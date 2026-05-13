@@ -1,0 +1,1026 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>刑事案卷智能分析系统 — 使用说明书</title>
+  <style>
+    :root {
+      --navy: #1e3a5f;
+      --navy-light: #2a4f7a;
+      --gold: #b8860b;
+      --gold-light: #d4a843;
+      --surface: #fafaf9;
+      --surface-alt: #f5f4ef;
+      --surface-elevated: #ffffff;
+      --border: #e8e6df;
+      --border-strong: #d4d2ca;
+      --text: #1c1917;
+      --text-secondary: #57534e;
+      --text-tertiary: #a8a29e;
+      --radius: 12px;
+      --radius-sm: 8px;
+      --shadow: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+      --shadow-md: 0 4px 6px rgba(0,0,0,0.07), 0 2px 4px rgba(0,0,0,0.06);
+      --shadow-lg: 0 10px 15px rgba(0,0,0,0.08), 0 4px 6px rgba(0,0,0,0.05);
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro SC", "SF Pro Text", "Helvetica Neue", Arial, "PingFang SC", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+      color: var(--text);
+      background: var(--surface);
+      line-height: 1.7;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ===== Cover Page ===== */
+    .cover {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      background: linear-gradient(160deg, var(--navy) 0%, #0f2440 60%, #0a1628 100%);
+      color: #fff;
+      text-align: center;
+      padding: 40px 20px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .cover::before {
+      content: '';
+      position: absolute;
+      top: -50%;
+      left: -50%;
+      width: 200%;
+      height: 200%;
+      background: radial-gradient(ellipse at 30% 50%, rgba(184,134,11,0.08) 0%, transparent 60%);
+      pointer-events: none;
+    }
+
+    .cover-icon {
+      width: 120px;
+      height: 120px;
+      margin-bottom: 40px;
+    }
+
+    .cover h1 {
+      font-size: clamp(2.5rem, 5vw, 3.5rem);
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      margin-bottom: 16px;
+    }
+
+    .cover h1 span { color: var(--gold-light); }
+
+    .cover .subtitle {
+      font-size: clamp(1rem, 2vw, 1.25rem);
+      color: rgba(255,255,255,0.6);
+      margin-bottom: 48px;
+      max-width: 500px;
+    }
+
+    .cover .version {
+      display: inline-block;
+      padding: 6px 16px;
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 20px;
+      font-size: 0.85rem;
+      color: rgba(255,255,255,0.5);
+    }
+
+    .cover .scroll-hint {
+      position: absolute;
+      bottom: 40px;
+      color: rgba(255,255,255,0.3);
+      font-size: 0.85rem;
+      animation: bounce 2s infinite;
+    }
+
+    @keyframes bounce {
+      0%, 20%, 50%, 80%, 100% { transform: translateY(0); }
+      40% { transform: translateY(-8px); }
+      60% { transform: translateY(-4px); }
+    }
+
+    /* ===== Navigation ===== */
+    .toc-bar {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(255,255,255,0.92);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      padding: 12px 0;
+    }
+
+    .toc-bar-inner {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .toc-bar-inner::-webkit-scrollbar { display: none; }
+
+    .toc-bar a {
+      flex-shrink: 0;
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 0.82rem;
+      color: var(--text-secondary);
+      text-decoration: none;
+      white-space: nowrap;
+      transition: all 0.2s;
+    }
+
+    .toc-bar a:hover, .toc-bar a.active {
+      background: var(--navy);
+      color: #fff;
+    }
+
+    /* ===== Content ===== */
+    .content {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 60px 24px 120px;
+    }
+
+    .section {
+      margin-bottom: 72px;
+    }
+
+    .section-number {
+      display: inline-block;
+      width: 40px;
+      height: 40px;
+      line-height: 40px;
+      text-align: center;
+      background: var(--navy);
+      color: #fff;
+      border-radius: 50%;
+      font-size: 1rem;
+      font-weight: 600;
+      margin-bottom: 12px;
+    }
+
+    h2 {
+      font-size: 1.75rem;
+      font-weight: 700;
+      color: var(--navy);
+      margin-bottom: 8px;
+    }
+
+    .section-desc {
+      color: var(--text-secondary);
+      margin-bottom: 32px;
+      font-size: 1.05rem;
+    }
+
+    h3 {
+      font-size: 1.25rem;
+      font-weight: 600;
+      color: var(--text);
+      margin: 32px 0 12px;
+      padding-left: 16px;
+      border-left: 3px solid var(--gold);
+    }
+
+    h4 {
+      font-size: 1.05rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+      margin: 24px 0 8px;
+    }
+
+    p { margin-bottom: 16px; }
+
+    /* ===== Cards ===== */
+    .card {
+      background: var(--surface-elevated);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 24px;
+      margin-bottom: 20px;
+      box-shadow: var(--shadow);
+    }
+
+    .card-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+      gap: 16px;
+      margin: 24px 0;
+    }
+
+    .card-grid .card { margin-bottom: 0; }
+
+    .card h4 {
+      margin-top: 0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* ===== Steps ===== */
+    .steps {
+      counter-reset: step;
+      list-style: none;
+      padding: 0;
+    }
+
+    .steps > li {
+      counter-increment: step;
+      position: relative;
+      padding-left: 56px;
+      padding-bottom: 32px;
+      border-left: 2px solid var(--border);
+      margin-left: 20px;
+    }
+
+    .steps > li:last-child {
+      border-left-color: transparent;
+      padding-bottom: 0;
+    }
+
+    .steps > li::before {
+      content: counter(step);
+      position: absolute;
+      left: -16px;
+      top: 0;
+      width: 30px;
+      height: 30px;
+      line-height: 30px;
+      text-align: center;
+      background: var(--navy);
+      color: #fff;
+      border-radius: 50%;
+      font-size: 0.85rem;
+      font-weight: 600;
+    }
+
+    .steps > li h4 {
+      margin-top: 0;
+      border-left: none;
+      padding-left: 0;
+    }
+
+    /* ===== Code ===== */
+    code {
+      font-family: "SF Mono", "Fira Code", Menlo, Consolas, monospace;
+      background: var(--surface-alt);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 0.9em;
+      color: var(--navy);
+    }
+
+    pre {
+      background: #1c1917;
+      color: #e7e5e4;
+      padding: 20px 24px;
+      border-radius: var(--radius-sm);
+      overflow-x: auto;
+      margin: 16px 0;
+      font-size: 0.9rem;
+      line-height: 1.6;
+    }
+
+    pre code {
+      background: none;
+      padding: 0;
+      color: inherit;
+    }
+
+    /* ===== Tables ===== */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 16px 0;
+      font-size: 0.95rem;
+    }
+
+    th {
+      background: var(--navy);
+      color: #fff;
+      padding: 12px 16px;
+      text-align: left;
+      font-weight: 600;
+    }
+
+    th:first-child { border-radius: var(--radius-sm) 0 0 0; }
+    th:last-child { border-radius: 0 var(--radius-sm) 0 0; }
+
+    td {
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    tr:last-child td { border-bottom: none; }
+    tr:nth-child(even) td { background: var(--surface-alt); }
+
+    /* ===== Alerts ===== */
+    .alert {
+      padding: 16px 20px;
+      border-radius: var(--radius-sm);
+      margin: 20px 0;
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+    }
+
+    .alert-icon { font-size: 1.2rem; flex-shrink: 0; margin-top: 1px; }
+
+    .alert-info {
+      background: rgba(30,58,95,0.06);
+      border-left: 3px solid var(--navy);
+    }
+
+    .alert-warning {
+      background: rgba(184,134,11,0.08);
+      border-left: 3px solid var(--gold);
+    }
+
+    .alert-danger {
+      background: rgba(153,27,27,0.06);
+      border-left: 3px solid #991b1b;
+    }
+
+    /* ===== Flowchart ===== */
+    .flow {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      justify-content: center;
+      margin: 24px 0;
+    }
+
+    .flow-step {
+      padding: 10px 18px;
+      background: var(--navy);
+      color: #fff;
+      border-radius: var(--radius-sm);
+      font-size: 0.9rem;
+      font-weight: 500;
+      text-align: center;
+      min-width: 120px;
+    }
+
+    .flow-arrow {
+      font-size: 1.5rem;
+      color: var(--gold);
+    }
+
+    /* ===== Feature list ===== */
+    .feature-list {
+      list-style: none;
+      padding: 0;
+    }
+
+    .feature-list > li {
+      padding: 8px 0 8px 28px;
+      position: relative;
+    }
+
+    .feature-list > li::before {
+      content: '✓';
+      position: absolute;
+      left: 0;
+      color: var(--gold);
+      font-weight: 700;
+    }
+
+    /* ===== Keyboard ===== */
+    kbd {
+      display: inline-block;
+      padding: 2px 8px;
+      background: var(--surface-elevated);
+      border: 1px solid var(--border-strong);
+      border-radius: 4px;
+      font-size: 0.85rem;
+      font-family: inherit;
+      box-shadow: 0 1px 0 var(--border-strong);
+    }
+
+    /* ===== Screenshot placeholder ===== */
+    .screenshot {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px;
+      background: var(--surface-elevated);
+      margin: 16px 0;
+      text-align: center;
+      box-shadow: var(--shadow);
+    }
+
+    .screenshot-placeholder {
+      background: linear-gradient(135deg, var(--surface-alt) 0%, #e8e6df 100%);
+      border-radius: var(--radius-sm);
+      padding: 40px;
+      color: var(--text-tertiary);
+      font-size: 0.9rem;
+    }
+
+    /* ===== Footer ===== */
+    .footer {
+      text-align: center;
+      padding: 40px 24px;
+      color: var(--text-tertiary);
+      font-size: 0.85rem;
+      border-top: 1px solid var(--border);
+    }
+
+    @media (max-width: 640px) {
+      .card-grid { grid-template-columns: 1fr; }
+      .flow { flex-direction: column; }
+      .flow-arrow { transform: rotate(90deg); }
+    }
+
+    @media print {
+      .toc-bar { display: none; }
+      .cover { min-height: auto; padding: 80px 20px; }
+      .section { page-break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ====== COVER ====== -->
+<div class="cover">
+  <svg class="cover-icon" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="4" y="4" width="112" height="112" rx="28" fill="rgba(255,255,255,0.08)" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>
+    <path d="M60 18 L96 34 L96 62 C96 82 78 98 60 106 C42 98 24 82 24 62 L24 34 Z" fill="rgba(59,130,246,0.3)" stroke="rgba(224,231,255,0.4)" stroke-width="1.5"/>
+    <circle cx="52" cy="52" r="18" fill="none" stroke="rgba(224,231,255,0.7)" stroke-width="3"/>
+    <line x1="65" y1="65" x2="82" y2="82" stroke="rgba(224,231,255,0.7)" stroke-width="3" stroke-linecap="round"/>
+  </svg>
+  <h1>刑事案卷<span>智能分析</span>系统</h1>
+  <p class="subtitle">基于三阶层犯罪论体系 · AI 驱动辩护分析 · 使用说明书</p>
+  <span class="version">v1.0 &middot; 2026 年 4 月</span>
+  <div class="scroll-hint">↓ 向下滚动阅读</div>
+</div>
+
+<!-- ====== NAV ====== -->
+<nav class="toc-bar" id="toc">
+  <div class="toc-bar-inner">
+    <a href="#overview">概览</a>
+    <a href="#install">安装启动</a>
+    <a href="#config">系统配置</a>
+    <a href="#create">创建案件</a>
+    <a href="#pipeline">流水线处理</a>
+    <a href="#convert">PDF 转 MD</a>
+    <a href="#analyze">智能分析</a>
+    <a href="#report">辩护报告</a>
+    <a href="#faq">常见问题</a>
+  </div>
+</nav>
+
+<!-- ====== CONTENT ====== -->
+<main class="content">
+
+<!-- ── 1. 概览 ── -->
+<section class="section" id="overview">
+  <div class="section-number">1</div>
+  <h2>系统概览</h2>
+  <p class="section-desc">刑事案卷智能分析系统是一款面向刑事辩护律师的桌面应用，通过 AI 大语言模型自动完成案卷材料的文字识别、内容提取、证据分析和辩护策略生成。</p>
+
+  <h3>核心功能</h3>
+  <ul class="feature-list">
+    <li>PDF 案卷批量上传、去水印、OCR 文字识别</li>
+    <li>PDF 自动转换为 Markdown 格式（MinerU 云端引擎）</li>
+    <li>基于三阶层犯罪论体系的辩护分析</li>
+    <li>自动生成指控要素、人物关系、事件拆解、法律法规、证据列表、矛盾分析和三阶层分析报告</li>
+    <li>AI 交互式辩护问答</li>
+    <li>一键导出完整辩护报告</li>
+  </ul>
+
+  <h3>业务流程</h3>
+  <div class="flow">
+    <div class="flow-step">上传 PDF</div>
+    <span class="flow-arrow">→</span>
+    <div class="flow-step">去水印 / OCR</div>
+    <span class="flow-arrow">→</span>
+    <div class="flow-step">PDF 转 MD</div>
+    <span class="flow-arrow">→</span>
+    <div class="flow-step">智能分析</div>
+    <span class="flow-arrow">→</span>
+    <div class="flow-step">辩护报告</div>
+  </div>
+
+  <h3>技术架构</h3>
+  <div class="card-grid">
+    <div class="card">
+      <h4>前端</h4>
+      <p>React 18 + TypeScript + Vite，macOS 原生风格 UI</p>
+      <p><code>localhost:5173</code></p>
+    </div>
+    <div class="card">
+      <h4>后端</h4>
+      <p>FastAPI（Python 3.13），RESTful API</p>
+      <p><code>localhost:8080</code></p>
+    </div>
+    <div class="card">
+      <h4>AI 模型</h4>
+      <p>阿里云百炼 · qwen3.6-plus</p>
+      <p>1M 上下文窗口</p>
+    </div>
+    <div class="card">
+      <h4>PDF 引擎</h4>
+      <p>MinerU 云端 API（每日 1000 页免费）</p>
+      <p>PyMuPDF / pypdf 本地辅助</p>
+    </div>
+  </div>
+</section>
+
+<!-- ── 2. 安装启动 ── -->
+<section class="section" id="install">
+  <div class="section-number">2</div>
+  <h2>安装与启动</h2>
+  <p class="section-desc">系统采用前后端分离架构，需分别启动后端和前端服务。</p>
+
+  <h3>2.1 环境要求</h3>
+  <table>
+    <tr><th>组件</th><th>最低版本</th><th>说明</th></tr>
+    <tr><td>Python</td><td>3.13</td><td>后端运行环境</td></tr>
+    <tr><td>Node.js</td><td>18+</td><td>前端构建与开发</td></tr>
+    <tr><td>macOS</td><td>13+</td><td>推荐运行平台（Apple Silicon 最佳）</td></tr>
+    <tr><td>poppler</td><td>最新版</td><td>PDF 缩略图生成（可选，通过 Homebrew 安装）</td></tr>
+  </table>
+
+  <h3>2.2 安装依赖</h3>
+  <pre><code># 后端依赖
+cd backend
+pip install -r requirements.txt
+
+# 前端依赖
+cd ../frontend
+npm install</code></pre>
+
+  <h3>2.3 启动服务</h3>
+  <ol class="steps">
+    <li>
+      <h4>启动后端</h4>
+      <pre><code>cd backend
+python3 main.py</code></pre>
+      <p>后端服务在 <code>http://localhost:8080</code> 启动，无热重载，修改代码后需手动重启。</p>
+    </li>
+    <li>
+      <h4>启动前端</h4>
+      <pre><code>cd frontend
+npm run dev</code></pre>
+      <p>前端开发服务器在 <code>http://localhost:5173</code> 启动，浏览器自动打开。</p>
+    </li>
+    <li>
+      <h4>生产构建</h4>
+      <pre><code>cd frontend
+npm run build</code></pre>
+      <p>构建产物输出到 <code>frontend/dist/</code>，可部署到任意静态服务器。</p>
+    </li>
+  </ol>
+
+  <div class="alert alert-info">
+    <span class="alert-icon">ℹ️</span>
+    <div><strong>提示：</strong>建议同时在两个终端窗口中分别运行后端和前端，以便查看日志和调试。</div>
+  </div>
+</section>
+
+<!-- ── 3. 系统配置 ── -->
+<section class="section" id="config">
+  <div class="section-number">3</div>
+  <h2>系统配置</h2>
+  <p class="section-desc">首次使用前，必须配置 MinerU Token 和 LLM API Key 两个核心凭据。</p>
+
+  <h3>3.1 打开设置页面</h3>
+  <p>在首页点击右上角 <kbd>⚙️ 设置</kbd> 按钮进入设置页面。</p>
+
+  <h3>3.2 配置项说明</h3>
+  <table>
+    <tr><th>配置项</th><th>说明</th><th>默认值</th><th>是否必填</th></tr>
+    <tr>
+      <td><code>MinerU Token</code></td>
+      <td>MinerU 云端 PDF 转 Markdown 的认证凭据</td>
+      <td>—</td>
+      <td><strong>是</strong></td>
+    </tr>
+    <tr>
+      <td><code>LLM API Key</code></td>
+      <td>阿里云百炼平台的 API 密钥</td>
+      <td>—</td>
+      <td><strong>是</strong></td>
+    </tr>
+    <tr>
+      <td><code>LLM Base URL</code></td>
+      <td>大模型 API 的基础 URL</td>
+      <td><code>https://coding.dashscope.aliyuncs.com/v1</code></td>
+      <td>否</td>
+    </tr>
+    <tr>
+      <td><code>LLM Model</code></td>
+      <td>使用的大模型名称</td>
+      <td><code>qwen3.6-plus</code></td>
+      <td>否</td>
+    </tr>
+  </table>
+
+  <h3>3.3 配置操作</h3>
+  <ol class="steps">
+    <li>
+      <h4>填入凭据</h4>
+      <p>在表单中依次填入 MinerU Token 和 LLM API Key。</p>
+    </li>
+    <li>
+      <h4>测试连接（可选）</h4>
+      <p>点击每个配置项旁边的「测试」按钮，验证凭据是否有效。</p>
+    </li>
+    <li>
+      <h4>保存</h4>
+      <p>点击「保存」按钮，配置将持久化到 <code>~/.openclaw/criminal-llm-config.json</code>。</p>
+    </li>
+  </ol>
+
+  <div class="alert alert-warning">
+    <span class="alert-icon">⚠️</span>
+    <div><strong>注意：</strong>首页会显示配置缺失提示。如果缺少 MinerU Token 或 LLM API Key，PDF 转 MD 和智能分析功能将无法正常工作。</div>
+  </div>
+</section>
+
+<!-- ── 4. 创建案件 ── -->
+<section class="section" id="create">
+  <div class="section-number">4</div>
+  <h2>创建案件</h2>
+  <p class="section-desc">所有分析操作都围绕「案件」进行，首先需要创建或导入案件。</p>
+
+  <h3>4.1 新建案件</h3>
+  <ol class="steps">
+    <li>
+      <h4>点击「新建案件」</h4>
+      <p>在首页点击 <kbd>+ 新建案件</kbd> 按钮。</p>
+    </li>
+    <li>
+      <h4>填写案件信息</h4>
+      <p>在弹出的对话框中输入：</p>
+      <ul>
+        <li><strong>案件名称</strong>：用于标识案件，如 "张三诈骗案"</li>
+        <li><strong>被告人姓名</strong>：案件涉及的被告人姓名（可选）</li>
+      </ul>
+    </li>
+    <li>
+      <h4>上传 PDF 文件</h4>
+      <p>选择要上传的 PDF 案卷文件，支持多选。上传后文件自动存入案件的 <code>original/</code> 目录。</p>
+    </li>
+  </ol>
+
+  <h3>4.2 导入已有案件文件夹</h3>
+  <p>如果已经存在符合案件目录结构的文件夹，可以一键导入：</p>
+  <ol class="steps">
+    <li>在首页的「待导入文件夹」区域找到目标文件夹</li>
+    <li>点击 <kbd>导入</kbd> 按钮，系统自动扫描并注册为合法案件</li>
+  </ol>
+
+  <h3>4.3 案件目录结构</h3>
+  <p>每个案件在磁盘上是一个文件夹，结构如下：</p>
+  <pre><code>data/cases/{case_id}/案件_名称_日期/
+├── case.json          # 案件元数据
+├── original/          # 原始上传的 PDF
+├── processed/         # 去水印后的 PDF
+├── md/                # 转换后的 Markdown
+├── md_images/         # Markdown 中的图片
+├── evidence/          # 提取的证据清单
+└── analysis/          # 分析报告
+    ├── stage_1/       # 指控要素
+    ├── stage_2/       # 人物关系
+    ├── stage_3/       # 事件拆解
+    ├── stage_4/       # 法律法规
+    └── stage_5/       # 综合辩护</code></pre>
+
+  <h3>4.4 删除与回收站</h3>
+  <p>删除案件后进入回收站，保留 <strong>30 天</strong>，逾期自动清除。可在回收站中恢复或立即清除。</p>
+</section>
+
+<!-- ── 5. 流水线处理 ── -->
+<section class="section" id="pipeline">
+  <div class="section-number">5</div>
+  <h2>流水线处理</h2>
+  <p class="section-desc">案件详情页提供完整的流水线式处理流程，每一步自动加载上一步的输出。</p>
+
+  <h3>5.1 打开案件详情页</h3>
+  <p>在首页点击任意案件卡片，进入案件详情页。页面顶部显示案件基本信息，下方为处理步骤面板。</p>
+
+  <h3>5.2 处理步骤</h3>
+  <table>
+    <tr><th>步骤</th><th>输入</th><th>输出</th><th>说明</th></tr>
+    <tr><td><strong>步骤 0</strong></td><td>上传 PDF</td><td><code>original/</code></td><td>保持原始文件名</td></tr>
+    <tr><td><strong>步骤 1</strong></td><td><code>original/</code></td><td><code>processed/</code></td><td>去水印、密码移除、OCR 识别</td></tr>
+    <tr><td><strong>步骤 2</strong></td><td><code>processed/</code> 或 <code>original/</code></td><td><code>md/</code></td><td>PDF 转 Markdown</td></tr>
+    <tr><td><strong>步骤 3</strong></td><td><code>md/</code></td><td><code>analysis/</code></td><td>三阶层辩护分析</td></tr>
+  </table>
+
+  <h3>5.3 操作方式</h3>
+  <ul class="feature-list">
+    <li>每一步完成后自动显示完成状态和结果摘要</li>
+    <li>可点击「重新处理」按钮重新执行某一步</li>
+    <li>后续步骤依赖前一步完成，未完成的步骤显示为锁定状态</li>
+    <li>可随时刷新页面，处理状态自动从磁盘恢复</li>
+  </ul>
+
+  <div class="alert alert-info">
+    <span class="alert-icon">ℹ️</span>
+    <div><strong>设计原则：</strong>每一步自动加载上一步输出，不需要手动添加文件。文件名保持延续性，不使用 UUID 替换原文件名。</div>
+  </div>
+</section>
+
+<!-- ── 6. PDF 转 MD ── -->
+<section class="section" id="convert">
+  <div class="section-number">6</div>
+  <h2>PDF 转 Markdown</h2>
+  <p class="section-desc">将 PDF 案卷转换为 Markdown 格式，提取文字、表格和图片。</p>
+
+  <h3>6.1 转换引擎</h3>
+  <p>系统使用 <strong>MinerU 云端 API</strong> 作为默认转换引擎：</p>
+  <ul class="feature-list">
+    <li>支持扫描件 OCR 和原生 PDF 文字提取</li>
+    <li>自动识别版面结构（标题、段落、表格）</li>
+    <li>图片自动提取到 <code>md_images/</code> 目录</li>
+    <li>每日免费 1000 页，超额后需排队</li>
+    <li>超时设为 1 小时（3600 秒）</li>
+  </ul>
+
+  <h3>6.2 操作流程</h3>
+  <ol class="steps">
+    <li>
+      <h4>进入转换页面</h4>
+      <p>在案件详情页点击「PDF 转 MD」步骤，或从侧边栏选择「转换」。</p>
+    </li>
+    <li>
+      <h4>选择文件</h4>
+      <p>系统自动列出 <code>processed/</code> 目录下的所有 PDF 文件（如未处理则从 <code>original/</code> 读取）。</p>
+    </li>
+    <li>
+      <h4>开始转换</h4>
+      <p>点击「开始转换」按钮，后台异步执行转换任务。进度条实时显示当前阶段：</p>
+      <ul>
+        <li>排队等待中 → 上传文件 → 转换中 → 下载结果 → 完成</li>
+      </ul>
+    </li>
+    <li>
+      <h4>查看结果</h4>
+      <p>转换完成后，Markdown 文件保存到 <code>md/</code> 目录，同名同目录。可在案件详情页预览。</p>
+    </li>
+  </ol>
+
+  <div class="alert alert-warning">
+    <span class="alert-icon">⚠️</span>
+    <div><strong>注意：</strong>签名行会被替换为 <code>[手写签名]</code> HTML 占位符，不会生成无效的图片引用。扫描件 PDF 的转换时间会比原生 PDF 更长。</div>
+  </div>
+
+  <h3>6.3 断点续传</h3>
+  <p>已处理完成的 MD 文件会跳过，部分处理的文件会清理后重新提取。刷新页面或后端重启后，转换进度自动恢复。</p>
+</section>
+
+<!-- ── 8. 智能分析 ── -->
+<section class="section" id="analyze">
+  <div class="section-number">8</div>
+  <h2>智能分析</h2>
+  <p class="section-desc">系统核心功能 — 基于三阶层犯罪论体系，自动完成案卷的辩护分析。</p>
+
+  <h3>8.1 分析阶段</h3>
+  <p>分析分为 5 个阶段，前 4 个阶段可独立运行，第 5 阶段依赖前 4 个阶段的输出：</p>
+
+  <table>
+    <tr><th>阶段</th><th>内容</th><th>依赖</th></tr>
+    <tr><td><strong>阶段 1：指控要素</strong></td><td>提取案件中的指控要素，包括罪名、犯罪事实、证据类型等</td><td>无</td></tr>
+    <tr><td><strong>阶段 2：人物关系</strong></td><td>分析涉案人员之间的关系图谱</td><td>无</td></tr>
+    <tr><td><strong>阶段 3：事件拆解</strong></td><td>按时间线拆解案件事件</td><td>无</td></tr>
+    <tr><td><strong>阶段 4：法律法规</strong></td><td>检索适用的法律法规和司法解释</td><td>无</td></tr>
+    <tr><td><strong>阶段 5：综合辩护</strong></td><td>基于前 4 个阶段的输出，生成综合辩护策略</td><td>阶段 1-4</td></tr>
+  </table>
+
+  <h3>8.2 分析理论框架</h3>
+  <p>分析基于 <strong>三阶层犯罪论体系</strong>：</p>
+  <div class="flow">
+    <div class="flow-step">构成要件<br>符合性</div>
+    <span class="flow-arrow">→</span>
+    <div class="flow-step">违法性</div>
+    <span class="flow-arrow">→</span>
+    <div class="flow-step">有责性</div>
+  </div>
+
+  <h3>8.3 操作流程</h3>
+  <ol class="steps">
+    <li>
+      <h4>进入分析页面</h4>
+      <p>在案件详情页点击「案卷分析」，或在侧边栏选择「分析」。</p>
+    </li>
+    <li>
+      <h4>选择分析阶段</h4>
+      <p>点击阶段卡片上的「运行」按钮。阶段 1-4 可随时运行，阶段 5 需等待前 4 个阶段完成。</p>
+    </li>
+    <li>
+      <h4>查看分析结果</h4>
+      <p>每个阶段完成后，结果以 Markdown 格式展示，包含：</p>
+      <ul>
+        <li><strong>指控要素</strong>：罪名、犯罪事实、证据类型等结构化要素</li>
+        <li><strong>人物关系</strong>：人员关系图谱（含 Mermaid 图）</li>
+        <li><strong>事件拆解</strong>：按时间线排列的事件清单</li>
+        <li><strong>法律法规</strong>：适用的法条、司法解释和参考案例</li>
+        <li><strong>综合辩护</strong>：完整的辩护策略和建议</li>
+      </ul>
+    </li>
+    <li>
+      <h4>清除重跑</h4>
+      <p>点击「清除」按钮可删除某个阶段及其后续所有阶段的分析结果，重新运行。</p>
+    </li>
+  </ol>
+
+  <h3>8.4 分析报告页面</h3>
+  <p>分析完成后，可进入「分析报告」页面查看完整结果。页面包含 8 个标签卡：</p>
+
+  <div class="card-grid">
+    <div class="card">
+      <h4>指控要素</h4>
+      <p>罪名、犯罪事实、证据类型等结构化提取</p>
+    </div>
+    <div class="card">
+      <h4>人物关系</h4>
+      <p>涉案人员关系图谱，含 Mermaid 可视化</p>
+    </div>
+    <div class="card">
+      <h4>事件拆解</h4>
+      <p>按时间线排列的事件清单</p>
+    </div>
+    <div class="card">
+      <h4>法律法规</h4>
+      <p>适用的法条、司法解释和参考案例</p>
+    </div>
+    <div class="card">
+      <h4>证据列表</h4>
+      <p>结构化证据清单，按类型分类</p>
+    </div>
+    <div class="card">
+      <h4>矛盾分析</h4>
+      <p>证据之间的矛盾点和逻辑漏洞</p>
+    </div>
+    <div class="card">
+      <h4>三阶层分析</h4>
+      <p>构成要件 → 违法性 → 有责性逐层分析</p>
+    </div>
+    <div class="card">
+      <h4>完整报告</h4>
+      <p>所有阶段结果合并，支持导出</p>
+    </div>
+  </div>
+
+  <h3>8.5 AI 交互问答</h3>
+  <p>在分析报告页面，可使用 AI 交互式辩护问答功能：</p>
+  <ul class="feature-list">
+    <li>在底部输入框输入问题，点击发送或按 <kbd>Enter</kbd></li>
+    <li>AI 基于已完成的分析结果回答问题</li>
+    <li>支持多轮对话，上下文自动关联</li>
+    <li>支持引用案卷中的具体证据材料</li>
+  </ul>
+
+  <div class="alert alert-info">
+    <span class="alert-icon">ℹ️</span>
+    <div><strong>状态恢复：</strong>分析过程中刷新页面或后端重启，已完成阶段的结果从磁盘自动恢复，运行中的状态尽可能恢复。</div>
+  </div>
+</section>
+
+<!-- ── 9. 辩护报告 ── -->
+<section class="section" id="report">
+  <div class="section-number">9</div>
+  <h2>辩护报告</h2>
+  <p class="section-desc">分析完成后，可导出完整的辩护报告。</p>
+
+  <h3>9.1 查看报告</h3>
+  <p>在分析报告页面点击「完整报告」标签，查看所有分析结果合并后的完整报告。</p>
+
+  <h3>9.2 导出报告</h3>
+  <ol class="steps">
+    <li>
+      <h4>点击导出按钮</h4>
+      <p>在完整报告页面点击「导出」按钮。</p>
+    </li>
+    <li>
+      <h4>选择格式</h4>
+      <p>目前支持导出为 Markdown 格式，文件保存到案件目录。</p>
+    </li>
+    <li>
+      <h4>使用报告</h4>
+      <p>导出的报告可直接用于辩护准备、提交法庭或供律师参考。</p>
+    </li>
+  </ol>
+</section>
+
+<!-- ── 10. 常见问题 ── -->
+<section class="section" id="faq">
+  <div class="section-number">10</div>
+  <h2>常见问题</h2>
+  <p class="section-desc">使用过程中可能遇到的问题及解决方案。</p>
+
+  <h3>配置相关</h3>
+  <div class="card">
+    <h4>Q: MinerU Token 从哪里获取？</h4>
+    <p>A: MinerU Token 在 MinerU 官方网站注册后获取。前往 <a href="https://mineru.ai" target="_blank">mineru.ai</a> 注册账号并生成 API Token。</p>
+  </div>
+  <div class="card">
+    <h4>Q: LLM API Key 在哪里获取？</h4>
+    <p>A: 在阿里云百炼平台（<a href="https://bailian.console.aliyun.com" target="_blank">bailian.console.aliyun.com</a>）开通服务后获取 API Key。</p>
+  </div>
+  <div class="card">
+    <h4>Q: 可以更换其他大模型吗？</h4>
+    <p>A: 可以。在设置页面修改 LLM Base URL 和 LLM Model 即可。需确保目标 API 兼容 OpenAI 接口规范。</p>
+  </div>
+
+  <h3>转换相关</h3>
+  <div class="card">
+    <h4>Q: PDF 转 MD 失败怎么办？</h4>
+    <p>A: 可能原因：① MinerU Token 无效或过期；② 网络连接问题；③ PDF 文件损坏。检查 Token 后重试，或尝试使用其他 PDF。</p>
+  </div>
+  <div class="card">
+    <h4>Q: 转换速度很慢？</h4>
+    <p>A: MinerU 是云端服务，转换速度取决于网络状况和服务器负载。扫描件 PDF 需要额外 OCR 处理，时间会更长。</p>
+  </div>
+  <div class="card">
+    <h4>Q: 每日 1000 页用完了怎么办？</h4>
+    <p>A: MinerU 每日免费限额 1000 页，超额后需排队等待。建议优先处理重要案件的 PDF，或次日再试。</p>
+  </div>
+
+  <h3>分析相关</h3>
+  <div class="card">
+    <h4>Q: 分析结果不准确怎么办？</h4>
+    <p>A: 可以尝试：① 确保 PDF 转 MD 质量良好（文字识别完整）；② 更换更强的 AI 模型；③ 在 AI 问答中进一步追问和细化。</p>
+  </div>
+  <div class="card">
+    <h4>Q: 刷新页面后分析状态丢失？</h4>
+    <p>A: 已完成阶段的结果从磁盘自动恢复。但如果后端进程被重启，运行中的分析任务可能丢失，需重新运行。</p>
+  </div>
+  <div class="card">
+    <h4>Q: 可以单独重新运行某个阶段吗？</h4>
+    <p>A: 可以。点击该阶段的「清除」按钮，会同时清除该阶段及其后续所有阶段的结果，然后重新运行。</p>
+  </div>
+
+  <h3>其他</h3>
+  <div class="card">
+    <h4>Q: 支持 Windows 系统吗？</h4>
+    <p>A: 核心功能（Python + React）跨平台兼容。但以下 macOS 特定功能需要适配：① AppleScript 文件夹选择对话框；② <code>open</code> 命令打开文件；③ <code>pdftoppm</code> 生成缩略图（Windows 需安装 poppler for Windows 或改用 PyMuPDF 方案）。</p>
+  </div>
+  <div class="card">
+    <h4>Q: 数据存储在哪里？</h4>
+    <p>A: 所有数据存储在本地 <code>data/cases/</code> 目录下。案件即文件夹，方便备份和迁移。配置文件存储在 <code>~/.openclaw/criminal-llm-config.json</code>。</p>
+  </div>
+  <div class="card">
+    <h4>Q: 如何备份案件数据？</h4>
+    <p>A: 直接复制 <code>data/cases/</code> 目录到备份位置即可。每个案件是一个独立文件夹，可以单独复制迁移。</p>
+  </div>
+
+  <div class="alert alert-danger">
+    <span class="alert-icon">🔒</span>
+    <div><strong>安全提醒：</strong>案件数据可能包含敏感的个人信息和法律材料。请妥善保管，不要将案件目录上传到不可信的第三方服务。</div>
+  </div>
+</section>
+
+</main>
+
+<!-- ====== FOOTER ====== -->
+<footer class="footer">
+  <p>刑事案卷智能分析系统 &middot; 使用说明书 v1.0</p>
+  <p>基于三阶层犯罪论体系 &middot; AI 驱动辩护分析</p>
+  <p style="margin-top: 12px; color: var(--text-tertiary);">2026 年 4 月</p>
+</footer>
+
+<!-- ====== SCROLL SCRIPT ====== -->
+<script>
+  // Smooth scroll for TOC links
+  document.querySelectorAll('.toc-bar a').forEach(link => {
+    link.addEventListener('click', e => {
+      e.preventDefault();
+      const target = document.querySelector(link.getAttribute('href'));
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  });
+
+  // Active TOC link tracking
+  const sections = document.querySelectorAll('.section[id]');
+  const tocLinks = document.querySelectorAll('.toc-bar a');
+
+  function updateActiveLink() {
+    let current = '';
+    sections.forEach(s => {
+      if (window.scrollY >= s.offsetTop - 120) current = s.id;
+    });
+    tocLinks.forEach(link => {
+      link.classList.toggle('active', link.getAttribute('href') === '#' + current);
+    });
+  }
+
+  window.addEventListener('scroll', updateActiveLink, { passive: true });
+</script>
+
+</body>
+</html>

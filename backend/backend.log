@@ -1,0 +1,12 @@
+INFO:     Started server process [71148]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+ERROR:    [Errno 48] error while attempting to bind on address ('0.0.0.0', 8080): address already in use
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+🚀 Criminal PDF WebUI 启动中...
+📂 数据目录: /Users/zhanghan/.openclaw/workspace/skills/criminal-pdf-webui/data
+🔗 OpenClaw URL: http://localhost:28789
+🧹 检查并清理超过 7 天的文件...
+   ✅ 无需清理
+👋 Criminal PDF WebUI 已关闭

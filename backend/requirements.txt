@@ -1,0 +1,19 @@
+# FastAPI - 使用最基础的版本，兼容性更好
+fastapi
+uvicorn
+python-multipart
+
+# PDF 处理
+pypdf
+pdf2image
+PyMuPDF  # PDF 文本提取
+
+# HTTP 客户端
+httpx
+
+# 工具
+python-dotenv
+
+# 注意：
+# - Pillow 使用系统安装的版本
+# - 移除 pydantic，使用 FastAPI 内置的类型验证

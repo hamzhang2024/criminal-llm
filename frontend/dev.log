@@ -1,0 +1,40 @@
+
+> criminal-pdf-webui@1.0.0 dev
+> vite
+
+Port 5173 is in use, trying another one...
+
+  VITE v5.4.21  ready in 494 ms
+
+  ➜  Local:   http://localhost:5174/
+  ➜  Network: use --host to expose
+08:08:13 [vite] hmr update /src/components/SimilarCaseViewer.tsx, /src/index.css
+08:11:31 [vite] hmr update /src/components/SimilarCaseViewer.tsx, /src/index.css
+08:11:55 [vite] hmr update /src/components/SimilarCaseViewer.tsx, /src/index.css
+08:12:03 [vite] hmr update /src/components/SimilarCaseViewer.tsx, /src/index.css
+08:13:59 [vite] hmr update /src/components/SimilarCaseViewer.tsx, /src/index.css
+08:19:06 [vite] hmr update /src/components/SimilarCaseViewer.tsx, /src/index.css
+08:19:28 [vite] hmr update /src/components/SimilarCaseViewer.tsx, /src/index.css
+08:25:36 [vite] hmr update /src/components/SimilarCaseViewer.tsx, /src/index.css
+08:26:08 [vite] hmr update /src/components/SimilarCaseViewer.tsx, /src/index.css
+08:26:30 [vite] hmr update /src/components/SimilarCaseViewer.tsx, /src/index.css
+08:37:18 [vite] hmr update /src/components/SimilarCaseViewer.tsx, /src/index.css
+08:37:27 [vite] hmr update /src/components/SimilarCaseViewer.tsx, /src/index.css
+08:37:42 [vite] hmr update /src/components/SimilarCaseViewer.tsx, /src/index.css
+08:37:56 [vite] hmr update /src/components/SimilarCaseViewer.tsx, /src/index.css
+08:39:36 [vite] hmr update /src/components/SimilarCaseViewer.tsx, /src/index.css
+08:43:43 [vite] hmr update /src/components/SimilarCaseViewer.tsx, /src/index.css
+08:43:51 [vite] hmr update /src/components/SimilarCaseViewer.tsx, /src/index.css
+08:43:59 [vite] hmr update /src/components/SimilarCaseViewer.tsx, /src/index.css
+08:44:07 [vite] hmr update /src/components/SimilarCaseViewer.tsx, /src/index.css
+08:44:43 [vite] hmr update /src/components/SimilarCaseViewer.tsx, /src/index.css
+08:45:02 [vite] hmr update /src/components/SimilarCaseViewer.tsx, /src/index.css
+09:18:19 [vite] hmr update /src/components/SimilarCaseViewer.tsx, /src/index.css
+09:18:35 [vite] hmr update /src/components/SimilarCaseViewer.tsx, /src/index.css
+09:28:45 [vite] hmr update /src/components/SimilarCaseViewer.tsx, /src/index.css
+09:28:56 [vite] hmr update /src/components/SimilarCaseViewer.tsx, /src/index.css
+npm notice
+npm notice New minor version of npm available! 11.6.2 -> 11.12.1
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v11.12.1
+npm notice To update run: npm install -g npm@11.12.1
+npm notice

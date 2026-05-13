@@ -1,0 +1,36 @@
+{
+  "case_id": "c695f6fc",
+  "status": "completed",
+  "progress": 100,
+  "message": "检索完成",
+  "updated_at": "2026-04-05T09:37:14.319590",
+  "total_found": 6,
+  "queries": [
+    {
+      "query": "非法经营 非法从事资金支付结算业务",
+      "description": "非法经营（基础检索）",
+      "priority": "low"
+    }
+  ],
+  "params": {
+    "limit": 20,
+    "date_range": "3y",
+    "court_levels": [
+      "supreme",
+      "higher",
+      "intermediate"
+    ],
+    "result_filter": "all",
+    "province": "",
+    "trial_procedure": "all",
+    "reference_level": "all",
+    "custom_queries": [
+      {
+        "query": "非法经营 非法从事资金支付结算业务",
+        "description": "非法经营（基础检索）",
+        "priority": "low"
+      }
+    ],
+    "return_limit": 10
+  }
+}

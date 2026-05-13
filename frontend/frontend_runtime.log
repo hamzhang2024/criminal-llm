@@ -1,0 +1,13 @@
+
+  VITE v5.4.21  ready in 90 ms
+
+  ➜  Local:   http://localhost:5173/
+  ➜  Network: http://192.168.1.64:5173/
+9:47:36 AM [vite] hmr update /src/index.css, /src/pages/HomePage.tsx, /src/pages/AnalyzePage.tsx, /src/pages/SettingsPage.tsx, /src/pages/ReportPage.tsx, /src/pages/CaseDetailPage.tsx
+9:47:39 AM [vite] hmr update /src/index.css, /src/pages/HomePage.tsx, /src/pages/AnalyzePage.tsx, /src/pages/SettingsPage.tsx, /src/pages/ReportPage.tsx, /src/pages/CaseDetailPage.tsx
+9:47:47 AM [vite] hmr update /src/pages/ReportPage.tsx, /src/index.css
+9:47:55 AM [vite] hmr update /src/pages/ReportPage.tsx, /src/index.css
+9:48:12 AM [vite] hmr update /src/pages/ReportPage.tsx, /src/index.css
+9:49:30 AM [vite] hmr update /src/pages/ReportPage.tsx, /src/index.css
+9:49:31 AM [vite] ✨ new dependencies optimized: react-pdf
+9:49:31 AM [vite] ✨ optimized dependencies changed. reloading

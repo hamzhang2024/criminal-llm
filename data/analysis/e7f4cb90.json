@@ -1,0 +1,56 @@
+{
+  "case_id": "e7f4cb90",
+  "case_dir": "/tmp",
+  "is_temp": false,
+  "defendant": null,
+  "created_at": "2026-04-17T07:10:56.118056",
+  "status": "pending",
+  "evidence_list": [
+    {
+      "id": "ev_001",
+      "filename": "test_processed.pdf",
+      "filepath": "/tmp/test_processed.pdf",
+      "type": "其他证据",
+      "pages": 84,
+      "selected": false,
+      "summary": null
+    },
+    {
+      "id": "ev_002",
+      "filename": "wm_test.pdf",
+      "filepath": "/tmp/wm_test.pdf",
+      "type": "其他证据",
+      "pages": 84,
+      "selected": false,
+      "summary": null
+    },
+    {
+      "id": "ev_003",
+      "filename": "served_processed.pdf",
+      "filepath": "/tmp/served_processed.pdf",
+      "type": "其他证据",
+      "pages": 84,
+      "selected": false,
+      "summary": null
+    },
+    {
+      "id": "ev_004",
+      "filename": "served_original.pdf",
+      "filepath": "/tmp/served_original.pdf",
+      "type": "其他证据",
+      "pages": 84,
+      "selected": false,
+      "summary": null
+    },
+    {
+      "id": "ev_005",
+      "filename": "test_sandwich.pdf",
+      "filepath": "/tmp/test_sandwich.pdf",
+      "type": "其他证据",
+      "pages": 86,
+      "selected": false,
+      "summary": null
+    }
+  ],
+  "supplement_dirs": []
+}

@@ -1,0 +1,173 @@
+/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/requests/__init__.py:113: RequestsDependencyWarning: urllib3 (2.6.3) or chardet (6.0.0.post1)/charset_normalizer (3.4.4) doesn't match a supported version!
+  warnings.warn(
+/Users/zhanghan/.openclaw/workspace/criminal-llm/backend/main.py:467: DeprecationWarning: 
+        on_event is deprecated, use lifespan event handlers instead.
+
+        Read more about it in the
+        [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+        
+  @app.on_event("startup")
+/Users/zhanghan/.openclaw/workspace/criminal-llm/backend/main.py:491: DeprecationWarning: 
+        on_event is deprecated, use lifespan event handlers instead.
+
+        Read more about it in the
+        [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+        
+  @app.on_event("shutdown")
+INFO:     Started server process [32609]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8080 (Press CTRL+C to quit)
+
+╔════════════════════════════════════════════╗
+║   Criminal PDF WebUI v1.0.0               ║
+║   刑事案卷 PDF 智能拆分可视化工具            ║
+╠════════════════════════════════════════════╣
+║   API:  http://127.0.0.1:8080/api           ║
+║   Docs: http://127.0.0.1:8080/docs          ║
+╚════════════════════════════════════════════╝
+    
+🚀 Criminal PDF WebUI 启动中...
+📂 数据目录: /Users/zhanghan/.openclaw/workspace/criminal-llm/data
+🔗 OpenClaw URL: http://localhost:28789
+🧹 检查并清理超过 7 天的文件...
+   ✅ 无需清理
+🗑️ 检查回收站...
+   ✅ 回收站无需清理
+INFO:     127.0.0.1:50289 - "GET /api/cases/case_976fafdd/step-files/2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50293 - "GET /api/cases/case_976fafdd HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50294 - "GET /api/cases/case_976fafdd/step-files/2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50293 - "GET /api/cases/case_976fafdd HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50294 - "GET /api/cases/case_976fafdd/files HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50300 - "GET /api/cases/case_976fafdd HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50301 - "GET /api/cases/case_976fafdd/files HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50293 - "GET /api/cases/case_976fafdd/step-files/2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50305 - "GET /api/cases/case_976fafdd/pdf-thumbnails?file_path=%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86.pdf&dir=processed&width=250 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50305 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-01.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50306 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-02.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50307 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-03.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50308 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-04.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50309 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-05.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50310 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-06.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50305 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-07.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50306 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-08.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50308 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-10.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50307 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-09.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50309 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-11.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50310 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-12.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50305 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-13.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50308 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-14.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50307 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-16.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50306 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-15.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50309 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-17.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50310 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-18.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50305 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-19.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50308 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-20.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50307 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-21.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50306 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-22.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50309 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-23.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50310 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-25.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50305 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-24.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50308 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-27.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50307 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-26.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50306 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-28.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50309 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-29.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50310 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-30.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50306 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-32.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50308 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-31.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50305 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-34.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50307 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-33.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50323 - "GET /api/cases/case_976fafdd HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50324 - "GET /api/cases/case_976fafdd/files HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50325 - "GET /api/cases/case_976fafdd HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50326 - "GET /api/cases/case_976fafdd/files HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50323 - "GET /api/cases/case_976fafdd/step-files/2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50341 - "GET /api/cases/case_976fafdd HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50342 - "GET /api/cases/case_976fafdd/step-files/2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50357 - "GET /api/cases/case_976fafdd HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50358 - "GET /api/cases/case_976fafdd/files HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50359 - "GET /api/cases/case_976fafdd HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50360 - "GET /api/cases/case_976fafdd/files HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50362 - "GET /api/cases/case_976fafdd/step-files/2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50362 - "GET /api/cases/case_976fafdd/step-files/3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50362 - "GET /api/cases/case_976fafdd/step-files/2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50374 - "GET /api/cases/case_976fafdd HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50375 - "GET /api/cases/case_976fafdd/files HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50376 - "GET /api/cases/case_976fafdd HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50377 - "GET /api/cases/case_976fafdd/files HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50374 - "GET /api/cases/case_976fafdd/step-files/2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50383 - "GET /api/cases/case_976fafdd HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50384 - "GET /api/cases/case_976fafdd/step-files/2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50389 - "GET /api/cases/case_976fafdd HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50390 - "GET /api/cases/case_976fafdd/files HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50391 - "GET /api/cases/case_976fafdd HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50392 - "GET /api/cases/case_976fafdd/files HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50403 - "GET /api/cases/case_976fafdd HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50404 - "GET /api/cases/case_976fafdd/files HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50405 - "GET /api/cases/case_976fafdd HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50406 - "GET /api/cases/case_976fafdd/files HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50403 - "GET /api/cases/case_976fafdd/step-files/2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50404 - "GET /api/cases/case_976fafdd/pdf-thumbnails?file_path=%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86.pdf&dir=processed&width=250 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50405 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-01.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50406 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-02.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50404 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-04.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50403 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-03.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50407 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-05.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50408 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-06.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50406 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-07.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50403 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-09.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50405 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-08.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50404 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-10.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50407 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-11.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50405 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-12.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50406 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-14.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50403 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-13.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50408 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-15.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50404 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-16.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50407 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-17.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50408 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-18.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50403 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-19.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50406 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-20.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50405 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-21.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50404 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-22.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50407 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-23.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50403 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-25.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50408 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-24.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50404 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-26.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50406 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-27.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50405 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-28.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50407 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-29.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50408 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-30.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50405 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-32.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50406 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-31.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50403 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-33.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50404 - "GET /api/cases/case_976fafdd/pdf-thumb-cache?path=/Users/zhanghan/.openclaw/workspace/data/cases/case_976fafdd/%E6%A1%88%E4%BB%B6_%E5%88%98%E5%BE%81%E6%A5%A0%E9%9D%9E%E6%B3%95%E7%BB%8F%E8%90%A5%E7%BD%AA_20260421/.thumbs/%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86/250/thumb-34.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50444 - "GET /api/cases/case_976fafdd/step-files/1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50444 - "GET /api/cases/case_976fafdd/step-files/2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50444 - "GET /api/cases/case_976fafdd/pdf-thumbnails?file_path=%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86.pdf&dir=processed&width=250 HTTP/1.1" 200 OK
+[LLM 客户端] baseUrl: https://coding.dashscope.aliyuncs.com/v1
+[LLM 客户端] model: qwen3.6-plus
+[LLM 客户端] apiKey: 已配置
+[LLM 请求] model=qwen3.6-plus, messages=2
+[LLM命名] 原始响应: {"type": "其他法律文书", "name": "第1卷_处理_其他法律文书"}
+INFO:     127.0.0.1:50447 - "POST /api/cases/case_976fafdd/llm-name-segment?file_name=%E7%AC%AC1%E5%8D%B7_%E5%A4%84%E7%90%86.pdf&start=2&end=4 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50472 - "GET /api/cases/case_976fafdd HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50473 - "GET /api/cases/case_976fafdd/files HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50474 - "GET /api/cases/case_976fafdd HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50475 - "GET /api/cases/case_976fafdd/files HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50472 - "GET /api/cases/case_976fafdd/step-files/2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50483 - "GET /api/cases/case_976fafdd HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50484 - "GET /api/cases/case_976fafdd/files HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50485 - "GET /api/cases/case_976fafdd HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50486 - "GET /api/cases/case_976fafdd/files HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50483 - "GET /api/cases/case_976fafdd HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50484 - "GET /api/cases/case_976fafdd/files HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50485 - "GET /api/cases/case_976fafdd HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50486 - "GET /api/cases/case_976fafdd/files HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50497 - "GET /api/cases/case_976fafdd HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50498 - "GET /api/cases/case_976fafdd/files HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50499 - "GET /api/cases/case_976fafdd HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50500 - "GET /api/cases/case_976fafdd/files HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50507 - "GET /api/cases/case_976fafdd HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50508 - "GET /api/cases/case_976fafdd/files HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50509 - "GET /api/cases/list HTTP/1.1" 200 OK

@@ -1,0 +1,396 @@
+/* macOS 风格设计系统 */
+
+:root {
+  /* macOS 系统字体 */
+  --font-system: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Icons", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  
+  /* macOS 浅色主题 */
+  --macos-bg-primary: #ffffff;
+  --macos-bg-secondary: #f5f5f7;
+  --macos-bg-tertiary: #efeff4;
+  --macos-sidebar: rgba(245, 245, 247, 0.8);
+  --macos-sidebar-active: rgba(255, 255, 255, 0.8);
+  --macos-border: rgba(0, 0, 0, 0.1);
+  --macos-border-light: rgba(0, 0, 0, 0.05);
+  --macos-text-primary: #1d1d1f;
+  --macos-text-secondary: #6e6e73;
+  --macos-text-tertiary: #86868b;
+  --macos-accent: #007aff;
+  --macos-accent-hover: #0056cc;
+  --macos-success: #34c759;
+  --macos-warning: #ff9500;
+  --macos-danger: #ff3b30;
+  
+  /* macOS 阴影 */
+  --macos-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --macos-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  --macos-shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.12);
+  --macos-shadow-xl: 0 16px 48px rgba(0, 0, 0, 0.15);
+  
+  /* macOS 圆角 */
+  --macos-radius-sm: 6px;
+  --macos-radius: 10px;
+  --macos-radius-lg: 14px;
+  --macos-radius-xl: 18px;
+  
+  /* macOS 毛玻璃效果 */
+  --macos-blur: blur(20px) saturate(180%);
+}
+
+/* 基础样式 */
+* {
+  font-family: var(--font-system);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  background-color: var(--macos-bg-secondary);
+  color: var(--macos-text-primary);
+  overflow: hidden;
+}
+
+/* macOS 窗口容器 */
+.macOS-window {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--macos-bg-primary);
+  border-radius: var(--macos-radius-lg);
+  overflow: hidden;
+  box-shadow: var(--macos-shadow-lg);
+}
+
+/* macOS 标题栏 */
+.macOS-titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 52px;
+  padding: 0 20px;
+  background: var(--macos-bg-primary);
+  border-bottom: 1px solid var(--macos-border);
+  -webkit-app-region: drag;
+}
+
+.macOS-titlebar-controls {
+  display: flex;
+  gap: 8px;
+}
+
+.macOS-control {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  -webkit-app-region: no-drag;
+}
+
+.macOS-control.close {
+  background: #ff5f57;
+  border: 1px solid #e0443e;
+}
+
+.macOS-control.minimize {
+  background: #ffbd2e;
+  border: 1px solid #dea123;
+}
+
+.macOS-control.maximize {
+  background: #28c940;
+  border: 1px solid #1aab29;
+}
+
+.macOS-titlebar-controls:hover .macOS-control::after {
+  content: '';
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.1);
+}
+
+.macOS-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--macos-text-primary);
+  text-align: center;
+  flex: 1;
+}
+
+/* macOS 侧边栏 */
+.macOS-sidebar {
+  width: 240px;
+  background: var(--macos-sidebar);
+  backdrop-filter: var(--macos-blur);
+  -webkit-backdrop-filter: var(--macos-blur);
+  border-right: 1px solid var(--macos-border);
+  display: flex;
+  flex-direction: column;
+  padding: 16px 12px;
+}
+
+.macOS-sidebar-section {
+  margin-bottom: 24px;
+}
+
+.macOS-sidebar-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--macos-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 0 12px;
+  margin-bottom: 8px;
+}
+
+.macOS-sidebar-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  margin: 2px 0;
+  border-radius: var(--macos-radius-sm);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-size: 13px;
+  color: var(--macos-text-primary);
+}
+
+.macOS-sidebar-item:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.macOS-sidebar-item.active {
+  background: var(--macos-sidebar-active);
+  box-shadow: var(--macos-shadow-sm);
+  font-weight: 500;
+}
+
+.macOS-sidebar-item svg {
+  width: 18px;
+  height: 18px;
+  color: var(--macos-text-secondary);
+}
+
+.macOS-sidebar-item.active svg {
+  color: var(--macos-accent);
+}
+
+/* macOS 主内容区 */
+.macOS-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--macos-bg-primary);
+}
+
+/* macOS 工具栏 */
+.macOS-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 44px;
+  padding: 0 20px;
+  background: var(--macos-bg-primary);
+  border-bottom: 1px solid var(--macos-border-light);
+}
+
+.macOS-toolbar-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--macos-text-primary);
+}
+
+.macOS-toolbar-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* macOS 按钮 */
+.macOS-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: var(--macos-radius-sm);
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.macOS-button-primary {
+  background: var(--macos-accent);
+  color: white;
+}
+
+.macOS-button-primary:hover {
+  background: var(--macos-accent-hover);
+}
+
+.macOS-button-secondary {
+  background: var(--macos-bg-tertiary);
+  color: var(--macos-text-primary);
+}
+
+.macOS-button-secondary:hover {
+  background: var(--macos-border);
+}
+
+.macOS-button-icon {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: var(--macos-radius-sm);
+  background: transparent;
+  color: var(--macos-text-secondary);
+}
+
+.macOS-button-icon:hover {
+  background: var(--macos-bg-tertiary);
+  color: var(--macos-text-primary);
+}
+
+/* macOS 卡片 */
+.macOS-card {
+  background: var(--macos-bg-primary);
+  border: 1px solid var(--macos-border);
+  border-radius: var(--macos-radius-lg);
+  padding: 16px;
+  box-shadow: var(--macos-shadow-sm);
+}
+
+.macOS-card:hover {
+  box-shadow: var(--macos-shadow);
+}
+
+/* macOS 输入框 */
+.macOS-input {
+  width: 100%;
+  padding: 10px 14px;
+  font-size: 14px;
+  font-family: var(--font-system);
+  background: var(--macos-bg-secondary);
+  border: 1px solid var(--macos-border);
+  border-radius: var(--macos-radius-sm);
+  color: var(--macos-text-primary);
+  transition: all 0.15s ease;
+}
+
+.macOS-input:focus {
+  outline: none;
+  border-color: var(--macos-accent);
+  box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.15);
+}
+
+.macOS-input::placeholder {
+  color: var(--macos-text-tertiary);
+}
+
+/* macOS 滚动条 */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.3);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+/* macOS 动画 */
+@keyframes macOS-fade-in {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.macOS-animate-in {
+  animation: macOS-fade-in 0.2s ease-out;
+}
+
+/* macOS 分割线 */
+.macOS-divider {
+  height: 1px;
+  background: var(--macos-border);
+  margin: 16px 0;
+}
+
+/* macOS 标签 */
+.macOS-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 10px;
+  background: var(--macos-bg-tertiary);
+  color: var(--macos-text-secondary);
+}
+
+.macOS-badge-accent {
+  background: rgba(0, 122, 255, 0.1);
+  color: var(--macos-accent);
+}
+
+.macOS-badge-success {
+  background: rgba(52, 199, 89, 0.1);
+  color: var(--macos-success);
+}
+
+.macOS-badge-warning {
+  background: rgba(255, 149, 0, 0.1);
+  color: var(--macos-warning);
+}
+
+/* macOS 空状态 */
+.macOS-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  text-align: center;
+  color: var(--macos-text-secondary);
+}
+
+.macOS-empty-state-icon {
+  width: 64px;
+  height: 64px;
+  margin-bottom: 16px;
+  color: var(--macos-text-tertiary);
+}
+
+.macOS-empty-state-title {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--macos-text-primary);
+  margin-bottom: 8px;
+}
+
+.macOS-empty-state-description {
+  font-size: 13px;
+  line-height: 1.5;
+  max-width: 300px;
+}

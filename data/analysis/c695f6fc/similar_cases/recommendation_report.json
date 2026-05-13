@@ -1,0 +1,103 @@
+{
+  "case_id": "c695f6fc",
+  "charge": "非法经营罪",
+  "search_time": "2026-04-05T09:37:14.319513",
+  "total_searched": 6,
+  "recommended_count": 6,
+  "recommendations": [
+    {
+      "rank": 1,
+      "case_number": "（2023）川11刑初24号",
+      "court": "最高人民法院",
+      "date": "2021年3月30日",
+      "charge": "非法经营罪",
+      "similarity": 40.0,
+      "result": "有期徒刑六年，并处罚金人民币七十四万元；二、被告人黄某圆犯非法经营罪，判处有期徒刑五年六个月，并处罚金人民币七十一万元；三、被告人陈某文犯非法经营罪，判处有期徒刑二年六个月，并处罚金人民币二十五万元（",
+      "key_points": [
+        "刑事",
+        "非法经营罪",
+        "虚拟货币",
+        "交易媒介",
+        "变相买卖外汇"
+      ],
+      "reference_value": "⭐⭐⭐ 中等",
+      "file_path": "/Users/zhanghan/.openclaw/workspace/skills/criminal-pdf-webui/data/analysis/c695f6fc/similar_cases/03_综上被告人万某园等人违反国家规定倒买倒卖外汇或者以虚拟货币为媒介变相买卖外汇影响外汇管理的有效性和合.txt"
+    },
+    {
+      "rank": 2,
+      "case_number": "（2023）浙03刑初26号",
+      "court": "最高人民法院",
+      "date": "2023年12月29日",
+      "charge": "走私普通货物罪",
+      "similarity": 0.0,
+      "result": "被告人林某业、谢某苏、郑某、胡某、陈某慧有期徒刑十二年至二年不等，并对陈某慧适用缓刑；同时，对各被告人并处罚金人民币二千万元至十万元不等",
+      "key_points": [
+        "刑事",
+        "走私普通货物罪",
+        "非法经营罪",
+        "买卖外汇",
+        "经营行为"
+      ],
+      "reference_value": "⭐ 一般",
+      "file_path": "/Users/zhanghan/.openclaw/workspace/skills/criminal-pdf-webui/data/analysis/c695f6fc/similar_cases/05_法院生效裁判认为被告人林某业谢某苏等人结伙从境外走私普通货物入境偷逃进口环节应缴税额特别巨大其行为均.txt"
+    },
+    {
+      "rank": 3,
+      "case_number": "(2023)吉01刑终131号",
+      "court": "最高人民法院",
+      "date": "1979年6月9日",
+      "charge": "容留他人吸毒罪",
+      "similarity": 0.0,
+      "result": "有期徒刑八个月，并处罚金人民币一万元，于2014年11月29日被刑满释放",
+      "key_points": [],
+      "reference_value": "⭐ 一般",
+      "file_path": "/Users/zhanghan/.openclaw/workspace/skills/criminal-pdf-webui/data/analysis/c695f6fc/similar_cases/01_石某孔某非法经营罪二审刑事裁定书.txt"
+    },
+    {
+      "rank": 4,
+      "case_number": "(2022)沪02刑终313号",
+      "court": "加载中...GPT易读易读AI+检索报告检索报告0在线客服推送在线客服客服问题反馈反馈分享分享手机阅读APP返回顶部目录公诉机关当事人审理经过一审法院认为与裁判本院认为裁判结果审判人员张某、刘某非法经营罪二审刑事裁定书张某、刘某非法经营罪二审刑事裁定书上海市第二中级人民法院",
+      "date": "1978年2月28日",
+      "charge": "故意伤害罪",
+      "similarity": 0.0,
+      "result": "有期徒刑一年，缓刑一年",
+      "key_points": [],
+      "reference_value": "⭐ 一般",
+      "file_path": "/Users/zhanghan/.openclaw/workspace/skills/criminal-pdf-webui/data/analysis/c695f6fc/similar_cases/06_张志强刘冬梅非法经营罪二审刑事裁定书.txt"
+    },
+    {
+      "rank": 5,
+      "case_number": "(2023)吉01刑终131号",
+      "court": "最高人民法院",
+      "date": "1979年6月9日",
+      "charge": "容留他人吸毒罪",
+      "similarity": 0.0,
+      "result": "有期徒刑八个月，并处罚金人民币一万元，于2014年11月29日被刑满释放",
+      "key_points": [],
+      "reference_value": "⭐ 一般",
+      "file_path": "/Users/zhanghan/.openclaw/workspace/skills/criminal-pdf-webui/data/analysis/c695f6fc/similar_cases/02_察院关于办理非法从事资金支付结算业务非法买卖外汇刑事案件适用法律若干问题的解释的有关规定认定非法经营.txt"
+    },
+    {
+      "rank": 6,
+      "case_number": "（2023）浙03刑初26号",
+      "court": "最高人民法院",
+      "date": "2023年12月29日",
+      "charge": "走私普通货物罪",
+      "similarity": 0.0,
+      "result": "被告人林某业、谢某苏、郑某、胡某、陈某慧有期徒刑十二年至二年不等，并对陈某慧适用缓刑；同时，对各被告人并处罚金人民币二千万元至十万元不等",
+      "key_points": [
+        "刑事",
+        "走私普通货物罪",
+        "非法经营罪",
+        "买卖外汇",
+        "经营行为"
+      ],
+      "reference_value": "⭐ 一般",
+      "file_path": "/Users/zhanghan/.openclaw/workspace/skills/criminal-pdf-webui/data/analysis/c695f6fc/similar_cases/04_林某业等走私普通货物非法经营案.txt"
+    }
+  ],
+  "defense_suggestions": [
+    "检索到 3 个从轻/减轻处罚案例，可借鉴量刑辩护要点",
+    "类案常见辩护要点：交易媒介, 非法经营罪, 经营行为, 刑事, 买卖外汇"
+  ]
+}

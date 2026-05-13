@@ -1,0 +1,179 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background-color: #f8fafc;
+}
+
+/* 自定义滚动条样式 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+@keyframes dialogIn {
+  from { opacity: 0; transform: scale(0.95) translateY(-10px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Report page markdown rendering */
+.report-content h1 {
+  font-size: 20px;
+  font-weight: 700;
+  margin: 24px 0 12px;
+  color: var(--macos-text-primary, #1d1d1f);
+  border-bottom: 1px solid var(--macos-border, #e5e5ea);
+  padding-bottom: 8px;
+}
+
+.report-content h2 {
+  font-size: 17px;
+  font-weight: 700;
+  margin: 20px 0 8px;
+  color: var(--macos-text-primary, #1d1d1f);
+}
+
+.report-content h3 {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 16px 0 6px;
+  color: var(--macos-text-primary, #1d1d1f);
+}
+
+.report-content h4 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 12px 0 4px;
+  color: var(--macos-text-secondary, #6e6e73);
+}
+
+.report-content p {
+  margin: 6px 0;
+  line-height: 1.7;
+  color: var(--macos-text-primary, #1d1d1f);
+}
+
+.report-content ul, .report-content ol {
+  margin: 8px 0;
+  padding-left: 24px;
+}
+
+.report-content li {
+  margin: 4px 0;
+  line-height: 1.6;
+}
+
+.report-content strong {
+  font-weight: 600;
+  color: var(--macos-text-primary, #1d1d1f);
+}
+
+.report-content code {
+  background: var(--macos-bg-secondary, #f5f5f7);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: 'SF Mono', 'Menlo', monospace;
+}
+
+.report-content pre {
+  background: var(--macos-bg-secondary, #f5f5f7);
+  padding: 12px;
+  border-radius: 8px;
+  overflow-x: auto;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.report-content blockquote {
+  border-left: 3px solid #007aff;
+  padding-left: 12px;
+  color: var(--macos-text-secondary, #6e6e73);
+  margin: 8px 0;
+}
+
+.report-content table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 12px 0;
+  font-size: 12px;
+}
+
+.report-content th {
+  background: var(--macos-bg-secondary, #f5f5f7);
+  padding: 8px 12px;
+  text-align: left;
+  font-weight: 600;
+  border: 1px solid var(--macos-border, #e5e5ea);
+}
+
+.report-content td {
+  padding: 8px 12px;
+  border: 1px solid var(--macos-border, #e5e5ea);
+}
+
+.report-content hr {
+  border: none;
+  border-top: 1px solid var(--macos-border, #e5e5ea);
+  margin: 16px 0;
+}
+
+.report-content a {
+  color: #007aff;
+  text-decoration: none;
+}
+
+.report-content a:hover {
+  text-decoration: underline;
+}
+
+.report-content img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+  margin: 12px 0;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+.report-content details {
+  margin: 8px 0;
+  border: 1px solid var(--macos-border, #e5e5ea);
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: var(--macos-bg-secondary, #f5f5f7);
+}
+
+.report-content details summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--macos-text-secondary, #6e6e73);
+  font-weight: 500;
+}
+
+.report-content details img {
+  max-width: 600px;
+  display: block;
+  margin: 8px 0;
+}
