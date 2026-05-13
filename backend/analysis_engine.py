@@ -1119,8 +1119,12 @@ class AnalysisEngine:
 def _infer_evidence_type(filename: str) -> str:
     """从文件名推断证据类型"""
     lower = filename.lower()
-    if "起诉" in lower or "指控" in lower:
+    if "起诉书" in lower or "公诉书" in lower:
+        return "起诉书"
+    elif "起诉意见书" in lower or "呈请起诉" in lower:
         return "起诉意见书"
+    elif "指控" in lower:
+        return "指控材料"
     elif "讯问" in lower:
         return "讯问笔录"
     elif "询问" in lower or "证人" in lower:
