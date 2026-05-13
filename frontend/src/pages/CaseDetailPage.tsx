@@ -589,10 +589,30 @@ export function CaseDetailPage() {
   const extractUserStoppedRef = useRef(false)
 
   // 运行单个阶段
-  const handleRunStage = useCallback(async (stageNum: number) => {
+  const handleRunStage = useCallback(async (stageNum: number, indictmentFile?: string) => {
     if (!defendant.trim()) {
       showAlert({ title: '提示', message: '案件缺少被告人信息，无法开始分析', variant: 'warning' })
       return
+    }
+
+    // 阶段 1 且未指定起诉书文件时，先获取候选文件让用户确认
+    if (stageNum === 1 && !indictmentFile) {
+      try {
+        setIndictmentCandidatesLoading(true)
+        const resp = await api.getIndictmentCandidates(caseId!)
+        setIndictmentCandidatesLoading(false)
+
+        if (resp.candidates && resp.candidates.length > 0) {
+          setIndictmentCandidates(resp.candidates)
+          const firstIndictment = resp.candidates.find(c => c.doc_type === '起诉书')
+          setSelectedIndictmentFile(firstIndictment ? firstIndictment.filename : resp.candidates[0].filename)
+          setIndictmentDialogMode('single-stage')
+          setShowIndictmentDialog(true)
+          return
+        }
+      } catch {
+        setIndictmentCandidatesLoading(false)
+      }
     }
 
     // 清理该阶段的旧状态
@@ -605,7 +625,7 @@ export function CaseDetailPage() {
     stageAbortRef.current[stageNum] = controller
 
     try {
-      const result = await api.runSingleStage(caseId!, stageNum, defendant, crimeType || undefined)
+      const result = await api.runSingleStage(caseId!, stageNum, defendant, crimeType || undefined, indictmentFile)
       if (!result.success) {
         throw new Error(result.detail || result.error || '阶段执行失败')
       }
@@ -884,6 +904,7 @@ export function CaseDetailPage() {
 
   // 起诉书选择对话框状态
   const [showIndictmentDialog, setShowIndictmentDialog] = useState(false)
+  const [indictmentDialogMode, setIndictmentDialogMode] = useState<'single-stage' | 'all-stages'>('all-stages')
   const [indictmentCandidates, setIndictmentCandidates] = useState<Array<{filename: string; doc_type: string; preview: string}>>([])
   const [selectedIndictmentFile, setSelectedIndictmentFile] = useState<string>('')
   const [indictmentCandidatesLoading, setIndictmentCandidatesLoading] = useState(false)
@@ -907,6 +928,7 @@ export function CaseDetailPage() {
         // 默认选中第一个起诉书，如果没有起诉书则选中第一个起诉意见书
         const firstIndictment = resp.candidates.find(c => c.doc_type === '起诉书')
         setSelectedIndictmentFile(firstIndictment ? firstIndictment.filename : resp.candidates[0].filename)
+        setIndictmentDialogMode('all-stages')
         setShowIndictmentDialog(true)
         return
       }
@@ -918,12 +940,6 @@ export function CaseDetailPage() {
     // 无候选文件，直接触发分析
     await startAnalysis(undefined)
   }, [caseId, defendant])
-
-  // 用户确认起诉书后的分析触发
-  const confirmIndictmentAndAnalyze = useCallback(async () => {
-    setShowIndictmentDialog(false)
-    await startAnalysis(selectedIndictmentFile || undefined)
-  }, [selectedIndictmentFile])
 
   // 触发分析（异步，立即返回）
   const startAnalysis = useCallback(async (indictmentFile?: string) => {
@@ -945,6 +961,17 @@ export function CaseDetailPage() {
       setProcessing(false)
     }
   }, [caseId, defendant, crimeType])
+
+  // 用户确认起诉书后的分析触发
+  const confirmIndictmentAndAnalyze = useCallback(async () => {
+    setShowIndictmentDialog(false)
+    const file = selectedIndictmentFile || undefined
+    if (indictmentDialogMode === 'single-stage') {
+      await handleRunStage(1, file)
+    } else {
+      await startAnalysis(file)
+    }
+  }, [selectedIndictmentFile, indictmentDialogMode, handleRunStage, startAnalysis])
 
   // 轮询分析进度
   const pollAnalysisProgress = useCallback(() => {
@@ -2848,14 +2875,14 @@ export function CaseDetailPage() {
         <div style={{
           position: 'fixed', inset: 0, zIndex: 9999,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          backgroundColor: 'rgba(0,0,0,0.4)',
+          backgroundColor: 'rgba(0,0,0,0.3)',
         }} onClick={() => setShowIndictmentDialog(false)}>
           <div style={{
-            backgroundColor: '#1e1e1e', borderRadius: '12px', padding: '24px',
+            backgroundColor: '#ffffff', borderRadius: '12px', padding: '24px',
             maxWidth: '640px', width: '90%', maxHeight: '80vh', overflow: 'auto',
-            boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+            boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
           }} onClick={e => e.stopPropagation()}>
-            <h3 style={{ margin: '0 0 8px', fontSize: '18px', fontWeight: 600, color: '#f5f5f7' }}>
+            <h3 style={{ margin: '0 0 8px', fontSize: '18px', fontWeight: 600, color: '#1d1d1f' }}>
               选择起诉书/起诉意见书
             </h3>
             <p style={{ margin: '0 0 16px', fontSize: '13px', color: '#86868b' }}>
@@ -2869,8 +2896,8 @@ export function CaseDetailPage() {
                   style={{
                     display: 'flex', alignItems: 'flex-start', gap: '10px',
                     padding: '12px', borderRadius: '8px', cursor: 'pointer',
-                    border: selectedIndictmentFile === c.filename ? '1px solid #007aff' : '1px solid #3a3a3c',
-                    backgroundColor: selectedIndictmentFile === c.filename ? 'rgba(0,122,255,0.1)' : 'rgba(255,255,255,0.03)',
+                    border: selectedIndictmentFile === c.filename ? '1px solid #007aff' : '1px solid #e5e5e7',
+                    backgroundColor: selectedIndictmentFile === c.filename ? 'rgba(0,122,255,0.05)' : '#f5f5f7',
                   }}
                 >
                   <input
@@ -2885,13 +2912,13 @@ export function CaseDetailPage() {
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
                       <span style={{
                         fontSize: '11px', fontWeight: 600, padding: '2px 6px', borderRadius: '4px',
-                        backgroundColor: c.doc_type === '起诉书' ? 'rgba(255,59,48,0.2)' : 'rgba(255,149,0,0.2)',
-                        color: c.doc_type === '起诉书' ? '#ff453a' : '#ffb340',
+                        backgroundColor: c.doc_type === '起诉书' ? 'rgba(255,59,48,0.1)' : 'rgba(255,149,0,0.1)',
+                        color: c.doc_type === '起诉书' ? '#d70015' : '#c78600',
                       }}>{c.doc_type}</span>
-                      <span style={{ fontSize: '14px', fontWeight: 500, color: '#f5f5f7' }}>{c.filename}</span>
+                      <span style={{ fontSize: '14px', fontWeight: 500, color: '#1d1d1f' }}>{c.filename}</span>
                     </div>
                     <div style={{
-                      fontSize: '12px', color: '#86868b', lineHeight: 1.5,
+                      fontSize: '12px', color: '#6e6e73', lineHeight: 1.5,
                       maxHeight: '60px', overflow: 'hidden',
                       whiteSpace: 'pre-wrap', wordBreak: 'break-all',
                     }}>{c.preview}</div>
@@ -2900,21 +2927,37 @@ export function CaseDetailPage() {
               ))}
             </div>
 
-            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'space-between', alignItems: 'center' }}>
               <button
-                onClick={() => { setShowIndictmentDialog(false); startAnalysis(undefined) }}
+                onClick={() => setShowIndictmentDialog(false)}
                 style={{
-                  padding: '8px 16px', borderRadius: '8px', border: '1px solid #3a3a3c',
-                  backgroundColor: 'transparent', color: '#f5f5f7', fontSize: '14px', cursor: 'pointer',
+                  padding: '8px 16px', borderRadius: '8px', border: '1px solid #e5e5e7',
+                  backgroundColor: 'transparent', color: '#86868b', fontSize: '14px', cursor: 'pointer',
                 }}
-              >跳过选择（自动检测）</button>
-              <button
-                onClick={confirmIndictmentAndAnalyze}
-                style={{
-                  padding: '8px 20px', borderRadius: '8px', border: 'none',
-                  backgroundColor: '#007aff', color: '#fff', fontSize: '14px', fontWeight: 500, cursor: 'pointer',
-                }}
-              >确认并开始分析</button>
+              >取消</button>
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <button
+                  onClick={() => {
+                    setShowIndictmentDialog(false)
+                    if (indictmentDialogMode === 'single-stage') {
+                      handleRunStage(1, undefined)
+                    } else {
+                      startAnalysis(undefined)
+                    }
+                  }}
+                  style={{
+                    padding: '8px 16px', borderRadius: '8px', border: '1px solid #e5e5e7',
+                    backgroundColor: 'transparent', color: '#1d1d1f', fontSize: '14px', cursor: 'pointer',
+                  }}
+                >自动检测</button>
+                <button
+                  onClick={confirmIndictmentAndAnalyze}
+                  style={{
+                    padding: '8px 20px', borderRadius: '8px', border: 'none',
+                    backgroundColor: '#007aff', color: '#fff', fontSize: '14px', fontWeight: 500, cursor: 'pointer',
+                  }}
+                >开始分析</button>
+              </div>
             </div>
           </div>
         </div>

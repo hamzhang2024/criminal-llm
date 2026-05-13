@@ -487,6 +487,9 @@ export interface IndictmentCandidate {
 
 export async function getIndictmentCandidates(caseId: string): Promise<{ candidates: IndictmentCandidate[] }> {
   const res = await fetch(`${API_BASE}/stage-analysis/${caseId}/indictment-candidates`)
+  if (!res.ok) {
+    throw new Error('获取候选文件失败')
+  }
   return res.json()
 }
 

@@ -431,8 +431,10 @@ pub fn run() {
           eprintln!("🚀 启动后端: {:?}", backend_exe);
 
           // 使用 std::process::Command 启动后端
-          // 设置数据目录环境变量，确保后端使用与 Tauri 一致的路径
-          let home = std::env::var("HOME").unwrap_or_default();
+          // 设置数据目录环境变量，确保后端使用正确的路径
+          let home = app.path().home_dir()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| std::env::var("HOME").unwrap_or_else(|_| "/Users/zhanghan".to_string()));
           let data_dir = format!("{}/Documents/.criminal-llm-data", home);
 
           let child = std::process::Command::new(&backend_exe)
