@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { PlusCircle, FolderOpen, Trash2, Calendar, FileText, ArrowRight, Settings, AlertCircle, ChevronRight } from 'lucide-react'
 import { MacOSTitlebar, MacOSToolbar, MacOSButton, MacOSCard, MacOSEmptyState } from '../components/MacOSLayout'
-import { api } from '../api'
+import { api, getAuthEmail } from '../api'
 import type { Case } from '../api/types'
 import { showConfirm, showAlert } from '../components/MacOSDialog'
 
@@ -39,8 +39,9 @@ export function HomePage() {
   // 加载案件列表和待导入文件夹
   const loadData = useCallback(async () => {
     try {
+      const owner = getAuthEmail() || undefined
       const [casesData, pendingData, trashData] = await Promise.all([
-        api.listCases(),
+        api.listCases(owner),
         api.getPendingCases(),
         api.getTrash()
       ])
@@ -51,7 +52,8 @@ export function HomePage() {
         defendant: c.defendant,
         created_at: c.created_at,
         file_count: c.file_count || 0,
-        status: c.status || 'new'
+        status: c.status || 'new',
+        owner: c.owner || ''
       })))
 
       setPendingFolders(pendingData)
@@ -68,8 +70,19 @@ export function HomePage() {
   const handleCreateCase = useCallback(async () => {
     if (!newCaseName.trim() || !defendant.trim()) return
 
+    // 创建前检查 API 配置
+    if (configMissing.length > 0) {
+      showAlert({
+        title: '需要先完成配置',
+        message: `请先前往设置页完成以下配置：\n${configMissing.join('、')}`,
+        variant: 'danger',
+      })
+      navigate('/settings')
+      return
+    }
+
     try {
-      const newCase = await api.createCase(newCaseName, defendant)
+      const newCase = await api.createCase(newCaseName, defendant, getAuthEmail() || undefined)
       setShowNewCase(false)
       setNewCaseName('')
       setDefendant('')
@@ -80,10 +93,21 @@ export function HomePage() {
       const msg = err instanceof Error ? err.message : '未知错误'
       showAlert({ title: '创建失败', message: `创建案件失败：${msg}`, variant: 'danger' })
     }
-  }, [newCaseName, defendant, navigate, loadData])
+  }, [newCaseName, defendant, navigate, loadData, configMissing])
 
   const handleImportFolder = useCallback(async () => {
     if (!selectedFolder || !newCaseName.trim() || !defendant.trim()) return
+
+    // 导入前检查 API 配置
+    if (configMissing.length > 0) {
+      showAlert({
+        title: '需要先完成配置',
+        message: `请先前往设置页完成以下配置：\n${configMissing.join('、')}`,
+        variant: 'danger',
+      })
+      navigate('/settings')
+      return
+    }
 
     try {
       const newCase = await api.importCase(selectedFolder.path, newCaseName, defendant)
@@ -97,7 +121,7 @@ export function HomePage() {
       console.error('导入案件失败:', err)
       showAlert({ title: '导入失败', message: '导入案件失败', variant: 'warning' })
     }
-  }, [selectedFolder, newCaseName, defendant, navigate, loadData])
+  }, [selectedFolder, newCaseName, defendant, navigate, loadData, configMissing])
 
   const handleDeleteCase = useCallback(async (id: string) => {
     if (!await showConfirm({ title: '删除案件', message: '确定要删除此案件吗？\n案件将移入回收站，5 天后彻底删除。', confirmText: '删除', variant: 'danger' })) return
@@ -169,6 +193,32 @@ export function HomePage() {
             }} />
           )}
         </button>
+        {/* 用户头像 + 邮箱 */}
+        <div
+          onClick={() => navigate('/settings')}
+          style={{
+            display: 'flex', alignItems: 'center', gap: '10px',
+            padding: '4px 12px 4px 4px',
+            background: 'transparent',
+            borderRadius: '20px',
+            cursor: 'pointer',
+            transition: 'background 0.15s',
+          }}
+          onMouseEnter={e => e.currentTarget.style.background = 'rgba(0,0,0,0.04)'}
+          onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+        >
+          <div style={{
+            width: 28, height: 28, borderRadius: '50%',
+            background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            color: '#fff', fontSize: '12px', fontWeight: 600,
+          }}>
+            {(getAuthEmail() || '?')[0].toUpperCase()}
+          </div>
+          <span style={{ fontSize: '13px', color: '#1d1d1f', fontWeight: 500 }}>
+            {getAuthEmail()}
+          </span>
+        </div>
       </MacOSToolbar>
 
       <div style={{ flex: 1, overflow: 'auto', padding: '30px' }}>

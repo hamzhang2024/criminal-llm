@@ -271,9 +271,9 @@ export function CaseDetailPage() {
 
   // 步骤配置 — 简化版：上传 → PDF处理 → 转MD → 分析
   const steps = [
-    { id: 'upload', name: '上传 PDF', icon: Upload, description: '选择原始案卷 PDF 文件' },
-    { id: 'process', name: 'PDF 处理', icon: Wand2, description: '去水印、密码解除、精度提升（可多选）' },
-    { id: 'convert', name: '转 MD', icon: FileDown, description: 'PDF 转为 Markdown → LLM 提取证据，准备分析' },
+    { id: 'upload', name: '上传文件', icon: Upload, description: '选择原始案卷文件' },
+    { id: 'process', name: '文件处理', icon: Wand2, description: '去水印、密码解除、精度提升（可多选）' },
+    { id: 'convert', name: '证据提取', icon: FileDown, description: '转换为结构化格式 → LLM 提取证据，准备分析' },
     { id: 'analyze', name: '案卷分析', icon: Scale, description: '5 阶段智能分析（指控要素 → 人物关系 → 事件拆解 → 法律法规 → 三阶层辩护）' }
   ]
 
@@ -672,7 +672,7 @@ export function CaseDetailPage() {
   const handleConvertAllToMd = useCallback(async () => {
     setProcessing(true)
     setError(null)
-    setProgress('正在将所有 PDF 转换为 Markdown...')
+    setProgress('正在转换并提取证据...')
     try {
       const result = await fetch(`${API_BASE}/cases/${caseId}/convert-all-to-md`, { method: 'POST' })
       const data = await result.json()
@@ -710,7 +710,6 @@ export function CaseDetailPage() {
             }
 
             setProgress(`✅ 已转换 ${successCount}/${totalCount} 个文件${blankFiles.length > 0 ? `，${blankFiles.length} 个失败` : ''}`)
-            setProcessing(false)
             setCurrentStep(2)
 
             // 重新加载文件列表
@@ -719,6 +718,56 @@ export function CaseDetailPage() {
               setFiles(filesData.map((f: any) => ({
                 id: f.id, name: f.name, size: f.size, status: f.status || 'done', source: f.source,
               })))
+            }
+
+            // 转换完成后自动开始证据提取
+            if (successCount > 0) {
+              setProgress('正在提取证据清单...')
+              try {
+                const evResult = await api.extractEvidence(caseId!)
+                if (evResult.success && evResult.evidence) {
+                  setEvidenceList(evResult.evidence)
+                  setEvidenceExtracted(true)
+                  setProgress(`✅ 已提取 ${evResult.total_evidence} 份证据，正在自动开始分析...`)
+
+                  // 证据提取完成后自动触发分析
+                  if (defendant.trim()) {
+                    setTimeout(async () => {
+                      try {
+                        const analysisResult = await api.runAllStages(caseId!, defendant, crimeType || undefined)
+                        if (!analysisResult.success) {
+                          throw new Error(analysisResult.detail || analysisResult.error || '分析执行失败')
+                        }
+                        setProgress('✅ 分析任务已启动，正在跟踪进度...')
+                        setProcessing(true)
+                        pollAnalysisProgress()
+                      } catch (err) {
+                        const errorMsg = err instanceof Error ? err.message : '分析触发失败'
+                        setError(errorMsg)
+                        setProcessing(false)
+                      }
+                    }, 500)
+                  } else {
+                    setProgress(`✅ 已提取 ${evResult.total_evidence} 份证据（请补充被告人信息后手动开始分析）`)
+                    setProcessing(false)
+                  }
+                } else {
+                  throw new Error(evResult.detail || evResult.error || '提取失败')
+                }
+              } catch (extractErr) {
+                const isStop = extractErr instanceof Error && extractErr.message === '用户已停止提取'
+                if (isStop) {
+                  setProgress('⏹ 已停止提取，当前已提取的证据已保存')
+                  setProcessing(false)
+                } else {
+                  const errorMsg = extractErr instanceof Error ? extractErr.message : '证据提取失败'
+                  setError(errorMsg)
+                  setProgress('')
+                  setProcessing(false)
+                }
+              }
+            } else {
+              setProcessing(false)
             }
           } else if (st === 'failed' || st === 'cancelled') {
             clearInterval(pollInterval)
@@ -746,7 +795,7 @@ export function CaseDetailPage() {
       setProgress('')
       setProcessing(false)
     }
-  }, [caseId, processing])
+  }, [caseId, processing, defendant, crimeType])
 
   // 提取证据（独立按钮，转 MD 后手动触发）
   const handleExtractEvidence = useCallback(async () => {
@@ -1532,7 +1581,7 @@ export function CaseDetailPage() {
               >
                 {processing ? '处理中...' :
                  currentStep === 0 ? '开始处理' :
-                 currentStep === 2 ? '全部转 MD' :
+                 currentStep === 2 ? '全部转换' :
                  currentStep === 3 ? (analysisCompleted ? '查看报告' : '开始分析') :
                  `开始${steps[currentStep]?.name} (${getSelectedFiles().length} 个)`}
               </MacOSButton>
@@ -1854,7 +1903,7 @@ export function CaseDetailPage() {
                 )}
                 {!evidenceExtracted && (
                   <div style={{ fontSize: '12px', color: 'var(--macos-text-tertiary)', padding: '12px 0' }}>
-                    请先点击"全部转 MD"完成后再提取证据
+                    请先完成转换后再提取证据
                   </div>
                 )}
               </MacOSCard>

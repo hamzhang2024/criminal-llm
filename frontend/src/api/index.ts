@@ -1,5 +1,11 @@
 // API 服务层 - 连接前端与 Python 后端
-// 所有 API 调用通过 HTTP 直接访问 FastAPI 后端
+// 认证 API 通过 Tauri 命令调用（避免 Webview 网络限制）
+
+import { invoke } from '@tauri-apps/api/core'
+import { open } from '@tauri-apps/plugin-shell'
+
+/** API 基础地址：开发模式走 Vite 代理，生产模式直连后端 */
+export const API_BASE = import.meta.env.PROD ? 'http://localhost:8080/api' : '/api'
 
 export interface Thumbnail { page: number; data: string }
 export interface SplitItem {
@@ -18,12 +24,130 @@ export interface SplitItem {
   sequence_number?: number
 }
 
-export const API_BASE = '/api'
+// ========== 认证（通过 Tauri 命令）==========
+
+interface AuthResult {
+  success: boolean
+  token?: string
+  email?: string
+  error?: string
+}
+
+export interface LoginResponse {
+  success: boolean
+  token: string
+  email: string
+}
+
+export interface VerifyResponse {
+  success: boolean
+  email: string
+  sub: string
+}
+
+export async function login(email: string, password: string): Promise<LoginResponse> {
+  const result: AuthResult = await invoke('auth_login', { email, password })
+  if (!result.success) {
+    throw new Error(result.error || '登录失败')
+  }
+  return {
+    success: true,
+    token: result.token || '',
+    email: result.email || '',
+  }
+}
+
+export async function verifyToken(token: string): Promise<VerifyResponse> {
+  const result: AuthResult = await invoke('auth_verify', { token })
+  if (!result.success) {
+    throw new Error(result.error || 'Token 无效')
+  }
+  return {
+    success: true,
+    email: result.email || '',
+    sub: '',
+  }
+}
+
+export async function register(email: string, password: string): Promise<{ success: boolean; message?: string }> {
+  const result: AuthResult = await invoke('auth_register', { email, password })
+  if (!result.success) {
+    throw new Error(result.error || '注册失败')
+  }
+  return { success: true, message: '注册成功' }
+}
+
+export async function resetPassword(email: string, oldPassword: string, newPassword: string): Promise<{ success: boolean; message?: string }> {
+  const result: AuthResult = await invoke('auth_reset_password', { email, oldPassword, newPassword })
+  if (!result.success) {
+    throw new Error(result.error || '重置失败')
+  }
+  return { success: true, message: '密码已重置' }
+}
+
+export async function sendResetCode(email: string): Promise<{ success: boolean; message?: string }> {
+  const result: AuthResult = await invoke('auth_send_reset_code', { email })
+  if (!result.success) {
+    throw new Error(result.error || '发送验证码失败')
+  }
+  return { success: true, message: result.error || '验证码已发送' }
+}
+
+export async function resetWithCode(email: string, code: string, newPassword: string): Promise<{ success: boolean; message?: string }> {
+  const result: AuthResult = await invoke('auth_reset_with_code', { email, code, newPassword })
+  if (!result.success) {
+    throw new Error(result.error || '重置失败')
+  }
+  return { success: true, message: '密码已重置' }
+}
+
+export function getToken(): string | null {
+  return localStorage.getItem('auth_token')
+}
+
+export function setToken(token: string): void {
+  localStorage.setItem('auth_token', token)
+}
+
+export function clearToken(): void {
+  localStorage.removeItem('auth_token')
+}
+
+export function getAuthEmail(): string | null {
+  return localStorage.getItem('auth_email')
+}
+
+export function setAuthEmail(email: string): void {
+  localStorage.setItem('auth_email', email)
+}
+
+export function clearAuthEmail(): void {
+  localStorage.removeItem('auth_email')
+}
+
+// ========== 版本与更新 ==========
+
+export interface UpdateInfo {
+  has_update: boolean
+  current_version: string
+  latest_version: string
+  download_url: string
+  release_notes: string
+}
+
+export function getAppVersion(): Promise<string> {
+  return invoke('get_app_version')
+}
+
+export async function checkUpdate(): Promise<UpdateInfo> {
+  return invoke('check_update')
+}
 
 // ========== 案件管理 ==========
 
-export async function listCases(): Promise<any> {
-  const res = await fetch(`${API_BASE}/cases/list`)
+export async function listCases(owner?: string): Promise<any> {
+  const params = owner ? `?owner=${encodeURIComponent(owner)}` : ''
+  const res = await fetch(`${API_BASE}/cases/list${params}`)
   return res.json()
 }
 
@@ -52,11 +176,11 @@ export async function getStepFiles(caseId: string, step: number): Promise<any> {
   return res.json()
 }
 
-export async function createCase(name: string, defendant: string): Promise<any> {
+export async function createCase(name: string, defendant: string, owner?: string): Promise<any> {
   const res = await fetch(`${API_BASE}/cases/create`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, defendant })
+    body: JSON.stringify({ name, defendant, owner })
   })
   return res.json()
 }
@@ -89,6 +213,15 @@ export async function permanentDeleteCase(caseId: string): Promise<any> {
 }
 
 // ========== 文件处理 ==========
+
+export async function claimCases(owner: string): Promise<any> {
+  const res = await fetch(`${API_BASE}/cases/claim-cases`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ owner })
+  })
+  return res.json()
+}
 
 export async function uploadFiles(caseId: string, files: File[]): Promise<any> {
   const formData = new FormData()
@@ -200,6 +333,17 @@ export async function chatAboutCase(caseId: string, message: string, history: Ar
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ message, history, use_ai: true })
   })
+  if (!res.ok) {
+    const errText = await res.text()
+    let errMsg = '对话失败'
+    try {
+      const errData = JSON.parse(errText)
+      errMsg = errData.detail || errData.error || errMsg
+    } catch {
+      errMsg = errText || errMsg
+    }
+    throw new Error(errMsg)
+  }
   return res.json()
 }
 
@@ -474,6 +618,11 @@ export async function searchLaws(crimeType: string): Promise<any> {
 }
 
 // ========== URL 工具函数 ==========
+
+/** 打开外部链接（调用 Tauri shell.open） */
+export function openUrl(url: string): void {
+  open(url).catch(() => {})
+}
 
 /** 获取缩略图 URL（用于 img src） */
 export function thumbnailUrl(caseId: string, filePath: string, dir: string, width = 500): string {

@@ -357,7 +357,7 @@ function PdfPage({ pdfDoc, pageNum, scale, annotations, annotationMode, onCreate
     }
     const timer = setTimeout(() => renderPage(), 50)
     return () => clearTimeout(timer)
-  }, [scale])
+  }, [scale, pdfDoc])
 
   const renderPage = useCallback(async () => {
     try {

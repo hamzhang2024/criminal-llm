@@ -485,7 +485,17 @@ export function ReportPage() {
           context: contextParts.join('\n\n'),
         }),
       })
-      if (!response.ok) throw new Error('更新失败')
+      if (!response.ok) {
+        const errText = await response.text()
+        let errMsg = '更新失败'
+        try {
+          const errData = JSON.parse(errText)
+          errMsg = errData.detail || errData.error || errMsg
+        } catch {
+          errMsg = errText || errMsg
+        }
+        throw new Error(errMsg)
+      }
       const data = await response.json()
       if (data.updated_report) {
         setStageContent(prev => ({ ...prev, stage_53: data.updated_report }))
@@ -550,16 +560,27 @@ export function ReportPage() {
           history: chatMessages.slice(-10).map(m => ({ role: m.role, content: m.content })),
         }),
       })
-      if (!response.ok) throw new Error('对话失败')
+      if (!response.ok) {
+        const errText = await response.text()
+        let errMsg = '对话失败'
+        try {
+          const errData = JSON.parse(errText)
+          errMsg = errData.detail || errData.error || errMsg
+        } catch {
+          errMsg = errText || errMsg
+        }
+        throw new Error(errMsg)
+      }
       const data = await response.json()
       setChatMessages(prev => prev
         .filter(m => m.id !== thinkingId)
         .concat({ id: generateId(), role: 'assistant', content: data.answer || '抱歉，未能获取回复。', timestamp: new Date().toISOString() }))
       scrollToBottom()
-    } catch {
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : '未知错误'
       setChatMessages(prev => prev
         .filter(m => m.id !== thinkingId)
-        .concat({ id: generateId(), role: 'assistant', content: '对话服务暂时不可用，请稍后重试。', timestamp: new Date().toISOString() }))
+        .concat({ id: generateId(), role: 'assistant', content: `对话失败：${errorMsg}`, timestamp: new Date().toISOString() }))
     } finally {
       setChatLoading(false)
     }

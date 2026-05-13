@@ -201,6 +201,8 @@ body {
   font-size: 15px;
   font-weight: 600;
   color: var(--macos-text-primary);
+  display: flex;
+  align-items: center;
 }
 
 .macOS-toolbar-actions {

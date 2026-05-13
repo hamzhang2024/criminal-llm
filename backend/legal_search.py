@@ -15,32 +15,12 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 # 用户自定义法律知识库目录
-LEGAL_KB_DIR = Path.home() / ".criminal-llm" / "legal_kb"
+from config import DATA_DIR
+LEGAL_KB_DIR = DATA_DIR / "legal_kb"
 LEGAL_KB_DIR.mkdir(parents=True, exist_ok=True)
 
 # 百炼 API 配置（复用 llm_client 的配置）
-_BAILIAN_BASE_URL = None
-_BAILIAN_API_KEY = None
-_BAILIAN_MODEL = None
-
-
-def _get_bailian_config() -> tuple[str, Optional[str], str]:
-    """获取百炼配置（直接复用 llm_client 的配置逻辑）"""
-    global _BAILIAN_BASE_URL, _BAILIAN_API_KEY, _BAILIAN_MODEL
-    if _BAILIAN_BASE_URL:
-        return _BAILIAN_BASE_URL, _BAILIAN_API_KEY, _BAILIAN_MODEL
-
-    # 直接调用 llm_client 的配置读取
-    from llm_client import _get_bailian_config as llm_get_config
-    base_url, api_key, _ = llm_get_config()
-
-    # 固定使用 qwen3.6-plus（支持 enable_search）
-    model = "qwen3.6-plus"
-
-    _BAILIAN_BASE_URL = base_url
-    _BAILIAN_API_KEY = api_key
-    _BAILIAN_MODEL = model
-    return base_url, api_key, model
+# 不缓存，每次从 config_manager 读取最新值
 
 
 # 罪名搜索关键词映射
@@ -77,7 +57,12 @@ def search_laws_by_llm(crime_type: str, timeout: int = 120) -> str:
     Returns:
         搜索到的法律法规条文文本，如果搜索失败则返回空字符串
     """
-    base_url, api_key, model = _get_bailian_config()
+    # 每次搜索前读取最新配置
+    from llm_client import _get_bailian_config as llm_get_config
+    from config_manager import load_config
+    cfg = load_config()
+    base_url, api_key, _ = llm_get_config()
+    model = cfg.get("llm_model", "")
     if not api_key:
         print("[法律搜索] 百炼 API Key 未配置，跳过网络搜索")
         return ""

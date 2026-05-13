@@ -6,6 +6,16 @@
     "main"
   ],
   "permissions": [
-    "core:default"
-  ]
+    "core:default",
+    "shell:allow-open",
+    "shell:allow-spawn",
+    "shell:allow-kill",
+    "shell:allow-stdin-write"
+  ],
+  "shell": {
+    "scope": [
+      { "name": "backend", "cmd": "**/criminal-llm", "args": true },
+      { "name": "open", "cmd": "open", "args": true }
+    ]
+  }
 }

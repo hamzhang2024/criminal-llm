@@ -4,10 +4,20 @@
 提供 REST API 供前端调用
 简化版：移除 pydantic 依赖，使用原生类型
 """
-# 初始化环境：加载 ~/.openclaw/.env（必须在所有 import 之前）
+# 初始化环境：加载 DATA_DIR/.env（必须在所有 import 之前）
 import os
+import sys
 from pathlib import Path
-_env_file = Path.home() / ".openclaw" / ".env"
+
+# 复制 DATA_DIR 计算逻辑（此时不能 import config，避免循环依赖）
+_is_frozen = getattr(sys, 'frozen', False)
+if _is_frozen:
+    _data_dir = Path.home() / "Documents" / ".criminal-llm-data"
+else:
+    _data_dir = Path(__file__).parent.parent / "data"
+_env_file = _data_dir / ".env"
+del _is_frozen, _data_dir
+
 if _env_file.exists():
     for line in _env_file.read_text().splitlines():
         line = line.strip()
@@ -98,8 +108,18 @@ async def get_config():
 
 @app.put("/api/config")
 async def update_config(body: Dict[str, Any]):
-    """保存配置"""
-    save_config(body)
+    """保存配置（合并已有配置，保留 llm_base_url / llm_model）"""
+    existing = load_config()
+    merged = {**existing, **body}
+    save_config(merged)
+    # 重载 LLM 客户端配置
+    try:
+        from llm_client import get_llm_client
+        client = get_llm_client()
+        client.reload_config()
+        print(f"[配置保存] LLM 客户端已重载: baseUrl={client.base_url}, model={client.model}")
+    except Exception as e:
+        print(f"[配置保存] LLM 客户端重载失败: {e}")
     return {"success": True, "message": "配置已保存"}
 
 
@@ -111,6 +131,8 @@ async def test_config(body: Dict[str, Any]):
     请求体：{"type": "mineru"|"llm", "token"/"api_key"/"base_url"/"model": ...}
     """
     import httpx
+    import ssl
+    import certifi
 
     config_type = body.get("type")
 
@@ -119,7 +141,9 @@ async def test_config(body: Dict[str, Any]):
         if not token:
             return {"success": False, "error": "Token 不能为空"}
         try:
-            async with httpx.AsyncClient(timeout=15) as client:
+            ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+            transport = httpx.AsyncHTTPTransport(verify=ssl_ctx)
+            async with httpx.AsyncClient(timeout=15, transport=transport) as client:
                 resp = await client.post(
                     "https://mineru.net/api/v4/file-urls/batch",
                     headers={"Authorization": f"Bearer {token}"},
@@ -135,12 +159,18 @@ async def test_config(body: Dict[str, Any]):
 
     elif config_type == "llm":
         api_key = body.get("api_key", "")
-        base_url = body.get("base_url", "https://coding.dashscope.aliyuncs.com/v1")
-        model = body.get("model", "qwen3.6-plus")
+        base_url = body.get("base_url", "")
+        model = body.get("model", "")
         if not api_key:
             return {"success": False, "error": "API Key 不能为空"}
+        if not base_url:
+            return {"success": False, "error": "Base URL 不能为空"}
+        if not model:
+            return {"success": False, "error": "模型名称不能为空"}
         try:
-            async with httpx.AsyncClient(timeout=30) as client:
+            ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+            transport = httpx.AsyncHTTPTransport(verify=ssl_ctx)
+            async with httpx.AsyncClient(timeout=30, transport=transport) as client:
                 resp = await client.post(
                     f"{base_url}/chat/completions",
                     headers={"Authorization": f"Bearer {api_key}"},
@@ -305,8 +335,19 @@ async def startup():
     """应用启动时初始化"""
     print(f"🚀 Criminal PDF WebUI 启动中...")
     print(f"📂 数据目录: {UPLOAD_DIR.parent}")
-    # 加载配置
     print(f"🔗 API: http://{HOST}:{PORT}/api")
+
+    # 打印配置文件路径和内容（诊断用）
+    try:
+        from config_manager import CONFIG_PATH, load_config
+        print(f"⚙️ 配置文件路径: {CONFIG_PATH}")
+        if CONFIG_PATH.exists():
+            cfg = load_config()
+            print(f"⚙️ 配置内容: llm_base_url={cfg.get('llm_base_url', '(未设置)')}, llm_model={cfg.get('llm_model', '(未设置)')}, llm_api_key={'已配置' if cfg.get('llm_api_key') else '未配置'}, mineru_token={'已配置' if cfg.get('mineru_token') else '未配置'}")
+        else:
+            print(f"⚙️ 配置文件不存在，使用默认值")
+    except Exception as e:
+        print(f"⚙️ 读取配置失败: {e}")
 
     # 初始化后台任务管理器
     from background_tasks import init_tasks
@@ -376,10 +417,15 @@ if __name__ == "__main__":
 ║   Docs: http://{HOST}:{PORT}/docs          ║
 ╚════════════════════════════════════════════╝
     """)
-    
-    uvicorn.run(
-        "main:app",
-        host=HOST,
-        port=PORT,
-        reload=DEBUG
-    )
+
+    # PyInstaller 模式下直接传递 app 对象（不能通过模块名导入）
+    import sys
+    if getattr(sys, 'frozen', False):
+        uvicorn.run(app, host=HOST, port=PORT, reload=False)
+    else:
+        uvicorn.run(
+            "main:app",
+            host=HOST,
+            port=PORT,
+            reload=DEBUG
+        )

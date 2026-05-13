@@ -7,6 +7,7 @@ export interface Case {
   created_at: string
   file_count: number
   status: 'new' | 'processing' | 'done'
+  owner?: string
 }
 
 export interface PendingFolder {

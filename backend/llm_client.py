@@ -1,9 +1,10 @@
 """
-LLM 客户端 - 使用阿里云百炼 API
+LLM 客户端 - 支持多种 LLM 提供商
 
-从应用配置 (~/.openclaw/criminal-llm-config.json) 获取 API Key、Base URL 和模型
+从应用配置 (DATA_DIR/criminal-llm-config.json) 获取 API Key、Base URL 和模型
 """
 import httpx
+from pathlib import Path
 from typing import Optional, Dict, Any, List
 
 # 导入法律知识库
@@ -31,7 +32,7 @@ except Exception:
 
 def _get_bailian_config() -> tuple[str, Optional[str], str]:
     """
-    获取 bailian 配置（阿里云百炼 Coding Plan）
+    获取 LLM 配置（从 config_manager 读取）
 
     Returns:
         (baseUrl, apiKey, defaultModel)
@@ -40,16 +41,14 @@ def _get_bailian_config() -> tuple[str, Optional[str], str]:
 
     config = load_config()
     api_key = config.get("llm_api_key")
-    base_url = config.get("llm_base_url", "https://coding.dashscope.aliyuncs.com/v1")
-    default_model = config.get("llm_model", "qwen3.6-plus")
-
-    return base_url, api_key, default_model
+    base_url = config.get("llm_base_url", "")
+    default_model = config.get("llm_model", "")
 
     return base_url, api_key, default_model
 
 
 class LLMClient:
-    """LLM 客户端 - 使用百炼 API (qwen3.5-plus)"""
+    """LLM 客户端 - 支持 OpenAI 兼容 API"""
 
     def __init__(self):
         base_url, api_key, default_model = _get_bailian_config()
@@ -63,6 +62,14 @@ class LLMClient:
         print(f"[LLM 客户端] model: {default_model}")
         print(f"[LLM 客户端] apiKey: {'已配置' if api_key else '未配置'}")
 
+    def reload_config(self):
+        """重新读取配置"""
+        base_url, api_key, default_model = _get_bailian_config()
+        self.base_url = base_url
+        self.api_key = api_key
+        self.model = default_model
+        print(f"[LLM 客户端] 配置已重载 baseUrl: {base_url}, model: {default_model}")
+
     async def chat(
         self,
         messages: List[Dict[str, str]],
@@ -71,6 +78,16 @@ class LLMClient:
         """
         发送聊天请求
         """
+        # 每次请求前重新读取配置，确保配置变更后立即生效
+        self.reload_config()
+
+        if not self.api_key:
+            raise Exception("API Key 未配置，请先在「设置」中填写")
+        if not self.base_url:
+            raise Exception("Base URL 未配置，请先在「设置」中填写大模型地址")
+        if not self.model:
+            raise Exception("模型名称未配置，请先在「设置」中填写模型名称")
+
         url = f"{self.base_url}/chat/completions"
 
         payload = {
@@ -83,7 +100,7 @@ class LLMClient:
             "Authorization": f"Bearer {self.api_key}"
         }
 
-        print(f"[LLM 请求] model={payload['model']}, messages={len(messages)}")
+        print(f"[LLM 请求] url={url}, model={payload['model']}, messages={len(messages)}")
 
         # 重试 5 次，指数退避
         last_error = None
@@ -119,6 +136,8 @@ class LLMClient:
     ) -> str:
         """
         分析案卷内容
+
+        每次分析前重新读取配置，确保使用最新设置
         
         Args:
             defendant: 辩护对象（被告人）姓名
@@ -129,6 +148,9 @@ class LLMClient:
         Returns:
             Markdown 格式的分析报告
         """
+        # 每次分析前重新读取配置，确保使用最新设置
+        self.reload_config()
+
         # 动态加载罪名特定知识
         crime_specific_knowledge = ""
         if crime_type:

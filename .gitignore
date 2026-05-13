@@ -7,3 +7,22 @@ __pycache__/
 .venv/
 .env
 .DS_Store
+
+# Tauri build
+frontend/src-tauri/target/
+frontend/src-tauri/app.icns
+frontend/src-tauri/resources/
+
+# PyInstaller
+backend/build/
+backend/dist/
+backend/*.spec
+
+# Output
+output/
+
+# Data (keep cases symlink only)
+data/cache/
+data/uploads/
+data/output/
+data/criminal-llm-config.json

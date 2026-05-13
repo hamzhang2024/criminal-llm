@@ -195,8 +195,8 @@ class CriminalCaseSplitter:
             (文书类型, 人名) — 人名可能为空
         """
         try:
-            from llm_client import LLMClient
-            client = LLMClient()
+            from llm_client import get_llm_client
+            client = get_llm_client()
 
             messages = [
                 {

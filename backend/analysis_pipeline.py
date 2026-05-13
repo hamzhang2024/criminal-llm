@@ -83,7 +83,9 @@ def _extract_person_from_filename(filename: str) -> Optional[str]:
 
 def infer_evidence_type(filename: str) -> str:
     """从文件名推断证据类型"""
-    if "起诉" in filename or "指控" in filename:
+    if "起诉书" in filename and "意见" not in filename:
+        return "起诉书"
+    elif "起诉意见书" in filename or "指控" in filename:
         return "起诉意见书"
     elif "讯问" in filename or "供述" in filename:
         return "讯问笔录"
@@ -623,20 +625,28 @@ class AnalysisPipeline:
 
         results_log = {"sub_steps": [], "wiki_dir": str(wiki_dir)}
 
-        # ===== 4a: 起诉意见书分析 =====
+        # ===== 4a: 指控要素分析（起诉书 > 起诉意见书） =====
         if not self._wiki_page_exists("", "01-指控要素.md"):
             indictment_text = ""
+            indictment_type = ""
             for f in self._load_md_files():
-                if f["type"] == "起诉意见书":
+                if f["type"] == "起诉书":
                     indictment_text = f["text"][:40000]
+                    indictment_type = "起诉书"
                     break
+            if not indictment_text:
+                for f in self._load_md_files():
+                    if f["type"] == "起诉意见书":
+                        indictment_text = f["text"][:40000]
+                        indictment_type = "起诉意见书"
+                        break
 
             if indictment_text:
-                print("[步骤 4a] 分析起诉意见书...")
+                print(f"[步骤 4a] 分析{indictment_type}...")
                 try:
                     analysis = await self.llm.chat([
-                        {"role": "system", "content": "你是刑事律师，详细分析起诉意见书的指控逻辑。"},
-                        {"role": "user", "content": f"""请详细分析以下起诉意见书，尤其关注：
+                        {"role": "system", "content": f"你是刑事律师，详细分析{indictment_type}的指控逻辑。"},
+                        {"role": "user", "content": f"""请详细分析以下{indictment_type}，尤其关注：
 
 1. 指控罪名及法律依据
 2. 犯罪事实概要（尽可能详细：时间、地点、人物、事件经过）
@@ -644,7 +654,7 @@ class AnalysisPipeline:
 4. 涉案金额及计算方式
 5. 证据清单
 
-起诉意见书内容：
+{indictment_type}内容：
 {indictment_text}
 
 请以 Markdown 格式输出分析结果。"""},

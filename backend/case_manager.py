@@ -27,10 +27,10 @@ router = APIRouter(prefix="/api/cases", tags=["案件管理"])
 EXTRACT_TASKS: dict = {}
 EVIDENCE_CONCURRENCY = 3  # 同时提取证据的并发任务数
 
-from config import MAX_FILE_SIZE
+from config import MAX_FILE_SIZE, DATA_DIR, UPLOAD_DIR as CONFIG_UPLOAD_DIR
 
 # 案件存储根目录
-CASES_DIR = Path(__file__).parent.parent.parent / "data" / "cases"
+CASES_DIR = DATA_DIR / "cases"
 CASES_DIR.mkdir(parents=True, exist_ok=True)
 
 # 回收站目录
@@ -82,6 +82,7 @@ class CaseInfo(BaseModel):
 class CreateCaseRequest(BaseModel):
     name: str
     defendant: str
+    owner: Optional[str] = None  # 创建者邮箱
 
 
 class PendingFolder(BaseModel):
@@ -91,13 +92,13 @@ class PendingFolder(BaseModel):
     size_mb: float
 
 
-def scan_cases() -> List[CaseInfo]:
-    """扫描所有合法案件（有 case.json）"""
+def scan_cases(owner: Optional[str] = None) -> List[CaseInfo]:
+    """扫描所有合法案件（有 case.json），可按 owner 过滤"""
     cases = []
-    
+
     if not CASES_DIR.exists():
         return cases
-    
+
     for case_dir in sorted(CASES_DIR.iterdir()):
         if case_dir.is_dir():
             for sub in case_dir.iterdir():
@@ -107,18 +108,23 @@ def scan_cases() -> List[CaseInfo]:
                         try:
                             with open(metadata_file, 'r', encoding='utf-8') as f:
                                 metadata = json.load(f)
-                            
+
+                            # 按 owner 过滤
+                            case_owner = metadata.get("owner")
+                            if owner and case_owner and case_owner != owner:
+                                continue
+
                             # 计算各阶段文件数量
                             file_count = sum(1 for _ in sub.rglob("*.pdf"))
                             file_count += sum(1 for _ in sub.rglob("*.md"))
-                            
+
                             metadata['file_count'] = file_count
-                            
+
                             # 检查案件状态
                             original_count = len(list((sub / "original").glob("*.pdf")))
                             processed_count = len(list((sub / "processed").glob("*.pdf")))
                             md_count = len(list((sub / "md").glob("*.md")))
-                            
+
                             if md_count > 0:
                                 metadata['status'] = 'md_ready'
                             elif processed_count > 0:
@@ -135,7 +141,7 @@ def scan_cases() -> List[CaseInfo]:
                             cases.append(CaseInfo(**metadata))
                         except Exception as e:
                             print(f"读取案件失败：{sub}: {e}")
-    
+
     return sorted(cases, key=lambda x: x.created_at, reverse=True)
 
 
@@ -249,9 +255,9 @@ def get_case_dir(case_id: str, name: str) -> Path:
 
 
 @router.get("/list")
-async def list_cases():
-    """列出所有合法案件"""
-    return scan_cases()
+async def list_cases(owner: Optional[str] = None):
+    """列出所有合法案件，可按 owner 过滤"""
+    return scan_cases(owner)
 
 
 @router.get("/pending")
@@ -264,15 +270,15 @@ async def list_pending_folders():
 async def create_case(request: CreateCaseRequest) -> CaseInfo:
     """创建新案件"""
     case_id = f"case_{uuid.uuid4().hex[:8]}"
-    
+
     # 创建案件文件夹结构
     case_path = get_case_dir(case_id, request.name)
     case_path.mkdir(parents=True, exist_ok=True)
-    
+
     # 创建子文件夹
     for subdir in ['original', 'processed', 'md', 'analysis']:
         (case_path / subdir).mkdir(exist_ok=True)
-    
+
     # 创建案件元数据
     metadata = {
         "id": case_id,
@@ -280,14 +286,16 @@ async def create_case(request: CreateCaseRequest) -> CaseInfo:
         "defendant": request.defendant,
         "created_at": datetime.now().strftime("%Y-%m-%d"),
         "status": "new",
-        "case_dir": str(case_path)
+        "case_dir": str(case_path),
     }
-    
+    if request.owner:
+        metadata["owner"] = request.owner
+
     # 保存元数据
     metadata_file = case_path / "case.json"
     with open(metadata_file, 'w', encoding='utf-8') as f:
         json.dump(metadata, f, ensure_ascii=False, indent=2)
-    
+
     return CaseInfo(**metadata)
 
 
@@ -322,9 +330,9 @@ async def import_folder(folder_path: str, name: str, defendant: str) -> CaseInfo
         "defendant": defendant,
         "created_at": datetime.now().strftime("%Y-%m-%d"),
         "status": "uploaded",
-        "case_dir": str(case_path)
+        "case_dir": str(case_path),
     }
-    
+
     metadata_file = case_path / "case.json"
     with open(metadata_file, 'w', encoding='utf-8') as f:
         json.dump(metadata, f, ensure_ascii=False, indent=2)
@@ -1056,51 +1064,56 @@ async def extract_evidence(case_id: str):
 
     evidence_dir.mkdir(parents=True, exist_ok=True)
 
-    # 排序辅助函数
-    def _is_indictment(name: str) -> bool:
-        return ("起诉书" in name and "意见" not in name) or "起诉意见书" in name
+    # 使用电源管理器防止休眠
+    from power_manager import PowerInhibitor
 
-    def _parse_volume_sort_key(name: str) -> tuple:
-        import re
-        cn2arabic = {'一': 1, '二': 2, '三': 3, '四': 4, '五': 5,
-                     '六': 6, '七': 7, '八': 8, '九': 9, '十': 10}
-        m = re.search(r'第([一二三四五六七八九十0-9]+)卷', name)
-        volume = 9999
-        sub = 9999
-        if m:
-            vol_str = m.group(1)
-            if vol_str.isdigit():
-                volume = int(vol_str)
-            elif vol_str in cn2arabic:
-                volume = cn2arabic[vol_str]
-        m2 = re.search(r'_(\d{2})_', name)
-        if m2:
-            sub = int(m2.group(1))
-        return (volume, sub)
+    with PowerInhibitor(f"证据提取: {case_id}"):
+        # 排序辅助函数
+        def _is_indictment(name: str) -> bool:
+            return ("起诉书" in name and "意见" not in name) or "起诉意见书" in name
 
-    def _sort_md_files(files: list) -> list:
-        return sorted(files, key=lambda f: _parse_volume_sort_key(f.name))
+        def _parse_volume_sort_key(name: str) -> tuple:
+            import re
+            cn2arabic = {'一': 1, '二': 2, '三': 3, '四': 4, '五': 5,
+                         '六': 6, '七': 7, '八': 8, '九': 9, '十': 10}
+            m = re.search(r'第([一二三四五六七八九十0-9]+)卷', name)
+            volume = 9999
+            sub = 9999
+            if m:
+                vol_str = m.group(1)
+                if vol_str.isdigit():
+                    volume = int(vol_str)
+                elif vol_str in cn2arabic:
+                    volume = cn2arabic[vol_str]
+            m2 = re.search(r'_(\d{2})_', name)
+            if m2:
+                sub = int(m2.group(1))
+            return (volume, sub)
 
-    # ── 第1步：起诉书/起诉意见书串行处理（依赖前一步输出） ──
-    all_md_files = _sort_md_files(list(md_dir.glob("*.md")))
-    indictment_files = [f for f in all_md_files if _is_indictment(f.name)]
-    other_files = [f for f in all_md_files if not _is_indictment(f.name)]
+        def _sort_md_files(files: list) -> list:
+            return sorted(files, key=lambda f: _parse_volume_sort_key(f.name))
 
-    for md_file in indictment_files:
-        if md_file.name in processed_sources:
-            print(f"[证据提取] 跳过已处理: {md_file.name}")
-            continue
+        # ── 第1步：起诉书/起诉意见书串行处理（起诉书优先） ──
+        all_md_files = _sort_md_files(list(md_dir.glob("*.md")))
+        indictment_files = [f for f in all_md_files if _is_indictment(f.name)]
+        other_files = [f for f in all_md_files if not _is_indictment(f.name)]
 
-        # 清理该来源的旧证据
-        old_files = [f for f in evidence_dir.iterdir()
-                     if f.suffix == ".md" and _get_source_from_evidence_file(f) == md_file.name]
-        if old_files:
-            print(f"[证据提取] 清理 {md_file.name} 的部分提取结果 ({len(old_files)} 个文件)，重新提取")
-            for f in old_files:
-                f.unlink()
-            existing_evidence = [ev for ev in existing_evidence if ev["source"] != md_file.name]
+        # 起诉书 > 起诉意见书：优先处理起诉书
+        indictment_files.sort(key=lambda f: (0 if "起诉意见书" not in f.name else 1))
 
-        try:
+        for md_file in indictment_files:
+            if md_file.name in processed_sources:
+                print(f"[证据提取] 跳过已处理: {md_file.name}")
+                continue
+
+            old_files = [f for f in evidence_dir.iterdir()
+                         if f.suffix == ".md" and _get_source_from_evidence_file(f) == md_file.name]
+            if old_files:
+                print(f"[证据提取] 清理 {md_file.name} 的部分提取结果 ({len(old_files)} 个文件)，重新提取")
+                for f in old_files:
+                    f.unlink()
+                existing_evidence = [ev for ev in existing_evidence if ev["source"] != md_file.name]
+
             md_text = md_file.read_text(encoding="utf-8")
             if not md_text.strip():
                 continue
@@ -1108,7 +1121,6 @@ async def extract_evidence(case_id: str):
             print(f"[证据提取] 处理{md_file.name}（逐笔提取）")
             num_facts = await _process_indictment_single(md_file, md_text, evidence_dir)
 
-            # 重新加载刚保存的证据文件
             ev_files = sorted(evidence_dir.glob("*.md"))
             new_files = ev_files[-num_facts:] if num_facts else []
             for new_file in new_files:
@@ -1124,7 +1136,6 @@ async def extract_evidence(case_id: str):
                     "md_file": new_file.name,
                 })
 
-            # 起诉书处理完立即保存检查点
             index_file.write_text(json.dumps({
                 "case_id": case_id,
                 "total_evidence": len(existing_evidence),
@@ -1132,106 +1143,94 @@ async def extract_evidence(case_id: str):
                 "generated_at": datetime.now().isoformat(),
             }, ensure_ascii=False, indent=2), encoding="utf-8")
 
-            # 标记为已处理
             processed_sources.add(md_file.name)
 
-        except Exception as e:
-            print(f"⚠️ 起诉书提取失败 {md_file.name}: {e}")
-            import traceback
-            traceback.print_exc()
-
-    # ── 第2步：非起诉书文件并发提取 ──
-    pending_files = [f for f in other_files if f.name not in processed_sources]
-
-    if pending_files:
-        print(f"[证据提取] 并发提取 {len(pending_files)} 个文件（并发数={EVIDENCE_CONCURRENCY}）")
-
-        # 每个文件分配独立的临时目录
-        sem = asyncio.Semaphore(EVIDENCE_CONCURRENCY)
-        temp_dir = evidence_dir / "_temp_extract"
-        temp_dir.mkdir(exist_ok=True)
-
-        # 按顺序启动并发任务
-        tasks = []
-        for md_file in pending_files:
-            file_temp_dir = temp_dir / md_file.stem
-            file_temp_dir.mkdir(exist_ok=True)
-
-            try:
-                md_text = md_file.read_text(encoding="utf-8")
-                if not md_text.strip():
-                    continue
-                tasks.append(_extract_single_file(md_file, md_text, file_temp_dir, sem))
-            except Exception as e:
-                print(f"⚠️ 读取文件失败 {md_file.name}: {e}")
-
-        # 等待所有任务完成
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        # 按 pending_files 顺序收集结果（gather 保证顺序）
-        new_evidence_by_source = {}
-        for i, result in enumerate(results):
-            if isinstance(result, Exception):
-                print(f"⚠️ 提取任务异常: {result}")
-                import traceback
-                traceback.print_exc()
-                continue
-
-            source_name, evidence_list = result
-            new_evidence_by_source[source_name] = evidence_list
-
-        # ── 第3步：按文件顺序合并，分配连续编号 ──
-        # 先加载已有的证据（起诉书等）
+        # ── 第2步：非起诉书文件并发提取 ──
+        pending_files = [f for f in other_files if f.name not in processed_sources]
         all_evidence = list(existing_evidence)
         next_id = len(all_evidence) + 1
 
-        # 按 pending_files 顺序（已排序）追加新证据
-        for md_file in pending_files:
-            source_name = md_file.name
-            if source_name not in new_evidence_by_source:
-                continue
+        if pending_files:
+            print(f"[证据提取] 并发提取 {len(pending_files)} 个文件（并发数={EVIDENCE_CONCURRENCY}）")
 
-            evidence_list = new_evidence_by_source[source_name]
+            sem = asyncio.Semaphore(EVIDENCE_CONCURRENCY)
+            temp_dir = evidence_dir / "_temp_extract"
+            temp_dir.mkdir(exist_ok=True)
 
-            for ev_data in evidence_list:
-                # 分配连续编号
-                new_name = f"{next_id:03d}_{_sanitize_filename(ev_data['name'])}.md"
-                final_path = evidence_dir / new_name
+            tasks = []
+            for md_file in pending_files:
+                file_temp_dir = temp_dir / md_file.stem
+                file_temp_dir.mkdir(exist_ok=True)
 
-                # 从临时目录移动到最终位置
-                temp_path = Path(ev_data["_temp_dir"]) / ev_data["md_file"]
-                if temp_path.exists():
-                    import shutil
-                    shutil.move(str(temp_path), str(final_path))
+                try:
+                    md_text = md_file.read_text(encoding="utf-8")
+                    if not md_text.strip():
+                        continue
+                    tasks.append(_extract_single_file(md_file, md_text, file_temp_dir, sem))
+                except Exception as e:
+                    print(f"⚠️ 读取文件失败 {md_file.name}: {e}")
 
-                all_evidence.append({
-                    "id": next_id,
-                    "name": ev_data["name"],
-                    "type": ev_data["type"],
-                    "source": ev_data["source"],
-                    "page_range": ev_data.get("page_range", ""),
-                    "persons": ev_data.get("persons", ""),
-                    "related_entities": ev_data.get("related_entities", ""),
-                    "summary_preview": ev_data["summary_preview"],
-                    "has_quotes": ev_data["has_quotes"],
-                    "md_file": new_name,
-                })
-                next_id += 1
+            results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        # 清理临时目录
-        import shutil
-        if temp_dir.exists():
-            shutil.rmtree(temp_dir, ignore_errors=True)
+            new_evidence_by_source = {}
+            for i, result in enumerate(results):
+                if isinstance(result, Exception):
+                    print(f"⚠️ 提取任务异常: {result}")
+                    import traceback
+                    traceback.print_exc()
+                    continue
 
-    # ── 最终保存 ──
-    index_file.write_text(json.dumps({
-        "case_id": case_id,
-        "total_evidence": len(all_evidence),
-        "evidence": all_evidence,
-        "generated_at": datetime.now().isoformat(),
-    }, ensure_ascii=False, indent=2), encoding="utf-8")
+                source_name, evidence_list = result
+                new_evidence_by_source[source_name] = evidence_list
 
-    print(f"[证据提取] 完成，共 {len(all_evidence)} 份证据")
+            # ── 第3步：按文件顺序合并，分配连续编号 ──
+
+            for md_file in pending_files:
+                source_name = md_file.name
+                if source_name not in new_evidence_by_source:
+                    continue
+
+                evidence_list = new_evidence_by_source[source_name]
+
+                for ev_data in evidence_list:
+                    new_name = f"{next_id:03d}_{_sanitize_filename(ev_data['name'])}.md"
+                    final_path = evidence_dir / new_name
+
+                    temp_path = Path(ev_data["_temp_dir"]) / ev_data["md_file"]
+                    if temp_path.exists():
+                        import shutil
+                        shutil.move(str(temp_path), str(final_path))
+
+                    all_evidence.append({
+                        "id": next_id,
+                        "name": ev_data["name"],
+                        "type": ev_data["type"],
+                        "source": ev_data["source"],
+                        "page_range": ev_data.get("page_range", ""),
+                        "persons": ev_data.get("persons", ""),
+                        "related_entities": ev_data.get("related_entities", ""),
+                        "summary_preview": ev_data["summary_preview"],
+                        "has_quotes": ev_data["has_quotes"],
+                        "md_file": new_name,
+                    })
+                    next_id += 1
+
+            # 清理临时目录
+            import shutil
+            if temp_dir.exists():
+                shutil.rmtree(temp_dir, ignore_errors=True)
+        else:
+            print("[证据提取] 所有文件已提取，跳过并发处理")
+
+        # ── 最终保存 ──
+        index_file.write_text(json.dumps({
+            "case_id": case_id,
+            "total_evidence": len(all_evidence),
+            "evidence": all_evidence,
+            "generated_at": datetime.now().isoformat(),
+        }, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        print(f"[证据提取] 完成，共 {len(all_evidence)} 份证据")
 
     EXTRACT_TASKS.pop(case_id, None)
 
@@ -1938,3 +1937,30 @@ async def delete_case(case_id: str):
     os.utime(trash_path, (time.time(), time.time()))
     
     return {"success": True, "message": f"案件已移入回收站，{TRASH_RETAIN_DAYS} 天后彻底删除"}
+
+
+@router.post("/claim-cases")
+async def claim_cases(owner: str):
+    """将没有 owner 的案件关联给当前用户"""
+    claimed = 0
+    if not CASES_DIR.exists():
+        return {"claimed": 0}
+
+    for case_dir in CASES_DIR.iterdir():
+        if case_dir.is_dir():
+            for sub in case_dir.iterdir():
+                if sub.is_dir():
+                    metadata_file = sub / "case.json"
+                    if metadata_file.exists():
+                        try:
+                            with open(metadata_file, 'r', encoding='utf-8') as f:
+                                metadata = json.load(f)
+                            if not metadata.get("owner"):
+                                metadata["owner"] = owner
+                                with open(metadata_file, 'w', encoding='utf-8') as f:
+                                    json.dump(metadata, f, ensure_ascii=False, indent=2)
+                                claimed += 1
+                        except Exception:
+                            pass
+
+    return {"claimed": claimed}

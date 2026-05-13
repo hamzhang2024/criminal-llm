@@ -90,8 +90,8 @@ def _get_mineru_token() -> str:
 
     优先级：
     1. 环境变量 MINERU_TOKEN
-    2. 应用配置 (~/.openclaw/criminal-llm-config.json)
-    3. ~/.openclaw/.env 文件
+    2. 应用配置 (DATA_DIR/criminal-llm-config.json)
+    3. DATA_DIR/.env 文件
     """
     # 环境变量优先
     token = os.environ.get("MINERU_TOKEN", "")
@@ -108,7 +108,8 @@ def _get_mineru_token() -> str:
         pass
 
     # 回退到 .env
-    env_path = Path.home() / ".openclaw" / ".env"
+    from config import DATA_DIR
+    env_path = DATA_DIR / ".env"
     if env_path.exists():
         for line in env_path.read_text().splitlines():
             if line.startswith("MINERU_TOKEN="):
@@ -367,10 +368,15 @@ async def _correct_chunk(text: str) -> str:
 修正后的文本："""
 
     try:
+        # 使用配置中的模型名称（不再写死 qwen3.6-plus）
+        from config_manager import load_config
+        cfg = load_config()
+        model_name = cfg.get("llm_model", "")
+
         result = await client.chat([
             {"role": "system", "content": "你是专业的中文 OCR 文本纠错助手。只修正明显的 OCR 识别错误，保持原文内容和结构完全不变。"},
             {"role": "user", "content": prompt},
-        ], model="qwen3.6-plus")
+        ], model=model_name)
         return result.strip()
     except Exception as e:
         print(f"[LLM OCR 纠错] 失败: {e}")

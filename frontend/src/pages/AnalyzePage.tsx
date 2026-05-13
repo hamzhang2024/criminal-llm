@@ -486,10 +486,11 @@ ${mockResult.defensePoints.map(p => `- ${p}`).join('\n')}
         content: data.message || data.answer || '分析完成'
       }])
     } catch (err) {
-      setError(err instanceof Error ? err.message : '对话失败')
+      const errorMsg = err instanceof Error ? err.message : '未知错误'
+      setError(errorMsg)
       setChatMessages(prev => [...prev, {
         role: 'assistant',
-        content: '抱歉，处理您的请求时出现错误。请稍后重试。'
+        content: `对话失败：${errorMsg}`
       }])
     }
   }, [chatInput, caseInfo, chatMessages])

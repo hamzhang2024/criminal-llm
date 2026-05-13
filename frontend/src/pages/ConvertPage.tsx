@@ -161,11 +161,11 @@ export function ConvertPage() {
                           <Key className="w-4 h-4" style={{ color: '#007aff' }} />
                           MinerU API Token
                         </div>
-                        <a 
-                          href="https://mineru.net" 
-                          target="_blank" 
+                        <a
+                          href="https://mineru.net"
+                          target="_blank"
                           rel="noopener noreferrer"
-                          style={{ fontSize: '12px', color: '#007aff', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px' }}
+                          style={{ fontSize: '12px', color: '#007aff', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
                         >
                           申请 Token <ExternalLink className="w-3 h-3" />
                         </a>

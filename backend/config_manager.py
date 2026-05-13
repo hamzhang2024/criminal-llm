@@ -1,19 +1,21 @@
 """
 配置管理 - 读取和保存应用配置
 
-配置文件：~/.openclaw/criminal-llm-config.json
+配置文件：DATA_DIR/criminal-llm-config.json
 """
 import json
 import os
 from pathlib import Path
 from typing import Dict, Any
 
-CONFIG_PATH = Path.home() / ".openclaw" / "criminal-llm-config.json"
+# 使用 config.py 的 DATA_DIR 确保开发和打包模式下路径一致
+from config import DATA_DIR
+CONFIG_PATH = DATA_DIR / "criminal-llm-config.json"
 
-# 默认配置
+# 默认配置（阿里云百炼，推荐 qwen3.5-plus）
 DEFAULTS = {
-    "llm_base_url": "https://coding.dashscope.aliyuncs.com/v1",
-    "llm_model": "qwen3.6-plus",
+    "llm_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "llm_model": "qwen3.5-plus",
 }
 
 

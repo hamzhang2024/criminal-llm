@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "刑事案卷分析系统",
-  "version": "0.1.0",
+  "version": "0.9.6",
   "identifier": "com.criminal-pdf.app",
   "build": {
     "frontendDist": "../dist",
@@ -10,18 +10,6 @@
     "beforeBuildCommand": "npm run build"
   },
   "app": {
-    "windows": [
-      {
-        "title": "刑事案卷分析系统",
-        "width": 1280,
-        "height": 800,
-        "minWidth": 800,
-        "minHeight": 600,
-        "resizable": true,
-        "fullscreen": false,
-        "center": true
-      }
-    ],
     "security": {
       "csp": null
     }
@@ -35,6 +23,12 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
+    ],
+    "macOS": {
+      "signingIdentity": null
+    },
+    "resources": [
+      "resources/backend/**/*"
     ]
   }
 }

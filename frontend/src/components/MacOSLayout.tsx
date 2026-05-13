@@ -88,11 +88,6 @@ export function MacOSSidebar() {
 export function MacOSTitlebar({ showBack = false, onBack }: { showBack?: boolean, onBack?: () => void }) {
   return (
     <div className="macOS-titlebar">
-      <div className="macOS-titlebar-controls">
-        <div className="macOS-control close" />
-        <div className="macOS-control minimize" />
-        <div className="macOS-control maximize" />
-      </div>
       <div style={{ display: 'flex', alignItems: 'center', flex: 1, justifyContent: 'center' }}>
         {showBack && (
           <button 
@@ -116,15 +111,17 @@ export function MacOSTitlebar({ showBack = false, onBack }: { showBack?: boolean
         )}
         <div className="macOS-title">刑事案卷分析系统</div>
       </div>
-      <div style={{ width: 52 }} />
     </div>
   )
 }
 
-export function MacOSToolbar({ title, children }: { title: string, children?: React.ReactNode }) {
+export function MacOSToolbar({ title, titleSlot, children }: { title: string, titleSlot?: React.ReactNode, children?: React.ReactNode }) {
   return (
     <div className="macOS-toolbar">
-      <div className="macOS-toolbar-title">{title}</div>
+      <div className="macOS-toolbar-title">
+        {title}
+        {titleSlot}
+      </div>
       <div className="macOS-toolbar-actions">
         {children}
       </div>

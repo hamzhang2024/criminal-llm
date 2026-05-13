@@ -13,9 +13,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any
 
-from config_manager import CONFIG_PATH
+from config import DATA_DIR
 
-TASKS_FILE = Path.home() / ".openclaw" / "criminal-llm-tasks.json"
+TASKS_FILE = DATA_DIR / "criminal-llm-tasks.json"
 
 # 线程池：单线程串行执行转换任务（MinerU 有并发限制）
 _executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="convert")
@@ -108,125 +108,126 @@ def start_convert_task(case_id: str):
     )
 
     def _run():
-        try:
-            # 导入需要的模块（延迟导入，避免循环依赖）
-            import sys
-            backend_dir = Path(__file__).parent
-            if str(backend_dir) not in sys.path:
-                sys.path.insert(0, str(backend_dir))
+        from power_manager import PowerInhibitor
 
-            from case_manager import find_case_path
-            from pdf_to_md import get_evidence_text
-            import fitz
+        with PowerInhibitor(f"PDF 转换: {case_id}"):
+            try:
+                # 导入需要的模块（延迟导入，避免循环依赖）
+                import sys
+                backend_dir = Path(__file__).parent
+                if str(backend_dir) not in sys.path:
+                    sys.path.insert(0, str(backend_dir))
 
-            case_path = find_case_path(case_id)
-            if not case_path:
-                _update_task(case_id, status="failed", message="案件不存在")
-                return
+                from case_manager import find_case_path
+                from pdf_to_md import get_evidence_text
+                import fitz
 
-            processed_dir = case_path / "processed"
-            md_dir = case_path / "md"
-            md_dir.mkdir(parents=True, exist_ok=True)
+                case_path = find_case_path(case_id)
+                if not case_path:
+                    _update_task(case_id, status="failed", message="案件不存在")
+                    return
 
-            if not processed_dir.exists():
-                _update_task(case_id, status="failed", message="案件中无已处理的 PDF 文件")
-                return
+                processed_dir = case_path / "processed"
+                md_dir = case_path / "md"
+                md_dir.mkdir(parents=True, exist_ok=True)
 
-            pdf_files = [f for f in sorted(processed_dir.iterdir()) if f.is_file() and f.suffix.lower() == ".pdf"]
-            if not pdf_files:
-                _update_task(case_id, status="failed", message="processed/ 目录中无 PDF 文件")
-                return
+                if not processed_dir.exists():
+                    _update_task(case_id, status="failed", message="案件中无已处理的 PDF 文件")
+                    return
 
-            _update_task(case_id, status="running", total=len(pdf_files), message=f"共 {len(pdf_files)} 个文件")
+                pdf_files = [f for f in sorted(processed_dir.iterdir()) if f.is_file() and f.suffix.lower() == ".pdf"]
+                if not pdf_files:
+                    _update_task(case_id, status="failed", message="processed/ 目录中无 PDF 文件")
+                    return
 
-            results = []
-            converted = 0
+                _update_task(case_id, status="running", total=len(pdf_files), message=f"共 {len(pdf_files)} 个文件")
 
-            for idx, pdf_file in enumerate(pdf_files):
-                # 检查是否已转换（跳过缓存命中的文件）
-                md_file = md_dir / f"{pdf_file.stem}.md"
-                if md_file.exists() and md_file.stat().st_size > 200:
+                results = []
+                converted = 0
+
+                for idx, pdf_file in enumerate(pdf_files):
+                    md_file = md_dir / f"{pdf_file.stem}.md"
+                    if md_file.exists() and md_file.stat().st_size > 200:
+                        _update_task(
+                            case_id,
+                            current=idx + 1,
+                            current_file=pdf_file.name,
+                            message=f"跳过已有: {pdf_file.name}",
+                            results=results,
+                        )
+                        results.append({
+                            "file": pdf_file.name,
+                            "success": True,
+                            "md_name": md_file.name,
+                            "md_size": md_file.stat().st_size,
+                            "skipped": True,
+                        })
+                        converted += 1
+                        continue
+
                     _update_task(
                         case_id,
                         current=idx + 1,
                         current_file=pdf_file.name,
-                        message=f"跳过已有: {pdf_file.name}",
+                        message=f"转换中: {pdf_file.name} ({idx + 1}/{len(pdf_files)})",
                         results=results,
                     )
-                    results.append({
-                        "file": pdf_file.name,
-                        "success": True,
-                        "md_name": md_file.name,
-                        "md_size": md_file.stat().st_size,
-                        "skipped": True,
-                    })
-                    converted += 1
-                    continue
 
-                _update_task(
-                    case_id,
-                    current=idx + 1,
-                    current_file=pdf_file.name,
-                    message=f"转换中: {pdf_file.name} ({idx + 1}/{len(pdf_files)})",
-                    results=results,
-                )
+                    try:
+                        text, images_dir = get_evidence_text(str(pdf_file), True, str(md_dir))
+                        if text is None:
+                            results.append({
+                                "file": pdf_file.name,
+                                "success": False,
+                                "error": "MinerU 转换失败（可能超时或配额不足）",
+                            })
+                            continue
 
-                try:
-                    text, images_dir = get_evidence_text(str(pdf_file), True, str(md_dir))
-                    if text is None:
-                        # 尝试获取 MinerU 最后的错误信息（从 stdout 捕获）
+                        if not md_file.exists():
+                            md_file.write_text(text, encoding="utf-8")
+
+                        md_size = md_file.stat().st_size if md_file.exists() else 0
+                        is_blank = md_size < 50 or not text.strip()
+
+                        results.append({
+                            "file": pdf_file.name,
+                            "success": not is_blank,
+                            "md_name": md_file.name if md_file.exists() else None,
+                            "md_size": md_size,
+                            "error": "PDF 内容为空" if is_blank else None,
+                        })
+                        if not is_blank:
+                            converted += 1
+
+                    except Exception as e:
                         results.append({
                             "file": pdf_file.name,
                             "success": False,
-                            "error": "MinerU 转换失败（可能超时或配额不足）",
+                            "error": str(e)[:200],
                         })
-                        continue
 
-                    if not md_file.exists():
-                        md_file.write_text(text, encoding="utf-8")
+                # 安全清理
+                pdf_stems = {f.stem for f in pdf_files}
+                for item in list(md_dir.iterdir()):
+                    if item.is_file() and item.suffix == ".md":
+                        if item.stem not in pdf_stems:
+                            item.unlink()
+                    elif item.is_dir() and item.name.endswith("_images"):
+                        stem_without_images = item.name.replace("_images", "")
+                        if stem_without_images not in pdf_stems:
+                            shutil.rmtree(item, ignore_errors=True)
 
-                    md_size = md_file.stat().st_size if md_file.exists() else 0
-                    is_blank = md_size < 50 or not text.strip()
+                _update_task(
+                    case_id,
+                    status="completed",
+                    message=f"完成: {converted}/{len(pdf_files)} 个文件转换成功",
+                    results=results,
+                )
+                print(f"[后台任务] {case_id}: 转换完成 {converted}/{len(pdf_files)}")
 
-                    results.append({
-                        "file": pdf_file.name,
-                        "success": not is_blank,
-                        "md_name": md_file.name if md_file.exists() else None,
-                        "md_size": md_size,
-                        "error": "PDF 内容为空" if is_blank else None,
-                    })
-                    if not is_blank:
-                        converted += 1
-
-                except Exception as e:
-                    results.append({
-                        "file": pdf_file.name,
-                        "success": False,
-                        "error": str(e)[:200],
-                    })
-
-            # 安全清理
-            pdf_stems = {f.stem for f in pdf_files}
-            for item in list(md_dir.iterdir()):
-                if item.is_file() and item.suffix == ".md":
-                    if item.stem not in pdf_stems:
-                        item.unlink()
-                elif item.is_dir() and item.name.endswith("_images"):
-                    stem_without_images = item.name.replace("_images", "")
-                    if stem_without_images not in pdf_stems:
-                        shutil.rmtree(item, ignore_errors=True)
-
-            _update_task(
-                case_id,
-                status="completed",
-                message=f"完成: {converted}/{len(pdf_files)} 个文件转换成功",
-                results=results,
-            )
-            print(f"[后台任务] {case_id}: 转换完成 {converted}/{len(pdf_files)}")
-
-        except Exception as e:
-            _update_task(case_id, status="failed", message=str(e)[:500])
-            print(f"[后台任务] {case_id}: 任务异常 {e}")
+            except Exception as e:
+                _update_task(case_id, status="failed", message=str(e)[:500])
+                print(f"[后台任务] {case_id}: 任务异常 {e}")
 
     _executor.submit(_run)
     return {"success": True, "task_id": _make_task_id(case_id), "status": "started", "message": "转换任务已启动"}

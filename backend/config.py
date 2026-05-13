@@ -2,6 +2,7 @@
 配置管理
 """
 import os
+import sys
 import shutil
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -11,11 +12,32 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # 基础路径
-BASE_DIR = Path(__file__).parent.parent
-DATA_DIR = BASE_DIR / "data"
+# 优先使用环境变量（由 Tauri 壳传入，确保开发和打包模式路径一致）
+_data_dir_env = os.environ.get("CRIMINAL_LLM_DATA_DIR")
+if _data_dir_env:
+    DATA_DIR = Path(_data_dir_env)
+else:
+    # PyInstaller 打包后，__file__ 指向 bundle 目录
+    _is_frozen = getattr(sys, 'frozen', False)
+    if _is_frozen:
+        # 桌面应用模式：数据目录在文稿目录（隐藏）
+        DATA_DIR = Path.home() / "Documents" / ".criminal-llm-data"
+    else:
+        # 开发模式：使用项目目录
+        DATA_DIR = Path(__file__).parent.parent / "data"
+
+# 确保数据目录存在
+if not DATA_DIR.exists():
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    if "criminal-llm-data" in str(DATA_DIR):
+        try:
+            os.system(f"chflags hidden '{DATA_DIR}'")
+        except Exception:
+            pass
 UPLOAD_DIR = DATA_DIR / "uploads"
 OUTPUT_DIR = DATA_DIR / "output"
 CACHE_DIR = DATA_DIR / "cache"
+ENV_FILE = DATA_DIR / ".env"
 
 # 确保目录存在
 for d in [UPLOAD_DIR, OUTPUT_DIR, CACHE_DIR]:
