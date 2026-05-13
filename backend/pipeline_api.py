@@ -16,13 +16,16 @@ from typing import Optional
 
 from fastapi import APIRouter, Body, HTTPException, UploadFile, File
 
-from analysis_pipeline import AnalysisPipeline
+from analysis_pipeline import AnalysisPipeline, _contains_indictment_title
 from case_manager import find_case_path
 
 router = APIRouter(prefix="/api/pipeline", tags=["案卷分析流水线"])
 
 # 实时进度状态（内存存储，按 case_id 分组）
 PIPELINE_PROGRESS: dict = {}
+
+# 起诉意见书匹配模式
+_OPINION_PATTERNS = ["起诉意见书", "呈请起诉", "起诉报告"]
 
 
 def _set_progress(case_id: str, step: int, message: str, current: int = 0, total: int = 0):
@@ -42,12 +45,50 @@ def _clear_progress(case_id: str):
     PIPELINE_PROGRESS.pop(case_id, None)
 
 
+@router.get("/{case_id}/indictment-candidates")
+async def get_indictment_candidates(case_id: str):
+    """扫描案件 MD 文件，找出所有起诉书和起诉意见书候选。
+
+    返回每份候选文件的文件名、文书类型（起诉书/起诉意见书）和前 500 字预览。
+    """
+    case_path = find_case_path(case_id)
+    if not case_path:
+        raise HTTPException(status_code=404, detail="案件不存在")
+
+    md_dir = case_path / "md"
+    if not md_dir.exists():
+        return {"case_id": case_id, "candidates": []}
+
+    candidates = []
+    for f in sorted(md_dir.iterdir(), key=lambda x: x.name):
+        if f.suffix.lower() != ".md":
+            continue
+        text = f.read_text(encoding="utf-8")
+        head = text[:3000]
+
+        doc_type = None
+        if _contains_indictment_title(head):
+            doc_type = "起诉书"
+        elif any(p in head for p in _OPINION_PATTERNS):
+            doc_type = "起诉意见书"
+
+        if doc_type:
+            candidates.append({
+                "filename": f.name,
+                "doc_type": doc_type,
+                "preview": text[:500],
+            })
+
+    return {"case_id": case_id, "candidates": candidates}
+
+
 @router.post("/{case_id}/step/{step_num}")
 async def run_pipeline_step(
     case_id: str,
     step_num: int,
     defendant: str = Body(..., embed=True),
     crime_type: Optional[str] = Body(default=None, embed=True),
+    indictment_file: Optional[str] = Body(default=None, embed=True),
 ):
     """
     执行分析流水线的指定步骤
@@ -66,7 +107,7 @@ async def run_pipeline_step(
     if not case_path:
         raise HTTPException(status_code=404, detail="案件不存在")
 
-    pipeline = AnalysisPipeline(case_id, case_path)
+    pipeline = AnalysisPipeline(case_id, case_path, indictment_file=indictment_file)
 
     # 初始化进度
     _set_progress(case_id, step_num, "准备开始...", 0, 0)

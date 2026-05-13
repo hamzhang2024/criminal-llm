@@ -882,52 +882,56 @@ export function CaseDetailPage() {
     }
   }, [caseId])
 
-  // 步骤 3：执行 5 阶段分析（异步触发 + 轮询进度）
+  // 起诉书选择对话框状态
+  const [showIndictmentDialog, setShowIndictmentDialog] = useState(false)
+  const [indictmentCandidates, setIndictmentCandidates] = useState<Array<{filename: string; doc_type: string; preview: string}>>([])
+  const [selectedIndictmentFile, setSelectedIndictmentFile] = useState<string>('')
+  const [indictmentCandidatesLoading, setIndictmentCandidatesLoading] = useState(false)
+
+  // 步骤 3：执行 5 阶段分析（先选择起诉书，再异步触发 + 轮询进度）
   const handleRunAnalysis = useCallback(async () => {
     if (!defendant.trim()) {
       showAlert({ title: '提示', message: '案件缺少被告人信息，无法开始分析', variant: 'warning' })
       return
     }
 
-    // 1. 先检查是否已有分析在运行
+    // 0. 先获取起诉书候选文件，让用户确认
     try {
-      const status = await api.getStageStatus(caseId!)
-      const taskState = status?.task?.status
-      if (taskState === 'running') {
-        // 已在运行中，直接开始轮询进度
-        setProgress('分析任务已在运行中，正在跟踪进度...')
-        setProcessing(true)
-        pollAnalysisProgress()
-        return
-      }
-      if (taskState === 'error') {
-        const errMsg = status?.task?.error || '上次分析出错'
-        setError(errMsg)
-        setProgress('')
-        const confirmed = await showConfirm({
-          title: '上次分析出错',
-          message: errMsg + '\n\n是否需要重新开始分析？',
-          variant: 'warning',
-          confirmText: '重新开始',
-        })
-        if (confirmed) {
-          await startAnalysis()
-        }
-        return
-      }
-    } catch { /* 无法获取状态，直接触发 */ }
+      setIndictmentCandidatesLoading(true)
+      const resp = await api.getIndictmentCandidates(caseId!)
+      setIndictmentCandidatesLoading(false)
 
-    // 2. 触发新分析
-    await startAnalysis()
+      if (resp.candidates && resp.candidates.length > 0) {
+        // 有候选文件，显示选择对话框
+        setIndictmentCandidates(resp.candidates)
+        // 默认选中第一个起诉书，如果没有起诉书则选中第一个起诉意见书
+        const firstIndictment = resp.candidates.find(c => c.doc_type === '起诉书')
+        setSelectedIndictmentFile(firstIndictment ? firstIndictment.filename : resp.candidates[0].filename)
+        setShowIndictmentDialog(true)
+        return
+      }
+    } catch {
+      setIndictmentCandidatesLoading(false)
+      // 获取候选失败，继续执行分析（回退到自动检测）
+    }
+
+    // 无候选文件，直接触发分析
+    await startAnalysis(undefined)
   }, [caseId, defendant])
 
+  // 用户确认起诉书后的分析触发
+  const confirmIndictmentAndAnalyze = useCallback(async () => {
+    setShowIndictmentDialog(false)
+    await startAnalysis(selectedIndictmentFile || undefined)
+  }, [selectedIndictmentFile])
+
   // 触发分析（异步，立即返回）
-  const startAnalysis = useCallback(async () => {
+  const startAnalysis = useCallback(async (indictmentFile?: string) => {
     setError(null)
     setProgress('正在触发 5 阶段分析...')
     setProcessing(true)
     try {
-      const result = await api.runAllStages(caseId!, defendant, crimeType || undefined)
+      const result = await api.runAllStages(caseId!, defendant, crimeType || undefined, indictmentFile)
       if (!result.success) {
         throw new Error(result.detail || result.error || '触发失败')
       }
@@ -2836,6 +2840,83 @@ export function CaseDetailPage() {
               )}
             </div>
           )}
+        </div>
+      )}
+
+      {/* 起诉书选择对话框 */}
+      {showIndictmentDialog && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 9999,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          backgroundColor: 'rgba(0,0,0,0.4)',
+        }} onClick={() => setShowIndictmentDialog(false)}>
+          <div style={{
+            backgroundColor: '#1e1e1e', borderRadius: '12px', padding: '24px',
+            maxWidth: '640px', width: '90%', maxHeight: '80vh', overflow: 'auto',
+            boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+          }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ margin: '0 0 8px', fontSize: '18px', fontWeight: 600, color: '#f5f5f7' }}>
+              选择起诉书/起诉意见书
+            </h3>
+            <p style={{ margin: '0 0 16px', fontSize: '13px', color: '#86868b' }}>
+              请确认用于指控要素分析的文书。系统将基于你选择的文书提取指控要素。
+            </p>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '20px' }}>
+              {indictmentCandidates.map((c) => (
+                <label
+                  key={c.filename}
+                  style={{
+                    display: 'flex', alignItems: 'flex-start', gap: '10px',
+                    padding: '12px', borderRadius: '8px', cursor: 'pointer',
+                    border: selectedIndictmentFile === c.filename ? '1px solid #007aff' : '1px solid #3a3a3c',
+                    backgroundColor: selectedIndictmentFile === c.filename ? 'rgba(0,122,255,0.1)' : 'rgba(255,255,255,0.03)',
+                  }}
+                >
+                  <input
+                    type="radio"
+                    name="indictment-file"
+                    value={c.filename}
+                    checked={selectedIndictmentFile === c.filename}
+                    onChange={() => setSelectedIndictmentFile(c.filename)}
+                    style={{ marginTop: '2px', accentColor: '#007aff' }}
+                  />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                      <span style={{
+                        fontSize: '11px', fontWeight: 600, padding: '2px 6px', borderRadius: '4px',
+                        backgroundColor: c.doc_type === '起诉书' ? 'rgba(255,59,48,0.2)' : 'rgba(255,149,0,0.2)',
+                        color: c.doc_type === '起诉书' ? '#ff453a' : '#ffb340',
+                      }}>{c.doc_type}</span>
+                      <span style={{ fontSize: '14px', fontWeight: 500, color: '#f5f5f7' }}>{c.filename}</span>
+                    </div>
+                    <div style={{
+                      fontSize: '12px', color: '#86868b', lineHeight: 1.5,
+                      maxHeight: '60px', overflow: 'hidden',
+                      whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+                    }}>{c.preview}</div>
+                  </div>
+                </label>
+              ))}
+            </div>
+
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => { setShowIndictmentDialog(false); startAnalysis(undefined) }}
+                style={{
+                  padding: '8px 16px', borderRadius: '8px', border: '1px solid #3a3a3c',
+                  backgroundColor: 'transparent', color: '#f5f5f7', fontSize: '14px', cursor: 'pointer',
+                }}
+              >跳过选择（自动检测）</button>
+              <button
+                onClick={confirmIndictmentAndAnalyze}
+                style={{
+                  padding: '8px 20px', borderRadius: '8px', border: 'none',
+                  backgroundColor: '#007aff', color: '#fff', fontSize: '14px', fontWeight: 500, cursor: 'pointer',
+                }}
+              >确认并开始分析</button>
+            </div>
+          </div>
         </div>
       )}
 

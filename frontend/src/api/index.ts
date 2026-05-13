@@ -363,7 +363,7 @@ export async function selectEvidence(caseId: string, evidenceIds: string[]): Pro
 
 // ========== 分析流水线 ==========
 
-export async function runPipelineStep(caseId: string, step: number, defendant: string, crimeType?: string): Promise<any> {
+export async function runPipelineStep(caseId: string, step: number, defendant: string, crimeType?: string, indictmentFile?: string): Promise<any> {
   const controller = new AbortController()
   // 根据步骤类型设置不同超时：步骤 2/3/4 需要大量 LLM 串行调用，需要更长时间
   // 步骤 2（逐次总结）：每人每次笔录都要单独 LLM 总结，可能耗时很长
@@ -373,7 +373,7 @@ export async function runPipelineStep(caseId: string, step: number, defendant: s
     const res = await fetch(`${API_BASE}/pipeline/${caseId}/step/${step}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ defendant, crime_type: crimeType }),
+      body: JSON.stringify({ defendant, crime_type: crimeType, indictment_file: indictmentFile }),
       signal: controller.signal
     })
     return res.json()
@@ -479,11 +479,22 @@ export async function getEvidenceIndex(caseId: string): Promise<any> {
 
 // ========== 5 阶段分析引擎 ==========
 
-export async function runAllStages(caseId: string, defendant: string, crimeType?: string): Promise<any> {
+export interface IndictmentCandidate {
+  filename: string
+  doc_type: string
+  preview: string
+}
+
+export async function getIndictmentCandidates(caseId: string): Promise<{ candidates: IndictmentCandidate[] }> {
+  const res = await fetch(`${API_BASE}/stage-analysis/${caseId}/indictment-candidates`)
+  return res.json()
+}
+
+export async function runAllStages(caseId: string, defendant: string, crimeType?: string, indictmentFile?: string): Promise<any> {
   const res = await fetch(`${API_BASE}/stage-analysis/${caseId}/run-all`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ defendant, crime_type: crimeType })
+    body: JSON.stringify({ defendant, crime_type: crimeType, indictment_file: indictmentFile })
   })
   return res.json()
 }
@@ -498,11 +509,11 @@ export async function getStageProgress(caseId: string): Promise<any> {
   return res.json()
 }
 
-export async function runSingleStage(caseId: string, stageNum: number, defendant: string, crimeType?: string): Promise<any> {
+export async function runSingleStage(caseId: string, stageNum: number, defendant: string, crimeType?: string, indictmentFile?: string): Promise<any> {
   const res = await fetch(`${API_BASE}/stage-analysis/${caseId}/run-stage/${stageNum}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ defendant, crime_type: crimeType })
+    body: JSON.stringify({ defendant, crime_type: crimeType, indictment_file: indictmentFile })
   })
   return res.json()
 }
@@ -698,6 +709,7 @@ export const api = {
   serveFileUrl,
   thumbCacheUrl,
   // 5 阶段分析
+  getIndictmentCandidates,
   runAllStages,
   runSingleStage,
   getStageProgress,

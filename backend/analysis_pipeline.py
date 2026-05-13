@@ -128,6 +128,21 @@ async def _classify_document_type(llm, text: str) -> str:
     return "其他"
 
 
+def _contains_indictment_title(text: str) -> bool:
+    """判断文本是否包含起诉书标题，排除「起诉意见书」的干扰。
+
+    "起诉意见书"中包含"起诉书"三个字，直接用 `in` 匹配会误判。
+    本函数使用负向前后查找，确保匹配的是独立的"起诉书"而非"起诉意见书"的一部分。
+    """
+    # 匹配独立的"起诉书"（前面不是"意见"，后面不是"意见"）
+    pattern = r"(?<!意见)起诉书(?!意见)"
+    if re.search(pattern, text):
+        return True
+    if "公诉书" in text:
+        return True
+    return False
+
+
 def _split_sessions(text: str) -> list[dict]:
     """
     按时间分隔出单次笔录
@@ -155,12 +170,14 @@ class AnalysisPipeline:
 
     MAX_CONCURRENCY = 5
 
-    def __init__(self, case_id: str, case_dir: Path):
+    def __init__(self, case_id: str, case_dir: Path, indictment_file: Optional[str] = None):
         self.case_id = case_id
         self.case_dir = Path(case_dir) if isinstance(case_dir, str) else case_dir
         self.analysis_dir = self.case_dir / "analysis"
         self.analysis_dir.mkdir(exist_ok=True)
         self.llm = get_llm_client()
+        # 用户手动指定的起诉书文件名（优先级高于自动检测）
+        self.selected_indictment_file = indictment_file
 
     # ========== 工具方法 ==========
 
@@ -183,11 +200,21 @@ class AnalysisPipeline:
     async def _find_indictment_in_md_files(self) -> tuple[str, str]:
         """在所有 MD 文件中找到起诉书或起诉意见书。
         返回 (文书内容, 文书类型)，都没找到返回 ("", "")。
+        如果用户手动指定了起诉书文件，优先使用该文件。
         """
+        # 如果用户手动指定了起诉书文件，直接使用
+        if self.selected_indictment_file:
+            md_files = self._load_md_files()
+            for f in md_files:
+                if f["filename"] == self.selected_indictment_file:
+                    # 用 LLM 确认类型
+                    doc_type = await _classify_document_type(self.llm, f["text"][:5000])
+                    if doc_type in ("起诉书", "起诉意见书"):
+                        return f["text"][:40000], doc_type
+                    # LLM 无法确认类型时，回退到自动检测
+
         md_files = self._load_md_files()
 
-        # 起诉书常见标题
-        INDICTMENT_PATTERNS = ["起诉书", "公诉书", "起诉书副本"]
         # 起诉意见书常见标题
         OPINION_PATTERNS = ["起诉意见书", "呈请起诉", "起诉报告"]
 
@@ -196,7 +223,7 @@ class AnalysisPipeline:
 
         for f in md_files:
             head = f["text"][:3000]
-            if any(p in head for p in INDICTMENT_PATTERNS):
+            if _contains_indictment_title(head):
                 indictment_candidates.append(f)
             if any(p in head for p in OPINION_PATTERNS):
                 opinion_candidates.append(f)

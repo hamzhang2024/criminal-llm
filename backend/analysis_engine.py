@@ -206,13 +206,15 @@ def _extract_json_and_render(text: str, mermaid_fn) -> str:
 class AnalysisEngine:
     """5 阶段分析引擎"""
 
-    def __init__(self, case_id: str, case_dir: Path):
+    def __init__(self, case_id: str, case_dir: Path, indictment_file: Optional[str] = None):
         self.case_id = case_id
         self.case_dir = case_dir
         self.analysis_dir = case_dir / "analysis"
         self.analysis_dir.mkdir(parents=True, exist_ok=True)
         self.md_texts: List[Dict[str, str]] = []  # [{filename, type, text}]
         self.stage_results: Dict[int, Dict[str, Any]] = {}
+        # 用户手动指定的起诉书文件名（优先级高于自动检测）
+        self.selected_indictment_file = indictment_file
 
     def _load_evidence_texts(self) -> List[Dict[str, str]]:
         """加载案件目录下所有证据文本
@@ -317,9 +319,16 @@ class AnalysisEngine:
     def _find_indictment(self, texts: list) -> Optional[Dict]:
         """
         查找起诉书/起诉意见书。
-        优先级：起诉书 > 起诉意见书；同类多份时取形成时间在后面的。
+        优先级：用户手动指定 > 起诉书 > 起诉意见书；同类多份时取形成时间在后面的。
         """
         import re
+
+        # 如果用户手动指定了起诉书文件，直接使用
+        if self.selected_indictment_file:
+            for t in texts:
+                if t.get("filename") == self.selected_indictment_file:
+                    return t
+            # 指定的文件不存在，回退到自动检测
 
         indictments = []  # (类型, 日期, 文本)
         for t in texts:

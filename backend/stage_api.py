@@ -17,12 +17,16 @@ from typing import Optional
 from fastapi import APIRouter, Body, HTTPException
 
 from analysis_engine import AnalysisEngine
+from analysis_pipeline import _contains_indictment_title
 from case_manager import find_case_path
 
 router = APIRouter(prefix="/api/stage-analysis", tags=["5阶段案卷分析"])
 
 # 实时进度状态
 STAGE_PROGRESS: dict = {}
+
+# 起诉意见书匹配模式
+_OPINION_PATTERNS = ["起诉意见书", "呈请起诉", "起诉报告"]
 
 
 async def _run_sub_stage(engine, sub_stage_type: str, defendant: str, crime_type: Optional[str]):
@@ -128,11 +132,45 @@ def _clear_progress(case_id: str):
     STAGE_PROGRESS.pop(case_id, None)
 
 
+@router.get("/{case_id}/indictment-candidates")
+async def get_indictment_candidates(case_id: str):
+    """扫描案件 MD 文件，找出所有起诉书和起诉意见书候选。"""
+    case_path = find_case_path(case_id)
+    if not case_path:
+        raise HTTPException(status_code=404, detail="案件不存在")
+
+    md_dir = case_path / "md"
+    if not md_dir.exists():
+        return {"case_id": case_id, "candidates": []}
+
+    candidates = []
+    for f in sorted(md_dir.iterdir(), key=lambda x: x.name):
+        if f.suffix.lower() != ".md":
+            continue
+        text = f.read_text(encoding="utf-8")
+        head = text[:3000]
+
+        doc_type = None
+        if _contains_indictment_title(head):
+            doc_type = "起诉书"
+        elif any(p in head for p in _OPINION_PATTERNS):
+            doc_type = "起诉意见书"
+
+        if doc_type:
+            candidates.append({
+                "filename": f.name,
+                "doc_type": doc_type,
+                "preview": text[:500],
+            })
+
+    return {"case_id": case_id, "candidates": candidates}
+
+
 # 分析任务状态追踪
 ANALYSIS_TASKS: dict = {}
 
 
-async def _execute_all_stages(case_id: str, defendant: str, crime_type: Optional[str]):
+async def _execute_all_stages(case_id: str, defendant: str, crime_type: Optional[str], indictment_file: Optional[str] = None):
     """后台执行全部 5 阶段分析"""
     try:
         case_path = find_case_path(case_id)
@@ -151,7 +189,7 @@ async def _execute_all_stages(case_id: str, defendant: str, crime_type: Optional
             ANALYSIS_TASKS[case_id] = {"status": "error", "error": "未提取证据，无法进行分析。请先完成证据提取。"}
             return
 
-        engine = AnalysisEngine(case_id, case_path)
+        engine = AnalysisEngine(case_id, case_path, indictment_file=indictment_file)
         _set_progress(case_id, 0, "开始 5 阶段分析...")
 
         # 阶段 1
@@ -190,6 +228,7 @@ async def run_all_stages(
     case_id: str,
     defendant: str = Body(..., embed=True),
     crime_type: Optional[str] = Body(default=None, embed=True),
+    indictment_file: Optional[str] = Body(default=None, embed=True),
 ):
     """
     异步执行全部 5 阶段分析
@@ -217,7 +256,7 @@ async def run_all_stages(
 
     # 后台执行，不阻塞
     import asyncio
-    asyncio.create_task(_execute_all_stages(case_id, defendant, crime_type))
+    asyncio.create_task(_execute_all_stages(case_id, defendant, crime_type, indictment_file=indictment_file))
 
     return {
         "success": True,
@@ -232,6 +271,7 @@ async def run_single_stage(
     stage_num: int,
     defendant: str = Body(..., embed=True),
     crime_type: Optional[str] = Body(default=None, embed=True),
+    indictment_file: Optional[str] = Body(default=None, embed=True),
 ):
     """
     单独执行某个阶段（支持 51/52/53 子阶段）
@@ -243,7 +283,7 @@ async def run_single_stage(
     if not case_path:
         raise HTTPException(status_code=404, detail="案件不存在")
 
-    engine = AnalysisEngine(case_id, case_path)
+    engine = AnalysisEngine(case_id, case_path, indictment_file=indictment_file)
 
     stage_methods = {
         1: lambda: engine.stage_1_read_indictment(defendant, crime_type),
