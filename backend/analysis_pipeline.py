@@ -111,6 +111,23 @@ def infer_evidence_type(filename: str) -> str:
         return "其他证据"
 
 
+async def _classify_document_type(llm, text: str) -> str:
+    """用 LLM 判断一段文书文本是「起诉书」还是「起诉意见书」还是「其他」"""
+    try:
+        result = await llm.chat([
+            {"role": "system", "content": "你是刑事律师助手。请判断以下文书的类型。只回答：起诉书 / 起诉意见书 / 其他。不要解释。"},
+            {"role": "user", "content": f"请判断以下文书的类型（只回答：起诉书 / 起诉意见书 / 其他）：\n\n{text[:3000]}"},
+        ])
+        result = result.strip()
+        if "起诉意见书" in result:
+            return "起诉意见书"
+        if "起诉书" in result:
+            return "起诉书"
+    except Exception:
+        pass
+    return "其他"
+
+
 def _split_sessions(text: str) -> list[dict]:
     """
     按时间分隔出单次笔录
@@ -162,6 +179,41 @@ class AnalysisPipeline:
                     "type": infer_evidence_type(f.name),
                 })
         return files
+
+    async def _find_indictment_in_md_files(self) -> tuple[str, str]:
+        """在所有 MD 文件中找到起诉书或起诉意见书。
+        返回 (文书内容, 文书类型)，都没找到返回 ("", "")。
+        """
+        md_files = self._load_md_files()
+
+        # 起诉书常见标题
+        INDICTMENT_PATTERNS = ["起诉书", "公诉书", "起诉书副本"]
+        # 起诉意见书常见标题
+        OPINION_PATTERNS = ["起诉意见书", "呈请起诉", "起诉报告"]
+
+        indictment_candidates = []
+        opinion_candidates = []
+
+        for f in md_files:
+            head = f["text"][:3000]
+            if any(p in head for p in INDICTMENT_PATTERNS):
+                indictment_candidates.append(f)
+            if any(p in head for p in OPINION_PATTERNS):
+                opinion_candidates.append(f)
+
+        # 优先确认起诉书
+        for f in indictment_candidates:
+            doc_type = await _classify_document_type(self.llm, f["text"][:5000])
+            if doc_type == "起诉书":
+                return f["text"][:40000], "起诉书"
+
+        # 再确认起诉意见书
+        for f in opinion_candidates:
+            doc_type = await _classify_document_type(self.llm, f["text"][:5000])
+            if doc_type == "起诉意见书":
+                return f["text"][:40000], "起诉意见书"
+
+        return "", ""
 
     def _save_step_result(self, step: int, data: dict):
         """保存步骤结果到 JSON"""
@@ -627,19 +679,7 @@ class AnalysisPipeline:
 
         # ===== 4a: 指控要素分析（起诉书 > 起诉意见书） =====
         if not self._wiki_page_exists("", "01-指控要素.md"):
-            indictment_text = ""
-            indictment_type = ""
-            for f in self._load_md_files():
-                if f["type"] == "起诉书":
-                    indictment_text = f["text"][:40000]
-                    indictment_type = "起诉书"
-                    break
-            if not indictment_text:
-                for f in self._load_md_files():
-                    if f["type"] == "起诉意见书":
-                        indictment_text = f["text"][:40000]
-                        indictment_type = "起诉意见书"
-                        break
+            indictment_text, indictment_type = await self._find_indictment_in_md_files()
 
             if indictment_text:
                 print(f"[步骤 4a] 分析{indictment_type}...")
@@ -666,7 +706,7 @@ class AnalysisPipeline:
                     self._save_wiki_page("", "01-指控要素.md", f"分析失败：{e}")
                     results_log["sub_steps"].append({"step": "4a", "name": "指控要素分析", "status": "failed", "error": str(e)})
             else:
-                self._save_wiki_page("", "01-指控要素.md", "本案无起诉意见书")
+                self._save_wiki_page("", "01-指控要素.md", "本案未发现起诉书或起诉意见书")
                 results_log["sub_steps"].append({"step": "4a", "name": "指控要素分析", "status": "no_indictment"})
         else:
             results_log["sub_steps"].append({"step": "4a", "name": "指控要素分析", "status": "skipped"})
