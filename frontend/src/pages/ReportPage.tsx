@@ -7,6 +7,7 @@ import { FileText, Loader2, Send, Download, Check,
   Gavel, Phone, Mail, Building2, StickyNote, Edit3, Play, Swords
 } from 'lucide-react'
 import { api } from '../api'
+import { showAlert } from '../components/MacOSDialog'
 import { marked } from 'marked'
 
 // 配置 marked 使用同步解析
@@ -198,9 +199,24 @@ export function ReportPage() {
     if (!caseId || !defendant) return
     setAnalysisRunning(true)
     try {
-      await api.resumePipeline(caseId, defendant)
-      loadDefenseStages()
-    } catch {
+      const result = await api.resumePipeline(caseId, defendant)
+      if (result.success) {
+        if (result.all_done) {
+          setNextStep(null)
+          showAlert({ title: '分析完成', message: '所有分析步骤已完成，可以查看完整报告。', variant: 'success' })
+        } else {
+          setNextStep(result.next_step ?? null)
+          showAlert({ title: '步骤完成', message: `步骤 ${result.step} 已完成`, variant: 'info' })
+        }
+        // 刷新分析状态
+        loadDefenseStages()
+      } else {
+        throw new Error(result.detail || result.error || '继续分析失败')
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '继续分析失败'
+      showAlert({ title: '分析失败', message: msg, variant: 'danger' })
+    } finally {
       setAnalysisRunning(false)
     }
   }, [caseId, defendant, loadDefenseStages])
