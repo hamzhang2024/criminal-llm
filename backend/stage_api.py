@@ -193,22 +193,27 @@ async def _execute_all_stages(case_id: str, defendant: str, crime_type: Optional
         _set_progress(case_id, 0, "开始 5 阶段分析...")
 
         # 阶段 1
+        ANALYSIS_TASKS[case_id] = {"status": "running", "current_stage": 1}
         _set_progress(case_id, 1, "正在分析起诉书，提取指控要素...")
         r1 = await engine.stage_1_read_indictment(defendant, crime_type)
 
         # 阶段 2
+        ANALYSIS_TASKS[case_id] = {"status": "running", "current_stage": 2}
         _set_progress(case_id, 2, "正在分析人物关系...")
         r2 = await engine.stage_2_character_relations(defendant, crime_type)
 
         # 阶段 3
+        ANALYSIS_TASKS[case_id] = {"status": "running", "current_stage": 3}
         _set_progress(case_id, 3, "正在分析事件时间线和证据归组...")
         r3 = await engine.stage_3_event_timeline(defendant, crime_type)
 
         # 阶段 4
+        ANALYSIS_TASKS[case_id] = {"status": "running", "current_stage": 4}
         _set_progress(case_id, 4, f"正在梳理{crime_type or '涉案罪名'}相关法律法规...")
         r4 = await engine.stage_4_legal_regulations(defendant, crime_type)
 
         # 阶段 5
+        ANALYSIS_TASKS[case_id] = {"status": "running", "current_stage": 5}
         _set_progress(case_id, 5, "正在生成综合辩护分析报告...")
         r5 = await engine.stage_5_full_defense(defendant, crime_type)
 
@@ -276,27 +281,31 @@ async def run_single_stage(
     """
     单独执行某个阶段（支持 51/52/53 子阶段）
     """
-    if not (1 <= stage_num <= 5 or stage_num in (45, 51, 52, 53)):
-        raise HTTPException(status_code=400, detail="无效阶段编号，请输入 1-5、45 或 51-53")
+    if not (1 <= stage_num <= 6 or stage_num in (51, 52, 53)):
+        raise HTTPException(status_code=400, detail="无效阶段编号，请输入 1-6 或 51-53")
 
     case_path = find_case_path(case_id)
     if not case_path:
         raise HTTPException(status_code=404, detail="案件不存在")
 
-    # 阶段 45 需要 AnalysisPipeline
-    if stage_num == 45:
+    # 阶段 6 需要 AnalysisPipeline
+    if stage_num == 6:
         pipeline = AnalysisPipeline(case_id, case_path, indictment_file=indictment_file)
 
-        _set_progress(case_id, stage_num, "正在执行阶段 45：控辩对抗模拟...")
+        ANALYSIS_TASKS[case_id] = {"status": "running", "current_stage": stage_num}
+        _set_progress(case_id, stage_num, "正在执行阶段 6：控辩对抗模拟...")
         try:
             result = await pipeline.step45_debate_simulation(defendant, crime_type)
             _clear_progress(case_id)
+            ANALYSIS_TASKS[case_id] = {"status": "completed", "stages": 1}
             return {"success": True, "stage": stage_num, "data": result}
         except ValueError as e:
             _clear_progress(case_id)
+            ANALYSIS_TASKS.pop(case_id, None)
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
             _clear_progress(case_id)
+            ANALYSIS_TASKS.pop(case_id, None)
             raise HTTPException(status_code=500, detail=f"阶段 {stage_num} 执行失败: {str(e)}")
 
     engine = AnalysisEngine(case_id, case_path, indictment_file=indictment_file)
@@ -307,6 +316,7 @@ async def run_single_stage(
         3: lambda: engine.stage_3_event_timeline(defendant, crime_type),
         4: lambda: engine.stage_4_legal_regulations(defendant, crime_type),
         5: lambda: engine.stage_5_full_defense(defendant, crime_type),
+        6: lambda: AnalysisPipeline(case_id, case_path, indictment_file=indictment_file).step45_debate_simulation(defendant, crime_type),
         51: lambda: _run_sub_stage(engine, "evidence_analysis", defendant, crime_type),
         52: lambda: _run_sub_stage(engine, "contradiction_analysis", defendant, crime_type),
         53: lambda: _run_sub_stage(engine, "three_tier_defense", defendant, crime_type),
@@ -318,23 +328,27 @@ async def run_single_stage(
         3: "事件拆解",
         4: "法律法规",
         5: "综合辩护分析",
-        45: "控辩对抗",
+        6: "控辩对抗",
         51: "证据分析",
         52: "矛盾分析",
         53: "三阶层辩护",
     }
 
+    ANALYSIS_TASKS[case_id] = {"status": "running", "current_stage": stage_num}
     _set_progress(case_id, stage_num, f"正在执行阶段 {stage_num}：{stage_names[stage_num]}...")
 
     try:
         result = await stage_methods[stage_num]()
         _clear_progress(case_id)
+        ANALYSIS_TASKS[case_id] = {"status": "completed", "stages": 1}
         return {"success": True, "stage": stage_num, "data": result}
     except ValueError as e:
         _clear_progress(case_id)
+        ANALYSIS_TASKS.pop(case_id, None)
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         _clear_progress(case_id)
+        ANALYSIS_TASKS.pop(case_id, None)
         raise HTTPException(status_code=500, detail=f"阶段 {stage_num} 执行失败: {str(e)}")
 
 
@@ -362,13 +376,13 @@ async def get_status(case_id: str):
         3: "事件拆解",
         4: "法律法规",
         5: "综合辩护分析",
-        45: "控辩对抗",
+        6: "控辩对抗",
         51: "证据分析",
         52: "矛盾分析",
         53: "三阶层辩护",
     }
 
-    for stage in [1, 2, 3, 4, 5, 45, 51, 52, 53]:
+    for stage in [1, 2, 3, 4, 5, 6, 51, 52, 53]:
         result_file = analysis_dir / f"stage_{stage}" / "output.json"
         status[f"stage_{stage}"] = {
             "name": stage_names[stage],
@@ -383,7 +397,7 @@ async def get_status(case_id: str):
 @router.get("/{case_id}/stage/{stage_num}/result")
 async def get_stage_result(case_id: str, stage_num: int):
     """获取指定阶段的分析结果（支持 51/52/53 子阶段）"""
-    if not (1 <= stage_num <= 5 or stage_num in (45, 51, 52, 53)):
+    if not (1 <= stage_num <= 6 or stage_num in (51, 52, 53)):
         raise HTTPException(status_code=400, detail="无效阶段编号")
 
     case_path = find_case_path(case_id)
@@ -400,8 +414,8 @@ async def get_stage_result(case_id: str, stage_num: int):
 
 @router.get("/{case_id}/stage/{stage_num}/markdown")
 async def get_stage_markdown(case_id: str, stage_num: int):
-    """获取指定阶段的 Markdown 输出（支持 1-5、45 控辩对抗、51/52/53 子阶段）"""
-    valid_stages = set(range(1, 6)) | {45, 51, 52, 53}
+    """获取指定阶段的 Markdown 输出（支持 1-6、6 控辩对抗、51/52/53 子阶段）"""
+    valid_stages = set(range(1, 7)) | {51, 52, 53}
     if stage_num not in valid_stages:
         raise HTTPException(status_code=400, detail="无效阶段编号")
 
@@ -409,8 +423,8 @@ async def get_stage_markdown(case_id: str, stage_num: int):
     if not case_path:
         raise HTTPException(status_code=404, detail="案件不存在")
 
-    # 阶段 45 的路径特殊处理
-    if stage_num == 45:
+    # 阶段 6 的路径特殊处理
+    if stage_num == 6:
         md_file = case_path / "analysis" / "04.5-控辩对抗" / "对抗分析.md"
     else:
         md_file = case_path / "analysis" / f"stage_{stage_num}" / "output.md"
@@ -444,7 +458,7 @@ async def save_stage_markdown(
     content: str = Body(..., embed=True),
 ):
     """保存指定阶段的 Markdown 内容到磁盘"""
-    valid_stages = set(range(1, 6)) | {45, 51, 52, 53}
+    valid_stages = set(range(1, 7)) | {51, 52, 53}
     if stage_num not in valid_stages:
         raise HTTPException(status_code=400, detail="无效阶段编号")
 
@@ -452,7 +466,7 @@ async def save_stage_markdown(
     if not case_path:
         raise HTTPException(status_code=404, detail="案件不存在")
 
-    if stage_num == 45:
+    if stage_num == 6:
         md_file = case_path / "analysis" / "04.5-控辩对抗" / "对抗分析.md"
     elif stage_num in (51, 52, 53):
         md_file = case_path / "analysis" / f"stage_{stage_num}" / "output.md"

@@ -87,14 +87,23 @@ export function CaseDetailPage() {
     api.getStageStatus(caseId!)
       .then(status => {
         const stages = status?.status || {}
-        const stageMap: Record<string, number> = { stage_1: 1, stage_2: 2, stage_3: 3, stage_4: 4, stage_5: 5 }
+        const stageMap: Record<string, number> = { stage_1: 1, stage_2: 2, stage_3: 3, stage_4: 4, stage_5: 5, stage_6: 6, stage_51: 51, stage_52: 52, stage_53: 53 }
         const newStatus: Record<number, 'idle' | 'completed'> = {}
         for (const [key, num] of Object.entries(stageMap)) {
           if (stages[key]?.completed) newStatus[num] = 'completed'
         }
         if (Object.keys(newStatus).length > 0) setStageStatus(prev => ({ ...prev, ...newStatus }))
-        if (stages.stage_5?.completed && stages.stage_51?.completed && stages.stage_52?.completed && stages.stage_53?.completed) {
+        if (stages.stage_5?.completed && stages.stage_51?.completed && stages.stage_52?.completed && stages.stage_53?.completed && stages.stage_6?.completed) {
           setAnalysisCompleted(true)
+        }
+        // 恢复运行中的阶段状态
+        const task = status?.task
+        if (task?.status === 'running') {
+          const runningStage = task.current_stage
+          if (runningStage) {
+            setStageStatus(prev => ({ ...prev, [runningStage]: 'running' }))
+            setRunningStage(runningStage)
+          }
         }
       })
       .catch(() => { /* 无分析状态 */ })
@@ -795,14 +804,14 @@ export function CaseDetailPage() {
   const [evidenceExtracted, setEvidenceExtracted] = useState(false)
   const [analysisCompleted, setAnalysisCompleted] = useState(false)
 
-  // 5 阶段独立控制
+  // 6 阶段独立控制（控辩对抗放在最后）
   const STAGES = [
     { num: 1, name: '指控要素', desc: '读取起诉书，提取指控要素' },
     { num: 2, name: '人物关系', desc: '构建人物关系图谱' },
     { num: 3, name: '事件拆解', desc: '梳理事件时间线，拆解事件' },
     { num: 4, name: '法律法规', desc: '梳理涉案法律法规' },
-    { num: 45, name: '控辩对抗', desc: '红蓝对抗，生成攻防对照表' },
     { num: 5, name: '综合辩护', desc: '证据分析 + 矛盾分析 + 三阶层辩护' },
+    { num: 6, name: '控辩对抗', desc: '红蓝对抗，生成攻防对照表' },
   ]
   const [stageStatus, setStageStatus] = useState<Record<number, 'idle' | 'running' | 'completed' | 'error'>>({})
   const [stageMessages, setStageMessages] = useState<Record<number, string>>({})
@@ -842,7 +851,7 @@ export function CaseDetailPage() {
       // 检查所有阶段是否完成
       const status = await api.getStageStatus(caseId!)
       const stages = status?.status || {}
-      const allDone = [1, 2, 3, 4, 45, 5].every(s => stages[`stage_${s}`]?.completed)
+      const allDone = [1, 2, 3, 4, 5, 6].every(s => stages[`stage_${s}`]?.completed)
       if (allDone) {
         setAnalysisCompleted(true)
         setProgress('✅ 6 阶段分析全部完成！')

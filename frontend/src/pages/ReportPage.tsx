@@ -47,7 +47,7 @@ const TABS = [
   { key: 'stage_4', label: '法律法规', icon: BookOpen, color: '#6b2765', bgColor: 'rgba(107,39,101,0.08)' },
   { key: 'stage_51', label: '证据列表', icon: Eye, color: '#1a6b6a', bgColor: 'rgba(26,107,106,0.08)' },
   { key: 'stage_52', label: '矛盾分析', icon: GitCompareArrows, color: '#991b1b', bgColor: 'rgba(153,27,27,0.08)' },
-  { key: 'stage_45', label: '控辩对抗', icon: Swords, color: '#7c3aed', bgColor: 'rgba(124,58,237,0.08)' },
+  { key: 'stage_6', label: '控辩对抗', icon: Swords, color: '#7c3aed', bgColor: 'rgba(124,58,237,0.08)' },
   { key: 'stage_53', label: '三阶层分析', icon: Scale, color: '#831843', bgColor: 'rgba(131,24,67,0.08)' },
   { key: 'full', label: '完整报告', icon: FileText, color: '#1e3a5f', bgColor: 'rgba(30,58,95,0.08)' },
 ]
@@ -202,7 +202,7 @@ export function ReportPage() {
     stage_4: '4',
     stage_51: '5a',
     stage_52: '5b',
-    stage_45: '45',
+    stage_6: '6',
     stage_53: '5f',
     full: 'final',
   }
@@ -322,10 +322,10 @@ export function ReportPage() {
         }
       }
 
-      // 加载控辩对抗（阶段 45）
+      // 加载控辩对抗（阶段 6）
       try {
-        const md = await api.getStageMarkdown(caseId, 45)
-        content['stage_45'] = md.content || ''
+        const md = await api.getStageMarkdown(caseId, 6)
+        content['stage_6'] = md.content || ''
       } catch { /* ignore */ }
 
       try {
