@@ -1963,7 +1963,6 @@ export function CaseDetailPage() {
                     <div style={{ marginTop: '8px', fontSize: '12px', color: 'var(--macos-text-tertiary)' }}>
                       📂 数据来源：{
                         currentStep === 1 ? '原始文件 (original/) → 处理后 (processed/)' :
-                        currentStep === 2 ? 'PDF 处理后 (processed/)' :
                         currentStep === 3 ? '证据目录 (evidence/) + MD 文件' :
                         'MD 文件 (md/)'
                       }
