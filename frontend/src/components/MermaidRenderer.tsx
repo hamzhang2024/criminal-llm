@@ -98,12 +98,12 @@ export function MermaidRenderer({ code }: MermaidRendererProps) {
       {rendered && (
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 10px', background: '#f5f5f7', borderRadius: '6px', fontSize: '12px' }}>
           <button onClick={() => setZoom(z => Math.max(z - 0.2, 0.4))}
-            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px', color: '#007aff', padding: '0 4px' }}>−</button>
+            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px', color: 'var(--macos-accent)', padding: '0 4px' }}>−</button>
           <span style={{ color: 'var(--macos-text-secondary)', minWidth: '40px', textAlign: 'center' }}>{Math.round(zoom * 100)}%</span>
           <button onClick={() => setZoom(z => Math.min(z + 0.2, 3))}
-            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px', color: '#007aff', padding: '0 4px' }}>+</button>
+            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px', color: 'var(--macos-accent)', padding: '0 4px' }}>+</button>
           <button onClick={() => setZoom(1.2)}
-            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '11px', color: '#007aff', marginLeft: '4px' }}>重置</button>
+            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '11px', color: 'var(--macos-accent)', marginLeft: '4px' }}>重置</button>
         </div>
       )}
       {/* 可滚动的图容器 */}

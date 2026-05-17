@@ -82,7 +82,7 @@ function DialogRenderer({ dialog, onClose }: { dialog: DialogState; onClose: () 
   const variantConfig: Record<DialogVariant, { icon: typeof Info; color: string; bg: string }> = {
     danger: { icon: XCircle, color: '#ff3b30', bg: 'rgba(255, 59, 48, 0.1)' },
     warning: { icon: AlertTriangle, color: '#ff9500', bg: 'rgba(255, 149, 0, 0.1)' },
-    info: { icon: Info, color: '#007aff', bg: 'rgba(0, 122, 255, 0.1)' },
+    info: { icon: Info, color: 'var(--macos-accent)', bg: 'rgba(30, 58, 95, 0.1)' },
     success: { icon: CheckCircle, color: '#34c759', bg: 'rgba(52, 199, 89, 0.1)' },
   }
 
@@ -90,12 +90,14 @@ function DialogRenderer({ dialog, onClose }: { dialog: DialogState; onClose: () 
 
   return (
     <div
-      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100001 }}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.3)', backdropFilter: 'blur(12px) saturate(180%)', WebkitBackdropFilter: 'blur(12px) saturate(180%)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100001 }}
       onClick={dialog.type === 'alert' ? onClose : undefined}
     >
       <div
         style={{
-          background: '#ffffff',
+          background: 'rgba(255, 255, 255, 0.72)',
+          backdropFilter: 'blur(20px) saturate(180%)',
+          WebkitBackdropFilter: 'blur(20px) saturate(180%)',
           borderRadius: '14px',
           padding: '24px',
           maxWidth: '400px',
@@ -119,7 +121,7 @@ function DialogRenderer({ dialog, onClose }: { dialog: DialogState; onClose: () 
             <Icon className="w-5 h-5" color={color} />
           </div>
           <div style={{ flex: 1 }}>
-            <h3 style={{ fontSize: '15px', fontWeight: '600', marginBottom: '6px', color: '#1d1d1f' }}>
+            <h3 style={{ fontSize: '15px', fontWeight: '600', marginBottom: '6px', color: 'var(--macos-text-primary)' }}>
               {dialog.title}
             </h3>
             <p style={{ fontSize: '13px', color: '#6e6e73', lineHeight: '1.5', margin: 0 }}>
@@ -158,7 +160,7 @@ function DialogRenderer({ dialog, onClose }: { dialog: DialogState; onClose: () 
               padding: '8px 18px',
               borderRadius: '8px',
               border: 'none',
-              background: dialog.variant === 'danger' ? '#ff3b30' : '#007aff',
+              background: dialog.variant === 'danger' ? '#ff3b30' : 'var(--macos-accent)',
               color: '#fff',
               fontSize: '13px',
               fontWeight: '500',

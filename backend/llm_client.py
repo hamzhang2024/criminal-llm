@@ -4,6 +4,7 @@ LLM 客户端 - 支持多种 LLM 提供商
 从应用配置 (DATA_DIR/criminal-llm-config.json) 获取 API Key、Base URL 和模型
 """
 import httpx
+import time
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 
@@ -58,6 +59,20 @@ class LLMClient:
         self.timeout = 600.0
         self.client = httpx.AsyncClient(timeout=self.timeout)
 
+        # 并发限流保护器
+        try:
+            from concurrency_controller import ConcurrencyController
+            from config_manager import load_config
+            config = load_config()
+            initial = config.get("evidence_concurrency", 3)
+            self.concurrency_controller = ConcurrencyController(
+                initial=initial,
+            )
+            print(f"[LLM 客户端] 限流保护已启用: 初始并发={initial}")
+        except Exception as e:
+            self.concurrency_controller = None
+            print(f"[LLM 客户端] 并发控制器加载失败: {e}")
+
         print(f"[LLM 客户端] baseUrl: {base_url}")
         print(f"[LLM 客户端] model: {default_model}")
         print(f"[LLM 客户端] apiKey: {'已配置' if api_key else '未配置'}")
@@ -104,10 +119,16 @@ class LLMClient:
 
         # 重试 5 次，指数退避
         last_error = None
+        start_time = time.time() if 'time' not in dir() else None
         for attempt in range(5):
             try:
+                req_start = time.time()
                 response = await self.client.post(url, json=payload, headers=headers)
                 response.raise_for_status()
+                latency_ms = (time.time() - req_start) * 1000
+
+                if self.concurrency_controller:
+                    self.concurrency_controller.record_success(latency_ms)
 
                 data = response.json()
 
@@ -117,11 +138,15 @@ class LLMClient:
                 return str(data)
             except (httpx.ReadTimeout, httpx.ConnectTimeout) as e:
                 last_error = e
+                if self.concurrency_controller:
+                    self.concurrency_controller.record_timeout()
                 import asyncio
                 wait = 5 * (attempt + 1)  # 5s, 10s, 15s, 20s, 25s
                 print(f"[LLM 超时] 第 {attempt+1}/5 次重试，等待 {wait}s...")
                 await asyncio.sleep(wait)
             except httpx.HTTPStatusError as e:
+                if self.concurrency_controller:
+                    self.concurrency_controller.record_error(str(e.response.status_code))
                 error_body = e.response.text[:500] if e.response else "无响应内容"
                 raise Exception(f"API 请求失败：{e.response.status_code}\n{error_body}")
 

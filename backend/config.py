@@ -23,8 +23,12 @@ else:
         # 桌面应用模式：数据目录在文稿目录（隐藏）
         DATA_DIR = Path.home() / "Documents" / ".criminal-llm-data"
     else:
-        # 开发模式：使用项目目录
-        DATA_DIR = Path(__file__).parent.parent / "data"
+        # 开发模式：优先使用用户数据目录，回退到项目目录
+        _user_data = Path.home() / "Documents" / ".criminal-llm-data"
+        if _user_data.exists():
+            DATA_DIR = _user_data
+        else:
+            DATA_DIR = Path(__file__).parent.parent / "data"
 
 # 确保数据目录存在
 if not DATA_DIR.exists():

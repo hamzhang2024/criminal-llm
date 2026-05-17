@@ -582,7 +582,12 @@ def _fold_consecutive_images(text: str, min_count: int = 1) -> Tuple[str, int]:
 
 # ═══════════════════════════════════════════════════════════
 # 2. MinerU API 转换（最高质量）
-def _mineru_convert(pdf_path: Path, output_dir: Path, timeout: int = 3600) -> Optional[tuple[str, Optional[Path]]]:
+def _mineru_convert(
+    pdf_path: Path,
+    output_dir: Path,
+    timeout: int = 3600,
+    progress_cb: Optional[callable] = None,
+) -> Optional[tuple[str, Optional[Path]]]:
     """使用 MinerU API 转换 PDF → MD，自动处理超大文件
 
     MinerU 使用 auto 模式，内部智能判断每页是否需要 OCR。
@@ -616,7 +621,7 @@ def _mineru_convert(pdf_path: Path, output_dir: Path, timeout: int = 3600) -> Op
                 chunk_output = output_dir / f"{temp_prefix}_{chunk_index}"
                 chunk_output.mkdir(parents=True, exist_ok=True)
                 print(f"[分段转换] 开始处理 chunk {chunk_index}: {chunk_path.name}")
-                result = _mineru_convert_single(chunk_path, chunk_output, timeout)
+                result = _mineru_convert_single(chunk_path, chunk_output, timeout, progress_cb)
                 chunk_path.unlink(missing_ok=True)  # 清理临时分段文件
                 if result and result[0]:
                     print(f"[分段转换] chunk {chunk_index} 成功: {len(result[0])} 字符")
@@ -668,14 +673,22 @@ def _mineru_convert(pdf_path: Path, output_dir: Path, timeout: int = 3600) -> Op
             return merged_text, merged_images_dir
 
     # 页数正常，直接调用
-    return _mineru_convert_single(pdf_path, output_dir, timeout)
+    return _mineru_convert_single(pdf_path, output_dir, timeout, progress_cb)
 
 
-def _mineru_convert_single(pdf_path: Path, output_dir: Path, timeout: int = 3600) -> Optional[tuple[str, Optional[Path]]]:
+def _mineru_convert_single(
+    pdf_path: Path,
+    output_dir: Path,
+    timeout: int = 3600,
+    progress_cb: Optional[callable] = None,
+) -> Optional[tuple[str, Optional[Path]]]:
     """使用 MinerU API 转换单个 PDF → MD（调用方已确保文件大小在限制内）
 
     直接使用 full.md（MinerU 最佳输出），并应用 OCR 纠错规则。
     图片目录会被保留并移动到输出目录。
+
+    Args:
+        progress_cb: 可选的进度回调，签名 (stage: str, detail: str)
     """
     token = _get_mineru_token()
     if not token:
@@ -685,7 +698,9 @@ def _mineru_convert_single(pdf_path: Path, output_dir: Path, timeout: int = 3600
     stem = pdf_path.stem
 
     try:
-        # 1. 获取上传链接
+        # 1. 提交转换任务
+        if progress_cb:
+            progress_cb("submitting", "正在提交转换任务...")
         resp = requests.post(
             f"{MINERU_API}/file-urls/batch",
             headers={"Authorization": f"Bearer {token}"},
@@ -710,14 +725,18 @@ def _mineru_convert_single(pdf_path: Path, output_dir: Path, timeout: int = 3600
         upload_url = result["data"]["file_urls"][0]
         print(f"[MinerU] 开始上传 {pdf_path.name} (batch_id={batch_id})")
 
-        # 2. 上传
+        # 2. 发送文件
+        if progress_cb:
+            progress_cb("uploading", "正在发送文件...")
         with open(pdf_path, "rb") as f:
             r = requests.put(upload_url, data=f.read(), timeout=120)
         if r.status_code not in (200, 203):
             print(f"[MinerU] 上传失败: {pdf_path.name}, HTTP {r.status_code}")
             return None, None
 
-        # 3. 轮询等待
+        # 3. 等待云端处理
+        if progress_cb:
+            progress_cb("processing", "正在识别文本内容...")
         waited = 0
         while waited < timeout:
             r = requests.get(
@@ -728,13 +747,20 @@ def _mineru_convert_single(pdf_path: Path, output_dir: Path, timeout: int = 3600
             data = r.json().get("data", {})
             results = data.get("extract_result", [])
             if not results:
-                time.sleep(5); waited += 5; continue
+                time.sleep(5); waited += 5
+                if progress_cb:
+                    progress_cb("processing", f"正在识别文本内容...（已等待 {waited} 秒）")
+                continue
 
             state = results[0].get("state")
             if state == "done":
                 print(f"[MinerU] 转换完成 {pdf_path.name}，下载结果中...")
+                if progress_cb:
+                    progress_cb("processing", "正在识别文本内容...")
 
-                # 4. 下载解压到临时子目录（不影响共享 output_dir 中其他文件）
+                # 4. 获取结果
+                if progress_cb:
+                    progress_cb("downloading", "正在生成结构化文本...")
                 temp_dir = output_dir / f"_tmp_mineru_{stem}"
                 temp_dir.mkdir(parents=True, exist_ok=True)
                 zip_path = temp_dir / f"{stem}.zip"
@@ -743,7 +769,9 @@ def _mineru_convert_single(pdf_path: Path, output_dir: Path, timeout: int = 3600
                     zf.extractall(temp_dir)
                 zip_path.unlink()
 
-                # 5. 使用 full.md（MinerU 最佳输出）
+                # 5. 解析输出
+                if progress_cb:
+                    progress_cb("parsing", "正在解析输出...")
                 full_md = temp_dir / "full.md"
                 if full_md.exists():
                     text = full_md.read_text(encoding="utf-8")
@@ -804,6 +832,7 @@ def get_evidence_text(
     pdf_path: str,
     prefer_md: bool = True,
     output_dir: Optional[str] = None,
+    progress_cb: Optional[callable] = None,
 ) -> Tuple[str, Optional[str]]:
     """
     获取证据文本
@@ -816,6 +845,7 @@ def get_evidence_text(
         pdf_path: PDF 文件路径
         prefer_md: 是否优先使用 MD 缓存（默认 True）
         output_dir: MD 保存目录（默认与 PDF 同目录）
+        progress_cb: 可选的进度回调 (stage: str, detail: str)
 
     Returns:
         (Markdown 格式的文字, 图片目录路径或 None)
@@ -848,7 +878,7 @@ def get_evidence_text(
             return cached, None
 
     # 2. 调用 MinerU 转换
-    text, images_dir = _mineru_convert(pdf, out)
+    text, images_dir = _mineru_convert(pdf, out, progress_cb=progress_cb)
 
     if text is not None:
         _save_to_dir(pdf, text, out)

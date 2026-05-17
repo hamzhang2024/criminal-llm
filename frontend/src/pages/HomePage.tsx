@@ -169,7 +169,7 @@ export function HomePage() {
   }, [loadData])
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: '#ffffff', overflow: 'hidden' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: 'var(--macos-bg-primary)', overflow: 'hidden' }}>
       <MacOSTitlebar />
       <MacOSToolbar title="刑事案卷分析系统">
         <MacOSButton variant="primary" icon={PlusCircle} onClick={() => setShowNewCase(true)}>
@@ -286,7 +286,7 @@ export function HomePage() {
                           alignItems: 'center',
                           justifyContent: 'center'
                         }}>
-                          <FileText className="w-6 h-6" color="#007aff" />
+                          <FileText className="w-6 h-6" color="var(--macos-accent)" />
                         </div>
                         <div>
                           <h3 style={{ fontSize: '16px', fontWeight: '600', marginBottom: '4px' }}>{caseItem.name}</h3>
@@ -312,9 +312,9 @@ export function HomePage() {
                         padding: '3px 10px',
                         borderRadius: '10px',
                         background: caseItem.status === 'done' ? 'rgba(52, 199, 89, 0.1)' :
-                                   caseItem.status === 'processing' ? 'rgba(255, 149, 0, 0.1)' : 'rgba(0, 122, 255, 0.1)',
-                        color: caseItem.status === 'done' ? '#34c759' :
-                               caseItem.status === 'processing' ? '#ff9500' : '#007aff'
+                                   caseItem.status === 'processing' ? 'rgba(255, 149, 0, 0.1)' : 'rgba(30, 58, 95, 0.1)',
+                        color: caseItem.status === 'done' ? '#2d8f3d' :
+                               caseItem.status === 'processing' ? '#ff9500' : 'var(--macos-accent)'
                       }}>
                         {caseItem.status === 'done' ? '已完成' :
                          caseItem.status === 'processing' ? '处理中' : '新建'}
@@ -329,13 +329,16 @@ export function HomePage() {
                       style={{
                         flex: 1,
                         padding: '6px',
-                        background: '#007aff',
+                        background: 'var(--macos-accent)',
                         color: 'white',
                         border: 'none',
                         borderRadius: '6px',
                         cursor: 'pointer',
-                        fontSize: '12px'
+                        fontSize: '12px',
+                        transition: 'background 0.15s ease',
                       }}
+                      onMouseEnter={e => e.currentTarget.style.background = 'var(--macos-accent-hover)'}
+                      onMouseLeave={e => e.currentTarget.style.background = 'var(--macos-accent)'}
                     >
                       打开
                     </button>
@@ -402,7 +405,7 @@ export function HomePage() {
                         style={{
                           flex: 1,
                           padding: '6px',
-                          background: '#007aff',
+                          background: 'var(--macos-accent)',
                           color: 'white',
                           border: 'none',
                           borderRadius: '6px',
@@ -548,7 +551,7 @@ export function HomePage() {
                 style={{
                   flex: 1,
                   padding: '10px',
-                  background: '#007aff',
+                  background: 'var(--macos-accent)',
                   color: 'white',
                   border: 'none',
                   borderRadius: '8px',

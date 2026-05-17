@@ -16,6 +16,7 @@ CONFIG_PATH = DATA_DIR / "criminal-llm-config.json"
 DEFAULTS = {
     "llm_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
     "llm_model": "qwen3.5-plus",
+    "evidence_concurrency": 3,
 }
 
 
@@ -53,6 +54,7 @@ def get_config_status() -> Dict[str, Any]:
         "llm_api_key_value": config.get("llm_api_key", ""),
         "llm_base_url": config.get("llm_base_url", ""),
         "llm_model": config.get("llm_model", ""),
+        "evidence_concurrency": config.get("evidence_concurrency", 3),
     }
 
 

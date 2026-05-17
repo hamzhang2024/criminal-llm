@@ -382,15 +382,21 @@ async def get_stage_result(case_id: str, stage_num: int):
 
 @router.get("/{case_id}/stage/{stage_num}/markdown")
 async def get_stage_markdown(case_id: str, stage_num: int):
-    """获取指定阶段的 Markdown 输出（支持 51/52/53 子阶段）"""
-    if not (1 <= stage_num <= 5 or stage_num in (51, 52, 53)):
+    """获取指定阶段的 Markdown 输出（支持 1-5、45 控辩对抗、51/52/53 子阶段）"""
+    valid_stages = set(range(1, 6)) | {45, 51, 52, 53}
+    if stage_num not in valid_stages:
         raise HTTPException(status_code=400, detail="无效阶段编号")
 
     case_path = find_case_path(case_id)
     if not case_path:
         raise HTTPException(status_code=404, detail="案件不存在")
 
-    md_file = case_path / "analysis" / f"stage_{stage_num}" / "output.md"
+    # 阶段 45 的路径特殊处理
+    if stage_num == 45:
+        md_file = case_path / "analysis" / "04.5-控辩对抗" / "对抗分析.md"
+    else:
+        md_file = case_path / "analysis" / f"stage_{stage_num}" / "output.md"
+
     if not md_file.exists():
         raise HTTPException(status_code=404, detail=f"阶段 {stage_num} 的 Markdown 不存在")
 
@@ -411,3 +417,48 @@ async def get_full_report(case_id: str):
 
     content = report_file.read_text(encoding="utf-8")
     return {"case_id": case_id, "content": content}
+
+
+@router.put("/{case_id}/stage/{stage_num}/markdown")
+async def save_stage_markdown(
+    case_id: str,
+    stage_num: int,
+    content: str = Body(..., embed=True),
+):
+    """保存指定阶段的 Markdown 内容到磁盘"""
+    valid_stages = set(range(1, 6)) | {45, 51, 52, 53}
+    if stage_num not in valid_stages:
+        raise HTTPException(status_code=400, detail="无效阶段编号")
+
+    case_path = find_case_path(case_id)
+    if not case_path:
+        raise HTTPException(status_code=404, detail="案件不存在")
+
+    if stage_num == 45:
+        md_file = case_path / "analysis" / "04.5-控辩对抗" / "对抗分析.md"
+    elif stage_num in (51, 52, 53):
+        md_file = case_path / "analysis" / f"stage_{stage_num}" / "output.md"
+    elif stage_num == 5:
+        md_file = case_path / "analysis" / "full_defense_report.md"
+    else:
+        md_file = case_path / "analysis" / f"stage_{stage_num}" / "output.md"
+
+    md_file.parent.mkdir(parents=True, exist_ok=True)
+    md_file.write_text(content, encoding="utf-8")
+    return {"success": True, "case_id": case_id, "stage": stage_num}
+
+
+@router.put("/{case_id}/full-report")
+async def save_full_report(
+    case_id: str,
+    content: str = Body(..., embed=True),
+):
+    """保存完整综合辩护报告到磁盘"""
+    case_path = find_case_path(case_id)
+    if not case_path:
+        raise HTTPException(status_code=404, detail="案件不存在")
+
+    report_file = case_path / "analysis" / "full_defense_report.md"
+    report_file.parent.mkdir(parents=True, exist_ok=True)
+    report_file.write_text(content, encoding="utf-8")
+    return {"success": True}

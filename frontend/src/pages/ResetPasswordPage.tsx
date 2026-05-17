@@ -102,12 +102,12 @@ export function ResetPasswordPage() {
         <MacOSTitlebar />
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <div style={{ width: '100%', maxWidth: 380, padding: '40px 36px', background: '#fff', borderRadius: 16, textAlign: 'center', boxShadow: '0 4px 24px rgba(0,0,0,0.08)' }}>
-            <div style={{ width: 56, height: 56, margin: '0 auto 16px', background: '#34c759', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ width: 56, height: 56, margin: '0 auto 16px', background: '#2d8f3d', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <Check className="w-7 h-7" color="#fff" />
             </div>
             <h2 style={{ fontSize: 20, fontWeight: 700, color: '#1d1d1f', marginBottom: 8 }}>密码已重置</h2>
             <p style={{ fontSize: 13, color: '#86868b', marginBottom: 24 }}>请使用新密码登录</p>
-            <button onClick={() => navigate('/login')} style={{ width: '100%', padding: '12px', background: '#007aff', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 15, fontWeight: 600 }}>返回登录</button>
+            <button onClick={() => navigate('/login')} style={{ width: '100%', padding: '12px', background: '#1e3a5f', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 15, fontWeight: 600 }}>返回登录</button>
           </div>
         </div>
       </div>
@@ -120,7 +120,7 @@ export function ResetPasswordPage() {
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: '#f5f5f7', overflow: 'hidden' }}>
       <MacOSTitlebar />
       <div style={{ display: 'flex', alignItems: 'center', padding: '12px 20px', borderBottom: '1px solid var(--macos-border)', background: '#fafafa', gap: '12px' }}>
-        <button onClick={() => navigate('/login')} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 12px', background: 'transparent', border: 'none', cursor: 'pointer', fontSize: '13px', color: '#007aff', borderRadius: '6px' }}
+        <button onClick={() => navigate('/login')} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 12px', background: 'transparent', border: 'none', cursor: 'pointer', fontSize: '13px', color: '#1e3a5f', borderRadius: '6px' }}
           onMouseEnter={e => e.currentTarget.style.background = 'rgba(0,122,255,0.08)'}
           onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
           <ArrowLeft className="w-4 h-4" />
@@ -131,7 +131,7 @@ export function ResetPasswordPage() {
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <div style={{ width: '100%', maxWidth: 380, padding: '40px 36px', background: '#fff', borderRadius: 16, boxShadow: '0 4px 24px rgba(0,0,0,0.08)' }}>
           <div style={{ textAlign: 'center', marginBottom: 28 }}>
-            <div style={{ width: 56, height: 56, margin: '0 auto 12px', background: '#007aff', borderRadius: 16, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ width: 56, height: 56, margin: '0 auto 12px', background: '#1e3a5f', borderRadius: 16, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <Lock className="w-7 h-7" color="#fff" />
             </div>
             <h1 style={{ fontSize: 20, fontWeight: 700, color: '#1d1d1f', marginBottom: 6 }}>找回密码</h1>
@@ -146,7 +146,7 @@ export function ResetPasswordPage() {
               <button key={tab.key} onClick={() => setMode(tab.key)} style={{
                 flex: 1, padding: '8px 0', background: mode === tab.key ? '#fff' : 'transparent',
                 border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 13, fontWeight: mode === tab.key ? 600 : 400,
-                color: mode === tab.key ? '#007aff' : '#86868b', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                color: mode === tab.key ? '#1e3a5f' : '#86868b', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
                 boxShadow: mode === tab.key ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
               }}>
                 <tab.icon className="w-3 h-3" />{tab.label}
@@ -166,7 +166,7 @@ export function ResetPasswordPage() {
                 <div style={{ display: 'flex', gap: 8 }}>
                   <input type="text" value={code} onChange={e => setCode(e.target.value)} placeholder="4 位验证码" maxLength={4} style={{ ...inputStyle, flex: 1 }} />
                   <button type="button" onClick={handleSendCode} disabled={loading || countdown > 0} style={{
-                    padding: '0 16px', background: countdown > 0 ? '#f5f5f7' : '#007aff', color: countdown > 0 ? '#86868b' : '#fff',
+                    padding: '0 16px', background: countdown > 0 ? '#f5f5f7' : '#1e3a5f', color: countdown > 0 ? '#86868b' : '#fff',
                     border: 'none', borderRadius: 8, cursor: countdown > 0 ? 'not-allowed' : 'pointer', fontSize: 13, fontWeight: 500, whiteSpace: 'nowrap',
                   }}>
                     {countdown > 0 ? `${countdown}s` : codeSent ? '重新发送' : '发送验证码'}
@@ -181,7 +181,7 @@ export function ResetPasswordPage() {
                 <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: '#1d1d1f', marginBottom: 6 }}>确认新密码</label>
                 <input type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} placeholder="再次输入新密码" required style={inputStyle} />
               </div>
-              <button type="submit" disabled={loading} style={{ width: '100%', padding: '12px', background: loading ? '#86868b' : '#007aff', color: '#fff', border: 'none', borderRadius: 8, cursor: loading ? 'not-allowed' : 'pointer', fontSize: 15, fontWeight: 600 }}>
+              <button type="submit" disabled={loading} style={{ width: '100%', padding: '12px', background: loading ? '#86868b' : '#1e3a5f', color: '#fff', border: 'none', borderRadius: 8, cursor: loading ? 'not-allowed' : 'pointer', fontSize: 15, fontWeight: 600 }}>
                 {loading ? '重置中...' : '重置密码'}
               </button>
             </form>
@@ -206,7 +206,7 @@ export function ResetPasswordPage() {
                 <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: '#1d1d1f', marginBottom: 6 }}>确认新密码</label>
                 <input type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} placeholder="再次输入新密码" required style={inputStyle} />
               </div>
-              <button type="submit" disabled={loading} style={{ width: '100%', padding: '12px', background: loading ? '#86868b' : '#007aff', color: '#fff', border: 'none', borderRadius: 8, cursor: loading ? 'not-allowed' : 'pointer', fontSize: 15, fontWeight: 600 }}>
+              <button type="submit" disabled={loading} style={{ width: '100%', padding: '12px', background: loading ? '#86868b' : '#1e3a5f', color: '#fff', border: 'none', borderRadius: 8, cursor: loading ? 'not-allowed' : 'pointer', fontSize: 15, fontWeight: 600 }}>
                 {loading ? '重置中...' : '重置密码'}
               </button>
             </form>

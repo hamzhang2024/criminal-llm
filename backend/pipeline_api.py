@@ -85,7 +85,7 @@ async def get_indictment_candidates(case_id: str):
 @router.post("/{case_id}/step/{step_num}")
 async def run_pipeline_step(
     case_id: str,
-    step_num: int,
+    step_num: float,
     defendant: str = Body(..., embed=True),
     crime_type: Optional[str] = Body(default=None, embed=True),
     indictment_file: Optional[str] = Body(default=None, embed=True),
@@ -98,10 +98,12 @@ async def run_pipeline_step(
     2. 逐次详细总结（每次笔录单独 LLM 总结）
     3. 内部矛盾分析（多次笔录者对比差异）
     4. 案件 Wiki 构建（LLM Wiki 模式，串行）
+    4.5. 控辩对抗模拟（红蓝辩论 + 交叉询问预演）
     5. 辩护意见生成
     """
-    if not (1 <= step_num <= 5):
-        raise HTTPException(status_code=400, detail="无效步骤编号，请输入 1-5")
+    valid_steps = {1, 2, 3, 4, 4.5, 5}
+    if step_num not in valid_steps:
+        raise HTTPException(status_code=400, detail="无效步骤编号，请输入 1-5 或 4.5")
 
     case_path = find_case_path(case_id)
     if not case_path:
@@ -110,24 +112,31 @@ async def run_pipeline_step(
     pipeline = AnalysisPipeline(case_id, case_path, indictment_file=indictment_file)
 
     # 初始化进度
-    _set_progress(case_id, step_num, "准备开始...", 0, 0)
+    _set_progress(case_id, int(step_num), "准备开始...", 0, 0)
 
     try:
         step_methods = {
             1: lambda: pipeline.step1_merge_statements(defendant, crime_type),
             2: lambda: pipeline.step2_detailed_summaries(
                 defendant, crime_type,
-                progress_cb=lambda current, total, msg: _set_progress(case_id, step_num, msg, current, total),
+                progress_cb=lambda current, total, msg: _set_progress(case_id, int(step_num), msg, current, total),
             ),
             3: lambda: pipeline.step3_internal_contradiction(
                 defendant, crime_type,
-                progress_cb=lambda current, total, msg: _set_progress(case_id, step_num, msg, current, total),
+                progress_cb=lambda current, total, msg: _set_progress(case_id, int(step_num), msg, current, total),
             ),
             4: lambda: pipeline.step4_build_case_wiki(
                 defendant, crime_type,
-                progress_cb=lambda current, total, msg: _set_progress(case_id, step_num, msg, current, total),
+                progress_cb=lambda current, total, msg: _set_progress(case_id, int(step_num), msg, current, total),
             ),
-            5: lambda: pipeline.step5_defense_opinion(defendant, crime_type),
+            4.5: lambda: pipeline.step45_debate_simulation(
+                defendant, crime_type,
+                progress_cb=lambda current, total, msg: _set_progress(case_id, 4, msg, current, total),
+            ),
+            5: lambda: pipeline.step5_defense_opinion(
+                defendant, crime_type,
+                progress_cb=lambda current, total, msg: _set_progress(case_id, 5, msg, current, total),
+            ),
         }
         result = await step_methods[step_num]()
         return {"success": True, "step": step_num, "data": result}
@@ -182,7 +191,93 @@ async def get_pipeline_status(case_id: str):
             except Exception:
                 pass
 
+    # 步骤 4.5 单独处理
+    result_45 = analysis_dir / "step_4.5_result.json"
+    status["step_4.5"] = {"completed": result_45.exists()}
+    if result_45.exists():
+        status["step_4.5"]["summary"] = "控辩对抗已生成"
+
     return {"case_id": case_id, "status": status}
+
+
+@router.get("/{case_id}/analysis-state")
+async def get_analysis_state(case_id: str):
+    """获取分析状态（各步骤/子步骤完成度，用于断点恢复 UI）"""
+    case_path = find_case_path(case_id)
+    if not case_path:
+        raise HTTPException(status_code=404, detail="案件不存在")
+
+    pipeline = AnalysisPipeline(case_id, case_path)
+    return {
+        "case_id": case_id,
+        "state": pipeline._get_resume_summary(),
+        "next_step": pipeline._get_next_unfinished_step(),
+    }
+
+
+@router.post("/{case_id}/resume")
+async def resume_pipeline(
+    case_id: str,
+    defendant: str = Body(..., embed=True),
+    crime_type: Optional[str] = Body(default=None, embed=True),
+    indictment_file: Optional[str] = Body(default=None, embed=True),
+):
+    """从断点恢复，自动找到下一个未完成的步骤继续执行"""
+    case_path = find_case_path(case_id)
+    if not case_path:
+        raise HTTPException(status_code=404, detail="案件不存在")
+
+    pipeline = AnalysisPipeline(case_id, case_path, indictment_file=indictment_file)
+
+    next_step = pipeline._get_next_unfinished_step()
+    if next_step is None:
+        return {"success": True, "message": "所有步骤已完成", "all_done": True}
+
+    # 初始化进度
+    _set_progress(case_id, next_step, "从断点恢复...", 0, 0)
+
+    try:
+        pipeline._mark_step_running(next_step)
+
+        step_methods = {
+            1: lambda: pipeline.step1_merge_statements(defendant, crime_type),
+            2: lambda: pipeline.step2_detailed_summaries(
+                defendant, crime_type,
+                progress_cb=lambda current, total, msg: _set_progress(case_id, int(next_step), msg, current, total),
+            ),
+            3: lambda: pipeline.step3_internal_contradiction(
+                defendant, crime_type,
+                progress_cb=lambda current, total, msg: _set_progress(case_id, int(next_step), msg, current, total),
+            ),
+            4: lambda: pipeline.step4_build_case_wiki(
+                defendant, crime_type,
+                progress_cb=lambda current, total, msg: _set_progress(case_id, int(next_step), msg, current, total),
+            ),
+            4.5: lambda: pipeline.step45_debate_simulation(
+                defendant, crime_type,
+                progress_cb=lambda current, total, msg: _set_progress(case_id, 4, msg, current, total),
+            ),
+            5: lambda: pipeline.step5_defense_opinion(
+                defendant, crime_type,
+                progress_cb=lambda current, total, msg: _set_progress(case_id, 5, msg, current, total),
+            ),
+        }
+        result = await step_methods[next_step]()
+        pipeline._mark_step_done(next_step)
+
+        return {
+            "success": True,
+            "step": next_step,
+            "data": result,
+            "next_step": pipeline._get_next_unfinished_step(),
+        }
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"步骤 {next_step} 执行失败: {str(e)}")
+    finally:
+        _clear_progress(case_id)
 
 
 @router.get("/{case_id}/step/{step_num}/result")
@@ -331,6 +426,61 @@ async def clear_wiki(case_id: str):
         step4_result.unlink()
 
     return {"success": True, "message": "Wiki 已清空"}
+
+
+# ========== 辩护意见子阶段 API ==========
+
+@router.get("/{case_id}/defense-stages")
+async def get_defense_stages(case_id: str):
+    """返回辩护意见各子阶段完成状态"""
+    case_path = find_case_path(case_id)
+    if not case_path:
+        raise HTTPException(status_code=404, detail="案件不存在")
+
+    defense_dir = case_path / "analysis" / "05-辩护意见"
+    stages = {
+        "01-案件概述": "pending",
+        "02-证据评估": "pending",
+        "03-矛盾利用": "pending",
+        "04-三阶层辩护": "pending",
+        "05-量刑情节": "pending",
+        "06-结论建议": "pending",
+    }
+
+    if defense_dir.exists():
+        for filename, status_key in stages.items():
+            if (defense_dir / filename).exists():
+                stages[filename] = "done"
+
+    # 检查完整报告
+    report_file = case_path / "analysis" / "辩护分析报告_*.md"
+    full_report_exists = any(case_path / "analysis").glob("辩护分析报告_*.md")
+
+    return {
+        "case_id": case_id,
+        "stages": stages,
+        "full_report": full_report_exists,
+        "defense_dir": str(defense_dir) if defense_dir.exists() else None,
+    }
+
+
+@router.get("/{case_id}/defense-stage/{stage_name}")
+async def get_defense_stage(case_id: str, stage_name: str):
+    """返回指定辩护子阶段的内容"""
+    case_path = find_case_path(case_id)
+    if not case_path:
+        raise HTTPException(status_code=404, detail="案件不存在")
+
+    defense_dir = case_path / "analysis" / "05-辩护意见"
+    stage_file = defense_dir / stage_name
+    if not stage_file.exists():
+        raise HTTPException(status_code=404, detail=f"辩护阶段文件不存在: {stage_name}")
+
+    return {
+        "case_id": case_id,
+        "stage": stage_name,
+        "content": stage_file.read_text(encoding="utf-8"),
+    }
 
 
 # ========== 证据浏览 API ==========

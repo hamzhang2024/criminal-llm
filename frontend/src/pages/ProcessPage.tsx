@@ -91,8 +91,8 @@ export function ProcessPage() {
                       </div>
                       <ArrowRight className="w-4 h-4" style={{ color: '#86868b' }} />
                       <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                        <FileDown className="w-5 h-5" style={{ color: '#007aff' }} />
-                        <div style={{ fontSize: '14px', color: '#007aff' }}>{file.name.replace('.pdf', '.md')}</div>
+                        <FileDown className="w-5 h-5" style={{ color: '#1e3a5f' }} />
+                        <div style={{ fontSize: '14px', color: '#1e3a5f' }}>{file.name.replace('.pdf', '.md')}</div>
                       </div>
                     </div>
                   ))}
@@ -141,7 +141,7 @@ export function ProcessPage() {
                 {/* 进度 */}
                 {progress && (
                   <MacOSCard style={{ marginTop: '20px' }}>
-                    <div style={{ fontSize: '14px', color: progress.startsWith('✅') ? '#34c759' : progress.startsWith('❌') ? '#ff3b30' : '#1d1d1f' }}>
+                    <div style={{ fontSize: '14px', color: progress.startsWith('✅') ? '#2d8f3d' : progress.startsWith('❌') ? '#ff3b30' : '#1d1d1f' }}>
                       {progress}
                     </div>
                   </MacOSCard>

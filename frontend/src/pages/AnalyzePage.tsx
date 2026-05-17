@@ -69,8 +69,8 @@ interface CaseInfo {
 const ROLE_COLORS: Record<string, string> = {
   '犯罪嫌疑人': '#ff3b30',
   '同案犯': '#ff9500',
-  '被害人': '#007aff',
-  '证人': '#34c759',
+  '被害人': '#1e3a5f',
+  '证人': '#2d8f3d',
   '介绍人': '#af52de',
   '中间人': '#5856d6',
   '其他': '#8e8e93',
@@ -160,7 +160,7 @@ function RelationshipGraph({ data }: { data: NonNullable<AnalysisResult['relatio
             <path
               d={`M ${from.x} ${from.y} Q ${midX} ${midY} ${to.x} ${to.y}`}
               fill="none"
-              stroke={active ? '#007aff' : '#d1d1d6'}
+              stroke={active ? '#1e3a5f' : '#d1d1d6'}
               strokeWidth={active ? 2 : 1}
               style={{ transition: 'all 0.2s' }}
             />
@@ -535,8 +535,8 @@ ${mockResult.defensePoints.map(p => `- ${p}`).join('\n')}
           {/* 进度显示 */}
           {progress && (
             <div style={{ padding: '12px 20px', background: 'rgba(0, 122, 255, 0.05)', borderBottom: '1px solid var(--macos-border)', display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <Loader2 className="w-4 h-4 animate-spin" style={{ color: '#007aff' }} />
-              <span style={{ fontSize: '13px', color: '#007aff' }}>{progress}</span>
+              <Loader2 className="w-4 h-4 animate-spin" style={{ color: '#1e3a5f' }} />
+              <span style={{ fontSize: '13px', color: '#1e3a5f' }}>{progress}</span>
             </div>
           )}
 
@@ -570,12 +570,12 @@ ${mockResult.defensePoints.map(p => `- ${p}`).join('\n')}
                           style={{
                             padding: '8px 12px',
                             background: selectedFile === file.name ? 'rgba(0,122,255,0.1)' : 'transparent',
-                            border: selectedFile === file.name ? '1px solid #007aff' : '1px solid transparent',
+                            border: selectedFile === file.name ? '1px solid #1e3a5f' : '1px solid transparent',
                             borderRadius: '6px',
                             cursor: 'pointer',
                             textAlign: 'left',
                             fontSize: '13px',
-                            color: selectedFile === file.name ? '#007aff' : 'var(--macos-text-primary)',
+                            color: selectedFile === file.name ? '#1e3a5f' : 'var(--macos-text-primary)',
                             display: 'flex',
                             alignItems: 'center',
                             gap: '8px'
@@ -619,7 +619,7 @@ ${mockResult.defensePoints.map(p => `- ${p}`).join('\n')}
               {/* 分析说明 */}
               <div style={{ padding: '16px', flex: 1, overflow: 'auto' }}>
                 <div style={{ display: 'flex', gap: '8px', padding: '12px', background: 'rgba(0,122,255,0.05)', borderRadius: '8px' }}>
-                  <BookOpen className="w-4 h-4" style={{ color: '#007aff', flexShrink: 0, marginTop: '2px' }} />
+                  <BookOpen className="w-4 h-4" style={{ color: '#1e3a5f', flexShrink: 0, marginTop: '2px' }} />
                   <div style={{ fontSize: '12px', color: 'var(--macos-text-secondary)', lineHeight: '1.5' }}>
                     <div style={{ fontWeight: '500', marginBottom: '4px', color: 'var(--macos-text-primary)' }}>三阶层分析</div>
                     <div>1. 构成要件符合性</div>
@@ -652,7 +652,7 @@ ${mockResult.defensePoints.map(p => `- ${p}`).join('\n')}
                           padding: '4px 12px',
                           borderRadius: '12px',
                           background: result.confidence > 90 ? 'rgba(52, 199, 89, 0.1)' : 'rgba(255, 149, 0, 0.1)',
-                          color: result.confidence > 90 ? '#34c759' : '#ff9500'
+                          color: result.confidence > 90 ? '#2d8f3d' : '#ff9500'
                         }}>
                           置信度 {result.confidence}%
                         </span>
@@ -660,7 +660,7 @@ ${mockResult.defensePoints.map(p => `- ${p}`).join('\n')}
 
                       {/* 构成要件 */}
                       <div style={{ marginBottom: '20px' }}>
-                        <h3 style={{ fontSize: '15px', fontWeight: '600', marginBottom: '12px', color: '#007aff' }}>
+                        <h3 style={{ fontSize: '15px', fontWeight: '600', marginBottom: '12px', color: '#1e3a5f' }}>
                           一、构成要件符合性
                         </h3>
                         <ul style={{ margin: 0, paddingLeft: '20px' }}>
@@ -674,7 +674,7 @@ ${mockResult.defensePoints.map(p => `- ${p}`).join('\n')}
 
                       {/* 违法性 */}
                       <div style={{ marginBottom: '20px' }}>
-                        <h3 style={{ fontSize: '15px', fontWeight: '600', marginBottom: '12px', color: '#34c759' }}>
+                        <h3 style={{ fontSize: '15px', fontWeight: '600', marginBottom: '12px', color: '#2d8f3d' }}>
                           二、违法性
                         </h3>
                         <p style={{ fontSize: '14px', lineHeight: '1.6', color: 'var(--macos-text-primary)' }}>

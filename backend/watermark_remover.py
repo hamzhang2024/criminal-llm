@@ -10,8 +10,6 @@ PDF 水印移除工具 - 集成到后端，不再依赖外部脚本
 import fitz
 import re
 import os
-import subprocess
-import tempfile
 import shutil
 from typing import Optional, Dict, Any
 
@@ -220,31 +218,10 @@ def remove_rotation_watermark(doc):
 
 
 def save_with_qpdf(doc, output_path):
-    """使用 PyMuPDF + qpdf 保存"""
-    base, ext = os.path.splitext(output_path)
-    temp_path = f"{base}_temp{ext}"
-
-    doc.save(temp_path, garbage=0, deflate=True)
-
-    try:
-        result = subprocess.run(
-            ['qpdf', '--linearize', temp_path, output_path],
-            capture_output=True, text=True, timeout=120
-        )
-        if result.returncode == 0:
-            os.remove(temp_path)
-            return True
-        else:
-            # qpdf 失败，回退到直接保存
-            doc.save(output_path, garbage=4, deflate=True)
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
-            return True
-    except Exception:
-        doc.save(output_path, garbage=4, deflate=True)
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-        return True
+    """使用 PyMuPDF 直接保存（跳过 qpdf 线性化）"""
+    # garbage=4 等价于 garbage collection + 对象去重 + 压缩
+    doc.save(output_path, garbage=4, deflate=True)
+    return True
 
 
 def auto_detect_repeating_text(doc, sample_count=5):
@@ -255,13 +232,15 @@ def auto_detect_repeating_text(doc, sample_count=5):
     for i in range(min(sample_count, len(doc))):
         page = doc[i]
         text = page.get_text()
-        lines = [l.strip() for l in text.split('\n') if l.strip() and len(l.strip()) > 5]
+        # 降低长度阈值到 2，避免漏掉短水印（如"江阴市院"只有4字）
+        lines = [l.strip() for l in text.split('\n') if l.strip() and len(l.strip()) >= 2]
         for line in lines:
             line_counts[line] += 1
 
     total_pages = min(sample_count, len(doc))
     for line, count in line_counts.most_common(10):
-        if count >= total_pages - 1 and len(line) < 50:
+        # 必须在几乎所有采样页都出现，且长度适中（2-50字符）
+        if count >= total_pages - 1 and 2 <= len(line) <= 50:
             return line
     return None
 

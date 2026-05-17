@@ -233,6 +233,18 @@ class AnalysisEngine:
                     index = json.loads(index_file.read_text(encoding="utf-8"))
                     for ev in index.get("evidence", []):
                         md_file = evidence_dir / ev["md_file"]
+                        # 如果 index.json 中的 md_file 不存在，尝试通过文件名匹配
+                        if not md_file.exists():
+                            # 尝试去掉数字前缀（如 "104_xxx.md" → "xxx.md"）
+                            import re
+                            stem = md_file.stem
+                            # 匹配 "NNN_" 或 "NN_" 前缀
+                            cleaned = re.sub(r"^\d{2,3}_", "", stem)
+                            if cleaned != stem:
+                                for candidate in evidence_dir.glob("*.md"):
+                                    if candidate.stem == cleaned or candidate.stem == stem:
+                                        md_file = candidate
+                                        break
                         if md_file.exists():
                             text = md_file.read_text(encoding="utf-8")
                             if text.strip():
@@ -347,7 +359,7 @@ class AnalysisEngine:
         # 先按类型排序（起诉书 > 起诉意见书），再按日期排序（晚的在前）
         def sort_key(item):
             doc_type, doc_date, _ = item
-            type_priority = 0 if doc_type == "起诉书" else 1
+            type_priority = 1 if doc_type == "起诉书" else 0
             # 日期越大（越晚）越优先
             date_val = doc_date if doc_date else "0000-00-00"
             return (type_priority, date_val)

@@ -53,13 +53,13 @@ export function RegisterPage() {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: '#f5f5f7', overflow: 'hidden' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: 'var(--macos-bg-secondary)', overflow: 'hidden' }}>
       <MacOSTitlebar />
 
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <div style={{
           width: '100%', maxWidth: 380, padding: '40px 36px',
-          background: '#fff', borderRadius: 16,
+          background: 'var(--macos-bg-primary)', borderRadius: 16,
           boxShadow: '0 4px 24px rgba(0,0,0,0.08)',
         }}>
           {/* 返回按钮 */}
@@ -68,7 +68,7 @@ export function RegisterPage() {
             style={{
               display: 'flex', alignItems: 'center', gap: '4px',
               padding: '4px 8px', background: 'transparent', border: 'none',
-              cursor: 'pointer', fontSize: '13px', color: '#007aff', marginBottom: 16,
+              cursor: 'pointer', fontSize: '13px', color: 'var(--macos-accent)', marginBottom: 16,
             }}
           >
             <ArrowLeft className="w-4 h-4" />
@@ -79,15 +79,15 @@ export function RegisterPage() {
           <div style={{ textAlign: 'center', marginBottom: 28 }}>
             <div style={{
               width: 56, height: 56, margin: '0 auto 12px',
-              background: '#34c759', borderRadius: 16,
+              background: 'var(--macos-success)', borderRadius: 16,
               display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}>
               <UserPlus className="w-7 h-7" color="#fff" />
             </div>
-            <h1 style={{ fontSize: 20, fontWeight: 700, color: '#1d1d1f', marginBottom: 6 }}>
+            <h1 style={{ fontSize: 20, fontWeight: 700, color: 'var(--macos-text-primary)', marginBottom: 6 }}>
               注册账号
             </h1>
-            <p style={{ fontSize: 13, color: '#86868b' }}>
+            <p style={{ fontSize: 13, color: 'var(--macos-text-secondary)' }}>
               创建新账号以使用系统
             </p>
           </div>
@@ -95,7 +95,7 @@ export function RegisterPage() {
           {/* Form */}
           <form onSubmit={handleRegister}>
             <div style={{ marginBottom: 16 }}>
-              <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: '#1d1d1f', marginBottom: 6 }}>
+              <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: 'var(--macos-text-primary)', marginBottom: 6 }}>
                 邮箱
               </label>
               <input
@@ -108,15 +108,15 @@ export function RegisterPage() {
                   width: '100%', padding: '10px 12px',
                   border: '1.5px solid #d2d2d7', borderRadius: 8,
                   fontSize: 14, boxSizing: 'border-box', outline: 'none',
-                  transition: 'border-color 0.15s',
+                  transition: 'all 0.15s ease',
                 }}
-                onFocus={e => e.currentTarget.style.borderColor = '#007aff'}
-                onBlur={e => e.currentTarget.style.borderColor = '#d2d2d7'}
+                onFocus={e => { e.currentTarget.style.borderColor = 'var(--macos-accent)'; e.currentTarget.style.boxShadow = '0 0 0 3px rgba(30,58,95,0.12)'; }}
+                onBlur={e => { e.currentTarget.style.borderColor = '#d2d2d7'; e.currentTarget.style.boxShadow = 'none'; }}
               />
             </div>
 
             <div style={{ marginBottom: 16 }}>
-              <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: '#1d1d1f', marginBottom: 6 }}>
+              <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: 'var(--macos-text-primary)', marginBottom: 6 }}>
                 密码
               </label>
               <div style={{ position: 'relative' }}>
@@ -130,10 +130,10 @@ export function RegisterPage() {
                     width: '100%', padding: '10px 40px 10px 12px',
                     border: '1.5px solid #d2d2d7', borderRadius: 8,
                     fontSize: 14, boxSizing: 'border-box', outline: 'none',
-                    transition: 'border-color 0.15s',
+                    transition: 'all 0.15s ease',
                   }}
-                  onFocus={e => e.currentTarget.style.borderColor = '#007aff'}
-                  onBlur={e => e.currentTarget.style.borderColor = '#d2d2d7'}
+                  onFocus={e => { e.currentTarget.style.borderColor = 'var(--macos-accent)'; e.currentTarget.style.boxShadow = '0 0 0 3px rgba(30,58,95,0.12)'; }}
+                  onBlur={e => { e.currentTarget.style.borderColor = '#d2d2d7'; e.currentTarget.style.boxShadow = 'none'; }}
                 />
                 <button
                   type="button"
@@ -141,7 +141,7 @@ export function RegisterPage() {
                   style={{
                     position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)',
                     background: 'transparent', border: 'none', cursor: 'pointer', padding: 4,
-                    fontSize: 12, color: '#86868b',
+                    fontSize: 12, color: 'var(--macos-text-tertiary)',
                   }}
                 >
                   {showPassword ? '隐藏' : '显示'}
@@ -150,7 +150,7 @@ export function RegisterPage() {
             </div>
 
             <div style={{ marginBottom: 24 }}>
-              <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: '#1d1d1f', marginBottom: 6 }}>
+              <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: 'var(--macos-text-primary)', marginBottom: 6 }}>
                 确认密码
               </label>
               <input
@@ -163,10 +163,10 @@ export function RegisterPage() {
                   width: '100%', padding: '10px 12px',
                   border: '1.5px solid #d2d2d7', borderRadius: 8,
                   fontSize: 14, boxSizing: 'border-box', outline: 'none',
-                  transition: 'border-color 0.15s',
+                  transition: 'all 0.15s ease',
                 }}
-                onFocus={e => e.currentTarget.style.borderColor = '#007aff'}
-                onBlur={e => e.currentTarget.style.borderColor = '#d2d2d7'}
+                onFocus={e => { e.currentTarget.style.borderColor = 'var(--macos-accent)'; e.currentTarget.style.boxShadow = '0 0 0 3px rgba(30,58,95,0.12)'; }}
+                onBlur={e => { e.currentTarget.style.borderColor = '#d2d2d7'; e.currentTarget.style.boxShadow = 'none'; }}
               />
             </div>
 
@@ -175,10 +175,10 @@ export function RegisterPage() {
               disabled={loading}
               style={{
                 width: '100%', padding: '12px',
-                background: loading ? '#86868b' : '#34c759', color: '#fff',
+                background: loading ? 'var(--macos-text-tertiary)' : 'var(--macos-success)', color: '#fff',
                 border: 'none', borderRadius: 8, cursor: loading ? 'not-allowed' : 'pointer',
                 fontSize: 15, fontWeight: 600,
-                transition: 'background 0.15s',
+                transition: 'background 0.15s ease',
               }}
             >
               {loading ? '注册中...' : '注册'}
@@ -186,11 +186,11 @@ export function RegisterPage() {
           </form>
 
           {/* Links */}
-          <div style={{ textAlign: 'center', marginTop: 20, fontSize: 13, color: '#86868b' }}>
+          <div style={{ textAlign: 'center', marginTop: 20, fontSize: 13, color: 'var(--macos-text-secondary)' }}>
             已有账号？{' '}
             <span
               onClick={() => navigate('/login')}
-              style={{ color: '#007aff', textDecoration: 'none', cursor: 'pointer' }}
+              style={{ color: 'var(--macos-accent)', textDecoration: 'none', cursor: 'pointer' }}
               onMouseEnter={e => e.currentTarget.style.textDecoration = 'underline'}
               onMouseLeave={e => e.currentTarget.style.textDecoration = 'none'}
             >

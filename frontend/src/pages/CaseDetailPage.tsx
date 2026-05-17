@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Upload, Wand2, FileDown, Scale, CheckCircle, AlertCircle, FileText, ArrowRight, Loader2, Trash2, CheckSquare, Square, XCircle, Play } from 'lucide-react'
+import { Upload, Wand2, FileDown, Scale, CheckCircle, AlertCircle, FileText, ArrowRight, Loader2, Trash2, CheckSquare, Square, XCircle, Play, RefreshCw } from 'lucide-react'
 import { MacOSTitlebar, MacOSSidebar, MacOSToolbar, MacOSButton, MacOSCard, MacOSEmptyState } from '../components/MacOSLayout'
 import { api, thumbnailUrl, serveFileUrl, API_BASE } from '../api'
 import { showConfirm, showAlert } from '../components/MacOSDialog'
@@ -8,6 +8,32 @@ import { marked } from 'marked'
 
 // 配置 marked 使用同步解析
 marked.setOptions({ async: false })
+
+/** 工作中动画 — 三个跳动的小圆点 */
+function WorkingDots() {
+  return (
+    <span style={{ display: 'inline-flex', gap: '3px', alignItems: 'flex-end', height: '14px' }}>
+      {[0, 1, 2].map(i => (
+        <span
+          key={i}
+          style={{
+            width: '5px',
+            height: '5px',
+            borderRadius: '50%',
+            background: '#1e3a5f',
+            animation: `bounceDot 1.2s ease-in-out ${i * 0.15}s infinite`,
+          }}
+        />
+      ))}
+      <style>{`
+        @keyframes bounceDot {
+          0%, 80%, 100% { transform: translateY(0) scale(1); }
+          40% { transform: translateY(-6px) scale(1.2); }
+        }
+      `}</style>
+    </span>
+  )
+}
 
 // 文件状态
 interface CaseFile {
@@ -72,6 +98,16 @@ export function CaseDetailPage() {
         }
       })
       .catch(() => { /* 无分析状态 */ })
+
+    // 加载断点续传状态
+    api.getAnalysisState(caseId!)
+      .then(state => {
+        if (state.state) {
+          setAnalysisState(state.state)
+          setNextStep(state.next_step)
+        }
+      })
+      .catch(() => { /* 无断点状态 */ })
   }, [caseId])
 
   // 切换步骤时加载对应文件
@@ -181,7 +217,10 @@ export function CaseDetailPage() {
             const st = data.status
             if (st === 'running' || st === 'pending') {
               setProcessing(true)
-              setProgress(`转换中：${data.current || 0}/${data.total || '?'} — ${data.message || ''}`)
+              const cur0 = data.current || 0
+              const tot0 = data.total || 0
+              const pct0 = tot0 > 0 ? Math.round((cur0 / tot0) * 100) : 0
+              setProgress(`转换中：${cur0}/${tot0} (${pct0}%) — ${data.message || ''}`)
               // 启动轮询
               const pollInterval = setInterval(async () => {
                 try {
@@ -190,7 +229,10 @@ export function CaseDetailPage() {
                   const st2 = statusData.status
 
                   if (st2 === 'running') {
-                    setProgress(`转换中：${statusData.current || 0}/${statusData.total || '?'} — ${statusData.message || ''}`)
+                    const cur = statusData.current || 0
+                    const tot = statusData.total || 0
+                    const pct = tot > 0 ? Math.round((cur / tot) * 100) : 0
+                    setProgress(`转换中：${cur}/${tot} (${pct}%) — ${statusData.message || ''}`)
                   } else if (st2 === 'completed') {
                     clearInterval(pollInterval)
                     const results = statusData.results || []
@@ -203,6 +245,44 @@ export function CaseDetailPage() {
                       setFiles(filesData.map((f: any) => ({
                         id: f.id, name: f.name, size: f.size, status: f.status || 'done', source: f.source,
                       })))
+                    }
+                    // 转换完成后自动提取证据
+                    if (successCount > 0) {
+                      setProgress('正在提取证据清单...')
+                      try {
+                        const evResult = await api.extractEvidence(caseId!)
+                        if (evResult.success && evResult.evidence) {
+                          setEvidenceList(evResult.evidence)
+                          setEvidenceExtracted(true)
+                          setProgress(`✅ 已提取 ${evResult.total_evidence} 份证据，正在自动开始分析...`)
+                          if (defendant.trim()) {
+                            setTimeout(async () => {
+                              try {
+                                const analysisResult = await api.runAllStages(caseId!, defendant, crimeType || undefined)
+                                if (!analysisResult.success) throw new Error(analysisResult.detail || analysisResult.error || '分析执行失败')
+                                setProgress('✅ 分析任务已启动，正在跟踪进度...')
+                                setProcessing(true)
+                                pollAnalysisProgress()
+                              } catch (err) {
+                                setError(err instanceof Error ? err.message : '分析触发失败')
+                                setProcessing(false)
+                              }
+                            }, 500)
+                          } else {
+                            setProgress(`✅ 已提取 ${evResult.total_evidence} 份证据（请补充被告人信息后手动开始分析）`)
+                          }
+                        } else {
+                          throw new Error(evResult.detail || evResult.error || '提取失败')
+                        }
+                      } catch (extractErr) {
+                        const isStop = extractErr instanceof Error && extractErr.message === '用户已停止提取'
+                        if (isStop) {
+                          setProgress('⏹ 已停止提取，当前已提取的证据已保存')
+                        } else {
+                          setError(extractErr instanceof Error ? extractErr.message : '证据提取失败')
+                          setProgress('')
+                        }
+                      }
                     }
                   } else if (st2 === 'failed' || st2 === 'cancelled') {
                     clearInterval(pollInterval)
@@ -261,10 +341,14 @@ export function CaseDetailPage() {
   const [crimeType, setCrimeType] = useState('')
 
   // 流水线状态
-  const [pipelineStatus, setPipelineStatus] = useState<Record<number, boolean>>({})
+  const [pipelineStatus, setPipelineStatus] = useState<Record<number | string, boolean>>({})
   const [pipelineRunning, setPipelineRunning] = useState(false)
   const [currentPipelineStep, setCurrentPipelineStep] = useState<number>(0)
   const [stepResults, setStepResults] = useState<Record<number, any>>({})
+
+  // 断点续传状态
+  const [analysisState, setAnalysisState] = useState<any>(null)
+  const [nextStep, setNextStep] = useState<number | null>(null)
 
   // 流水线实时进度（LLM 调用进度）
   const [liveProgress, setLiveProgress] = useState<{ message: string; current: number; total: number; elapsed: number } | null>(null)
@@ -274,7 +358,7 @@ export function CaseDetailPage() {
     { id: 'upload', name: '上传文件', icon: Upload, description: '选择原始案卷文件' },
     { id: 'process', name: '文件处理', icon: Wand2, description: '去水印、密码解除、精度提升（可多选）' },
     { id: 'convert', name: '证据提取', icon: FileDown, description: '转换为结构化格式 → LLM 提取证据，准备分析' },
-    { id: 'analyze', name: '案卷分析', icon: Scale, description: '5 阶段智能分析（指控要素 → 人物关系 → 事件拆解 → 法律法规 → 三阶层辩护）' }
+    { id: 'analyze', name: '案卷分析', icon: Scale, description: '6 阶段智能分析（指控要素 → 人物关系 → 事件拆解 → 法律法规 → 控辩对抗 → 三阶层辩护）' }
   ]
 
   // 上传文件
@@ -357,6 +441,26 @@ export function CaseDetailPage() {
 
     const isMarkdown = file.name.endsWith('.md')
 
+    // 步骤1：优先使用 processed/ 中对应的 _去水印 文件
+    let previewName = file.name
+    if (currentStep === 1 && !file.name.includes('_去水印')) {
+      const stem = file.name.replace(/\.pdf$/i, '')
+      const candidate = `${stem}_去水印.pdf`
+      try {
+        const testData = await api.getThumbnails(caseId!, candidate, 'processed', 500)
+        if (testData.success && testData.thumbnails) {
+          // processed/ 中有对应的去水印文件
+          previewName = candidate
+          setPreviewThumbs(testData.thumbnails)
+          setPreviewThumbError(null)
+          setPreviewFile({ ...file, path: serveFileUrl(caseId!, candidate, 'processed'), name: candidate })
+          setEnlargedPage(-1)
+          setPreviewThumbLoading(false)
+          return
+        }
+      } catch { /* fallback to original logic */ }
+    }
+
     // 异步加载缩略图（PDF）或跳过（MD）
     if (!isMarkdown) {
       setPreviewThumbs([])
@@ -364,9 +468,9 @@ export function CaseDetailPage() {
       setPreviewThumbLoading(true)
       for (const d of dirsToTry) {
         try {
-          const data = await api.getThumbnails(caseId!, file.name, d, 500)
+          const data = await api.getThumbnails(caseId!, previewName, d, 500)
           if (data.success && data.thumbnails) {
-            setPreviewFile({ ...file, path: serveFileUrl(caseId!, file.name, d) })
+            setPreviewFile({ ...file, path: serveFileUrl(caseId!, previewName, d), name: previewName })
             setPreviewThumbs(data.thumbnails)
             setEnlargedPage(-1)
             setPreviewThumbLoading(false)
@@ -376,7 +480,7 @@ export function CaseDetailPage() {
           const msg = err instanceof Error ? err.message : ''
           // 检测加密错误
           if (msg.includes('加密') || msg.includes('encrypt') || msg.includes('password')) {
-            setPreviewFile({ ...file, path: serveFileUrl(caseId!, file.name, d) })
+            setPreviewFile({ ...file, path: serveFileUrl(caseId!, previewName, d), name: previewName })
             setPreviewThumbError('该 PDF 文件已加密，无法预览缩略图。文件仍可正常使用，不影响后续处理步骤。')
             setPreviewThumbLoading(false)
             return
@@ -385,12 +489,12 @@ export function CaseDetailPage() {
         }
       }
       // 所有目录都尝试完毕
-      setPreviewFile({ ...file, path: serveFileUrl(caseId!, file.name, dirsToTry[0]) })
+      setPreviewFile({ ...file, path: serveFileUrl(caseId!, previewName, dirsToTry[0]), name: previewName })
       setPreviewThumbError('所有目录中均未找到该 PDF 文件')
       setPreviewThumbLoading(false)
     } else {
       // Markdown 文件：直接打开文本预览
-      const serveUrl = serveFileUrl(caseId!, file.name, dirsToTry[0])
+      const serveUrl = serveFileUrl(caseId!, previewName, dirsToTry[0])
       setPreviewFile({ ...file, path: serveUrl })
       setEnlargedPage(-1)
     }
@@ -440,6 +544,120 @@ export function CaseDetailPage() {
       showAlert({ title: '删除失败', message: errMsg, variant: 'danger' })
     }
   }, [caseId])
+
+  // 删除 MD 文件
+  const handleDeleteMd = useCallback(async (mdFileName: string) => {
+    const confirmed = await showConfirm({
+      title: '确认删除',
+      message: `确定要删除「${mdFileName}」吗？删除后可从 PDF 重新转换。`,
+      variant: 'danger',
+    })
+    if (!confirmed) return
+
+    try {
+      const result = await api.deleteMdFile(caseId!, mdFileName)
+      if (result.success) {
+        setProgress(`✅ 已删除 ${mdFileName}`)
+        setTimeout(() => setProgress(''), 2000)
+        // 重新加载文件列表
+        if (currentStep >= 3) {
+          const filesData = await api.getStepFiles(caseId!, 3)
+          if (Array.isArray(filesData)) {
+            setFiles(filesData.map((f: any) => ({
+              id: f.id, name: f.name, size: f.size, status: 'pending', source: f.source,
+            })))
+          }
+        }
+      }
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : '删除失败'
+      showAlert({ title: '删除失败', message: errMsg, variant: 'danger' })
+    }
+  }, [caseId, currentStep])
+
+  // 删除 PDF 文件（步骤 2）
+  const handleDeletePdf = useCallback(async (pdfFileName: string) => {
+    const confirmed = await showConfirm({
+      title: '确认删除',
+      message: `确定要删除「${pdfFileName}」吗？删除后可重新上传。`,
+      variant: 'danger',
+    })
+    if (!confirmed) return
+
+    try {
+      const result = await api.deletePdfFile(caseId!, pdfFileName)
+      if (result.success) {
+        setProgress(`✅ 已删除 ${pdfFileName}`)
+        setTimeout(() => setProgress(''), 2000)
+        // 重新加载文件列表
+        const filesData = await api.getStepFiles(caseId!, 2)
+        if (Array.isArray(filesData)) {
+          setFiles(filesData.map((f: any) => ({
+            id: f.id, name: f.name, size: f.size, status: f.status || 'pending', source: f.source,
+          })))
+        }
+      }
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : '删除失败'
+      showAlert({ title: '删除失败', message: errMsg, variant: 'danger' })
+    }
+  }, [caseId])
+
+  // 删除原始 PDF 文件（步骤 1）
+  const handleDeleteOriginal = useCallback(async (pdfFileName: string) => {
+    const confirmed = await showConfirm({
+      title: '确认删除',
+      message: `确定要删除「${pdfFileName}」吗？删除后可重新上传。`,
+      variant: 'danger',
+    })
+    if (!confirmed) return
+
+    try {
+      const result = await api.deleteFile(caseId!, pdfFileName)
+      if (result.success) {
+        setProgress(`✅ 已删除 ${pdfFileName}`)
+        setTimeout(() => setProgress(''), 2000)
+        // 重新加载步骤 1 文件列表
+        const stepFiles = await api.getStepFiles(caseId!, 1)
+        if (Array.isArray(stepFiles)) {
+          setFiles(stepFiles.map((f: any) => ({
+            id: f.id, name: f.name, size: f.size, status: f.status || 'pending', source: f.source,
+          })))
+        }
+      }
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : '删除失败'
+      showAlert({ title: '删除失败', message: errMsg, variant: 'danger' })
+    }
+  }, [caseId])
+
+  // 重新转换 MD（从 PDF 转换）
+  const handleReconvertMd = useCallback(async (mdFileName: string) => {
+    const pdfName = mdFileName.replace(/\.md$/, '') + '.pdf'
+    try {
+      setProgress(`正在转换 ${mdFileName}...`)
+      const result = await api.convertToMd(caseId!, pdfName)
+      if (result.success) {
+        setProgress(`✅ 已重新转换 ${mdFileName}`)
+        setTimeout(() => setProgress(''), 2000)
+        // 刷新文件列表
+        if (currentStep >= 3) {
+          const filesData = await api.getStepFiles(caseId!, 3)
+          if (Array.isArray(filesData)) {
+            setFiles(filesData.map((f: any) => ({
+              id: f.id, name: f.name, size: f.size, status: 'pending', source: f.source,
+            })))
+          }
+        }
+      } else {
+        throw new Error(result.error || '转换失败')
+      }
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : '转换失败'
+      showAlert({ title: '转换失败', message: errMsg, variant: 'danger' })
+      setProgress('')
+    }
+  }, [caseId, currentStep])
 
   // 批量处理（去水印/转MD）
   const handleBatchProcess = useCallback(async (stepIndex: number) => {
@@ -674,7 +892,7 @@ export function CaseDetailPage() {
     setError(null)
     setProgress('正在转换并提取证据...')
     try {
-      const result = await fetch(`${API_BASE}/cases/${caseId}/convert-all-to-md`, { method: 'POST' })
+      const result = await fetch(`${API_BASE}/tasks/${caseId}/convert-all-to-md`, { method: 'POST' })
       const data = await result.json()
       if (!result.ok) {
         throw new Error(data.detail || data.error || '转换失败')
@@ -696,7 +914,10 @@ export function CaseDetailPage() {
           const st = statusData.status
 
           if (st === 'running') {
-            setProgress(`转换中：${statusData.current || 0}/${statusData.total || '?'} — ${statusData.message || ''}`)
+            const cur = statusData.current || 0
+            const tot = statusData.total || 0
+            const pct = tot > 0 ? Math.round((cur / tot) * 100) : 0
+            setProgress(`转换中：${cur}/${tot} (${pct}%) — ${statusData.message || ''}`)
           } else if (st === 'completed') {
             clearInterval(pollInterval)
             const results = statusData.results || []
@@ -780,14 +1001,14 @@ export function CaseDetailPage() {
         }
       }, 2000)
 
-      // 3 分钟超时自动停止轮询
+      // 15 分钟超时自动停止轮询（后端 MinerU 转换超时为 1 小时）
       setTimeout(() => {
         clearInterval(pollInterval)
         if (processing) {
           setProgress('⚠️ 转换超时，任务可能仍在后台运行，请稍后刷新页面查看结果')
           setProcessing(false)
         }
-      }, 180000)
+      }, 900000)
 
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : '转换失败'
@@ -839,6 +1060,22 @@ export function CaseDetailPage() {
         throw new Error(evResult.detail || evResult.error || '提取失败')
       }
     } catch (err) {
+      // 后端返回 400：无 MD 文件，询问用户是否转换
+      if (err instanceof Error && (err.message.includes('无 MD 文件') || err.message.includes('请先完成 PDF 转 MD'))) {
+        setProcessing(false)
+        setProgress('')
+        const confirmed = await showConfirm({
+          title: '需要先进行文件转换',
+          message: '当前案件中还没有转换后的文件，需要先进行 PDF 转 MD 才能提取证据。\n是否立即开始转换？',
+          confirmText: '开始转换',
+          cancelText: '取消',
+          variant: 'info',
+        })
+        if (confirmed) {
+          handleConvertAllToMd()
+        }
+        return
+      }
       const isStop = err instanceof Error && err.message === '用户已停止提取'
       if (isStop) {
         setProgress('⏹ 已停止提取，当前已提取的证据已保存')
@@ -849,9 +1086,7 @@ export function CaseDetailPage() {
       }
       setProcessing(false)
     }
-  }, [caseId, defendant, crimeType])
-
-  // 停止提取证据
+  }, [caseId, defendant, crimeType, handleConvertAllToMd])
   const handleStopExtract = useCallback(() => {
     extractUserStoppedRef.current = true
     if (extractPollRef.current) {
@@ -987,6 +1222,7 @@ export function CaseDetailPage() {
     { num: 2, name: '逐次总结', desc: '每次笔录单独 LLM 总结' },
     { num: 3, name: '矛盾分析', desc: '多次笔录者对比差异' },
     { num: 4, name: '案件 Wiki', desc: 'LLM Wiki 模式构建证据知识库' },
+    { num: 4.5, name: '控辩对抗', desc: '红蓝对抗，生成攻防对照表' },
     { num: 5, name: '辩护意见', desc: '综合前 4 步形成辩护意见' },
   ]
 
@@ -1103,6 +1339,57 @@ export function CaseDetailPage() {
       console.error('步骤执行失败:', err)
     }
   }, [pipelineStatus, pipelineRunning, executePipelineStep])
+
+  // 从断点恢复
+  const handleResumeAnalysis = useCallback(async () => {
+    if (!defendant.trim()) {
+      showAlert({ title: '提示', message: '案件缺少被告人信息，无法继续分析', variant: 'warning' })
+      return
+    }
+    setPipelineRunning(true)
+    setError(null)
+    setProgress('从断点恢复分析...')
+    setLiveProgress(null)
+
+    try {
+      const result = await api.resumePipeline(caseId!, defendant, crimeType || undefined)
+      if (result.success) {
+        if (result.all_done) {
+          setProgress('所有步骤已完成')
+          navigate(`/case/${caseId}/report`)
+        } else {
+          setProgress(`步骤 ${result.step} 已完成`)
+          // 刷新状态
+          api.getPipelineStatus(caseId!).then(st => {
+            const newStatus: Record<number | string, boolean> = {}
+            for (const [key, val] of Object.entries(st.status || {})) {
+              const num = parseFloat(key.replace('step_', ''))
+              if ((val as any)?.completed) newStatus[num] = true
+            }
+            setPipelineStatus(prev => ({ ...prev, ...newStatus }))
+          })
+          api.getAnalysisState(caseId!).then(st => {
+            if (st.state) {
+              setAnalysisState(st.state)
+              setNextStep(st.next_step)
+            }
+          })
+          if (!result.next_step) {
+            navigate(`/case/${caseId}/report`)
+          }
+        }
+      } else {
+        throw new Error(result.detail || result.error || '断点恢复失败')
+      }
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : '断点恢复失败'
+      setError(errorMsg)
+    } finally {
+      setPipelineRunning(false)
+      setCurrentPipelineStep(0)
+      setLiveProgress(null)
+    }
+  }, [caseId, defendant, crimeType, navigate])
 
   // 加载已有流水线状态
   const loadPipelineState = useCallback(async () => {
@@ -1304,7 +1591,7 @@ export function CaseDetailPage() {
     return (
       <div style={{
         maxHeight: '300px', overflow: 'auto', padding: '12px',
-        background: '#f5f5f7', borderRadius: '8px', fontSize: '12px', lineHeight: '1.6',
+        background: 'var(--macos-bg-tertiary)', borderRadius: '8px', fontSize: '12px', lineHeight: '1.6',
         whiteSpace: 'pre-wrap'
       }}>
         {analysis}
@@ -1399,12 +1686,21 @@ export function CaseDetailPage() {
       // 转MD：一键全部转换
       handleConvertAllToMd()
     } else if (currentStep === 3) {
-      // 案卷分析：已完成则跳转报告，否则开始分析
-      if (analysisCompleted) {
-        navigate(`/case/${caseId}/report`)
-      } else {
-        handleRunAnalysis()
+      // 案卷分析：检查是否已提取证据，未提取则引导用户先提取
+      if (!evidenceExtracted) {
+        const confirmed = await showConfirm({
+          title: '尚未提取证据',
+          message: '查看报告前需要先提取证据清单，是否立即提取？',
+          confirmText: '提取证据',
+          cancelText: '取消',
+          variant: 'info',
+        })
+        if (confirmed) {
+          handleExtractEvidence()
+        }
+        return
       }
+      navigate(`/case/${caseId}/report`)
     }
   }, [currentStep, files, handleBatchProcess, handleConvertAllToMd, handleRunAnalysis, optWatermark, optEnhance, optDeleteOriginal, password])
 
@@ -1413,7 +1709,7 @@ export function CaseDetailPage() {
   const doneCount = files.filter(f => f.status === 'done').length
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: '#ffffff', overflow: 'hidden' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: 'var(--macos-bg-primary)', overflow: 'hidden' }}>
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         {/* 左侧：案件步骤导航 */}
         <div style={{ width: '200px', background: 'var(--macos-bg-secondary)', borderRight: '1px solid var(--macos-border)', padding: '16px' }}>
@@ -1433,7 +1729,7 @@ export function CaseDetailPage() {
               borderRadius: '6px',
               cursor: 'pointer',
               fontSize: '12px',
-              color: '#007aff',
+              color: '#1e3a5f',
               fontWeight: '500'
             }}
           >
@@ -1467,13 +1763,13 @@ export function CaseDetailPage() {
                     cursor: 'pointer',
                     textAlign: 'left',
                     fontSize: '13px',
-                    color: isActive ? '#007aff' : 'var(--macos-text-primary)'
+                    color: isActive ? '#1e3a5f' : 'var(--macos-text-primary)'
                   }}
                 >
                   {isDone ? (
-                    <CheckCircle className="w-4 h-4" color="#34c759" />
+                    <CheckCircle className="w-4 h-4" color="#2d8f3d" />
                   ) : (
-                    <Icon className="w-4 h-4" color={isActive ? '#007aff' : '#86868b'} />
+                    <Icon className="w-4 h-4" color={isActive ? '#1e3a5f' : '#86868b'} />
                   )}
                   <span>{step.name}</span>
                 </button>
@@ -1542,10 +1838,11 @@ export function CaseDetailPage() {
                   } else if (currentStep === 2) {
                     handleConvertAllToMd()
                   } else if (currentStep === 3) {
-                    if (analysisCompleted) {
-                      navigate(`/case/${caseId}/report`)
+                    // 检查是否已提取证据
+                    if (!evidenceExtracted) {
+                      handleExtractEvidence()
                     } else {
-                      handleRunAnalysis()
+                      navigate(`/case/${caseId}/report`)
                     }
                   }
                 }}
@@ -1553,7 +1850,7 @@ export function CaseDetailPage() {
                 {processing ? '处理中...' :
                  currentStep === 0 ? '开始处理' :
                  currentStep === 2 ? '全部转换' :
-                 currentStep === 3 ? (analysisCompleted ? '查看报告' : '开始分析') :
+                 currentStep === 3 ? (!evidenceExtracted ? '提取证据' : '查看报告') :
                  `开始${steps[currentStep]?.name} (${getSelectedFiles().length} 个)`}
               </MacOSButton>
             </div>
@@ -1570,11 +1867,16 @@ export function CaseDetailPage() {
           {/* 取消处理后的确认对话框：选择是否删除已处理文件 */}
           {error === 'cancelled_process' && (
             <div style={{
-              position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
+              position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)',
+              backdropFilter: 'blur(12px) saturate(180%)',
+              WebkitBackdropFilter: 'blur(12px) saturate(180%)',
               display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10001
             }}>
               <div style={{
-                background: 'var(--macos-bg-secondary)', borderRadius: '12px',
+                background: 'rgba(255, 255, 255, 0.72)',
+                backdropFilter: 'blur(20px) saturate(180%)',
+                WebkitBackdropFilter: 'blur(20px) saturate(180%)',
+                borderRadius: '12px',
                 padding: '24px', maxWidth: '400px', width: '90vw',
                 boxShadow: '0 20px 60px rgba(0,0,0,0.3)'
               }}>
@@ -1627,12 +1929,12 @@ export function CaseDetailPage() {
                           marginBottom: '6px'
                         }}>
                           {isDone ? (
-                            <CheckCircle className="w-5 h-5" color="#34c759" />
+                            <CheckCircle className="w-5 h-5" color="#2d8f3d" />
                           ) : (
-                            <Icon className="w-5 h-5" color={isActive ? '#007aff' : '#86868b'} />
+                            <Icon className="w-5 h-5" color={isActive ? '#1e3a5f' : '#86868b'} />
                           )}
                         </div>
-                        <div style={{ fontSize: '11px', fontWeight: isActive ? '600' : '400', color: isActive ? '#007aff' : '#6e6e73', textAlign: 'center' }}>
+                        <div style={{ fontSize: '11px', fontWeight: isActive ? '600' : '400', color: isActive ? '#1e3a5f' : '#6e6e73', textAlign: 'center' }}>
                           {step.name}
                         </div>
                       </div>
@@ -1641,7 +1943,7 @@ export function CaseDetailPage() {
                         <div style={{
                           flex: 1,
                           height: '2px',
-                          background: index < currentStep ? '#34c759' : 'var(--macos-border)',
+                          background: index < currentStep ? '#2d8f3d' : 'var(--macos-border)',
                           marginBottom: '20px'
                         }} />
                       )}
@@ -1681,7 +1983,7 @@ export function CaseDetailPage() {
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                     {/* 去水印 */}
                     <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', cursor: 'pointer', padding: '12px', background: optWatermark ? 'rgba(0,122,255,0.05)' : 'var(--macos-bg-secondary)', borderRadius: '8px', border: optWatermark ? '1px solid rgba(0,122,255,0.3)' : '1px solid transparent' }}>
-                      <input type="checkbox" checked={optWatermark} onChange={(e) => setOptWatermark(e.target.checked)} style={{ marginTop: '2px', accentColor: '#007aff' }} />
+                      <input type="checkbox" checked={optWatermark} onChange={(e) => setOptWatermark(e.target.checked)} style={{ marginTop: '2px', accentColor: '#1e3a5f' }} />
                       <div>
                         <div style={{ fontSize: '13px', fontWeight: '500' }}>去水印 / 密码</div>
                         <div style={{ fontSize: '12px', color: 'var(--macos-text-secondary)' }}>移除 PDF 水印和加密保护，输出干净文件</div>
@@ -1707,7 +2009,7 @@ export function CaseDetailPage() {
                     )}
                     {/* 精度提升 */}
                     <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', cursor: 'pointer', padding: '12px', background: optEnhance ? 'rgba(0,122,255,0.05)' : 'var(--macos-bg-secondary)', borderRadius: '8px', border: optEnhance ? '1px solid rgba(0,122,255,0.3)' : '1px solid transparent' }}>
-                      <input type="checkbox" checked={optEnhance} onChange={(e) => setOptEnhance(e.target.checked)} style={{ marginTop: '2px', accentColor: '#007aff' }} />
+                      <input type="checkbox" checked={optEnhance} onChange={(e) => setOptEnhance(e.target.checked)} style={{ marginTop: '2px', accentColor: '#1e3a5f' }} />
                       <div style={{ flex: 1 }}>
                         <div style={{ fontSize: '13px', fontWeight: '500' }}>精度提升</div>
                         <div style={{ fontSize: '12px', color: 'var(--macos-text-secondary)', marginBottom: optEnhance ? '8px' : '0' }}>提高 PDF 图片分辨率，适用于低分辨率扫描件</div>
@@ -1719,7 +2021,7 @@ export function CaseDetailPage() {
                                 onClick={() => setEnhanceDpi(dpi)}
                                 style={{
                                   padding: '4px 12px',
-                                  background: enhanceDpi === dpi ? '#007aff' : 'rgba(142,142,147,0.12)',
+                                  background: enhanceDpi === dpi ? '#1e3a5f' : 'rgba(142,142,147,0.12)',
                                   color: enhanceDpi === dpi ? '#fff' : 'var(--macos-text-primary)',
                                   border: 'none',
                                   borderRadius: '6px',
@@ -1751,13 +2053,17 @@ export function CaseDetailPage() {
               <MacOSCard style={{ marginBottom: '16px', background: 'var(--macos-bg-secondary)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                   {processing ? (
-                    <Loader2 className="w-5 h-5 animate-spin" color="#007aff" />
+                    <Loader2 className="w-5 h-5 animate-spin" color="#1e3a5f" />
                   ) : (
-                    <CheckCircle className="w-5 h-5" color="#34c759" />
+                    <CheckCircle className="w-5 h-5" color="#2d8f3d" />
                   )}
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: '14px', fontWeight: '500', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      {processing ? '处理中' : '处理完成'}
+                      {processing ? (
+                        <>处理中 <WorkingDots /></>
+                      ) : (
+                        '处理完成'
+                      )}
                       {/* 步骤1处理中时显示停止按钮 */}
                       {processing && currentStep === 1 && (
                         <button
@@ -1774,7 +2080,7 @@ export function CaseDetailPage() {
                         </button>
                       )}
                     </div>
-                    <div style={{ fontSize: '13px', color: progress.startsWith('✅') ? '#34c759' : 'var(--macos-text-primary)' }}>
+                    <div style={{ fontSize: '13px', color: progress.startsWith('✅') ? '#2d8f3d' : 'var(--macos-text-primary)' }}>
                       {progress}
                     </div>
                     {processing && (() => {
@@ -1783,7 +2089,7 @@ export function CaseDetailPage() {
                       const pct = pctMatch ? parseInt(pctMatch[1]) : (doneCount / Math.max(files.length, 1)) * 100
                       return (
                         <div style={{ marginTop: '8px', height: '4px', background: 'var(--macos-border)', borderRadius: '2px', overflow: 'hidden' }}>
-                          <div style={{ height: '100%', background: '#007aff', width: `${Math.min(pct, 100)}%`, borderRadius: '2px', transition: 'width 0.3s ease' }} />
+                          <div style={{ height: '100%', background: '#1e3a5f', width: `${Math.min(pct, 100)}%`, borderRadius: '2px', transition: 'width 0.3s ease' }} />
                         </div>
                       )
                     })()}
@@ -1814,7 +2120,7 @@ export function CaseDetailPage() {
                           onClick={handleExtractEvidence}
                           style={{
                             padding: '6px 12px', borderRadius: '6px',
-                            border: 'none', background: '#007aff',
+                            border: 'none', background: '#1e3a5f',
                             color: '#fff', fontSize: '12px', fontWeight: '500',
                             cursor: 'pointer'
                           }}
@@ -1833,7 +2139,7 @@ export function CaseDetailPage() {
                         onClick={handleExtractEvidence}
                         style={{
                           padding: '6px 12px', borderRadius: '6px',
-                          border: 'none', background: '#007aff',
+                          border: 'none', background: '#1e3a5f',
                           color: '#fff', fontSize: '12px', fontWeight: '500',
                           cursor: 'pointer'
                         }}
@@ -1857,7 +2163,7 @@ export function CaseDetailPage() {
                             width: '28px', height: '28px', borderRadius: '6px',
                             background: 'rgba(0,122,255,0.1)',
                             display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            fontSize: '12px', fontWeight: '600', color: '#007aff'
+                            fontSize: '12px', fontWeight: '600', color: '#1e3a5f'
                           }}>{ev.id}</div>
                           <div style={{ flex: 1, overflow: 'hidden' }}>
                             <div style={{ fontSize: '13px', fontWeight: '500', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -1903,14 +2209,14 @@ export function CaseDetailPage() {
                         style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px', display: 'flex', alignItems: 'center' }}
                       >
                         {files.every(f => f.selected) ? (
-                          <CheckSquare className="w-4 h-4" color="#007aff" />
+                          <CheckSquare className="w-4 h-4" color="#1e3a5f" />
                         ) : (
                           <Square className="w-4 h-4" color="#86868b" />
                         )}
                       </button>
                       <h4 style={{ fontSize: '14px', fontWeight: '600' }}>
                         {currentStep === 0 ? '原始文件' :
-                         currentStep === 1 ? '待处理 PDF（来自 original/）' :
+                         currentStep === 1 ? '待处理 PDF' :
                          'MD 文件'}
                       </h4>
                     </div>
@@ -1949,7 +2255,7 @@ export function CaseDetailPage() {
                               background: 'rgba(52, 199, 89, 0.1)',
                               display: 'flex', alignItems: 'center', justifyContent: 'center'
                             }}>
-                              <CheckCircle className="w-4 h-4" color="#34c759" />
+                              <CheckCircle className="w-4 h-4" color="#2d8f3d" />
                             </div>
                           ) : file.status === 'processing' ? (
                             <div style={{
@@ -1957,7 +2263,7 @@ export function CaseDetailPage() {
                               background: 'rgba(0, 122, 255, 0.1)',
                               display: 'flex', alignItems: 'center', justifyContent: 'center'
                             }}>
-                              <Loader2 className="w-4 h-4 animate-spin" color="#007aff" />
+                              <Loader2 className="w-4 h-4 animate-spin" color="#1e3a5f" />
                             </div>
                           ) : (
                             <div style={{
@@ -1976,7 +2282,7 @@ export function CaseDetailPage() {
                             style={{ background: 'none', border: 'none', cursor: file.status === 'pending' ? 'pointer' : 'default', padding: '2px', display: 'flex', alignItems: 'center', opacity: file.status !== 'pending' ? 0.3 : 1 }}
                           >
                             {file.selected ? (
-                              <CheckSquare className="w-4 h-4" color="#007aff" />
+                              <CheckSquare className="w-4 h-4" color="#1e3a5f" />
                             ) : (
                               <Square className="w-4 h-4" color="#86868b" />
                             )}
@@ -1994,9 +2300,9 @@ export function CaseDetailPage() {
                             justifyContent: 'center'
                           }}>
                             {file.status === 'done' ? (
-                              <CheckCircle className="w-4 h-4" color="#34c759" />
+                              <CheckCircle className="w-4 h-4" color="#2d8f3d" />
                             ) : file.status === 'processing' ? (
-                              <Loader2 className="w-4 h-4 animate-spin" color="#007aff" />
+                              <Loader2 className="w-4 h-4 animate-spin" color="#1e3a5f" />
                             ) : file.status === 'error' ? (
                               <AlertCircle className="w-4 h-4" color="#ff3b30" />
                             ) : (
@@ -2017,7 +2323,7 @@ export function CaseDetailPage() {
                                file.status === 'processing' ? 'LLM 分析中...' :
                                '待拆分'
                              ) :
-                             currentStep === 3 ? '拆分后 PDF' :
+                             currentStep === 3 ? '已拆分 MD' :
                              'MD 格式'}
                             {file.error && ` - ${file.error}`}
                           </div>
@@ -2027,7 +2333,7 @@ export function CaseDetailPage() {
                         {currentStep === 2 && file.splitResults && (
                           <span style={{
                             padding: '4px 10px', borderRadius: '12px',
-                            background: 'rgba(52, 199, 89, 0.1)', color: '#34c759',
+                            background: 'rgba(52, 199, 89, 0.1)', color: '#2d8f3d',
                             fontSize: '12px', fontWeight: '500', whiteSpace: 'nowrap'
                           }}>
                             ✓ 已拆分
@@ -2046,6 +2352,19 @@ export function CaseDetailPage() {
                           </span>
                         )}
 
+                        {/* 步骤 2：PDF 删除和重新转换按钮 */}
+                        {currentStep === 2 && file.status !== 'processing' && (
+                          <>
+                            <button
+                              onClick={() => handleDeletePdf(file.name)}
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}
+                              title="删除此 PDF，删除后可重新上传转换"
+                            >
+                              <Trash2 className="w-4 h-4" color="#86868b" />
+                            </button>
+                          </>
+                        )}
+
                         {file.status !== 'processing' && currentStep === 0 && (
                           <button
                             onClick={() => handleRemoveFile(file)}
@@ -2053,6 +2372,37 @@ export function CaseDetailPage() {
                           >
                             <Trash2 className="w-4 h-4" color="#86868b" />
                           </button>
+                        )}
+
+                        {/* 步骤 1：PDF 删除按钮 */}
+                        {file.status !== 'processing' && currentStep === 1 && (
+                          <button
+                            onClick={() => handleDeleteOriginal(file.name)}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}
+                            title="删除此 PDF，删除后可重新上传"
+                          >
+                            <Trash2 className="w-4 h-4" color="#86868b" />
+                          </button>
+                        )}
+
+                        {/* MD 文件删除和重新转换按钮（步骤 3+） */}
+                        {file.status !== 'processing' && currentStep >= 3 && file.name.endsWith('.md') && (
+                          <>
+                            <button
+                              onClick={() => handleReconvertMd(file.name)}
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}
+                              title="从 PDF 重新转换此文件"
+                            >
+                              <RefreshCw className="w-4 h-4" color="#86868b" />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteMd(file.name)}
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}
+                              title="删除此 MD 文件，删除后可从 PDF 重新转换"
+                            >
+                              <Trash2 className="w-4 h-4" color="#86868b" />
+                            </button>
+                          </>
                         )}
                         
                         {/* 打开文件按钮 */}
@@ -2062,7 +2412,7 @@ export function CaseDetailPage() {
                             style={{
                               padding: '6px 12px',
                               background: 'rgba(0, 122, 255, 0.1)',
-                              color: '#007aff',
+                              color: '#1e3a5f',
                               border: 'none',
                               borderRadius: '6px',
                               cursor: 'pointer',
@@ -2149,7 +2499,7 @@ export function CaseDetailPage() {
                             background: status === 'completed' ? 'rgba(52,199,89,0.15)' : isRunning ? 'rgba(0,122,255,0.1)' : status === 'error' ? 'rgba(255,59,48,0.1)' : 'var(--macos-bg-tertiary)',
                             display: 'flex', alignItems: 'center', justifyContent: 'center',
                             fontSize: '14px', fontWeight: '600', flexShrink: 0,
-                            color: status === 'completed' ? '#34c759' : isRunning ? '#007aff' : status === 'error' ? '#ff3b30' : '#86868b'
+                            color: status === 'completed' ? '#2d8f3d' : isRunning ? '#1e3a5f' : status === 'error' ? '#ff3b30' : '#86868b'
                           }}>
                             {status === 'completed' ? '✓' : isRunning ? <Loader2 className="w-4 h-4 animate-spin" /> : stage.num}
                           </div>
@@ -2157,7 +2507,7 @@ export function CaseDetailPage() {
                           {/* 阶段信息 */}
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ fontSize: '13px', fontWeight: '500' }}>{stage.name}</div>
-                            {msg && <div style={{ fontSize: '11px', color: '#007aff' }}>{msg}</div>}
+                            {msg && <div style={{ fontSize: '11px', color: '#1e3a5f' }}>{msg}</div>}
                             {errMsg && <div style={{ fontSize: '11px', color: '#ff3b30' }}>{errMsg}</div>}
                             {!msg && !errMsg && <div style={{ fontSize: '11px', color: 'var(--macos-text-tertiary)' }}>{stage.desc}</div>}
                           </div>
@@ -2169,7 +2519,7 @@ export function CaseDetailPage() {
                                 <button onClick={() => handleViewStage(stage.num)} disabled={analysisDisabled} style={{
                                   padding: '4px 10px', borderRadius: '6px',
                                   border: '1px solid var(--macos-border)', background: 'transparent',
-                                  color: analysisDisabled ? '#d1d1d6' : '#007aff',
+                                  color: analysisDisabled ? '#d1d1d6' : '#1e3a5f',
                                   fontSize: '12px', cursor: analysisDisabled ? 'not-allowed' : 'pointer'
                                 }}>查看</button>
                                 <button onClick={() => handleClearStage(stage.num)} disabled={analysisDisabled} style={{
@@ -2199,7 +2549,7 @@ export function CaseDetailPage() {
                               <button onClick={() => handleRunStage(stage.num)} disabled={!defendant.trim() || analysisDisabled} style={{
                                 padding: '4px 10px', borderRadius: '6px',
                                 border: 'none',
-                                background: (!defendant.trim() || analysisDisabled) ? '#d1d1d6' : '#007aff',
+                                background: (!defendant.trim() || analysisDisabled) ? '#d1d1d6' : '#1e3a5f',
                                 color: '#fff', fontSize: '12px',
                                 cursor: (!defendant.trim() || analysisDisabled) ? 'not-allowed' : 'pointer'
                               }}>开始</button>
@@ -2244,10 +2594,20 @@ export function CaseDetailPage() {
                     variant="primary"
                     icon={pipelineRunning ? Loader2 : Scale}
                     onClick={executeNextStep}
-                    disabled={pipelineRunning || pipelineStatus[5] || !defendant.trim()}
+                    disabled={pipelineRunning || (pipelineStatus[5] && nextStep !== 4.5) || !defendant.trim()}
                   >
-                    {pipelineRunning ? '分析中...' : pipelineStatus[5] ? '分析完成' : '执行下一步'}
+                    {pipelineRunning ? '分析中...' : pipelineStatus[5] && nextStep === 4.5 ? '补充控辩对抗' : pipelineStatus[5] ? '分析完成' : '执行下一步'}
                   </MacOSButton>
+                  {nextStep && !pipelineRunning && (
+                    <MacOSButton
+                      variant="secondary"
+                      icon={RefreshCw}
+                      onClick={handleResumeAnalysis}
+                      disabled={!defendant.trim()}
+                    >
+                      继续分析（步骤 {nextStep}）
+                    </MacOSButton>
+                  )}
                 </div>
 
                 {/* 流水线步骤进度条 */}
@@ -2266,7 +2626,7 @@ export function CaseDetailPage() {
                           background: isDone ? 'rgba(52,199,89,0.1)' : isRunning ? 'rgba(0,122,255,0.1)' : 'var(--macos-bg-secondary)',
                           fontSize: '11px',
                           textAlign: 'center',
-                          color: isDone ? '#34c759' : isRunning ? '#007aff' : 'var(--macos-text-tertiary)',
+                          color: isDone ? '#2d8f3d' : isRunning ? '#1e3a5f' : 'var(--macos-text-tertiary)',
                           fontWeight: isDone || isRunning ? '600' : '400',
                           border: isRunning ? '1px solid rgba(0,122,255,0.3)' : '1px solid transparent',
                           cursor: canRun ? 'pointer' : 'default',
@@ -2294,21 +2654,37 @@ export function CaseDetailPage() {
                 </div>
 
                 {/* 已有分析结果摘要 */}
-                {(Object.keys(pipelineStatus).length > 0 || analysisCompleted) && (
+                {(Object.keys(pipelineStatus).length > 0 || analysisCompleted || nextStep) && (
                   <MacOSCard style={{ marginBottom: '12px', padding: '12px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                       <div style={{ fontSize: '13px', fontWeight: '600', color: 'var(--macos-text-primary)' }}>
-                        {analysisCompleted ? '✓ 5 阶段分析已完成' : pipelineStatus[5] ? '分析记录' : `已有 ${Object.values(pipelineStatus).filter(Boolean).length}/5 步完成`}
+                        {analysisCompleted ? '✓ 6 阶段分析已完成' : pipelineStatus[5] ? (nextStep === 4.5 ? '分析已完成，可补充控辩对抗' : '分析记录') : nextStep ? `部分分析完成（${Object.values(pipelineStatus).filter(Boolean).length}/6 步，继续从步骤 ${nextStep} 开始）` : `已有 ${Object.values(pipelineStatus).filter(Boolean).length}/6 步完成`}
                       </div>
-                      {(pipelineStatus[5] || analysisCompleted) && (
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        {nextStep && !pipelineRunning && (
+                          <MacOSButton
+                            variant="secondary"
+                            icon={RefreshCw}
+                            onClick={handleResumeAnalysis}
+                            disabled={!defendant.trim()}
+                          >
+                            {nextStep === 4.5 && pipelineStatus[5] ? '补充控辩对抗' : '继续分析'}
+                          </MacOSButton>
+                        )}
                         <MacOSButton
-                          variant="primary"
-                          icon={FileText}
-                          onClick={() => navigate(`/case/${caseId}/report`)}
-                        >
-                          查看报告
-                        </MacOSButton>
-                      )}
+                            variant="primary"
+                            icon={FileText}
+                            onClick={() => {
+                              if (!evidenceExtracted) {
+                                handleExtractEvidence()
+                              } else {
+                                navigate(`/case/${caseId}/report`)
+                              }
+                            }}
+                          >
+                            {!evidenceExtracted ? '提取证据' : '查看报告'}
+                          </MacOSButton>
+                      </div>
                     </div>
                     <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                       {PIPELINE_STEPS.map(step => {
@@ -2323,6 +2699,7 @@ export function CaseDetailPage() {
                           const done = subs.filter((s: any) => s.status === 'done').length
                           summary = `Wiki ${done}/${subs.length} 子步骤`
                         }
+                        else if (step.num === 4.5 && result) summary = '控辩对抗已生成'
                         else if (step.num === 5 && result) summary = '辩护意见已生成'
                         return (
                           <div key={step.num} style={{
@@ -2331,7 +2708,7 @@ export function CaseDetailPage() {
                             background: done ? 'rgba(52,199,89,0.06)' : 'var(--macos-bg-secondary)',
                             border: `1px solid ${done ? 'rgba(52,199,89,0.2)' : 'transparent'}`,
                           }}>
-                            <div style={{ fontSize: '11px', fontWeight: '600', color: done ? '#34c759' : 'var(--macos-text-tertiary)', marginBottom: '2px' }}>
+                            <div style={{ fontSize: '11px', fontWeight: '600', color: done ? '#2d8f3d' : 'var(--macos-text-tertiary)', marginBottom: '2px' }}>
                               {done ? '✓' : '○'} {step.name}
                             </div>
                             {done && summary && (
@@ -2357,9 +2734,9 @@ export function CaseDetailPage() {
                 {liveProgress && (
                   <MacOSCard style={{ marginBottom: '12px', background: 'rgba(0,122,255,0.04)', border: '1px solid rgba(0,122,255,0.15)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                      <Loader2 className="w-5 h-5 animate-spin" color="#007aff" />
+                      <Loader2 className="w-5 h-5 animate-spin" color="#1e3a5f" />
                       <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: '13px', fontWeight: '500', color: '#007aff', marginBottom: '4px' }}>
+                        <div style={{ fontSize: '13px', fontWeight: '500', color: '#1e3a5f', marginBottom: '4px' }}>
                           {liveProgress!.message}
                         </div>
                         <div style={{ fontSize: '11px', color: 'var(--macos-text-tertiary)' }}>
@@ -2371,7 +2748,7 @@ export function CaseDetailPage() {
                             <div style={{
                               width: `${(liveProgress!.current / liveProgress!.total) * 100}%`,
                               height: '100%',
-                              background: '#007aff',
+                              background: '#1e3a5f',
                               borderRadius: '2px',
                               transition: 'width 0.3s ease',
                             }} />
@@ -2409,7 +2786,7 @@ export function CaseDetailPage() {
                         <span style={{ fontSize: '20px' }}>✓</span>
                       </div>
                       <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: '14px', fontWeight: '600', color: '#34c759' }}>分析完成</div>
+                        <div style={{ fontSize: '14px', fontWeight: '600', color: '#2d8f3d' }}>分析完成</div>
                         <div style={{ fontSize: '12px', color: 'var(--macos-text-secondary)', marginTop: '2px' }}>
                           5 步流水线分析已完成，查看完整报告
                         </div>
@@ -2417,9 +2794,15 @@ export function CaseDetailPage() {
                       <MacOSButton
                         variant="primary"
                         icon={FileText}
-                        onClick={() => navigate(`/case/${caseId}/report`)}
+                        onClick={() => {
+                          if (!evidenceExtracted) {
+                            handleExtractEvidence()
+                          } else {
+                            navigate(`/case/${caseId}/report`)
+                          }
+                        }}
                       >
-                        查看分析报告
+                        {!evidenceExtracted ? '提取证据' : '查看分析报告'}
                       </MacOSButton>
                     </div>
                   </MacOSCard>
@@ -2553,7 +2936,7 @@ export function CaseDetailPage() {
                                   padding: '6px 8px', marginBottom: '2px', borderRadius: '4px',
                                   fontSize: '11px',
                                   background: isActive ? 'rgba(0,122,255,0.1)' : 'transparent',
-                                  color: isActive ? '#007aff' : 'var(--macos-text-secondary)',
+                                  color: isActive ? '#1e3a5f' : 'var(--macos-text-secondary)',
                                   border: 'none', cursor: 'pointer',
                                   fontWeight: isActive ? '600' : '400',
                                 }}
@@ -2672,7 +3055,7 @@ export function CaseDetailPage() {
                 borderRadius: '6px',
                 cursor: 'pointer',
                 fontSize: '13px',
-                color: '#007aff',
+                color: '#1e3a5f',
                 fontWeight: '500'
               }}
             >

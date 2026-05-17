@@ -174,7 +174,24 @@ def start_convert_task(case_id: str):
                     )
 
                     try:
-                        text, images_dir = get_evidence_text(str(pdf_file), True, str(md_dir))
+                        # 子步骤进度回调
+                        def _sub_progress(stage: str, detail: str,
+                                          _case=case_id, _idx=idx, _total=len(pdf_files), _name=pdf_file.name):
+                            msg_map = {
+                                "submitting": "正在提交转换",
+                                "uploading": "正在发送文件",
+                                "processing": detail,
+                                "downloading": "正在生成文本",
+                                "parsing": "正在整理输出",
+                            }
+                            msg = msg_map.get(stage, detail)
+                            _update_task(_case, current=_idx + 1, current_file=_name,
+                                         message=f"{msg}（{_idx + 1}/{_total}）")
+
+                        text, images_dir = get_evidence_text(
+                            str(pdf_file), True, str(md_dir),
+                            progress_cb=_sub_progress,
+                        )
                         if text is None:
                             results.append({
                                 "file": pdf_file.name,

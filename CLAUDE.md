@@ -60,6 +60,7 @@ criminal-llm/
 │   ├── analysis_pipeline.py    # 分析流水线编排（步骤 0-5 串联）
 │   ├── analysis_engine.py      # 分析引擎（三阶层分析核心）
 │   ├── case_splitter.py        # 文书拆分模块
+│   ├── concurrency_controller.py # 证据提取并发控制器
 │   ├── pdf_processor.py        # PDF 处理核心（水印移除、OCR）
 │   ├── legal_search.py         # 法律条文联网搜索
 │   ├── legal_kb_api.py         # 法律知识库 CRUD API
@@ -83,6 +84,8 @@ criminal-llm/
 │   │   ├── pages/
 │   │   │   ├── HomePage.tsx      # 首页：案件列表（toolbar 显示登录用户头像+邮箱）
 │   │   │   ├── LoginPage.tsx     # 登录页面（认证门禁）
+│   │   │   ├── RegisterPage.tsx  # 注册页面（跳转远程认证服务器）
+│   │   │   ├── ResetPasswordPage.tsx # 密码重置页面
 │   │   │   ├── CaseDetailPage.tsx # 案件详情：流水线处理（主页面）
 │   │   │   ├── AnalyzePage.tsx   # 案卷分析页面
 │   │   │   ├── ReportPage.tsx    # 辩护报告页面
@@ -127,6 +130,8 @@ criminal-llm/
 步骤3：案卷分析 → md/ → analysis/（三阶层理论辩护分析）
 ```
 
+**PDF 转 MD → 证据提取 → 分析全自动串联**：转换完成后自动触发证据提取，提取完成后（若被告人信息已填写）自动启动分析流水线。
+
 ### 关键设计原则
 1. **每步自动加载上一步输出**，不手动添加文件
 2. **保持文件名延续性**，不用 UUID 替换原文件名
@@ -141,6 +146,8 @@ criminal-llm/
 ```
 /                          → HomePage（案件列表，需认证）
 /login                     → LoginPage（认证门禁，未登录时自动显示）
+/register                  → RegisterPage（注册，跳转远程认证服务器）
+/reset-password            → ResetPasswordPage（密码重置）
 /case/:caseId              → CaseDetailPage（案件详情 + 流水线工作流）
 /case/:caseId/report       → ReportPage（辩护分析报告 + 批注）
 /process                   → ProcessPage（PDF 处理 - 独立向后兼容）
@@ -161,10 +168,33 @@ criminal-llm/
 | `StickyNoteOverlay` | 区域便签批注覆盖层，支持点击创建/编辑/删除彩色便签 |
 | `MermaidRenderer` | Mermaid 图表渲染组件 |
 
-### 报告页模板
-- 报告页 HTML 模板位于 `backend/templates/report.html`，使用 Jinja2 渲染
-- 模板中的 `showPdf` 函数切换 PDF 时会自动清空 iframe src 避免缓存
-- 前端 `ReportPage.tsx` 的 PDF 切换依赖 `pdfDoc` 引用变化触发重新渲染
+### 报告页（ReportPage.tsx）
+- 3 面板布局：左侧证据浏览、中间报告内容、右侧对话/修改
+- **9 个内容标签**：指控要素、人物关系、事件拆解、法律法规、证据列表、矛盾分析、**控辩对抗**、三阶层分析、完整报告
+- 内容来源：5 阶段分析 API（`stage_api.py`）读取 `analysis/stage_N/output.md`
+- **控辩对抗标签**（步骤 4.5）：位于矛盾分析与三阶层分析之间，展示红蓝对抗模拟结果（`analysis/04.5-控辩对抗/对抗分析.md`）
+- **编辑功能**：顶部工具栏「编辑」按钮进入编辑模式，textarea 直接修改 Markdown 原文，保存到后端磁盘
+- **LLM 修改**：右侧「修改报告」标签页通过 LLM 聊天指令修改三阶层报告（调用 `/api/analyze-case/chat/update`）
+- 批注功能：支持 PDF 页面批注和内容区域便签批注
+
+### 两套分析系统
+
+项目同时存在两套分析 API，功能有重叠但接口不同：
+
+| 系统 | 文件 | 前缀 | 说明 |
+|------|------|------|------|
+| **5 阶段分析** | `stage_api.py` | `/api/stage-analysis/*` | 新引擎，支持步骤 1-5 + 子阶段 51/52/53 + 步骤 4.5 控辩对抗 |
+| **流水线分析** | `pipeline_api.py` | `/api/pipeline/*` | 旧引擎，步骤 1-5 串联 + 断点续传 + 步骤 4.5 控辩对抗 |
+
+两套系统共享 `analysis_pipeline.py` 中的 `AnalysisPipeline` 类作为核心编排器。
+
+### 分析流水线（含断点续传）
+
+分析流水线支持断点续传：每一步完成后将状态持久化到 `analysis/analysis_state.json`，中断后可从最后完成的步骤继续。
+
+**步骤 4.5（控辩对抗）**：位于步骤 4（案件 Wiki）和步骤 5（辩护意见）之间，通过红蓝对抗模拟生成攻防对照表。子步骤：45a 红方指控 → 45b 蓝方辩护 → 45c 红方反驳 → 45d 蓝方回应 → 45e 法官裁决。中间结果保存到 `analysis/04.5-控辩对抗/` 目录。
+
+已有案件（已完成全部 5 步的）点击"继续分析"时，`_get_next_unfinished_step` 会自动发现 4.5 为下一个未完成步骤。
 
 ### Vite 代理
 开发环境 Vite 将 `/api` 请求代理到 `http://localhost:8080`（FastAPI），无需额外 CORS 配置。生产环境需构建后由 Tauri 壳提供。
@@ -180,6 +210,8 @@ criminal-llm/
 8. **测试 API**：`curl -s http://localhost:8080/api/cases/list | jq '.'`
 9. **后端无热重载**：修改后端后需手动重启（`kill` 进程再启动）
 10. **用中文注释**：代码注释用中文
+11. **版本号管理**：`cd frontend && python3 bump-version.py`（自动递增 package.json + tauri.conf.json 版本号）
+12. **图标生成**：`cd frontend && python3 generate-icon.py`（从桌面图片生成多尺寸图标 + icns）
 
 ### 测试
 - **E2E 测试**：`npx playwright test`（配置文件 `tests/playwright.config.ts`）
@@ -217,6 +249,16 @@ criminal-llm/
 
 **案件管理、文件处理、分析等本地 API** 通过 `api` 对象统一导出。
 
+### 配置文件（config_manager.py）
+存储于 `DATA_DIR/criminal-llm-config.json`，字段：
+| 字段 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `mineru_token` | string | - | MinerU API Token |
+| `llm_api_key` | string | - | LLM API Key |
+| `llm_base_url` | string | 百炼 URL | LLM 服务地址 |
+| `llm_model` | string | `qwen3.5-plus` | 模型名称 |
+| `evidence_concurrency` | int | `3` | 证据提取并发数（1-10） |
+
 ### API 设计
 - 所有 API 接收 JSON body（使用 Pydantic 模型）或 query params
 - 错误返回 `{ "success": false, "error": "..." }` 或 HTTPException
@@ -230,7 +272,7 @@ criminal-llm/
 | `case_router` | `/api/cases/*` | 案件 CRUD、文件扫描、导入、证据提取 |
 | `process_router` | `/api/process/*` | PDF 处理（去水印、OCR） |
 | `analyzer_router` | `/api/analyze/*` | 案卷分析、证据识别 |
-| `stage_router` | `/api/stages/*` | 分析阶段状态管理 |
+| `stage_router` | `/api/stage-analysis/*` | 5 阶段分析（运行、进度、结果、Markdown 读写） |
 | `pipeline_router` | `/api/pipeline/*` | 流水线处理 |
 | `legal_kb_router` | `/api/legal-kb/*` | 法律知识库 CRUD |
 | `bg_task_router` | `/api/tasks/*` | 后台任务（PDF 转 MD 进度） |
@@ -270,6 +312,25 @@ export JWT_SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))")
 python3 -m uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
+### 打包与部署
+
+#### 本地打包
+1. **PyInstaller 打包后端**：`cd backend && pyinstaller criminal-llm.spec --noconfirm`
+2. **前端构建**：`cd frontend && npm run build`
+3. **Tauri 构建**：`cd frontend && npx tauri build`
+   - DMG 打包有中文文件名兼容问题，需用 `hdiutil` 手动创建
+4. **清理缓存**：重新打包前清理 `backend/__pycache__/` 和 `backend/build/`
+
+#### 服务器部署
+- 下载地址：`root@118.196.83.43:/opt/criminal-llm-auth/data/uploads/`
+- 上传 DMG：`scp <dmg-file> root@118.196.83.43:/opt/criminal-llm-auth/data/uploads/`
+- 服务管理：认证服务在 `/opt/criminal-llm-auth/`，用 `nohup` 后台运行
+
+### 证据提取关键点
+- 证据清单在 `evidence/index.json`，每条记录有 `md_file` 字段指向实际文件
+- **后期添加的文件**：index.json 中的 `md_file` 可能带有数字前缀（如 `104_xxx.md`），但实际文件名可能没有前缀
+- `_load_evidence_texts()` 会 fallback 匹配无前缀的文件名
+
 ### 后台任务
 - PDF 转 MD 使用 `background_tasks.py` 的 `ThreadPoolExecutor(max_workers=1)` 异步执行
 - 任务状态持久化到 `~/.openclaw/criminal-llm-tasks.json`，重启可恢复
@@ -284,10 +345,13 @@ python3 -m uvicorn main:app --host 0.0.0.0 --port 8000
   2. 转换完成 → 自动开始证据提取
   3. 提取完成 → 自动开始分析（如果被告人信息已填写）
 - 手动"提取证据"按钮保留，用于重新提取/错误恢复
-- 采用 **3 并发提取**（`asyncio.gather` + `Semaphore(3)`）
+- **并发数可配置**：默认 3，用户可在设置页面调整为 1-10。配置存储在 `DATA_DIR/criminal-llm-config.json` 的 `evidence_concurrency` 字段
 - 起诉书/起诉意见书优先串行处理（依赖前一步输出）
 - 非起诉书文件并发处理，按卷号排序后分配连续证据编号
 - 提取时自动识别文书边界，逐笔提取犯罪事实
+- 证据清单在 `evidence/index.json`，每条记录有 `md_file` 字段指向实际文件
+- **后期添加的文件**：index.json 中的 `md_file` 可能带有数字前缀（如 `104_xxx.md`），但实际文件名可能没有前缀，加载时需 fallback 匹配
+- **卡死排查**：用户反馈并发过高会导致 API 限流卡死，建议在设置页引导用户降低并发数至 1-2
 
 ### 知识库
 - **内置**：刑法全文 + 刑诉法全文（`backend/legal_db/`）
@@ -299,13 +363,23 @@ python3 -m uvicorn main:app --host 0.0.0.0 --port 8000
 ## ⚠️ 已知问题
 
 1. **MinerU 配额** — 每日 1000 页免费，超额后需排队；转换超时设为 1 小时（3600 秒）
-2. **案件目录嵌套** — 案件目录结构为 `data/cases/{case_id}/案件_名称_日期/`，`find_case_path()` 会扫描子目录匹配
+2. **DMG 打包** — `bundle_dmg.sh` 对中文文件名有兼容问题，需用 `hdiutil create` 手动创建
+3. **证据提取卡死** — 并发过高可能触发 API 限流，引导用户降低并发数至 1-2
 
 ---
 
 ## 📌 重要提醒
 
 - **不要修改用户数据**：`data/cases/` 里的案件数据不要随意删除
+- **数据目录**：开发模式优先使用 `~/Documents/.criminal-llm-data/`（config.py 已修复 symlink 丢失问题）
 - **保持向后兼容**：已有的 API 端点不要破坏
 - **测试后提交**：修改后确认 `npm run build` 通过
 - **用中文注释**：代码注释用中文
+
+## 🛠️ 工具脚本
+
+| 脚本 | 路径 | 功能 |
+|------|------|------|
+| 版本号递增 | `frontend/bump-version.py` | 自动递增 package.json + tauri.conf.json 版本号 |
+| 图标生成 | `frontend/generate-icon.py` | 从桌面图片裁剪生成多尺寸 PNG + icns |
+| 说明书同步 | `scripts/sync-manual.sh` | 同步 docs/user-manual.html 到前端 public 目录 |

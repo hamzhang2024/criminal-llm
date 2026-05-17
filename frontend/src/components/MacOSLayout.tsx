@@ -37,11 +37,11 @@ export function MacOSSidebar() {
         
         {/* 进度条 */}
         <div style={{ padding: '0 12px 12px' }}>
-          <div style={{ height: '4px', background: 'rgba(0,0,0,0.1)', borderRadius: '2px', overflow: 'hidden' }}>
-            <div style={{ 
-              height: '100%', 
+          <div style={{ height: '4px', background: 'rgba(0,0,0,0.08)', borderRadius: '2px', overflow: 'hidden' }}>
+            <div style={{
+              height: '100%',
               width: `${currentIndex >= 0 ? ((currentIndex + 1) / mainItems.length) * 100 : 0}%`,
-              background: currentIndex >= 0 ? '#007aff' : 'transparent',
+              background: currentIndex >= 0 ? 'var(--macos-accent)' : 'transparent',
               borderRadius: '2px',
               transition: 'width 0.3s ease'
             }} />
@@ -67,12 +67,6 @@ export function MacOSSidebar() {
       <div className="macOS-sidebar-section">
         <div className="macOS-sidebar-title">工具</div>
         <div className="group">
-          <SidebarItem
-            path="/tauri-test"
-            label="Tauri 测试"
-            icon={FileText}
-            active={location.pathname === '/tauri-test'}
-          />
           <SidebarItem
             path="/manual"
             label="使用说明书"

@@ -12,6 +12,7 @@ interface ConfigStatus {
   llm_api_key: boolean
   llm_base_url: boolean
   llm_model: boolean
+  evidence_concurrency: number
 }
 
 interface ConfigForm {
@@ -19,6 +20,7 @@ interface ConfigForm {
   llm_api_key: string
   llm_base_url: string
   llm_model: string
+  evidence_concurrency: number
 }
 
 // 默认 LLM 配置（阿里云百炼 Token Plan）
@@ -33,6 +35,7 @@ export function SettingsPage() {
     llm_api_key: '',
     llm_base_url: DEFAULT_LLM_BASE_URL,
     llm_model: DEFAULT_LLM_MODEL,
+    evidence_concurrency: 3,
   })
   const [status, setStatus] = useState<ConfigStatus | null>(null)
   const [saving, setSaving] = useState(false)
@@ -53,7 +56,8 @@ export function SettingsPage() {
       config.mineru_token !== initialConfig.mineru_token ||
       config.llm_api_key !== initialConfig.llm_api_key ||
       config.llm_base_url !== initialConfig.llm_base_url ||
-      config.llm_model !== initialConfig.llm_model
+      config.llm_model !== initialConfig.llm_model ||
+      config.evidence_concurrency !== initialConfig.evidence_concurrency
     )
   }, [initialConfig, config])
 
@@ -90,6 +94,7 @@ export function SettingsPage() {
       if (data.llm_api_key_value) updates.llm_api_key = data.llm_api_key_value
       if (data.llm_base_url) updates.llm_base_url = data.llm_base_url
       if (data.llm_model) updates.llm_model = data.llm_model
+      if (data.evidence_concurrency) updates.evidence_concurrency = data.evidence_concurrency
       const loaded = { ...config, ...updates }
       setConfig(loaded)
       // 记录初始快照，用于检测未保存的变更
@@ -119,6 +124,7 @@ export function SettingsPage() {
           llm_api_key: config.llm_api_key.trim(),
           llm_base_url: config.llm_base_url.trim(),
           llm_model: config.llm_model.trim(),
+          evidence_concurrency: config.evidence_concurrency,
         }),
       })
       if (res.ok) {
@@ -251,7 +257,7 @@ export function SettingsPage() {
   }
 
   const statusIcon = (configured: boolean, testState: 'ok' | 'fail' | null) => {
-    if (testState === 'ok') return <Check className="w-4 h-4" color="#34c759" />
+    if (testState === 'ok') return <Check className="w-4 h-4" color="#2d8f3d" />
     if (testState === 'fail') return <span style={{ fontSize: '11px', color: '#ff3b30' }}>失败</span>
     if (configured) return <Check className="w-4 h-4" color="#86868b" />
     return null
@@ -299,7 +305,7 @@ export function SettingsPage() {
           style={{
             display: 'flex', alignItems: 'center', gap: '6px',
             padding: '6px 12px', background: 'transparent', border: 'none',
-            cursor: 'pointer', fontSize: '13px', color: '#007aff', borderRadius: '6px',
+            cursor: 'pointer', fontSize: '13px', color: 'var(--macos-accent)', borderRadius: '6px',
           }}
           onMouseEnter={e => e.currentTarget.style.background = 'rgba(0,122,255,0.08)'}
           onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
@@ -367,7 +373,7 @@ export function SettingsPage() {
                     href="https://mineru.net"
                     target="_blank"
                     rel="noopener noreferrer"
-                    style={{ fontSize: '11px', color: '#007aff', textDecoration: 'none', cursor: 'pointer' }}
+                    style={{ fontSize: '11px', color: 'var(--macos-accent)', textDecoration: 'none', cursor: 'pointer' }}
                     onMouseEnter={e => e.currentTarget.style.textDecoration = 'underline'}
                     onMouseLeave={e => e.currentTarget.style.textDecoration = 'none'}
                   >
@@ -381,7 +387,7 @@ export function SettingsPage() {
                       padding: '4px 10px', fontSize: '11px', borderRadius: '4px',
                       border: '1px solid var(--macos-border)', background: 'transparent',
                       cursor: testing === 'mineru' ? 'not-allowed' : 'pointer',
-                      color: testing === 'mineru' ? '#86868b' : '#007aff',
+                      color: testing === 'mineru' ? '#86868b' : 'var(--macos-accent)',
                       opacity: testing === 'mineru' ? 0.6 : 1,
                     }}
                   >
@@ -418,7 +424,7 @@ export function SettingsPage() {
           <MacOSCard style={{ marginTop: '16px' }}>
             <h2 style={{ fontSize: '15px', fontWeight: '600', color: '#1d1d1f', display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
               大模型配置
-              <span style={{ fontSize: '11px', color: '#34c759', fontWeight: 500, background: 'rgba(52,199,89,0.1)', padding: '2px 8px', borderRadius: '4px' }}>推荐 qwen3.5-omni-plus</span>
+              <span style={{ fontSize: '11px', color: '#2d8f3d', fontWeight: 500, background: 'rgba(52,199,89,0.1)', padding: '2px 8px', borderRadius: '4px' }}>推荐 ollama qwen3.6 35b-a3b</span>
             </h2>
 
             <div style={{ marginBottom: '16px' }}>
@@ -433,7 +439,7 @@ export function SettingsPage() {
                       padding: '4px 10px', fontSize: '11px', borderRadius: '4px',
                       border: '1px solid var(--macos-border)', background: 'transparent',
                       cursor: testing === 'llm' ? 'not-allowed' : 'pointer',
-                      color: testing === 'llm' ? '#86868b' : '#007aff',
+                      color: testing === 'llm' ? '#86868b' : 'var(--macos-accent)',
                       opacity: testing === 'llm' ? 0.6 : 1,
                     }}
                   >
@@ -499,6 +505,34 @@ export function SettingsPage() {
                 }}
               />
             </div>
+
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: '500', marginBottom: '8px' }}>
+                证据提取并发数
+              </label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <input
+                  type="number"
+                  min={1}
+                  max={10}
+                  value={config.evidence_concurrency}
+                  onChange={e => {
+                    const v = parseInt(e.target.value, 10)
+                    if (!isNaN(v) && v >= 1 && v <= 10) {
+                      setConfig(prev => ({ ...prev, evidence_concurrency: v }))
+                    }
+                  }}
+                  style={{
+                    width: '80px', padding: '10px 12px',
+                    border: '1px solid var(--macos-border)', borderRadius: '8px',
+                    fontSize: '14px', boxSizing: 'border-box',
+                  }}
+                />
+                <span style={{ fontSize: '12px', color: '#86868b' }}>
+                  范围 1-10，默认 3。并发过高可能导致 API 限流，建议 1-2
+                </span>
+              </div>
+            </div>
           </MacOSCard>
 
           <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
@@ -506,7 +540,7 @@ export function SettingsPage() {
               onClick={handleSave}
               disabled={saving}
               style={{
-                flex: 1, padding: '12px', background: '#007aff', color: 'white',
+                flex: 1, padding: '12px', background: 'var(--macos-accent)', color: 'white',
                 border: 'none', borderRadius: '8px', cursor: saving ? 'not-allowed' : 'pointer',
                 fontSize: '14px', fontWeight: '500', opacity: saving ? 0.6 : 1,
               }}
@@ -530,7 +564,7 @@ export function SettingsPage() {
             background: 'rgba(0, 122, 255, 0.05)', borderRadius: '8px',
             fontSize: '12px', color: '#6e6e73', lineHeight: '1.6',
           }}>
-            <strong>MinerU Token：</strong>在 <a href="https://mineru.net" target="_blank" rel="noopener noreferrer" style={{ color: '#007aff', textDecoration: 'none' }} onMouseEnter={e => e.currentTarget.style.textDecoration = 'underline'} onMouseLeave={e => e.currentTarget.style.textDecoration = 'none'}>mineru.net</a> 注册后获取
+            <strong>MinerU Token：</strong>在 <a href="https://mineru.net" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--macos-accent)', textDecoration: 'none' }} onMouseEnter={e => e.currentTarget.style.textDecoration = 'underline'} onMouseLeave={e => e.currentTarget.style.textDecoration = 'none'}>mineru.net</a> 注册后获取
             <br />
             <strong>API Key：</strong>在阿里云百炼平台开通，推荐 <code style={{ fontSize: '11px' }}>qwen-plus</code>。Base URL 和模型名称可在上方输入框中自定义
           </div>
@@ -555,9 +589,9 @@ export function SettingsPage() {
                 style={{
                   display: 'flex', alignItems: 'center', gap: '6px',
                   padding: '8px 16px', fontSize: 13, fontWeight: 500,
-                  background: 'transparent', border: '1.5px solid #007aff',
+                  background: 'transparent', border: '1.5px solid var(--macos-accent)',
                   borderRadius: '8px', cursor: checkingUpdate ? 'not-allowed' : 'pointer',
-                  color: '#007aff', opacity: checkingUpdate ? 0.6 : 1,
+                  color: 'var(--macos-accent)', opacity: checkingUpdate ? 0.6 : 1,
                 }}
               >
                 {checkingUpdate ? <RotateCw className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}

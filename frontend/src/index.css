@@ -108,7 +108,7 @@ body {
 }
 
 .report-content blockquote {
-  border-left: 3px solid #007aff;
+  border-left: 3px solid var(--macos-accent, #1e3a5f);
   padding-left: 12px;
   color: var(--macos-text-secondary, #6e6e73);
   margin: 8px 0;
@@ -141,7 +141,7 @@ body {
 }
 
 .report-content a {
-  color: #007aff;
+  color: var(--macos-accent, #1e3a5f);
   text-decoration: none;
 }
 

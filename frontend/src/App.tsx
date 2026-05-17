@@ -12,11 +12,34 @@ import { LoginPage } from './pages/LoginPage'
 import { RegisterPage } from './pages/RegisterPage'
 import { ResetPasswordPage } from './pages/ResetPasswordPage'
 import { useDialogProvider } from './components/MacOSDialog'
-import { verifyToken, getToken, clearToken, clearAuthEmail, claimCases } from './api'
+import { verifyToken, getToken, clearToken, clearAuthEmail, claimCases, checkUpdate } from './api'
+import { showAlert, showConfirm } from './components/MacOSDialog'
 
 function DialogWrapper() {
   const DialogComponent = useDialogProvider()
   return DialogComponent
+}
+
+/** 静默检查更新并提示 */
+function checkUpdateSilent() {
+  setTimeout(async () => {
+    try {
+      const info = await checkUpdate()
+      if (info.has_update) {
+        const confirmed = await showConfirm({
+          title: '发现新版本',
+          message: `当前版本：${info.current_version}\n最新版本：${info.latest_version}\n\n${info.release_notes || '前往下载页面获取更新'}`,
+          confirmText: '前往下载',
+          variant: 'info',
+        })
+        if (confirmed) {
+          window.open(info.download_url || 'http://118.196.83.43:8000/', '_blank')
+        }
+      }
+    } catch {
+      // 网络错误时忽略，不影响正常使用
+    }
+  }, 2000)
 }
 
 /** 认证门禁：检查 token 有效性，无效则显示登录页 */
@@ -43,6 +66,8 @@ function AuthGate({ children }: { children: React.ReactNode }) {
           if (result.email) {
             claimCases(result.email).catch(() => {})
           }
+          // 启动时检查更新
+          checkUpdateSilent()
         }
       } catch (err) {
         if (!cancelled) {

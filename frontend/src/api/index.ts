@@ -1,8 +1,22 @@
 // API 服务层 - 连接前端与 Python 后端
-// 认证 API 通过 Tauri 命令调用（避免 Webview 网络限制）
+// 认证 API 在 Tauri 环境下通过 Tauri 命令调用，浏览器环境下直连后端
 
-import { invoke } from '@tauri-apps/api/core'
-import { open } from '@tauri-apps/plugin-shell'
+/** 是否在 Tauri 环境下运行 */
+function isTauri(): boolean {
+  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+}
+
+/** 懒加载 Tauri invoke（避免浏览器环境下模块加载报错） */
+async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  const { invoke } = await import('@tauri-apps/api/core')
+  return invoke<T>(cmd, args)
+}
+
+/** 懒加载 Tauri shell.open */
+async function tauriOpen(url: string): Promise<void> {
+  const { open } = await import('@tauri-apps/plugin-shell')
+  open(url).catch(() => {})
+}
 
 /** API 基础地址：开发模式走 Vite 代理，生产模式直连后端 */
 export const API_BASE = import.meta.env.PROD ? 'http://localhost:8080/api' : '/api'
@@ -46,7 +60,9 @@ export interface VerifyResponse {
 }
 
 export async function login(email: string, password: string): Promise<LoginResponse> {
-  const result: AuthResult = await invoke('auth_login', { email, password })
+  const result: AuthResult = isTauri()
+    ? await tauriInvoke('auth_login', { email, password })
+    : { success: false, error: '浏览器模式下不支持 Tauri 认证' }
   if (!result.success) {
     throw new Error(result.error || '登录失败')
   }
@@ -58,7 +74,9 @@ export async function login(email: string, password: string): Promise<LoginRespo
 }
 
 export async function verifyToken(token: string): Promise<VerifyResponse> {
-  const result: AuthResult = await invoke('auth_verify', { token })
+  const result: AuthResult = isTauri()
+    ? await tauriInvoke('auth_verify', { token })
+    : { success: false, error: '浏览器模式下不支持 Tauri 认证' }
   if (!result.success) {
     throw new Error(result.error || 'Token 无效')
   }
@@ -70,7 +88,9 @@ export async function verifyToken(token: string): Promise<VerifyResponse> {
 }
 
 export async function register(email: string, password: string): Promise<{ success: boolean; message?: string }> {
-  const result: AuthResult = await invoke('auth_register', { email, password })
+  const result: AuthResult = isTauri()
+    ? await tauriInvoke('auth_register', { email, password })
+    : { success: false, error: '浏览器模式下不支持 Tauri 认证' }
   if (!result.success) {
     throw new Error(result.error || '注册失败')
   }
@@ -78,7 +98,9 @@ export async function register(email: string, password: string): Promise<{ succe
 }
 
 export async function resetPassword(email: string, oldPassword: string, newPassword: string): Promise<{ success: boolean; message?: string }> {
-  const result: AuthResult = await invoke('auth_reset_password', { email, oldPassword, newPassword })
+  const result: AuthResult = isTauri()
+    ? await tauriInvoke('auth_reset_password', { email, oldPassword, newPassword })
+    : { success: false, error: '浏览器模式下不支持 Tauri 认证' }
   if (!result.success) {
     throw new Error(result.error || '重置失败')
   }
@@ -86,7 +108,9 @@ export async function resetPassword(email: string, oldPassword: string, newPassw
 }
 
 export async function sendResetCode(email: string): Promise<{ success: boolean; message?: string }> {
-  const result: AuthResult = await invoke('auth_send_reset_code', { email })
+  const result: AuthResult = isTauri()
+    ? await tauriInvoke('auth_send_reset_code', { email })
+    : { success: false, error: '浏览器模式下不支持 Tauri 认证' }
   if (!result.success) {
     throw new Error(result.error || '发送验证码失败')
   }
@@ -94,7 +118,9 @@ export async function sendResetCode(email: string): Promise<{ success: boolean; 
 }
 
 export async function resetWithCode(email: string, code: string, newPassword: string): Promise<{ success: boolean; message?: string }> {
-  const result: AuthResult = await invoke('auth_reset_with_code', { email, code, newPassword })
+  const result: AuthResult = isTauri()
+    ? await tauriInvoke('auth_reset_with_code', { email, code, newPassword })
+    : { success: false, error: '浏览器模式下不支持 Tauri 认证' }
   if (!result.success) {
     throw new Error(result.error || '重置失败')
   }
@@ -136,11 +162,17 @@ export interface UpdateInfo {
 }
 
 export function getAppVersion(): Promise<string> {
-  return invoke('get_app_version')
+  if (isTauri()) {
+    return tauriInvoke('get_app_version')
+  }
+  return Promise.resolve('0.0.0-web')
 }
 
 export async function checkUpdate(): Promise<UpdateInfo> {
-  return invoke('check_update')
+  if (isTauri()) {
+    return tauriInvoke('check_update')
+  }
+  return { has_update: false, current_version: '0.0.0', latest_version: '0.0.0', download_url: '', release_notes: '' }
 }
 
 // ========== 案件管理 ==========
@@ -265,6 +297,28 @@ export async function convertToMd(caseId: string, fileName: string): Promise<any
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ file_name: fileName })
   })
+  return res.json()
+}
+
+export async function deleteMdFile(caseId: string, mdFileName: string): Promise<any> {
+  const res = await fetch(`${API_BASE}/cases/${caseId}/md-file/${encodeURIComponent(mdFileName)}`, {
+    method: 'DELETE'
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail || err.error || res.statusText)
+  }
+  return res.json()
+}
+
+export async function deletePdfFile(caseId: string, pdfFileName: string): Promise<any> {
+  const res = await fetch(`${API_BASE}/cases/${caseId}/pdf-file/${encodeURIComponent(pdfFileName)}`, {
+    method: 'DELETE'
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail || err.error || res.statusText)
+  }
   return res.json()
 }
 
@@ -402,6 +456,44 @@ export async function getStepResult(caseId: string, step: number): Promise<any> 
   return res.json()
 }
 
+export async function getAnalysisState(caseId: string): Promise<any> {
+  const res = await fetch(`${API_BASE}/pipeline/${caseId}/analysis-state`)
+  return res.json()
+}
+
+export async function resumePipeline(caseId: string, defendant: string, crimeType?: string, indictmentFile?: string): Promise<any> {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), 7200000) // 120 分钟超时
+  try {
+    const res = await fetch(`${API_BASE}/pipeline/${caseId}/resume`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ defendant, crime_type: crimeType, indictment_file: indictmentFile }),
+      signal: controller.signal
+    })
+    return res.json()
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error('断点恢复超时，请检查后端是否正常运行')
+    }
+    throw err
+  } finally {
+    clearTimeout(timeoutId)
+  }
+}
+
+// ========== 辩护意见子阶段 ==========
+
+export async function getDefenseStages(caseId: string): Promise<any> {
+  const res = await fetch(`${API_BASE}/pipeline/${caseId}/defense-stages`)
+  return res.json()
+}
+
+export async function getDefenseStageContent(caseId: string, stageName: string): Promise<any> {
+  const res = await fetch(`${API_BASE}/pipeline/${caseId}/defense-stage/${encodeURIComponent(stageName)}`)
+  return res.json()
+}
+
 // ========== Wiki 相关 ==========
 
 export async function getWikiIndex(caseId: string): Promise<any> {
@@ -455,7 +547,11 @@ export async function extractEvidence(caseId: string): Promise<any> {
       headers: { 'Content-Type': 'application/json' },
       signal: controller.signal,
     })
-    return res.json()
+    const data = await res.json()
+    if (!res.ok) {
+      throw new Error(data.detail || data.error || '提取失败')
+    }
+    return data
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
       throw new Error('用户已停止提取')
@@ -533,6 +629,24 @@ export async function getStageMarkdown(caseId: string, stageNum: number): Promis
 
 export async function getFullReport(caseId: string): Promise<any> {
   const res = await fetch(`${API_BASE}/stage-analysis/${caseId}/full-report`)
+  return res.json()
+}
+
+export async function saveStageMarkdown(caseId: string, stageNum: number, content: string): Promise<any> {
+  const res = await fetch(`${API_BASE}/stage-analysis/${caseId}/stage/${stageNum}/markdown`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content }),
+  })
+  return res.json()
+}
+
+export async function saveFullReport(caseId: string, content: string): Promise<any> {
+  const res = await fetch(`${API_BASE}/stage-analysis/${caseId}/full-report`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content }),
+  })
   return res.json()
 }
 
@@ -633,9 +747,13 @@ export async function searchLaws(crimeType: string): Promise<any> {
 
 // ========== URL 工具函数 ==========
 
-/** 打开外部链接（调用 Tauri shell.open） */
+/** 打开外部链接（Tauri 环境下调用 shell.open，浏览器降级 window.open） */
 export function openUrl(url: string): void {
-  open(url).catch(() => {})
+  if (isTauri()) {
+    tauriOpen(url)
+  } else {
+    window.open(url, '_blank')
+  }
 }
 
 /** 获取缩略图 URL（用于 img src） */
@@ -672,6 +790,8 @@ export const api = {
   uploadFiles,
   batchProcess,
   convertToMd,
+  deleteMdFile,
+  deletePdfFile,
   openFile,
   getLlmSegmentNames,
   getThumbnails,
@@ -689,6 +809,11 @@ export const api = {
   getPipelineStatus,
   getPipelineProgress,
   getStepResult,
+  getAnalysisState,
+  resumePipeline,
+  // 辩护意见子阶段
+  getDefenseStages,
+  getDefenseStageContent,
   // Wiki
   getWikiIndex,
   getWikiPage,
@@ -720,6 +845,8 @@ export const api = {
   getStageResult,
   getStageMarkdown,
   getFullReport,
+  saveStageMarkdown,
+  saveFullReport,
   // 证据提取
   extractEvidence,
   stopExtractEvidence,

@@ -1,10 +1,10 @@
-import { useState, useCallback, useRef, useEffect, useMemo, useReducer } from 'react'
+import { useState, useCallback, useRef, useEffect, useReducer } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { FileText, Loader2, Send, Download, Check,
   AlertCircle, Scale, MessageCircle, Bookmark, PanelLeft,
   PanelLeftClose, Trash2, CheckSquare, RefreshCw,
   FileBarChart, GitCompareArrows, Clock, Users, BookOpen, Eye,
-  Gavel, Phone, Mail, Building2, StickyNote
+  Gavel, Phone, Mail, Building2, StickyNote, Edit3, Play, Swords
 } from 'lucide-react'
 import { api } from '../api'
 import { marked } from 'marked'
@@ -14,27 +14,28 @@ marked.setOptions({ async: false })
 import { MermaidRenderer } from '../components/MermaidRenderer'
 import { PdfViewer } from '../components/PdfViewer'
 import { StickyNoteOverlay } from '../components/StickyNoteOverlay'
+import { ReportRenderer } from '../components/report/ReportRenderer'
 
 // ====== 设计令牌 ======
 
 const colors = {
-  surface: '#fafaf9',
-  surfaceAlt: '#f5f4ef',
+  surface: '#ffffff',
+  surfaceAlt: '#f8f9fa',
   surfaceElevated: '#ffffff',
-  border: '#e8e6df',
-  borderStrong: '#d4d2ca',
-  textPrimary: '#1c1917',
-  textSecondary: '#57534e',
-  textTertiary: '#a8a29e',
+  border: '#e5e5ea',
+  borderStrong: '#d1d1d6',
+  textPrimary: '#1d1d1f',
+  textSecondary: '#6e6e73',
+  textTertiary: '#86868b',
   accent: '#1e3a5f',      // deep navy
-  accentLight: 'rgba(30,58,95,0.06)',
+  accentLight: 'rgba(30,58,95,0.08)',
   accentBorder: 'rgba(30,58,95,0.15)',
   gold: '#b8860b',        // dark gold for highlights
   goldBg: 'rgba(184,134,11,0.08)',
-  goldBorder: 'rgba(184,134,11,0.2)',
+  goldBorder: 'rgba(184,134,11,0.25)',
   userBubble: '#1e3a5f',
-  assistantBubble: '#f5f4ef',
-  systemBubble: 'rgba(184,134,11,0.1)',
+  assistantBubble: '#f5f5f7',
+  systemBubble: 'rgba(184,134,11,0.08)',
 }
 
 // 8 个文件卡标签 — 重新配色为沉稳的律师风格
@@ -45,6 +46,7 @@ const TABS = [
   { key: 'stage_4', label: '法律法规', icon: BookOpen, color: '#6b2765', bgColor: 'rgba(107,39,101,0.08)' },
   { key: 'stage_51', label: '证据列表', icon: Eye, color: '#1a6b6a', bgColor: 'rgba(26,107,106,0.08)' },
   { key: 'stage_52', label: '矛盾分析', icon: GitCompareArrows, color: '#991b1b', bgColor: 'rgba(153,27,27,0.08)' },
+  { key: 'stage_45', label: '控辩对抗', icon: Swords, color: '#7c3aed', bgColor: 'rgba(124,58,237,0.08)' },
   { key: 'stage_53', label: '三阶层分析', icon: Scale, color: '#831843', bgColor: 'rgba(131,24,67,0.08)' },
   { key: 'full', label: '完整报告', icon: FileText, color: '#1e3a5f', bgColor: 'rgba(30,58,95,0.08)' },
 ]
@@ -140,6 +142,82 @@ export function ReportPage() {
   const [kbFormContent, setKbFormContent] = useState('')
   const [regeneratingLegal, setRegeneratingLegal] = useState(false)
 
+  // 渐进式分析状态
+  const [analysisRunning, setAnalysisRunning] = useState(false)
+  const [completedStages, setCompletedStages] = useState<Set<string>>(new Set())
+  const [nextStep, setNextStep] = useState<number | null | undefined>(undefined)
+
+  // 加载分析阶段完成状态 + 主流水线状态
+  const loadDefenseStages = useCallback(async () => {
+    if (!caseId) return
+    try {
+      const data = await api.getDefenseStages(caseId)
+      if (data && data.stages) {
+        const done = new Set<string>()
+        for (const [key, status] of Object.entries(data.stages)) {
+          if (status === 'done') done.add(key)
+        }
+        setCompletedStages(done)
+      }
+    } catch { /* ignore */ }
+    // 加载主流水线状态，判断是否有待完成的步骤
+    try {
+      const state = await api.getAnalysisState(caseId)
+      if (state) {
+        setNextStep(state.next_step ?? null)
+      }
+    } catch { /* ignore */ }
+  }, [caseId])
+
+  // 轮询分析状态
+  useEffect(() => {
+    if (!caseId) return
+    loadDefenseStages()
+    const interval = setInterval(() => {
+      loadDefenseStages().then(() => {
+        // 如果所有阶段都完成，停止轮询
+        setCompletedStages(prev => {
+          if (prev.size >= 5) {
+            setAnalysisRunning(false)
+          }
+          return prev
+        })
+        setNextStep(prev => {
+          if (prev === null) {
+            setAnalysisRunning(false)
+          }
+          return prev
+        })
+      })
+    }, 3000)
+    return () => clearInterval(interval)
+  }, [caseId, loadDefenseStages])
+
+  // 继续分析
+  const handleResumeAnalysis = useCallback(async () => {
+    if (!caseId || !defendant) return
+    setAnalysisRunning(true)
+    try {
+      await api.resumePipeline(caseId, defendant)
+      loadDefenseStages()
+    } catch {
+      setAnalysisRunning(false)
+    }
+  }, [caseId, defendant, loadDefenseStages])
+
+  // 标签对应的阶段映射
+  const tabStageMap: Record<string, string> = {
+    stage_1: '1',
+    stage_2: '2',
+    stage_3: '3',
+    stage_4: '4',
+    stage_51: '5a',
+    stage_52: '5b',
+    stage_45: '45',
+    stage_53: '5f',
+    full: 'final',
+  }
+
   // Panels
   const [leftCollapsed, setLeftCollapsed] = useState(false)
   const [rightCollapsed, setRightCollapsed] = useState(false)
@@ -175,6 +253,11 @@ export function ReportPage() {
     } catch { return [] }
   })
 
+  // 编辑模式
+  const [editMode, setEditMode] = useState(false)
+  const [editContent, setEditContent] = useState('')
+  const [saving, setSaving] = useState(false)
+
   // Load data
   useEffect(() => {
     if (!caseId) return
@@ -187,6 +270,14 @@ export function ReportPage() {
       loadLegalKB()
     }
   }, [activeTab, caseId])
+
+  // 切换 tab 时退出编辑模式
+  useEffect(() => {
+    if (editMode) {
+      setEditMode(false)
+      setEditContent('')
+    }
+  }, [activeTab])
 
   // 加载证据内容
   const loadEvidenceContent = useCallback(async (item: EvidenceItem) => {
@@ -241,6 +332,12 @@ export function ReportPage() {
           } catch { /* ignore */ }
         }
       }
+
+      // 加载控辩对抗（阶段 45）
+      try {
+        const md = await api.getStageMarkdown(caseId, 45)
+        content['stage_45'] = md.content || ''
+      } catch { /* ignore */ }
 
       try {
         const fullReport = await api.getFullReport(caseId)
@@ -379,6 +476,45 @@ export function ReportPage() {
   const updateAnnotationPosition = useCallback((id: string, x: number, y: number) => {
     setAnnotations(prev => prev.map(a => a.id === id ? { ...a, x, y } : a))
   }, [])
+
+  // 编辑模式：进入编辑
+  const handleStartEdit = useCallback(() => {
+    setEditContent(stageContent[activeTab] || '')
+    setEditMode(true)
+  }, [stageContent, activeTab])
+
+  // 编辑模式：取消
+  const handleCancelEdit = useCallback(() => {
+    setEditMode(false)
+    setEditContent('')
+  }, [])
+
+  // 编辑模式：保存
+  const handleSaveEdit = useCallback(async () => {
+    if (!caseId || !editContent || editMode === false) return
+    setSaving(true)
+    try {
+      if (activeTab === 'full') {
+        await api.saveFullReport(caseId, editContent)
+      } else {
+        const stageNumMap: Record<string, number> = {
+          stage_1: 1, stage_2: 2, stage_3: 3, stage_4: 4,
+          stage_51: 51, stage_52: 52, stage_53: 53,
+        }
+        const stageNum = stageNumMap[activeTab]
+        if (stageNum) {
+          await api.saveStageMarkdown(caseId, stageNum, editContent)
+        }
+      }
+      setStageContent(prev => ({ ...prev, [activeTab]: editContent }))
+      setEditMode(false)
+      setEditContent('')
+    } catch {
+      // 保存失败，保持编辑模式
+    } finally {
+      setSaving(false)
+    }
+  }, [caseId, editContent, activeTab, editMode])
 
   // 分类批注
   const pdfAnnotations = annotations.filter(a => a.pdfFile === selectedPdf)
@@ -700,11 +836,6 @@ export function ReportPage() {
   const activeTabDef = TABS.find(t => t.key === activeTab)
   const activeContent = stageContent[activeTab] || ''
 
-  const renderedHtml = useMemo(() => {
-    if (!activeContent) return ''
-    try { return marked.parse(activeContent, { async: false }) as string } catch { return activeContent }
-  }, [activeContent])
-
   const renderActiveTab = () => {
     if (!activeContent) {
       const Icon = activeTabDef?.icon || FileText
@@ -717,64 +848,15 @@ export function ReportPage() {
       )
     }
 
-    const mermaidRegex = /```mermaid\n([\s\S]*?)```/g
-    const parts: React.ReactNode[] = []
-    let lastIndex = 0
-    let match
-
-    while ((match = mermaidRegex.exec(activeContent)) !== null) {
-      if (match.index > lastIndex) {
-        const textBefore = activeContent.slice(lastIndex, match.index)
-        parts.push(
-          <div
-            key={`md-${lastIndex}`}
-            className="report-content"
-            style={{ fontSize: '13px', lineHeight: '1.85' }}
-            dangerouslySetInnerHTML={{ __html: marked.parse(textBefore, { async: false }) as string }}
-          />
-        )
-      }
-      const mermaidCode = match[1].trim()
-      parts.push(<MermaidRenderer key={`mermaid-${match.index}`} code={mermaidCode} />)
-      lastIndex = match.index + match[0].length
-    }
-
-    if (lastIndex < activeContent.length) {
-      parts.push(
-        <div
-          key="md-end"
-          className="report-content"
-          style={{ fontSize: '13px', lineHeight: '1.85' }}
-          dangerouslySetInnerHTML={{ __html: marked.parse(activeContent.slice(lastIndex), { async: false }) as string }}
-        />
-      )
-    }
-
-    if (parts.length === 0) {
-      return (
-        <div
-          className="report-content"
-          style={{ fontSize: '13px', lineHeight: '1.85' }}
-          dangerouslySetInnerHTML={{ __html: renderedHtml }}
-        />
-      )
-    }
-
-    return <div style={{ display: 'flex', flexDirection: 'column' }}>{parts}</div>
+    return <ReportRenderer markdown={activeContent} />
   }
 
   // ===== Safari 风格顶部标签栏 =====
   const renderSafariTabs = () => {
-    const availableTabs = TABS.filter(t => stageContent[t.key])
+    // 所有标签都显示，不管是否完成
+    const allTabs = TABS
 
-    if (availableTabs.length === 0) {
-      return (
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '60px 24px', color: colors.textTertiary }}>
-          <FileText className="w-12 h-12" style={{ opacity: 0.15 }} />
-          <div style={{ fontSize: '14px', marginTop: '12px' }}>暂无分析内容</div>
-        </div>
-      )
-    }
+    if (allTabs.length === 0) return null
 
     return (
       <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -786,34 +868,36 @@ export function ReportPage() {
           flexShrink: 0,
           overflowX: 'auto',
         }}>
-          {availableTabs.map(tab => {
+          {allTabs.map(tab => {
+            const hasContent = !!stageContent[tab.key]
             const isActive = activeTab === tab.key
             const Icon = tab.icon
             return (
               <div
                 key={tab.key}
-                onClick={() => setActiveTab(tab.key)}
+                onClick={() => hasContent && setActiveTab(tab.key)}
                 style={{
                   display: 'flex', alignItems: 'center', gap: '6px',
                   padding: '7px 14px',
                   borderRadius: '8px 8px 0 0',
-                  cursor: 'pointer',
+                  cursor: hasContent ? 'pointer' : 'default',
                   transition: 'all 0.15s ease',
-                  background: isActive ? colors.surfaceElevated : 'rgba(245,244,239,0.6)',
+                  background: isActive ? colors.surfaceElevated : hasContent ? colors.surfaceAlt : 'rgba(0,0,0,0.03)',
                   border: isActive ? `1.5px solid ${colors.borderStrong}` : '1.5px solid transparent',
                   borderBottom: isActive ? `1.5px solid ${colors.surfaceElevated}` : '1.5px solid transparent',
                   position: 'relative',
                   zIndex: isActive ? 1 : 0,
+                  opacity: hasContent ? 1 : 0.5,
                 }}
                 onMouseEnter={e => {
-                  if (!isActive) e.currentTarget.style.background = 'rgba(232,230,222,0.8)'
+                  if (!isActive && hasContent) e.currentTarget.style.background = colors.border
                 }}
                 onMouseLeave={e => {
-                  if (!isActive) e.currentTarget.style.background = 'rgba(245,244,239,0.6)'
+                  if (!isActive && hasContent) e.currentTarget.style.background = hasContent ? colors.surfaceAlt : 'rgba(0,0,0,0.03)'
                 }}
               >
-                <Icon className="w-3.5 h-3.5" style={{ color: tab.color }} />
-                <span style={{ fontSize: '12px', fontWeight: isActive ? 600 : 400, color: isActive ? colors.textPrimary : colors.textSecondary, whiteSpace: 'nowrap' }}>
+                <Icon className="w-3.5 h-3.5" style={{ color: tab.color, opacity: hasContent ? 1 : 0.4 }} />
+                <span style={{ fontSize: '12px', fontWeight: isActive ? 600 : 400, color: hasContent ? (isActive ? colors.textPrimary : colors.textSecondary) : colors.textTertiary, whiteSpace: 'nowrap' }}>
                   {tab.label}
                 </span>
               </div>
@@ -828,36 +912,63 @@ export function ReportPage() {
 
         {/* 内容区 */}
         <div ref={scrollContentRef} style={{ flex: 1, overflow: 'auto', background: colors.surfaceElevated, position: 'relative' }}>
-          <div style={{ padding: '24px 28px', maxWidth: '900px', margin: '0 auto' }}>
-            {activeTabDef ? (
-              <>
-                {/* 标题 */}
-                <div style={{
-                  display: 'flex', alignItems: 'center', gap: '10px',
-                  marginBottom: '20px',
-                  paddingBottom: '12px',
-                  borderBottom: `1px solid ${colors.border}`,
-                }}>
-                  {(() => { const Icon = activeTabDef!.icon; return <Icon className="w-5 h-5" style={{ color: activeTabDef.color }} /> })()}
-                  <h2 style={{ fontSize: '16px', fontWeight: 700, color: colors.textPrimary, margin: 0 }}>
-                    {activeTabDef.label}
-                  </h2>
-                </div>
-                {renderActiveTab()}
-                {renderLegalKBPanel()}
-              </>
-            ) : null}
-          </div>
+          {editMode ? (
+            /* 编辑模式：Markdown 编辑器 */
+            <div style={{ padding: '24px 28px', height: '100%', display: 'flex', flexDirection: 'column' }}>
+              <div style={{
+                fontSize: '11px', color: colors.gold, background: colors.goldBg,
+                padding: '6px 12px', borderRadius: '6px', marginBottom: '12px',
+                border: `1px solid ${colors.goldBorder}`,
+              }}>
+                编辑模式：修改将直接保存到磁盘
+              </div>
+              <textarea
+                value={editContent}
+                onChange={e => setEditContent(e.target.value)}
+                style={{
+                  flex: 1, padding: '16px', fontSize: '13px', lineHeight: '1.8',
+                  fontFamily: '"SF Mono", "Fira Code", "Cascadia Code", monospace',
+                  border: `1px solid ${colors.border}`, borderRadius: '8px',
+                  background: colors.surface, outline: 'none', resize: 'none',
+                  color: colors.textPrimary,
+                  boxSizing: 'border-box',
+                }}
+              />
+            </div>
+          ) : (
+            <div style={{ padding: '24px 28px', maxWidth: '900px', margin: '0 auto' }}>
+              {activeTabDef ? (
+                <>
+                  {/* 标题 */}
+                  <div style={{
+                    display: 'flex', alignItems: 'center', gap: '10px',
+                    marginBottom: '20px',
+                    paddingBottom: '12px',
+                    borderBottom: `1px solid ${colors.border}`,
+                  }}>
+                    {(() => { const Icon = activeTabDef!.icon; return <Icon className="w-5 h-5" style={{ color: activeTabDef.color }} /> })()}
+                    <h2 style={{ fontSize: '16px', fontWeight: 700, color: colors.textPrimary, margin: 0 }}>
+                      {activeTabDef.label}
+                    </h2>
+                  </div>
+                  {renderActiveTab()}
+                  {renderLegalKBPanel()}
+                </>
+              ) : null}
+            </div>
+          )}
           {/* 便签批注覆盖（在滚动容器内，随内容一起滚动） */}
-          <StickyNoteOverlay
-            annotations={viewportAnnotations}
-            onAdd={addAnnotation}
-            onUpdate={updateAnnotation}
-            onUpdatePosition={updateAnnotationPosition}
-            onDelete={deleteAnnotation}
-            active={annotationMode}
-            contentRef={scrollContentRef}
-          />
+          {!editMode && (
+            <StickyNoteOverlay
+              annotations={viewportAnnotations}
+              onAdd={addAnnotation}
+              onUpdate={updateAnnotation}
+              onUpdatePosition={updateAnnotationPosition}
+              onDelete={deleteAnnotation}
+              active={annotationMode}
+              contentRef={scrollContentRef}
+            />
+          )}
         </div>
       </div>
     )
@@ -1085,6 +1196,42 @@ export function ReportPage() {
           </div>
         </div>
         <div style={{ display: 'flex', gap: '6px' }}>
+          {editMode ? (
+            <>
+              <button onClick={handleCancelEdit} disabled={saving} style={{
+                padding: '5px 12px',
+                background: colors.surfaceAlt,
+                color: colors.textSecondary,
+                border: `1px solid ${colors.border}`,
+                borderRadius: '6px', cursor: saving ? 'default' : 'pointer',
+                fontSize: '11px', display: 'flex', alignItems: 'center', gap: '5px', fontWeight: 500,
+              }}>
+                取消
+              </button>
+              <button onClick={handleSaveEdit} disabled={saving || !editContent} style={{
+                padding: '5px 12px',
+                background: saving ? colors.goldBg : colors.gold,
+                color: saving ? colors.textTertiary : '#fff',
+                border: `1px solid ${saving ? colors.goldBorder : colors.gold}`,
+                borderRadius: '6px', cursor: saving ? 'default' : 'pointer',
+                fontSize: '11px', display: 'flex', alignItems: 'center', gap: '5px', fontWeight: 500,
+              }}>
+                {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                保存
+              </button>
+            </>
+          ) : (
+            <button onClick={handleStartEdit} disabled={!activeContent} style={{
+              padding: '5px 12px',
+              background: activeContent ? colors.goldBg : colors.surfaceAlt,
+              color: activeContent ? colors.gold : colors.textTertiary,
+              border: `1px solid ${activeContent ? colors.goldBorder : colors.border}`,
+              borderRadius: '6px', cursor: activeContent ? 'pointer' : 'not-allowed',
+              fontSize: '11px', display: 'flex', alignItems: 'center', gap: '5px', fontWeight: 500,
+            }}>
+              <Edit3 className="w-3 h-3" />编辑
+            </button>
+          )}
           <button onClick={() => setAnnotationMode(v => !v)} style={{
             padding: '5px 12px',
             background: annotationMode ? colors.gold : colors.goldBg,
@@ -1095,6 +1242,19 @@ export function ReportPage() {
           }}>
             <StickyNote className="w-3 h-3" />批注
           </button>
+          {nextStep !== null && (
+            <button onClick={handleResumeAnalysis} disabled={analysisRunning} style={{
+              padding: '5px 12px',
+              background: analysisRunning ? colors.accentLight : colors.accent,
+              color: analysisRunning ? colors.textTertiary : '#fff',
+              border: `1px solid ${colors.accentBorder}`,
+              borderRadius: '6px', cursor: analysisRunning ? 'default' : 'pointer',
+              fontSize: '11px', display: 'flex', alignItems: 'center', gap: '5px', fontWeight: 500,
+            }}>
+              {analysisRunning ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
+              继续分析
+            </button>
+          )}
           <button onClick={handleExportReport} disabled={!stageContent.full && !stageContent.stage_53} style={{
             padding: '5px 12px',
             background: (stageContent.full || stageContent.stage_53) ? colors.accent : colors.surfaceAlt,

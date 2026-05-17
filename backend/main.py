@@ -100,6 +100,20 @@ async def health_check():
     return {"status": "ok", "version": "1.0.0"}
 
 
+@app.get("/api/config/concurrency-status")
+async def get_concurrency_status():
+    """返回当前 LLM 并发状态"""
+    from llm_client import get_llm_client
+    try:
+        llm = get_llm_client()
+        if llm.concurrency_controller:
+            status = llm.concurrency_controller.get_status()
+            return {"success": True, **status}
+        return {"success": False, "error": "并发控制器未启用"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 @app.get("/api/config")
 async def get_config():
     """获取配置状态（不返回实际值）"""

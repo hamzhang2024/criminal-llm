@@ -15,8 +15,8 @@
   --macos-text-primary: #1d1d1f;
   --macos-text-secondary: #6e6e73;
   --macos-text-tertiary: #86868b;
-  --macos-accent: #007aff;
-  --macos-accent-hover: #0056cc;
+  --macos-accent: #1e3a5f;
+  --macos-accent-hover: #2c5282;
   --macos-success: #34c759;
   --macos-warning: #ff9500;
   --macos-danger: #ff3b30;
@@ -35,6 +35,13 @@
   
   /* macOS 毛玻璃效果 */
   --macos-blur: blur(20px) saturate(180%);
+}
+
+/* 毛玻璃通用类 */
+.frosted {
+  background: rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(16px) saturate(160%);
+  -webkit-backdrop-filter: blur(16px) saturate(160%);
 }
 
 /* 基础样式 */
@@ -69,7 +76,9 @@ body {
   justify-content: space-between;
   height: 52px;
   padding: 0 20px;
-  background: var(--macos-bg-primary);
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: var(--macos-blur);
+  -webkit-backdrop-filter: var(--macos-blur);
   border-bottom: 1px solid var(--macos-border);
   -webkit-app-region: drag;
 }
@@ -121,7 +130,7 @@ body {
 /* macOS 侧边栏 */
 .macOS-sidebar {
   width: 240px;
-  background: var(--macos-sidebar);
+  background: rgba(245, 245, 247, 0.85);
   backdrop-filter: var(--macos-blur);
   -webkit-backdrop-filter: var(--macos-blur);
   border-right: 1px solid var(--macos-border);
@@ -193,7 +202,9 @@ body {
   justify-content: space-between;
   height: 44px;
   padding: 0 20px;
-  background: var(--macos-bg-primary);
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: var(--macos-blur);
+  -webkit-backdrop-filter: var(--macos-blur);
   border-bottom: 1px solid var(--macos-border-light);
 }
 
@@ -259,15 +270,19 @@ body {
 
 /* macOS 卡片 */
 .macOS-card {
-  background: var(--macos-bg-primary);
+  background: rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(12px) saturate(160%);
+  -webkit-backdrop-filter: blur(12px) saturate(160%);
   border: 1px solid var(--macos-border);
   border-radius: var(--macos-radius-lg);
   padding: 16px;
   box-shadow: var(--macos-shadow-sm);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
 
 .macOS-card:hover {
   box-shadow: var(--macos-shadow);
+  transform: translateY(-1px);
 }
 
 /* macOS 输入框 */
@@ -286,7 +301,7 @@ body {
 .macOS-input:focus {
   outline: none;
   border-color: var(--macos-accent);
-  box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.15);
+  box-shadow: 0 0 0 3px rgba(30, 58, 95, 0.15);
 }
 
 .macOS-input::placeholder {
@@ -352,7 +367,7 @@ body {
 }
 
 .macOS-badge-accent {
-  background: rgba(0, 122, 255, 0.1);
+  background: rgba(30, 58, 95, 0.1);
   color: var(--macos-accent);
 }
 

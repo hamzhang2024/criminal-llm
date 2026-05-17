@@ -9,6 +9,7 @@
 """
 from pathlib import Path
 from datetime import datetime
+import shutil
 from typing import List, Dict, Optional
 from pydantic import BaseModel
 from fastapi import APIRouter, UploadFile, File, HTTPException, Request
@@ -23,9 +24,8 @@ import asyncio
 
 router = APIRouter(prefix="/api/cases", tags=["案件管理"])
 
-# 证据提取状态追踪 + 并发配置
+# 证据提取状态追踪（并发数从 config_manager 读取）
 EXTRACT_TASKS: dict = {}
-EVIDENCE_CONCURRENCY = 3  # 同时提取证据的并发任务数
 
 from config import MAX_FILE_SIZE, DATA_DIR, UPLOAD_DIR as CONFIG_UPLOAD_DIR
 
@@ -498,6 +498,16 @@ async def get_step_files(case_id: str, step: int):
     # 对于步骤2（转MD），检查 md/ 中是否已有对应文件
     md_dir = case_path / "md"
 
+    def _is_freshly_processed(src: Path, dst: Path) -> bool:
+        """检查目标文件是否确实是在源文件之后生成的（防止误判）"""
+        if not dst.exists():
+            return False
+        src_stat = src.stat()
+        dst_stat = dst.stat()
+        # 处理后文件的修改时间必须晚于或等于源文件的修改时间，
+        # 且两者大小明显不同（处理后通常更大或更小），才认为是对应的输出
+        return dst_stat.st_mtime >= src_stat.st_mtime and abs(dst_stat.st_size - src_stat.st_size) > src_stat.st_size * 0.1
+
     for f in sorted(input_dir.iterdir(), key=natural_sort_key):
         if f.is_file() and f.suffix.lower() in allowed_suffixes:
             stat = f.stat()
@@ -505,13 +515,13 @@ async def get_step_files(case_id: str, step: int):
             status = "pending"
             if step == 1 and processed_dir.exists():
                 processed_file = processed_dir / f.name
-                if processed_file.exists():
+                if _is_freshly_processed(f, processed_file):
                     status = "done"
                 else:
                     # 也检查带 _去水印 后缀的文件
                     stem_no_ext = f.stem
                     for pf in processed_dir.iterdir():
-                        if pf.is_file() and pf.stem.startswith(stem_no_ext):
+                        if pf.is_file() and pf.stem.startswith(stem_no_ext) and _is_freshly_processed(f, pf):
                             status = "done"
                             break
 
@@ -726,24 +736,6 @@ async def cleanup_processed(case_id: str):
                 f.unlink()
 
     return {"success": True, "cleaned": cleaned, "message": f"已清理 {cleaned} 个已处理文件"}
-
-
-@router.post("/{case_id}/convert-all-to-md")
-async def convert_all_to_md(case_id: str):
-    """
-    启动后台转换任务（不阻塞主进程）
-
-    转换在后台线程中执行，可随时查看进度。
-    """
-    from background_tasks import get_task_status, start_convert_task
-
-    # 检查是否已有运行中的任务
-    status = get_task_status(case_id)
-    if status and status.get("status") == "running":
-        return {"status": "running", "message": "转换任务正在运行中"}
-
-    result = start_convert_task(case_id)
-    return result
 
 
 def _get_source_from_evidence_file(ev_path: Path) -> str:
@@ -1020,6 +1012,31 @@ async def _extract_single_file(
         return (md_file.name, evidence_list)
 
 
+async def _extract_single_file_with_tracking(
+    md_file: Path,
+    md_text: str,
+    temp_dir: Path,
+    semaphore: asyncio.Semaphore,
+    controller: 'ConcurrencyController',
+) -> tuple:
+    """包装 _extract_single_file，记录成功/失败到并发控制器。"""
+    start = time.time()
+    try:
+        result = await _extract_single_file(md_file, md_text, temp_dir, semaphore)
+        latency_ms = (time.time() - start) * 1000
+        controller.record_success(latency_ms)
+        return result
+    except Exception as e:
+        error_msg = str(e).lower()
+        if any(kw in error_msg for kw in ['429', 'rate limit', 'too many', 'quota']):
+            controller.record_error('rate_limit')
+        elif any(kw in error_msg for kw in ['timeout', 'timed out', 'connection error']):
+            controller.record_timeout()
+        else:
+            controller.record_error('other')
+        raise
+
+
 @router.post("/{case_id}/extract-evidence")
 async def extract_evidence(case_id: str):
     """
@@ -1145,15 +1162,24 @@ async def extract_evidence(case_id: str):
 
             processed_sources.add(md_file.name)
 
-        # ── 第2步：非起诉书文件并发提取 ──
+        # ── 第2步：非起诉书文件并发提取（带自动降级）──
         pending_files = [f for f in other_files if f.name not in processed_sources]
         all_evidence = list(existing_evidence)
         next_id = len(all_evidence) + 1
 
-        if pending_files:
-            print(f"[证据提取] 并发提取 {len(pending_files)} 个文件（并发数={EVIDENCE_CONCURRENCY}）")
+        # 从 config 读取初始并发数
+        from config_manager import get_config_value
+        initial_concurrency = int(get_config_value("evidence_concurrency", "3"))
+        initial_concurrency = max(1, min(10, initial_concurrency))
 
-            sem = asyncio.Semaphore(EVIDENCE_CONCURRENCY)
+        # 并发控制器：遇到 429/超时时自动降级，不向上试探
+        from concurrency_controller import ConcurrencyController
+        controller = ConcurrencyController(initial=initial_concurrency, min_concurrency=1)
+
+        if pending_files:
+            print(f"[证据提取] 并发提取 {len(pending_files)} 个文件（初始并发数={initial_concurrency}）")
+
+            sem = asyncio.Semaphore(initial_concurrency)
             temp_dir = evidence_dir / "_temp_extract"
             temp_dir.mkdir(exist_ok=True)
 
@@ -1166,20 +1192,57 @@ async def extract_evidence(case_id: str):
                     md_text = md_file.read_text(encoding="utf-8")
                     if not md_text.strip():
                         continue
-                    tasks.append(_extract_single_file(md_file, md_text, file_temp_dir, sem))
+                    tasks.append(_extract_single_file_with_tracking(md_file, md_text, file_temp_dir, sem, controller))
                 except Exception as e:
                     print(f"⚠️ 读取文件失败 {md_file.name}: {e}")
 
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
+            # 检查是否有错误
+            error_results = [(i, r) for i, r in enumerate(results) if isinstance(r, Exception)]
+
+            # 如果并发数被自动降级过，打印提示
+            if controller.concurrency < initial_concurrency:
+                print(f"[证据提取] 自动降级：{initial_concurrency} → {controller.concurrency}")
+
+            if error_results:
+                # 停止提取，返回错误信息
+                error_details = []
+                for idx, exc in error_results:
+                    error_msg = str(exc)
+                    # 识别是否为限流/超时错误
+                    is_rate_limit = any(kw in error_msg.lower() for kw in ['429', 'rate limit', 'too many', 'quota'])
+                    is_timeout = any(kw in error_msg.lower() for kw in ['timeout', 'timed out', 'connection error'])
+                    error_type = '限流错误' if is_rate_limit else ('超时错误' if is_timeout else 'API错误')
+                    error_details.append(f"  - {pending_files[idx].name if idx < len(pending_files) else 'unknown'}: {error_msg[:100]}")
+                    print(f"⚠️ [{error_type}] {pending_files[idx].name if idx < len(pending_files) else 'unknown'}: {error_msg[:200]}")
+
+                # 构建错误提示
+                error_msg = (
+                    f"证据提取失败：{len(error_results)} 个文件提取失败。\n"
+                    f"可能原因：并发数过高导致 API 限流或超时。\n"
+                    f"建议：在设置中将「证据提取并发数」降低至 1 或 2 后重试。"
+                )
+                print(f"[证据提取] ❌ {error_msg}")
+
+                # 清理临时目录
+                import shutil
+                if temp_dir.exists():
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+
+                EXTRACT_TASKS.pop(case_id, None)
+                return {
+                    "success": False,
+                    "error": error_msg,
+                    "case_id": case_id,
+                    "total_evidence": len(all_evidence),
+                    "processed_before_error": len(all_evidence),
+                    "failed_files": [str(pending_files[i]) if i < len(pending_files) else 'unknown' for i, _ in error_results],
+                    "suggestion": "请将证据提取并发数降低至 1-2 后重试",
+                }
+
             new_evidence_by_source = {}
             for i, result in enumerate(results):
-                if isinstance(result, Exception):
-                    print(f"⚠️ 提取任务异常: {result}")
-                    import traceback
-                    traceback.print_exc()
-                    continue
-
                 source_name, evidence_list = result
                 new_evidence_by_source[source_name] = evidence_list
 
@@ -1313,6 +1376,9 @@ async def get_evidence_summary(case_id: str, filename: str):
     return {"content": ev_file.read_text(encoding="utf-8")}
 
 
+import shutil
+
+
 @router.post("/{case_id}/clear-evidence")
 async def clear_evidence(case_id: str):
     """清除证据目录，允许重新提取"""
@@ -1324,10 +1390,72 @@ async def clear_evidence(case_id: str):
     if not evidence_dir.exists():
         return {"success": True, "message": "证据目录不存在，无需清除"}
 
-    for f in evidence_dir.iterdir():
-        f.unlink()
+    # 删除整个目录再重建（比逐个 unlink 更可靠，能正确处理子目录）
+    shutil.rmtree(evidence_dir)
+    evidence_dir.mkdir(parents=True, exist_ok=True)
 
-    return {"success": True, "message": f"已清除 {evidence_dir.name} 目录"}
+    return {"success": True, "message": "已清除证据目录"}
+
+
+@router.delete("/{case_id}/md-file/{md_file_name}")
+async def delete_md_file(case_id: str, md_file_name: str):
+    """删除单个 MD 文件（删除后可从 PDF 重新转换）"""
+    case_path = find_case_path(case_id)
+    if not case_path:
+        raise HTTPException(status_code=404, detail="案件不存在")
+
+    md_dir = case_path / "md"
+    md_file = md_dir / md_file_name
+
+    if not md_file.exists():
+        raise HTTPException(status_code=404, detail=f"MD 文件不存在：{md_file_name}")
+
+    md_file.unlink()
+
+    # 同时删除关联的图片目录（如果有）
+    images_dir = md_dir / f"{md_file.stem}_images"
+    if images_dir.exists():
+        shutil.rmtree(images_dir)
+
+    # 返回对应的 PDF 文件名（用于重新转换）
+    pdf_name = md_file.stem + ".pdf"
+    return {
+        "success": True,
+        "message": f"已删除 {md_file_name}，可从 PDF 重新转换",
+        "pdf_name": pdf_name,
+    }
+
+
+@router.delete("/{case_id}/pdf-file/{pdf_file_name}")
+async def delete_pdf_file(case_id: str, pdf_file_name: str):
+    """删除 PDF 文件（同时删除对应的 MD 文件）"""
+    case_path = find_case_path(case_id)
+    if not case_path:
+        raise HTTPException(status_code=404, detail="案件不存在")
+
+    # 查找并删除 PDF（processed/ 或 original/）
+    pdf_path = None
+    for d in [case_path / "processed", case_path / "original"]:
+        p = d / pdf_file_name
+        if p.exists():
+            pdf_path = p
+            break
+
+    if not pdf_path:
+        raise HTTPException(status_code=404, detail=f"PDF 文件不存在：{pdf_file_name}")
+
+    pdf_path.unlink()
+
+    # 同时删除对应的 MD 文件（如果有）
+    md_file = case_path / "md" / f"{pdf_path.stem}.md"
+    if md_file.exists():
+        md_file.unlink()
+        # 删除关联的图片目录
+        images_dir = case_path / "md" / f"{pdf_path.stem}_images"
+        if images_dir.exists():
+            shutil.rmtree(images_dir)
+
+    return {"success": True, "message": f"已删除 {pdf_file_name}"}
 
 
 @router.post("/{case_id}/clear-stage/{stage_num}")
@@ -1425,6 +1553,11 @@ def _parse_evidence_blocks(llm_output: str, source_file: str) -> list:
             name = re.sub(r'\*\*【|】\*\*|\*\*', '', name).strip()
             if not name:
                 name = f"证据{i // 2 + 1}"
+
+        # 去掉 LLM 输出的"证据N："前缀（如"证据1：《受案登记表》" → "《受案登记表》"）
+        name = re.sub(r'^证据\s*\d+\s*[：:]\s*', '', name).strip()
+        if not name:
+            name = f"证据{i // 2 + 1}"
 
         # 提取各字段
         ev_type = _extract_field(content, "证据类型") or "其他证据"
@@ -1555,7 +1688,6 @@ async def pdf_thumbnails(case_id: str, file_path: str, dir: Optional[str] = None
     import urllib.parse
     from fastapi.responses import FileResponse
     from fastapi import HTTPException
-    import subprocess
 
     file_path = urllib.parse.unquote(file_path)
 
@@ -1584,9 +1716,21 @@ async def pdf_thumbnails(case_id: str, file_path: str, dir: Optional[str] = None
     thumb_cache = case_root / ".thumbs" / pdf_path.stem / str(width)
     thumb_cache.mkdir(parents=True, exist_ok=True)
 
-    # 检查已生成的缩略图
+    # 检查已生成的缩略图，并验证缓存是否过期
     existing = sorted(thumb_cache.glob("thumb-*.png"))
+    cache_stale = False
     if len(existing) > 0:
+        # 检查 PDF 文件是否在缩略图之后被修改过
+        pdf_mtime = pdf_path.stat().st_mtime
+        thumb_mtime = existing[0].stat().st_mtime
+        if pdf_mtime > thumb_mtime:
+            # PDF 已更新，缓存失效，清理旧缩略图
+            for t in existing:
+                t.unlink()
+            existing = []
+            cache_stale = True
+
+    if len(existing) > 0 and not cache_stale:
         # 全部存在，返回路径列表
         thumb_urls = [
             f"http://localhost:8080/api/cases/{case_id}/pdf-thumb-cache?path={urllib.parse.quote(str(t))}"
@@ -1594,33 +1738,14 @@ async def pdf_thumbnails(case_id: str, file_path: str, dir: Optional[str] = None
         ]
         return {"success": True, "thumbnails": thumb_urls, "total": len(existing)}
 
-    # 用 pdftoppm 生成缩略图（如果 PDF 加密或 pdftoppm 不可用，改用 PyMuPDF）
-    try:
-        result = subprocess.run(
-            ['pdftoppm', '-png', '-scale-to', str(width), str(pdf_path), str(thumb_cache / 'thumb')],
-            capture_output=True, timeout=120
-        )
-        if result.returncode != 0:
-            stderr = result.stderr.decode()
-            if 'password' in stderr.lower() or 'encrypt' in stderr.lower():
-                # PDF 加密，改用 PyMuPDF
-                generated = _generate_thumbnails_with_pymupdf(pdf_path, thumb_cache, width)
-            else:
-                raise Exception(f"pdftoppm failed: {stderr[:200]}")
-        else:
-            generated = sorted(thumb_cache.glob("thumb-*.png"))
+    # 优先用 PyMuPDF 生成缩略图（比 pdftoppm 快很多，且支持加密 PDF）
+    generated = _generate_thumbnails_with_pymupdf(pdf_path, thumb_cache, width)
 
-        thumb_urls = [
-            f"http://localhost:8080/api/cases/{case_id}/pdf-thumb-cache?path={urllib.parse.quote(str(t))}"
-            for t in generated
-        ]
-        return {"success": True, "thumbnails": thumb_urls, "total": len(generated)}
-    except subprocess.TimeoutExpired:
-        raise HTTPException(status_code=500, detail="缩略图生成超时")
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"缩略图生成失败: {str(e)}")
+    thumb_urls = [
+        f"http://localhost:8080/api/cases/{case_id}/pdf-thumb-cache?path={urllib.parse.quote(str(t))}"
+        for t in generated
+    ]
+    return {"success": True, "thumbnails": thumb_urls, "total": len(generated)}
 
 
 @router.get("/{case_id}/pdf-thumb-cache")
