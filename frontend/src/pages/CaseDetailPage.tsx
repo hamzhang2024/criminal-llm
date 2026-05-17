@@ -544,6 +544,13 @@ export function CaseDetailPage() {
 
   // 删除文件（调用后端真实删除接口）
   const handleRemoveFile = useCallback(async (file: CaseFile) => {
+    const confirmed = await showConfirm({
+      title: '确认删除',
+      message: `确定要删除「${file.name}」吗？删除后可重新上传。`,
+      variant: 'danger',
+    })
+    if (!confirmed) return
+
     try {
       await api.deleteFile(caseId!, file.name)
       // 重新加载文件列表
@@ -2534,7 +2541,21 @@ export function CaseDetailPage() {
                       const isRunning = runningStage === stage.num
                       const msg = stageMessages[stage.num]
                       const errMsg = stageErrors[stage.num]
-                      const analysisDisabled = !evidenceExtracted
+
+                      // 检查前置阶段是否完成
+                      const canStartStage = (num: number) => {
+                        const idx = STAGES.findIndex(s => s.num === num)
+                        if (idx <= 0) return true // 阶段 1 无前置
+                        for (let i = 0; i < idx; i++) {
+                          if (stageStatus[STAGES[i].num] !== 'completed') return false
+                        }
+                        return true
+                      }
+
+                      const evidenceDisabled = !evidenceExtracted
+                      const seqDisabled = !canStartStage(stage.num)
+                      // 整体禁用：证据未完成 或 前序阶段未完成
+                      const analysisDisabled = evidenceDisabled || seqDisabled
 
                       return (
                         <div key={stage.num} style={{
@@ -2562,7 +2583,12 @@ export function CaseDetailPage() {
                             <div style={{ fontSize: '13px', fontWeight: '500' }}>{stage.name}</div>
                             {msg && <div style={{ fontSize: '11px', color: '#1e3a5f' }}>{msg}</div>}
                             {errMsg && <div style={{ fontSize: '11px', color: '#ff3b30' }}>{errMsg}</div>}
-                            {!msg && !errMsg && <div style={{ fontSize: '11px', color: 'var(--macos-text-tertiary)' }}>{stage.desc}</div>}
+                            {!msg && !errMsg && seqDisabled && (
+                              <div style={{ fontSize: '11px', color: '#86868b' }}>
+                                等待前序阶段完成
+                              </div>
+                            )}
+                            {!msg && !errMsg && !seqDisabled && !isRunning && <div style={{ fontSize: '11px', color: 'var(--macos-text-tertiary)' }}>{stage.desc}</div>}
                           </div>
 
                           {/* 操作按钮 */}

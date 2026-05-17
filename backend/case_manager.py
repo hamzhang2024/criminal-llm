@@ -416,7 +416,7 @@ async def upload_files(case_id: str, files: list[UploadFile] = File(...)):
 
 @router.delete("/{case_id}/file/{file_name}")
 async def delete_file(case_id: str, file_name: str):
-    """删除案件中的文件"""
+    """删除案件中的文件（同时删除 processed/ 和 md/ 中的对应文件）"""
     import urllib.parse
     file_name = urllib.parse.unquote(file_name)
 
@@ -429,8 +429,28 @@ async def delete_file(case_id: str, file_name: str):
     if not file_path.exists():
         return {"success": False, "error": f"文件不存在：{file_name}"}
 
+    # 删除 original 文件
     file_path.unlink()
-    print(f"[delete] removed: {file_path}")
+    print(f"[delete] removed original: {file_path}")
+
+    # 同步删除 processed/ 中的对应文件
+    stem = file_path.stem
+    processed_dir = case_path / "processed"
+    if processed_dir.exists():
+        # 可能有 _去水印 后缀的变体
+        for p in processed_dir.iterdir():
+            if p.suffix == ".pdf" and p.stem == stem:
+                p.unlink()
+                print(f"[delete] removed processed: {p}")
+
+    # 同步删除 md/ 中的对应文件
+    md_dir = case_path / "md"
+    if md_dir.exists():
+        for p in md_dir.iterdir():
+            if p.suffix == ".md" and p.stem == stem:
+                p.unlink()
+                print(f"[delete] removed md: {p}")
+
     return {"success": True, "message": f"已删除 {file_name}"}
 
 
