@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "刑事案卷分析系统",
-  "version": "0.9.92",
+  "version": "0.9.93",
   "identifier": "com.criminal-pdf.app",
   "build": {
     "frontendDist": "../dist",
