@@ -165,39 +165,70 @@ export function SettingsPage() {
     setTesting('mineru')
     setTestResult(prev => ({ ...prev, mineru_token: null }))
     try {
+      // 先检查后端是否可达
+      try {
+        const healthRes = await fetch(`${API_BASE}/health`)
+        if (!healthRes.ok) {
+          setTestResult(prev => ({ ...prev, mineru_token: 'fail' }))
+          showAlert({ title: '验证失败', message: '后端服务未就绪（健康检查失败），请完全退出应用（Cmd+Q）后重新打开', variant: 'danger' })
+          return
+        }
+      } catch {
+        setTestResult(prev => ({ ...prev, mineru_token: 'fail' }))
+        showAlert({ title: '验证失败', message: '无法连接后端服务。请：1) 完全退出应用（Cmd+Q） 2) 重新打开应用 3) 如果仍失败，请重新安装', variant: 'danger' })
+        return
+      }
+
       const res = await fetch(`${API_BASE}/config/test`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ type: 'mineru', token: config.mineru_token.trim() }),
       })
+
+      const responseText = await res.text()
+      console.log('[Mineru Test] status:', res.status, 'body:', responseText)
+
       if (!res.ok) {
-        const text = await res.text()
         let errorMsg = `服务器错误 (${res.status})`
         try {
-          const errData = JSON.parse(text)
+          const errData = JSON.parse(responseText)
           errorMsg = errData.detail || errData.error || errorMsg
         } catch {
-          errorMsg = text || errorMsg
+          errorMsg = responseText || errorMsg
         }
         setTestResult(prev => ({ ...prev, mineru_token: 'fail' }))
-        showAlert({ title: '验证失败', message: errorMsg, variant: 'danger' })
+        showAlert({ title: '验证失败', message: `后端返回错误: ${errorMsg}`, variant: 'danger' })
         return
       }
-      const data = await res.json()
-      console.log('[Mineru Test] response:', JSON.stringify(data))
+
+      let data: { success?: boolean; message?: string; error?: string }
+      try {
+        data = JSON.parse(responseText)
+      } catch {
+        setTestResult(prev => ({ ...prev, mineru_token: 'fail' }))
+        showAlert({ title: '验证失败', message: `后端返回了无效的响应格式: ${responseText.substring(0, 200)}`, variant: 'danger' })
+        return
+      }
+
       if (data.success) {
         setTestResult(prev => ({ ...prev, mineru_token: 'ok' }))
-        showAlert({ title: '验证成功', message: data.message, variant: 'success' })
+        showAlert({ title: '验证成功', message: data.message || 'Token 有效', variant: 'success' })
       } else {
         setTestResult(prev => ({ ...prev, mineru_token: 'fail' }))
-        showAlert({ title: '验证失败', message: data.error || 'MinerU Token 无效', variant: 'danger' })
+        showAlert({ title: '验证失败', message: data.error || 'MinerU Token 无效，请检查是否正确复制', variant: 'danger' })
       }
     } catch (err) {
+      console.error('[Mineru Test] exception:', err)
       setTestResult(prev => ({ ...prev, mineru_token: 'fail' }))
-      const msg = err instanceof Error ? err.message : ''
-      const friendlyMsg = msg.includes('fetch') || msg.includes('Failed to fetch') || msg.includes('load')
-        ? '无法连接后端服务，请确认后端（main.py）正在运行'
-        : `网络错误: ${msg || '未知错误'}`
+      const msg = err instanceof Error ? err.message : String(err)
+      let friendlyMsg: string
+      if (msg.includes('Failed to fetch') || msg.includes('NetworkError') || msg.includes('fetch')) {
+        friendlyMsg = '无法连接后端服务。请：1) 完全退出应用（Cmd+Q） 2) 重新打开应用 3) 如果仍失败，请重新安装'
+      } else if (msg.includes('timeout') || msg.includes('Timeout')) {
+        friendlyMsg = '请求超时，后端响应太慢。请检查网络连接后重试'
+      } else {
+        friendlyMsg = `未知错误: ${msg}`
+      }
       showAlert({ title: '验证失败', message: friendlyMsg, variant: 'danger' })
     } finally {
       setTesting(null)
@@ -212,6 +243,20 @@ export function SettingsPage() {
     setTesting('llm')
     setTestResult(prev => ({ ...prev, llm_api_key: null }))
     try {
+      // 先检查后端是否可达
+      try {
+        const healthRes = await fetch(`${API_BASE}/health`)
+        if (!healthRes.ok) {
+          setTestResult(prev => ({ ...prev, llm_api_key: 'fail' }))
+          showAlert({ title: '验证失败', message: '后端服务未就绪（健康检查失败），请完全退出应用（Cmd+Q）后重新打开', variant: 'danger' })
+          return
+        }
+      } catch {
+        setTestResult(prev => ({ ...prev, llm_api_key: 'fail' }))
+        showAlert({ title: '验证失败', message: '无法连接后端服务。请：1) 完全退出应用（Cmd+Q） 2) 重新打开应用 3) 如果仍失败，请重新安装', variant: 'danger' })
+        return
+      }
+
       const res = await fetch(`${API_BASE}/config/test`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -222,34 +267,51 @@ export function SettingsPage() {
           model: config.llm_model.trim(),
         }),
       })
+
+      const responseText = await res.text()
+      console.log('[LLM Test] status:', res.status, 'body:', responseText)
+
       if (!res.ok) {
-        const text = await res.text()
         let errorMsg = `服务器错误 (${res.status})`
         try {
-          const errData = JSON.parse(text)
+          const errData = JSON.parse(responseText)
           errorMsg = errData.detail || errData.error || errorMsg
         } catch {
-          errorMsg = text || errorMsg
+          errorMsg = responseText || errorMsg
         }
         setTestResult(prev => ({ ...prev, llm_api_key: 'fail' }))
-        showAlert({ title: '验证失败', message: errorMsg, variant: 'danger' })
+        showAlert({ title: '验证失败', message: `后端返回错误: ${errorMsg}`, variant: 'danger' })
         return
       }
-      const data = await res.json()
-      console.log('[LLM Test] response:', JSON.stringify(data))
+
+      let data: { success?: boolean; message?: string; error?: string }
+      try {
+        data = JSON.parse(responseText)
+      } catch {
+        setTestResult(prev => ({ ...prev, llm_api_key: 'fail' }))
+        showAlert({ title: '验证失败', message: `后端返回了无效的响应格式: ${responseText.substring(0, 200)}`, variant: 'danger' })
+        return
+      }
+
       if (data.success) {
         setTestResult(prev => ({ ...prev, llm_api_key: 'ok' }))
-        showAlert({ title: '验证成功', message: data.message, variant: 'success' })
+        showAlert({ title: '验证成功', message: data.message || 'API Key 有效', variant: 'success' })
       } else {
         setTestResult(prev => ({ ...prev, llm_api_key: 'fail' }))
-        showAlert({ title: '验证失败', message: data.error || 'API Key 无效', variant: 'danger' })
+        showAlert({ title: '验证失败', message: data.error || 'API Key 无效，请检查是否正确复制', variant: 'danger' })
       }
     } catch (err) {
+      console.error('[LLM Test] exception:', err)
       setTestResult(prev => ({ ...prev, llm_api_key: 'fail' }))
-      const msg = err instanceof Error ? err.message : ''
-      const friendlyMsg = msg.includes('fetch') || msg.includes('Failed to fetch') || msg.includes('load')
-        ? '无法连接后端服务，请确认后端（main.py）正在运行'
-        : `网络错误: ${msg || '未知错误'}`
+      const msg = err instanceof Error ? err.message : String(err)
+      let friendlyMsg: string
+      if (msg.includes('Failed to fetch') || msg.includes('NetworkError') || msg.includes('fetch')) {
+        friendlyMsg = '无法连接后端服务。请：1) 完全退出应用（Cmd+Q） 2) 重新打开应用 3) 如果仍失败，请重新安装'
+      } else if (msg.includes('timeout') || msg.includes('Timeout')) {
+        friendlyMsg = '请求超时，后端响应太慢。请检查网络连接后重试'
+      } else {
+        friendlyMsg = `未知错误: ${msg}`
+      }
       showAlert({ title: '验证失败', message: friendlyMsg, variant: 'danger' })
     } finally {
       setTesting(null)
