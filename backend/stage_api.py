@@ -17,7 +17,7 @@ from typing import Optional
 from fastapi import APIRouter, Body, HTTPException
 
 from analysis_engine import AnalysisEngine
-from analysis_pipeline import _contains_indictment_title
+from analysis_pipeline import AnalysisPipeline, _contains_indictment_title
 from case_manager import find_case_path
 
 router = APIRouter(prefix="/api/stage-analysis", tags=["5阶段案卷分析"])
@@ -276,12 +276,28 @@ async def run_single_stage(
     """
     单独执行某个阶段（支持 51/52/53 子阶段）
     """
-    if not (1 <= stage_num <= 5 or stage_num in (51, 52, 53)):
-        raise HTTPException(status_code=400, detail="无效阶段编号，请输入 1-5 或 51-53")
+    if not (1 <= stage_num <= 5 or stage_num in (45, 51, 52, 53)):
+        raise HTTPException(status_code=400, detail="无效阶段编号，请输入 1-5、45 或 51-53")
 
     case_path = find_case_path(case_id)
     if not case_path:
         raise HTTPException(status_code=404, detail="案件不存在")
+
+    # 阶段 45 需要 AnalysisPipeline
+    if stage_num == 45:
+        pipeline = AnalysisPipeline(case_id, case_path, indictment_file=indictment_file)
+
+        _set_progress(case_id, stage_num, "正在执行阶段 45：控辩对抗模拟...")
+        try:
+            result = await pipeline.step45_debate_simulation(defendant, crime_type)
+            _clear_progress(case_id)
+            return {"success": True, "stage": stage_num, "data": result}
+        except ValueError as e:
+            _clear_progress(case_id)
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            _clear_progress(case_id)
+            raise HTTPException(status_code=500, detail=f"阶段 {stage_num} 执行失败: {str(e)}")
 
     engine = AnalysisEngine(case_id, case_path, indictment_file=indictment_file)
 
@@ -302,6 +318,7 @@ async def run_single_stage(
         3: "事件拆解",
         4: "法律法规",
         5: "综合辩护分析",
+        45: "控辩对抗",
         51: "证据分析",
         52: "矛盾分析",
         53: "三阶层辩护",
@@ -345,12 +362,13 @@ async def get_status(case_id: str):
         3: "事件拆解",
         4: "法律法规",
         5: "综合辩护分析",
+        45: "控辩对抗",
         51: "证据分析",
         52: "矛盾分析",
         53: "三阶层辩护",
     }
 
-    for stage in [1, 2, 3, 4, 5, 51, 52, 53]:
+    for stage in [1, 2, 3, 4, 5, 45, 51, 52, 53]:
         result_file = analysis_dir / f"stage_{stage}" / "output.json"
         status[f"stage_{stage}"] = {
             "name": stage_names[stage],
@@ -365,7 +383,7 @@ async def get_status(case_id: str):
 @router.get("/{case_id}/stage/{stage_num}/result")
 async def get_stage_result(case_id: str, stage_num: int):
     """获取指定阶段的分析结果（支持 51/52/53 子阶段）"""
-    if not (1 <= stage_num <= 5 or stage_num in (51, 52, 53)):
+    if not (1 <= stage_num <= 5 or stage_num in (45, 51, 52, 53)):
         raise HTTPException(status_code=400, detail="无效阶段编号")
 
     case_path = find_case_path(case_id)

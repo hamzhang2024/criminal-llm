@@ -4,7 +4,7 @@ import { FileText, Loader2, Send, Download, Check,
   AlertCircle, Scale, MessageCircle, Bookmark, PanelLeft,
   PanelLeftClose, Trash2, CheckSquare, RefreshCw,
   FileBarChart, GitCompareArrows, Clock, Users, BookOpen, Eye,
-  Gavel, Phone, Mail, Building2, StickyNote, Edit3, Play, Swords
+  Gavel, Phone, Mail, Building2, StickyNote, Edit3, Swords
 } from 'lucide-react'
 import { api } from '../api'
 import { showAlert } from '../components/MacOSDialog'
@@ -193,33 +193,6 @@ export function ReportPage() {
     }, 3000)
     return () => clearInterval(interval)
   }, [caseId, loadDefenseStages])
-
-  // 继续分析
-  const handleResumeAnalysis = useCallback(async () => {
-    if (!caseId || !defendant) return
-    setAnalysisRunning(true)
-    try {
-      const result = await api.resumePipeline(caseId, defendant)
-      if (result.success) {
-        if (result.all_done) {
-          setNextStep(null)
-          showAlert({ title: '分析完成', message: '所有分析步骤已完成，可以查看完整报告。', variant: 'success' })
-        } else {
-          setNextStep(result.next_step ?? null)
-          showAlert({ title: '步骤完成', message: `步骤 ${result.step} 已完成`, variant: 'info' })
-        }
-        // 刷新分析状态
-        loadDefenseStages()
-      } else {
-        throw new Error(result.detail || result.error || '继续分析失败')
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : '继续分析失败'
-      showAlert({ title: '分析失败', message: msg, variant: 'danger' })
-    } finally {
-      setAnalysisRunning(false)
-    }
-  }, [caseId, defendant, loadDefenseStages])
 
   // 标签对应的阶段映射
   const tabStageMap: Record<string, string> = {
@@ -1258,19 +1231,6 @@ export function ReportPage() {
           }}>
             <StickyNote className="w-3 h-3" />批注
           </button>
-          {nextStep !== null && (
-            <button onClick={handleResumeAnalysis} disabled={analysisRunning} style={{
-              padding: '5px 12px',
-              background: analysisRunning ? colors.accentLight : colors.accent,
-              color: analysisRunning ? colors.textTertiary : '#fff',
-              border: `1px solid ${colors.accentBorder}`,
-              borderRadius: '6px', cursor: analysisRunning ? 'default' : 'pointer',
-              fontSize: '11px', display: 'flex', alignItems: 'center', gap: '5px', fontWeight: 500,
-            }}>
-              {analysisRunning ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
-              继续分析
-            </button>
-          )}
           <button onClick={handleExportReport} disabled={!stageContent.full && !stageContent.stage_53} style={{
             padding: '5px 12px',
             background: (stageContent.full || stageContent.stage_53) ? colors.accent : colors.surfaceAlt,

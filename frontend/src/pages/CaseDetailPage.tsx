@@ -801,6 +801,7 @@ export function CaseDetailPage() {
     { num: 2, name: '人物关系', desc: '构建人物关系图谱' },
     { num: 3, name: '事件拆解', desc: '梳理事件时间线，拆解事件' },
     { num: 4, name: '法律法规', desc: '梳理涉案法律法规' },
+    { num: 45, name: '控辩对抗', desc: '红蓝对抗，生成攻防对照表' },
     { num: 5, name: '综合辩护', desc: '证据分析 + 矛盾分析 + 三阶层辩护' },
   ]
   const [stageStatus, setStageStatus] = useState<Record<number, 'idle' | 'running' | 'completed' | 'error'>>({})
@@ -841,10 +842,10 @@ export function CaseDetailPage() {
       // 检查所有阶段是否完成
       const status = await api.getStageStatus(caseId!)
       const stages = status?.status || {}
-      const allDone = [1, 2, 3, 4, 5].every(s => stages[`stage_${s}`]?.completed)
+      const allDone = [1, 2, 3, 4, 45, 5].every(s => stages[`stage_${s}`]?.completed)
       if (allDone) {
         setAnalysisCompleted(true)
-        setProgress('✅ 5 阶段分析全部完成！')
+        setProgress('✅ 6 阶段分析全部完成！')
         setTimeout(() => navigate(`/case/${caseId}/report`), 2000)
       }
     } catch (err) {
@@ -1221,7 +1222,7 @@ export function CaseDetailPage() {
         if (taskState === 'completed') {
           clearInterval(pollInterval)
           setAnalysisCompleted(true)
-          setProgress('✅ 5 阶段分析全部完成！')
+          setProgress('✅ 6 阶段分析全部完成！')
           setProcessing(false)
           setTimeout(() => navigate(`/case/${caseId}/report`), 1500)
         } else if (taskState === 'error') {
@@ -1235,7 +1236,7 @@ export function CaseDetailPage() {
           if (stageStatus.stage_53?.completed) {
             clearInterval(pollInterval)
             setAnalysisCompleted(true)
-            setProgress('✅ 5 阶段分析全部完成！')
+            setProgress('✅ 6 阶段分析全部完成！')
             setProcessing(false)
             setTimeout(() => navigate(`/case/${caseId}/report`), 1500)
           } else if (pollCount < 10) {
@@ -2506,7 +2507,7 @@ export function CaseDetailPage() {
 
                 {/* 5 阶段独立按钮 */}
                 <MacOSCard style={{ marginBottom: '16px' }}>
-                  <h4 style={{ fontSize: '14px', fontWeight: '600', marginBottom: '12px' }}>分析阶段</h4>
+                  <h4 style={{ fontSize: '14px', fontWeight: '600', marginBottom: '12px' }}>分析阶段（不建议并行处理）</h4>
                   {!evidenceExtracted && (
                     <div style={{
                       padding: '8px 12px', borderRadius: '8px', marginBottom: '12px',
