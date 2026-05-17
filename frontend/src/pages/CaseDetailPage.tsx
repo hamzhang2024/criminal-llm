@@ -188,11 +188,18 @@ export function CaseDetailPage() {
                     setProgress(`✅ 已提取 ${data2.total_evidence} 份证据`)
                     setTimeout(() => setProgress(''), 3000)
                   } else {
-                    // 刷新进度
+                    // 刷新进度：使用后端返回的进度数据
+                    const totalFiles = st2.total_files || 0
+                    const processedFiles = st2.processed_files || 0
+                    const currentFile = st2.current_file || ''
+                    const pct = totalFiles > 0 ? Math.round((processedFiles / totalFiles) * 100) : 0
+                    if (processedFiles > 0 || totalFiles > 0) {
+                      setProgress(`正在提取证据... ${processedFiles}/${totalFiles} (${pct}%) ${currentFile ? '— ' + currentFile : ''}`)
+                    }
+                    // 同时刷新已提取的证据数
                     const data3 = await api.getEvidenceIndex(caseId!)
                     if (data3.total_evidence > 0) {
                       setEvidenceList(data3.evidence || [])
-                      setProgress(`正在提取证据... 已提取 ${data3.total_evidence} 份`)
                     }
                   }
                 } catch {
@@ -1029,36 +1036,73 @@ export function CaseDetailPage() {
     setError(null)
     setProgress('正在提取证据清单...')
     try {
-      const evResult = await api.extractEvidence(caseId!)
-      if (evResult.success && evResult.evidence) {
-        setEvidenceList(evResult.evidence)
-        setEvidenceExtracted(true)
-        setProgress(`✅ 已提取 ${evResult.total_evidence} 份证据，正在自动开始分析...`)
+      // 启动提取任务（不等待返回，用 polling 跟踪进度）
+      fetch(`${API_BASE}/cases/${caseId}/extract-evidence`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      }).catch(() => {}) // 忽略错误，由 polling 处理
 
-        // 证据提取完成后自动触发分析
-        if (defendant.trim()) {
-          setTimeout(async () => {
-            try {
-              const analysisResult = await api.runAllStages(caseId!, defendant, crimeType || undefined)
-              if (!analysisResult.success) {
-                throw new Error(analysisResult.detail || analysisResult.error || '分析执行失败')
-              }
-              setProgress('✅ 分析任务已启动，正在跟踪进度...')
-              setProcessing(true)
-              pollAnalysisProgress()
-            } catch (err) {
-              const errorMsg = err instanceof Error ? err.message : '分析触发失败'
-              setError(errorMsg)
-              setProcessing(false)
+      // 轮询进度
+      extractPollRef.current = setInterval(async () => {
+        if (extractUserStoppedRef.current) {
+          clearInterval(extractPollRef.current!)
+          extractPollRef.current = null
+          return
+        }
+        try {
+          const st = await fetch(`${API_BASE}/cases/${caseId}/extract-status`).then(r => r.json())
+          if (st.status !== 'running') {
+            clearInterval(extractPollRef.current!)
+            extractPollRef.current = null
+            const data = await api.getEvidenceIndex(caseId!)
+            setEvidenceList(data.evidence || [])
+            setEvidenceExtracted(true)
+            setProcessing(false)
+            setProgress(`✅ 已提取 ${data.total_evidence} 份证据，正在自动开始分析...`)
+            // 自动触发分析
+            if (defendant.trim()) {
+              setTimeout(async () => {
+                try {
+                  const analysisResult = await api.runAllStages(caseId!, defendant, crimeType || undefined)
+                  if (!analysisResult.success) throw new Error(analysisResult.detail || analysisResult.error || '分析执行失败')
+                  setProgress('✅ 分析任务已启动，正在跟踪进度...')
+                  setProcessing(true)
+                  pollAnalysisProgress()
+                } catch (err) {
+                  setError(err instanceof Error ? err.message : '分析触发失败')
+                  setProcessing(false)
+                }
+              }, 500)
+            } else {
+              setProgress(`✅ 已提取 ${data.total_evidence} 份证据（请补充被告人信息后手动开始分析）`)
             }
-          }, 500)
-        } else {
-          setProgress(`✅ 已提取 ${evResult.total_evidence} 份证据（请补充被告人信息后手动开始分析）`)
+          } else {
+            const totalFiles = st.total_files || 0
+            const processedFiles = st.processed_files || 0
+            const currentFile = st.current_file || ''
+            const pct = totalFiles > 0 ? Math.round((processedFiles / totalFiles) * 100) : 0
+            if (processedFiles > 0 || totalFiles > 0) {
+              setProgress(`正在提取证据... ${processedFiles}/${totalFiles} (${pct}%) ${currentFile ? '— ' + currentFile : ''}`)
+            }
+            const data = await api.getEvidenceIndex(caseId!)
+            if (data.total_evidence > 0) setEvidenceList(data.evidence || [])
+          }
+        } catch {
+          clearInterval(extractPollRef.current!)
+          extractPollRef.current = null
           setProcessing(false)
         }
-      } else {
-        throw new Error(evResult.detail || evResult.error || '提取失败')
-      }
+      }, 3000)
+
+      // 15 分钟超时
+      setTimeout(() => {
+        if (extractPollRef.current) {
+          clearInterval(extractPollRef.current)
+          extractPollRef.current = null
+          setProcessing(false)
+          setProgress('⚠️ 提取超时，任务可能仍在后台运行，请稍后刷新页面查看结果')
+        }
+      }, 900000)
     } catch (err) {
       // 后端返回 400：无 MD 文件，询问用户是否转换
       if (err instanceof Error && (err.message.includes('无 MD 文件') || err.message.includes('请先完成 PDF 转 MD'))) {

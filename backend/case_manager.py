@@ -25,6 +25,7 @@ import asyncio
 router = APIRouter(prefix="/api/cases", tags=["案件管理"])
 
 # 证据提取状态追踪（并发数从 config_manager 读取）
+# 结构: { case_id: { "status": "running", "total_files": N, "processed_files": N, "current_file": "xxx.md", "started_at": time.time() } }
 EXTRACT_TASKS: dict = {}
 
 from config import MAX_FILE_SIZE, DATA_DIR, UPLOAD_DIR as CONFIG_UPLOAD_DIR
@@ -1063,7 +1064,13 @@ async def extract_evidence(case_id: str):
     if EXTRACT_TASKS.get(case_id) == "running":
         raise HTTPException(status_code=409, detail="证据提取已在运行中")
 
-    EXTRACT_TASKS[case_id] = {"status": "running", "started_at": time.time()}
+    EXTRACT_TASKS[case_id] = {
+        "status": "running",
+        "total_files": len(all_md_files),
+        "processed_files": 0,
+        "current_file": "",
+        "started_at": time.time(),
+    }
 
     # 读取已提取的证据索引（断点续传：跳过已提取的 MD 文件）
     index_file = evidence_dir / "index.json"
@@ -1135,8 +1142,17 @@ async def extract_evidence(case_id: str):
             if not md_text.strip():
                 continue
 
+            # 更新进度
+            task = EXTRACT_TASKS.get(case_id)
+            if task:
+                task["current_file"] = md_file.name
+
             print(f"[证据提取] 处理{md_file.name}（逐笔提取）")
             num_facts = await _process_indictment_single(md_file, md_text, evidence_dir)
+
+            # 更新已处理计数
+            if task:
+                task["processed_files"] = task.get("processed_files", 0) + 1
 
             ev_files = sorted(evidence_dir.glob("*.md"))
             new_files = ev_files[-num_facts:] if num_facts else []
@@ -1183,7 +1199,8 @@ async def extract_evidence(case_id: str):
             temp_dir = evidence_dir / "_temp_extract"
             temp_dir.mkdir(exist_ok=True)
 
-            tasks = []
+            # 用 (文件名, task) 对保持顺序
+            file_task_pairs = []
             for md_file in pending_files:
                 file_temp_dir = temp_dir / md_file.stem
                 file_temp_dir.mkdir(exist_ok=True)
@@ -1192,11 +1209,40 @@ async def extract_evidence(case_id: str):
                     md_text = md_file.read_text(encoding="utf-8")
                     if not md_text.strip():
                         continue
-                    tasks.append(_extract_single_file_with_tracking(md_file, md_text, file_temp_dir, sem, controller))
+                    task = _extract_single_file_with_tracking(md_file, md_text, file_temp_dir, sem, controller)
+                    file_task_pairs.append((md_file.name, task))
                 except Exception as e:
                     print(f"⚠️ 读取文件失败 {md_file.name}: {e}")
 
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+            # 用 as_completed 替代 gather，每个任务完成时更新进度
+            processed_count = task.get("processed_files", 0) if task else 0
+            total_concurrent = len(file_task_pairs)
+            completed_count = 0
+            results = []
+            # 用 dict 保持文件名到结果的映射
+            result_map: dict = {}
+
+            async def track_completion(idx, fname, coro):
+                nonlocal completed_count
+                try:
+                    result = await coro
+                    result_map[idx] = result
+                except Exception as exc:
+                    result_map[idx] = exc
+                completed_count += 1
+                if task:
+                    task["processed_files"] = processed_count + completed_count
+                    if completed_count < total_concurrent:
+                        task["current_file"] = f"剩余 {total_concurrent - completed_count} 个文件"
+                    else:
+                        task["current_file"] = "完成"
+
+            await asyncio.gather(*[
+                track_completion(i, fname, coro)
+                for i, (fname, coro) in enumerate(file_task_pairs)
+            ])
+
+            results = [result_map[i] for i in range(len(file_task_pairs))]
 
             # 检查是否有错误
             error_results = [(i, r) for i, r in enumerate(results) if isinstance(r, Exception)]
@@ -1354,10 +1400,16 @@ async def get_evidence_index(case_id: str):
 
 @router.get("/{case_id}/extract-status")
 async def get_extract_status(case_id: str):
-    """获取证据提取状态"""
+    """获取证据提取状态（含进度信息）"""
     task = EXTRACT_TASKS.get(case_id)
     if task:
-        return {"case_id": case_id, "status": "running"}
+        return {
+            "case_id": case_id,
+            "status": "running",
+            "total_files": task.get("total_files", 0),
+            "processed_files": task.get("processed_files", 0),
+            "current_file": task.get("current_file", ""),
+        }
     return {"case_id": case_id, "status": "idle"}
 
 
