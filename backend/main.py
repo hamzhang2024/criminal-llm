@@ -155,19 +155,25 @@ async def test_config(body: Dict[str, Any]):
         try:
             # 不使用 certifi，让 httpx 用系统默认证书（macOS 用钥匙串）
             # 打包后的应用 certifi 证书包可能缺失，导致 SSL 验证失败
+            print(f"[MinerU验证] token长度={len(token)}, token前20字符={token[:20]}...")
             async with httpx.AsyncClient(timeout=15) as client:
                 resp = await client.post(
                     "https://mineru.net/api/v4/file-urls/batch",
                     headers={"Authorization": f"Bearer {token}"},
                     json={"files": [{"name": "test.pdf", "data_id": "test"}]},
                 )
+            print(f"[MinerU验证] 响应状态: {resp.status_code}, 响应体: {resp.text[:300]}")
             if resp.status_code == 200:
                 return {"success": True, "message": "Token 验证成功"}
             else:
                 msg = resp.json().get("msg", f"HTTP {resp.status_code}")
                 return {"success": False, "error": msg}
+        except httpx.RequestError as e:
+            print(f"[MinerU验证] 网络请求异常: {type(e).__name__}: {e}")
+            return {"success": False, "error": f"网络请求失败: {type(e).__name__} - {e}"}
         except Exception as e:
-            return {"success": False, "error": f"网络错误: {e}"}
+            print(f"[MinerU验证] 未知异常: {type(e).__name__}: {e}")
+            return {"success": False, "error": f"验证异常: {type(e).__name__} - {e}"}
 
     elif config_type == "llm":
         api_key = body.get("api_key", "")

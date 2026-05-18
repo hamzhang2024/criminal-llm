@@ -108,12 +108,17 @@ export function ReportRenderer({ markdown, evidenceItems, onEvidenceClick }: Rep
     return () => el.removeEventListener('click', handler)
   }, [])
 
-  // 提取 mermaid 代码块
-  const mermaidRegex = /```mermaid\n([\s\S]*?)```/g
+  // 提取 mermaid 代码块（支持 trailing space、\r\n 等）
+  const mermaidRegex = /```mermaid\s*\n([\s\S]*?)```/g
   const mermaidCodes: string[] = []
   let m
   while ((m = mermaidRegex.exec(markdown)) !== null) {
     mermaidCodes.push(m[1].trim())
+  }
+  if (mermaidCodes.length > 0) {
+    console.log('[ReportRenderer] 提取到', mermaidCodes.length, '个 mermaid 块, 首个长度:', mermaidCodes[0].length)
+  } else if (markdown.length > 100) {
+    console.log('[ReportRenderer] 未提取到 mermaid 块, markdown长度:', markdown.length, '包含```mermaid:', markdown.includes('```mermaid'))
   }
 
   // 提取三阶层段落
@@ -159,7 +164,7 @@ export function ReportRenderer({ markdown, evidenceItems, onEvidenceClick }: Rep
     if (!markdown) return ''
     try {
       // 移除 mermaid 代码块，避免重复渲染
-      const withoutMermaid = markdown.replace(/```mermaid\n[\s\S]*?```/g, '')
+      const withoutMermaid = markdown.replace(/```mermaid\s*\n[\s\S]*?```/g, '')
       return marked.parse(withoutMermaid, { async: false }) as string
     } catch {
       return markdown
@@ -311,9 +316,13 @@ export function ReportRenderer({ markdown, evidenceItems, onEvidenceClick }: Rep
       )}
 
       {/* Mermaid 图表 */}
-      {mermaidCodes.map((code, i) => (
-        <MermaidRenderer key={i} code={code} />
-      ))}
+      {mermaidCodes.length > 0 && (
+        <div style={{ marginTop: '20px', borderTop: '1px solid #e5e5ea', paddingTop: '16px' }}>
+          {mermaidCodes.map((code, i) => (
+            <MermaidRenderer key={i} code={code} />
+          ))}
+        </div>
+      )}
     </div>
   )
 }
