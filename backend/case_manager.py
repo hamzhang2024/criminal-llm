@@ -14,7 +14,6 @@ from typing import List, Dict, Optional
 from pydantic import BaseModel
 from fastapi import APIRouter, UploadFile, File, HTTPException, Request
 from fastapi.responses import JSONResponse
-import shutil
 import json
 import uuid
 import os
@@ -861,7 +860,7 @@ _EVIDENCE_SYSTEM_PROMPT = """你是刑事案卷审查专家，正在逐份审查
 
 对于每份文书，按以下规则提取：
 
-### 起诉意见书/起诉书（最高优先级）
+### 起诉意见书/起诉书
 
 **必须逐笔提取全部犯罪事实，不得遗漏，不得简化。**
 
@@ -1084,14 +1083,39 @@ async def extract_evidence(case_id: str):
     if EXTRACT_TASKS.get(case_id) == "running":
         raise HTTPException(status_code=409, detail="证据提取已在运行中")
 
+    # 统计文件总数（用于进度显示，排序前后数量一致，此处用未排序的计数）
+    total_md_count = len(list(md_dir.glob("*.md")))
+
     EXTRACT_TASKS[case_id] = {
         "status": "running",
-        "total_files": len(all_md_files),
+        "total_files": total_md_count,
         "processed_files": 0,
         "current_file": "",
         "started_at": time.time(),
     }
 
+    # 确保异常时清理任务状态
+    try:
+        await _do_extract_evidence(case_id, case_path, md_dir, evidence_dir)
+    except Exception:
+        EXTRACT_TASKS.pop(case_id, None)
+        raise
+
+    return {
+        "success": True,
+        "case_id": case_id,
+        "total_evidence": 0,
+        "evidence": [],
+    }
+
+
+async def _do_extract_evidence(
+    case_id: str,
+    case_path: Path,
+    md_dir: Path,
+    evidence_dir: Path,
+):
+    """证据提取核心逻辑（从 extract_evidence 拆分，便于异常清理）"""
     # 读取已提取的证据索引（断点续传：跳过已提取的 MD 文件）
     index_file = evidence_dir / "index.json"
     processed_sources = set()
@@ -1108,10 +1132,22 @@ async def extract_evidence(case_id: str):
 
     evidence_dir.mkdir(parents=True, exist_ok=True)
 
+    # 清理上次中断遗留的临时文件
+    old_temp = evidence_dir / "_temp_extract"
+    if old_temp.exists():
+        shutil.rmtree(old_temp)
+        print(f"[证据提取] 清理上次中断的临时目录")
+
     # 使用电源管理器防止休眠
     from power_manager import PowerInhibitor
 
     with PowerInhibitor(f"证据提取: {case_id}"):
+        # 检查是否被取消
+        if EXTRACT_TASKS.get(case_id) == "cancelled":
+            print(f"[证据提取] 任务已被取消")
+            EXTRACT_TASKS.pop(case_id, None)
+            return {"success": False, "error": "用户已停止提取", "case_id": case_id}
+
         # 排序辅助函数
         def _is_indictment(name: str) -> bool:
             return ("起诉书" in name and "意见" not in name) or "起诉意见书" in name
@@ -1137,197 +1173,163 @@ async def extract_evidence(case_id: str):
         def _sort_md_files(files: list) -> list:
             return sorted(files, key=lambda f: _parse_volume_sort_key(f.name))
 
-        # ── 第1步：起诉书/起诉意见书串行处理（起诉书优先） ──
         all_md_files = _sort_md_files(list(md_dir.glob("*.md")))
         indictment_files = [f for f in all_md_files if _is_indictment(f.name)]
         other_files = [f for f in all_md_files if not _is_indictment(f.name)]
 
-        # 起诉书 > 起诉意见书：优先处理起诉书
-        indictment_files.sort(key=lambda f: (0 if "起诉意见书" not in f.name else 1))
-
-        for md_file in indictment_files:
-            if md_file.name in processed_sources:
-                print(f"[证据提取] 跳过已处理: {md_file.name}")
-                continue
-
-            old_files = [f for f in evidence_dir.iterdir()
-                         if f.suffix == ".md" and _get_source_from_evidence_file(f) == md_file.name]
-            if old_files:
-                print(f"[证据提取] 清理 {md_file.name} 的部分提取结果 ({len(old_files)} 个文件)，重新提取")
-                for f in old_files:
-                    f.unlink()
-                existing_evidence = [ev for ev in existing_evidence if ev["source"] != md_file.name]
-
-            md_text = md_file.read_text(encoding="utf-8")
-            if not md_text.strip():
-                continue
-
-            # 更新进度
-            task = EXTRACT_TASKS.get(case_id)
-            if task:
-                task["current_file"] = md_file.name
-
-            print(f"[证据提取] 处理{md_file.name}（逐笔提取）")
-            num_facts = await _process_indictment_single(md_file, md_text, evidence_dir)
-
-            # 更新已处理计数
-            if task:
-                task["processed_files"] = task.get("processed_files", 0) + 1
-
-            ev_files = sorted(evidence_dir.glob("*.md"))
-            new_files = ev_files[-num_facts:] if num_facts else []
-            for new_file in new_files:
-                existing_evidence.append({
-                    "name": new_file.stem.split("_", 1)[-1].replace(".md", ""),
-                    "type": "起诉意见书" if "意见" in md_file.name else "起诉书",
-                    "source": md_file.name,
-                    "page_range": "",
-                    "persons": "",
-                    "related_entities": "",
-                    "summary_preview": f"{md_file.name} 中的一笔犯罪事实",
-                    "has_quotes": True,
-                    "md_file": new_file.name,
-                })
-
-            index_file.write_text(json.dumps({
-                "case_id": case_id,
-                "total_evidence": len(existing_evidence),
-                "evidence": existing_evidence,
-                "generated_at": datetime.now().isoformat(),
-            }, ensure_ascii=False, indent=2), encoding="utf-8")
-
-            processed_sources.add(md_file.name)
-
-        # ── 第2步：非起诉书文件并发提取（带自动降级）──
+        # ── 第1步：普通文件并发提取（先处理，让用户快速看到进度）──
         pending_files = [f for f in other_files if f.name not in processed_sources]
         all_evidence = list(existing_evidence)
         next_id = len(all_evidence) + 1
 
-        # 从 config 读取初始并发数
-        from config_manager import get_config_value
-        initial_concurrency = int(get_config_value("evidence_concurrency", "3"))
-        initial_concurrency = max(1, min(10, initial_concurrency))
-
-        # 并发控制器：遇到 429/超时时自动降级，不向上试探
-        from concurrency_controller import ConcurrencyController
-        controller = ConcurrencyController(initial=initial_concurrency, min_concurrency=1)
-
         if pending_files:
-            print(f"[证据提取] 并发提取 {len(pending_files)} 个文件（初始并发数={initial_concurrency}）")
+            # 并发控制器 + 信号量
+            from concurrency_controller import ConcurrencyController
+            from config_manager import load_config
+            config = load_config()
+            initial_concurrency = config.get("evidence_concurrency", 3)
+            semaphore = asyncio.Semaphore(initial_concurrency)
+            controller = ConcurrencyController(initial=initial_concurrency)
+            print(f"[证据提取] 并发提取 {len(pending_files)} 个文件，初始并发={initial_concurrency}")
 
-            sem = asyncio.Semaphore(initial_concurrency)
             temp_dir = evidence_dir / "_temp_extract"
             temp_dir.mkdir(exist_ok=True)
 
-            # 用 (文件名, task) 对保持顺序
-            file_task_pairs = []
-            for md_file in pending_files:
-                file_temp_dir = temp_dir / md_file.stem
-                file_temp_dir.mkdir(exist_ok=True)
+            # 断点续传：检查已完成的文件（.done 标记），跳过
+            completed_markers = {
+                f.stem for f in temp_dir.glob("*.done")
+            }
+            files_to_extract = [
+                f for f in pending_files
+                if f.stem not in completed_markers
+            ]
+            if completed_markers:
+                print(f"[证据提取] 断点续传：跳过已完成的 {len(completed_markers)} 个文件")
 
+            async def extract_and_save_temp(md_file: Path) -> tuple:
+                """并发提取单个文件，证据保存到独立子目录，完成后写 .done 标记"""
                 try:
                     md_text = md_file.read_text(encoding="utf-8")
                     if not md_text.strip():
-                        continue
-                    task = _extract_single_file_with_tracking(md_file, md_text, file_temp_dir, sem, controller)
-                    file_task_pairs.append((md_file.name, task))
-                except Exception as e:
-                    print(f"⚠️ 读取文件失败 {md_file.name}: {e}")
+                        # 空文件也写标记，避免重复检查
+                        (temp_dir / f"{md_file.stem}.done").write_text("", encoding="utf-8")
+                        return (md_file.name, [])
 
-            # 用 as_completed 替代 gather，每个任务完成时更新进度
-            processed_count = task.get("processed_files", 0) if task else 0
-            total_concurrent = len(file_task_pairs)
-            completed_count = 0
-            results = []
-            # 用 dict 保持文件名到结果的映射
-            result_map: dict = {}
+                    # 每个文件用独立子目录，避免文件名冲突
+                    file_temp_dir = temp_dir / md_file.stem
+                    file_temp_dir.mkdir(exist_ok=True)
 
-            async def track_completion(idx, fname, coro):
-                nonlocal completed_count
-                try:
-                    result = await coro
-                    result_map[idx] = result
-                except Exception as exc:
-                    result_map[idx] = exc
-                completed_count += 1
-                if task:
-                    task["processed_files"] = processed_count + completed_count
-                    if completed_count < total_concurrent:
-                        task["current_file"] = f"剩余 {total_concurrent - completed_count} 个文件"
-                    else:
-                        task["current_file"] = "完成"
+                    # 更新进度
+                    task = EXTRACT_TASKS.get(case_id)
+                    if task:
+                        task["current_file"] = md_file.name
 
-            await asyncio.gather(*[
-                track_completion(i, fname, coro)
-                for i, (fname, coro) in enumerate(file_task_pairs)
-            ])
+                    print(f"[证据提取] 处理: {md_file.name}")
+                    source_name, evidence_list = await _extract_single_file_with_tracking(
+                        md_file, md_text, file_temp_dir, semaphore, controller
+                    )
 
-            results = [result_map[i] for i in range(len(file_task_pairs))]
+                    # 写完成标记（断点续传用）
+                    (temp_dir / f"{md_file.stem}.done").write_text("", encoding="utf-8")
 
-            # 检查是否有错误
-            error_results = [(i, r) for i, r in enumerate(results) if isinstance(r, Exception)]
+                    if task:
+                        task["processed_files"] = task.get("processed_files", 0) + 1
 
-            # 如果并发数被自动降级过，打印提示
-            if controller.concurrency < initial_concurrency:
-                print(f"[证据提取] 自动降级：{initial_concurrency} → {controller.concurrency}")
+                    print(f"[证据提取] {md_file.name}: 提取 {len(evidence_list)} 条证据")
+                    return (source_name, evidence_list)
+                except asyncio.CancelledError:
+                    print(f"[证据提取] {md_file.name}: 提取被取消")
+                    raise
 
-            if error_results:
-                # 停止提取，返回错误信息
-                error_details = []
-                for idx, exc in error_results:
-                    error_msg = str(exc)
-                    # 识别是否为限流/超时错误
-                    is_rate_limit = any(kw in error_msg.lower() for kw in ['429', 'rate limit', 'too many', 'quota'])
-                    is_timeout = any(kw in error_msg.lower() for kw in ['timeout', 'timed out', 'connection error'])
-                    error_type = '限流错误' if is_rate_limit else ('超时错误' if is_timeout else 'API错误')
-                    error_details.append(f"  - {pending_files[idx].name if idx < len(pending_files) else 'unknown'}: {error_msg[:100]}")
-                    print(f"⚠️ [{error_type}] {pending_files[idx].name if idx < len(pending_files) else 'unknown'}: {error_msg[:200]}")
+            # 取消监视器：定期检查 EXTRACT_TASKS，检测到取消时取消所有任务
+            gather_task = None
 
-                # 构建错误提示
-                error_msg = (
-                    f"证据提取失败：{len(error_results)} 个文件提取失败。\n"
-                    f"可能原因：并发数过高导致 API 限流或超时。\n"
-                    f"建议：在设置中将「证据提取并发数」降低至 1 或 2 后重试。"
-                )
-                print(f"[证据提取] ❌ {error_msg}")
+            async def cancel_watcher():
+                nonlocal gather_task
+                while True:
+                    await asyncio.sleep(1)
+                    if EXTRACT_TASKS.get(case_id) == "cancelled":
+                        print(f"[证据提取] 检测到取消信号，停止并发提取")
+                        if gather_task and not gather_task.done():
+                            gather_task.cancel()
+                        return
 
-                # 清理临时目录
-                import shutil
-                if temp_dir.exists():
-                    shutil.rmtree(temp_dir, ignore_errors=True)
+            # 创建取消监视器
+            watcher = asyncio.create_task(cancel_watcher())
 
+            try:
+                # 创建提取任务（只提取未完成的文件）
+                coros = [
+                    extract_and_save_temp(f)
+                    for f in files_to_extract
+                ]
+
+                # 用 asyncio.gather 并发执行
+                gather_task = asyncio.gather(*coros, return_exceptions=True)
+                gather_results = await gather_task
+
+            except asyncio.CancelledError:
+                print(f"[证据提取] 并发提取被取消")
                 EXTRACT_TASKS.pop(case_id, None)
-                return {
-                    "success": False,
-                    "error": error_msg,
-                    "case_id": case_id,
-                    "total_evidence": len(all_evidence),
-                    "processed_before_error": len(all_evidence),
-                    "failed_files": [str(pending_files[i]) if i < len(pending_files) else 'unknown' for i, _ in error_results],
-                    "suggestion": "请将证据提取并发数降低至 1-2 后重试",
-                }
+                return {"success": False, "error": "用户已停止提取", "case_id": case_id}
+            finally:
+                # 取消监视器
+                watcher.cancel()
+                try:
+                    await watcher
+                except (asyncio.CancelledError, Exception):
+                    pass
 
-            new_evidence_by_source = {}
-            for i, result in enumerate(results):
-                source_name, evidence_list = result
-                new_evidence_by_source[source_name] = evidence_list
+            # 合并结果：已完成的文件 + 新提取的文件
+            # 按 pending_files 原始顺序，保证证据编号跟随卷号顺序
+            extracted = {}
+            for i, result in enumerate(gather_results):
+                if i < len(files_to_extract):
+                    f = files_to_extract[i]
+                    extracted[f.name] = result
 
-            # ── 第3步：按文件顺序合并，分配连续编号 ──
-
+            # ── 按原始文件顺序分配编号（保持卷号顺序）──
             for md_file in pending_files:
-                source_name = md_file.name
-                if source_name not in new_evidence_by_source:
-                    continue
+                # 已完成的文件：从子目录读取证据
+                if md_file.stem in completed_markers:
+                    file_temp_dir = temp_dir / md_file.stem
+                    ev_files = sorted(file_temp_dir.glob("evid_*.md"))
+                    ev_list = []
+                    for ef in ev_files:
+                        ev_text = ef.read_text(encoding="utf-8")
+                        blocks = _parse_evidence_blocks(ev_text, md_file.name)
+                        ev_list.extend([{
+                            "name": b["name"],
+                            "type": b["type"],
+                            "source": md_file.name,
+                            "page_range": b.get("page_range", ""),
+                            "persons": b.get("persons", ""),
+                            "related_entities": b.get("related_entities", ""),
+                            "summary_preview": b["summary"][:200],
+                            "has_quotes": bool(b.get("original_quotes", "").strip()),
+                            "md_file": ef.name,
+                            "_temp_dir": str(file_temp_dir),
+                        } for b in blocks])
+                    if not ev_list:
+                        continue
+                else:
+                    # 新提取的文件：从 extracted 结果读取
+                    result = extracted.get(md_file.name)
+                    if isinstance(result, Exception):
+                        print(f"[证据提取] {md_file.name}: 提取异常: {result}")
+                        continue
+                    if result is None:
+                        continue
+                    _, ev_list = result
+                    if not ev_list:
+                        continue
 
-                evidence_list = new_evidence_by_source[source_name]
-
-                for ev_data in evidence_list:
+                for ev_data in ev_list:
                     new_name = f"{next_id:03d}_{_sanitize_filename(ev_data['name'])}.md"
                     final_path = evidence_dir / new_name
 
                     temp_path = Path(ev_data["_temp_dir"]) / ev_data["md_file"]
                     if temp_path.exists():
-                        import shutil
                         shutil.move(str(temp_path), str(final_path))
 
                     all_evidence.append({
@@ -1343,13 +1345,63 @@ async def extract_evidence(case_id: str):
                         "md_file": new_name,
                     })
                     next_id += 1
-
-            # 清理临时目录
-            import shutil
-            if temp_dir.exists():
-                shutil.rmtree(temp_dir, ignore_errors=True)
         else:
             print("[证据提取] 所有文件已提取，跳过并发处理")
+
+        # ── 第2步：起诉书/起诉意见书最后处理（直接复制，不调用 LLM）──
+        indictment_files.sort(key=lambda f: (0 if "起诉意见书" not in f.name else 1))
+
+        for md_file in indictment_files:
+            if EXTRACT_TASKS.get(case_id) == "cancelled":
+                print(f"[证据提取] 任务已被取消（处理 {md_file.name} 前）")
+                EXTRACT_TASKS.pop(case_id, None)
+                return {"success": False, "error": "用户已停止提取", "case_id": case_id}
+
+            if md_file.name in processed_sources:
+                print(f"[证据提取] 跳过已处理: {md_file.name}")
+                continue
+
+            # 清理旧的起诉书证据
+            old_files = [f for f in evidence_dir.iterdir()
+                         if f.suffix == ".md" and _get_source_from_evidence_file(f) == md_file.name]
+            if old_files:
+                print(f"[证据提取] 清理 {md_file.name} 的旧证据 ({len(old_files)} 个文件)，重新处理")
+                for f in old_files:
+                    f.unlink()
+                all_evidence = [ev for ev in all_evidence if ev["source"] != md_file.name]
+
+            # 直接复制 MD 文件到 evidence 目录
+            dest_name = f"{next_id:03d}_{md_file.name}"
+            dest_path = evidence_dir / dest_name
+            shutil.copy2(str(md_file), str(dest_path))
+            print(f"[证据提取] {md_file.name} → {dest_name}（直接复制）")
+
+            task = EXTRACT_TASKS.get(case_id)
+            if task:
+                task["current_file"] = md_file.name
+                task["processed_files"] = task.get("processed_files", 0) + 1
+
+            all_evidence.append({
+                "name": md_file.stem,
+                "type": "起诉意见书" if "意见" in md_file.name else "起诉书",
+                "source": md_file.name,
+                "page_range": "",
+                "persons": "",
+                "related_entities": "",
+                "summary_preview": f"{md_file.name}（待案卷分析时详细提取）",
+                "has_quotes": True,
+                "md_file": dest_name,
+            })
+            next_id += 1
+
+            index_file.write_text(json.dumps({
+                "case_id": case_id,
+                "total_evidence": len(all_evidence),
+                "evidence": all_evidence,
+                "generated_at": datetime.now().isoformat(),
+            }, ensure_ascii=False, indent=2), encoding="utf-8")
+
+            processed_sources.add(md_file.name)
 
         # ── 最终保存 ──
         index_file.write_text(json.dumps({
@@ -1358,6 +1410,12 @@ async def extract_evidence(case_id: str):
             "evidence": all_evidence,
             "generated_at": datetime.now().isoformat(),
         }, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        # 清理临时文件（无论走哪个分支都清理）
+        old_temp = evidence_dir / "_temp_extract"
+        if old_temp.exists():
+            shutil.rmtree(old_temp)
+            print(f"[证据提取] 临时目录已清理")
 
         print(f"[证据提取] 完成，共 {len(all_evidence)} 份证据")
 
@@ -1422,7 +1480,9 @@ async def get_evidence_index(case_id: str):
 async def get_extract_status(case_id: str):
     """获取证据提取状态（含进度信息）"""
     task = EXTRACT_TASKS.get(case_id)
-    if task:
+    if task == "cancelled":
+        return {"case_id": case_id, "status": "cancelled"}
+    if task and isinstance(task, dict):
         return {
             "case_id": case_id,
             "status": "running",
@@ -1447,16 +1507,25 @@ async def get_evidence_summary(case_id: str, filename: str):
 
     return {"content": ev_file.read_text(encoding="utf-8")}
 
-
-import shutil
+@router.post("/{case_id}/stop-extract")
+async def stop_extract(case_id: str):
+    """停止正在运行的提取任务，保留已提取的证据"""
+    # 标记为取消状态，让正在运行的提取任务退出
+    EXTRACT_TASKS[case_id] = "cancelled"
+    print(f"[停止提取] 已取消 {case_id} 的提取任务，保留已提取的证据")
+    return {"success": True, "message": "提取任务已取消"}
 
 
 @router.post("/{case_id}/clear-evidence")
 async def clear_evidence(case_id: str):
-    """清除证据目录，允许重新提取"""
+    """清除证据目录和卡死的提取任务状态，允许重新提取"""
     case_path = find_case_path(case_id)
     if not case_path:
         raise HTTPException(status_code=404, detail="案件不存在")
+
+    # 标记为取消状态，让正在运行的提取任务退出
+    EXTRACT_TASKS[case_id] = "cancelled"
+    print(f"[清除证据] 已取消 {case_id} 的提取任务")
 
     evidence_dir = case_path / "evidence"
     if not evidence_dir.exists():
@@ -1466,7 +1535,7 @@ async def clear_evidence(case_id: str):
     shutil.rmtree(evidence_dir)
     evidence_dir.mkdir(parents=True, exist_ok=True)
 
-    return {"success": True, "message": "已清除证据目录"}
+    return {"success": True, "message": "已清除证据目录，可重新提取"}
 
 
 @router.delete("/{case_id}/md-file/{md_file_name}")

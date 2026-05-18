@@ -56,7 +56,7 @@ class LLMClient:
         self.base_url = base_url
         self.api_key = api_key
         self.model = default_model
-        self.timeout = 600.0
+        self.timeout = 300.0
         self.client = httpx.AsyncClient(timeout=self.timeout)
 
         # 并发限流保护器
@@ -117,10 +117,9 @@ class LLMClient:
 
         print(f"[LLM 请求] url={url}, model={payload['model']}, messages={len(messages)}")
 
-        # 重试 5 次，指数退避
+        # 重试 2 次，指数退避
         last_error = None
-        start_time = time.time() if 'time' not in dir() else None
-        for attempt in range(5):
+        for attempt in range(3):
             try:
                 req_start = time.time()
                 response = await self.client.post(url, json=payload, headers=headers)
@@ -150,7 +149,7 @@ class LLMClient:
                 error_body = e.response.text[:500] if e.response else "无响应内容"
                 raise Exception(f"API 请求失败：{e.response.status_code}\n{error_body}")
 
-        raise Exception(f"LLM 请求超时（已重试 5 次）: {last_error}")
+        raise Exception(f"LLM 请求超时（已重试 {3-1} 次）: {last_error}")
     
     async def analyze_case(
         self,

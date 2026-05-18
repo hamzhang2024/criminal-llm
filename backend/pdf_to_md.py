@@ -52,7 +52,8 @@ def _split_pdf_pages(pdf_path: Path, chunk_size: int = MINERU_MAX_PAGES) -> list
     if total > 0:
         avg_page_size = file_size / total
         if avg_page_size > 0:
-            max_pages_by_size = int(MINERU_MAX_FILE_SIZE * 0.95 / avg_page_size)  # 留 5% 缓冲
+            # 留 20% 缓冲（0.80），避免 chunk 接近 200MB 上限时因开销超限
+            max_pages_by_size = int(MINERU_MAX_FILE_SIZE * 0.80 / avg_page_size)
             chunk_size = min(chunk_size, max_pages_by_size)
             chunk_size = max(chunk_size, 10)  # 至少 10 页一段
 
@@ -65,7 +66,24 @@ def _split_pdf_pages(pdf_path: Path, chunk_size: int = MINERU_MAX_PAGES) -> list
         tmp_path = Path(pdf_path.parent) / f"_chunk_{start+1}-{end}_{pdf_path.name}"
         new_doc.save(str(tmp_path))
         new_doc.close()
-        chunks.append(tmp_path)
+
+        # 检查实际文件大小，fitz.save 可能与预期不同
+        actual_size = tmp_path.stat().st_size
+        if actual_size > MINERU_MAX_FILE_SIZE * 0.95:
+            print(f"[分段转换] chunk {start+1}-{end} 实际 {actual_size//1024//1024}MB 超限，减半重新拆分")
+            tmp_path.unlink(missing_ok=True)
+            # 用减半后的 chunk_size 重新拆分这段范围
+            sub_size = max(chunk_size // 2, 10)
+            for sub_start in range(start, end, sub_size):
+                sub_end = min(sub_start + sub_size, end)
+                sub_doc = fitz.open()
+                sub_doc.insert_pdf(fitz.open(str(pdf_path)), from_page=sub_start, to_page=sub_end - 1)
+                sub_path = Path(pdf_path.parent) / f"_chunk_{sub_start+1}-{sub_end}_{pdf_path.name}"
+                sub_doc.save(str(sub_path))
+                sub_doc.close()
+                chunks.append(sub_path)
+        else:
+            chunks.append(tmp_path)
 
     return chunks
 
@@ -621,7 +639,14 @@ def _mineru_convert(
                 chunk_output = output_dir / f"{temp_prefix}_{chunk_index}"
                 chunk_output.mkdir(parents=True, exist_ok=True)
                 print(f"[分段转换] 开始处理 chunk {chunk_index}: {chunk_path.name}")
+
+                # 失败重试一次，避免偶尔的网络/API错误丢失整段
                 result = _mineru_convert_single(chunk_path, chunk_output, timeout, progress_cb)
+                if not result or not result[0]:
+                    print(f"[分段转换] chunk {chunk_index} 首次失败，重试中...")
+                    import time; time.sleep(10)
+                    result = _mineru_convert_single(chunk_path, chunk_output, timeout, progress_cb)
+
                 chunk_path.unlink(missing_ok=True)  # 清理临时分段文件
                 if result and result[0]:
                     print(f"[分段转换] chunk {chunk_index} 成功: {len(result[0])} 字符")
@@ -629,7 +654,7 @@ def _mineru_convert(
                     if result[1]:
                         all_images_dirs.append(result[1])
                 else:
-                    print(f"[分段转换] chunk {chunk_index} 失败或结果为空")
+                    print(f"[分段转换] chunk {chunk_index} 重试后仍失败，跳过（已丢失对应页）")
                 chunk_index += 1
 
             print(f"[分段转换] 完成 {pdf_path.name}: {len(chunk_results)}/{len(chunks)} 个 chunk 成功")
