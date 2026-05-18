@@ -145,8 +145,6 @@ async def test_config(body: Dict[str, Any]):
     请求体：{"type": "mineru"|"llm", "token"/"api_key"/"base_url"/"model": ...}
     """
     import httpx
-    import ssl
-    import certifi
 
     config_type = body.get("type")
 
@@ -155,9 +153,9 @@ async def test_config(body: Dict[str, Any]):
         if not token:
             return {"success": False, "error": "Token 不能为空"}
         try:
-            ssl_ctx = ssl.create_default_context(cafile=certifi.where())
-            transport = httpx.AsyncHTTPTransport(verify=ssl_ctx)
-            async with httpx.AsyncClient(timeout=15, transport=transport) as client:
+            # 不使用 certifi，让 httpx 用系统默认证书（macOS 用钥匙串）
+            # 打包后的应用 certifi 证书包可能缺失，导致 SSL 验证失败
+            async with httpx.AsyncClient(timeout=15) as client:
                 resp = await client.post(
                     "https://mineru.net/api/v4/file-urls/batch",
                     headers={"Authorization": f"Bearer {token}"},
@@ -182,9 +180,8 @@ async def test_config(body: Dict[str, Any]):
         if not model:
             return {"success": False, "error": "模型名称不能为空"}
         try:
-            ssl_ctx = ssl.create_default_context(cafile=certifi.where())
-            transport = httpx.AsyncHTTPTransport(verify=ssl_ctx)
-            async with httpx.AsyncClient(timeout=30, transport=transport) as client:
+            # 同上：不使用 certifi，用系统默认证书
+            async with httpx.AsyncClient(timeout=30) as client:
                 resp = await client.post(
                     f"{base_url}/chat/completions",
                     headers={"Authorization": f"Bearer {api_key}"},
