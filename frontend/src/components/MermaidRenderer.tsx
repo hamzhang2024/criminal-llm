@@ -46,15 +46,18 @@ export function MermaidRenderer({ code }: MermaidRendererProps) {
     mermaid
       .render(id, sanitized)
       .then(({ svg }) => {
+        console.log('[MermaidRenderer] 渲染成功, id:', id, 'SVG长度:', svg.length)
         if (!cancelled && containerRef.current) {
           // 设置 SVG 尺寸
           const scaled = svg.replace(/<svg /, '<svg style="width: auto; height: auto; display: block;" ')
           containerRef.current.innerHTML = scaled
+          console.log('[MermaidRenderer] SVG 已注入 DOM')
           setRendered(true)
           setError(null)
         }
       })
       .catch((err) => {
+        console.error('[MermaidRenderer] 首次渲染失败:', err.message)
         if (!cancelled) {
           // 尝试二次修复：移除 %% 注释行
           const retry = sanitized
@@ -107,12 +110,12 @@ export function MermaidRenderer({ code }: MermaidRendererProps) {
         </div>
       )}
       {/* 可滚动的图容器 */}
-      <div style={{ overflow: 'auto', maxWidth: '100%', maxHeight: '70vh', width: '100%' }}>
+      <div style={{ overflow: 'auto', width: '100%', padding: '8px 0' }}>
         <div
           ref={containerRef}
           style={{
             transform: `scale(${zoom})`,
-            transformOrigin: 'top center',
+            transformOrigin: 'top left',
             transition: 'transform 0.15s ease',
             minWidth: rendered ? 'fit-content' : undefined,
           }}
