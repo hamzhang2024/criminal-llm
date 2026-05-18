@@ -455,6 +455,7 @@ export function ReportPage() {
   // 批注操作
   const addAnnotation = useCallback((annotation: Annotation) => {
     setAnnotations(prev => [...prev, annotation])
+    setAnnotationMode(false)
   }, [])
   const updateAnnotation = useCallback((id: string, text: string) => {
     setAnnotations(prev => prev.map(a => a.id === id ? { ...a, text } : a))
@@ -837,7 +838,21 @@ export function ReportPage() {
       )
     }
 
-    return <ReportRenderer markdown={activeContent} />
+    return (
+      <ReportRenderer
+        markdown={activeContent}
+        evidenceItems={evidenceItems}
+        onEvidenceClick={(mdFile) => {
+          // 确保左栏处于 MD 模式（而非 PDF 模式）
+          if (viewModeState !== 'md') viewModeDispatch('md')
+          const item = evidenceItems.find(i => i.mdFile === mdFile)
+          if (item) {
+            setSelectedEvidenceId(item.id)
+            loadEvidenceContent(item)
+          }
+        }}
+      />
+    )
   }
 
   // ===== Safari 风格顶部标签栏 =====

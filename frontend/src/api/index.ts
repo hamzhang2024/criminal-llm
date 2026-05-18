@@ -21,6 +21,17 @@ async function tauriOpen(url: string): Promise<void> {
 /** API 基础地址：开发模式走 Vite 代理，生产模式直连后端 */
 export const API_BASE = import.meta.env.PROD ? 'http://localhost:8080/api' : '/api'
 
+/** 安全的 fetch 包装：将网络错误转为友好的中文提示 */
+async function safeFetch(url: string, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, init)
+  } catch (err) {
+    // fetch 底层失败（后端未启动/崩溃/网络不通）
+    // 在 WebKit/Tauri 中错误消息通常是 "Load failed"
+    throw new Error('后端未启动或连接失败，请重新启动应用')
+  }
+}
+
 export interface Thumbnail { page: number; data: string }
 export interface SplitItem {
   id: string
@@ -179,37 +190,37 @@ export async function checkUpdate(): Promise<UpdateInfo> {
 
 export async function listCases(owner?: string): Promise<any> {
   const params = owner ? `?owner=${encodeURIComponent(owner)}` : ''
-  const res = await fetch(`${API_BASE}/cases/list${params}`)
+  const res = await safeFetch(`${API_BASE}/cases/list${params}`)
   return res.json()
 }
 
 export async function getPendingCases(): Promise<any> {
-  const res = await fetch(`${API_BASE}/cases/pending`)
+  const res = await safeFetch(`${API_BASE}/cases/pending`)
   return res.json()
 }
 
 export async function getTrash(): Promise<any> {
-  const res = await fetch(`${API_BASE}/cases/trash`)
+  const res = await safeFetch(`${API_BASE}/cases/trash`)
   return res.json()
 }
 
 export async function getCaseInfo(caseId: string): Promise<any> {
-  const res = await fetch(`${API_BASE}/cases/${caseId}`)
+  const res = await safeFetch(`${API_BASE}/cases/${caseId}`)
   return res.json()
 }
 
 export async function getCaseFiles(caseId: string): Promise<any> {
-  const res = await fetch(`${API_BASE}/cases/${caseId}/files`)
+  const res = await safeFetch(`${API_BASE}/cases/${caseId}/files`)
   return res.json()
 }
 
 export async function getStepFiles(caseId: string, step: number): Promise<any> {
-  const res = await fetch(`${API_BASE}/cases/${caseId}/step-files/${step}`)
+  const res = await safeFetch(`${API_BASE}/cases/${caseId}/step-files/${step}`)
   return res.json()
 }
 
 export async function createCase(name: string, defendant: string, owner?: string): Promise<any> {
-  const res = await fetch(`${API_BASE}/cases/create`, {
+  const res = await safeFetch(`${API_BASE}/cases/create`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name, defendant, owner })
@@ -283,7 +294,7 @@ export async function deleteFile(caseId: string, fileName: string): Promise<any>
 }
 
 export async function batchProcess(caseId: string, step: number, fileNames: string[], options: Record<string, unknown> = {}): Promise<any> {
-  const res = await fetch(`${API_BASE}/cases/${caseId}/batch-process`, {
+  const res = await safeFetch(`${API_BASE}/cases/${caseId}/batch-process`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ step, file_names: fileNames, ...options })
@@ -292,7 +303,7 @@ export async function batchProcess(caseId: string, step: number, fileNames: stri
 }
 
 export async function convertToMd(caseId: string, fileName: string): Promise<any> {
-  const res = await fetch(`${API_BASE}/cases/${caseId}/convert-to-md`, {
+  const res = await safeFetch(`${API_BASE}/cases/${caseId}/convert-to-md`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ file_name: fileName })
@@ -542,7 +553,7 @@ export async function extractEvidence(caseId: string): Promise<any> {
   const controller = _extractController
   const timeoutId = setTimeout(() => controller.abort(), 300000) // 5 分钟超时
   try {
-    const res = await fetch(`${API_BASE}/cases/${caseId}/extract-evidence`, {
+    const res = await safeFetch(`${API_BASE}/cases/${caseId}/extract-evidence`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       signal: controller.signal,
@@ -569,7 +580,7 @@ export function stopExtractEvidence() {
 
 export async function getEvidenceIndex(caseId: string): Promise<any> {
   // 直接从文件系统读取证据索引
-  const res = await fetch(`${API_BASE}/cases/${caseId}/evidence-index`)
+  const res = await safeFetch(`${API_BASE}/cases/${caseId}/evidence-index`)
   return res.json()
 }
 

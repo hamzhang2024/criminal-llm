@@ -9,6 +9,16 @@ import { marked } from 'marked'
 // 配置 marked 使用同步解析
 marked.setOptions({ async: false })
 
+/** 安全的 fetch：将网络错误转为友好的中文提示 */
+async function safeFetchJson(url: string): Promise<any> {
+  try {
+    const res = await fetch(url)
+    return res.json()
+  } catch {
+    throw new Error('后端未启动或连接失败，请重新启动应用')
+  }
+}
+
 /** 工作中动画 — 三个跳动的小圆点 */
 function WorkingDots() {
   return (
@@ -159,7 +169,7 @@ export function CaseDetailPage() {
         // 检查证据提取是否正在运行
         const checkExtractStatus = async () => {
           try {
-            const st = await fetch(`${API_BASE}/cases/${caseId}/extract-status`).then(r => r.json())
+            const st = await safeFetchJson(`${API_BASE}/cases/${caseId}/extract-status`)
             return st.status === 'running'
           } catch {
             return false
@@ -262,43 +272,9 @@ export function CaseDetailPage() {
                         id: f.id, name: f.name, size: f.size, status: f.status || 'done', source: f.source,
                       })))
                     }
-                    // 转换完成后自动提取证据
+                    // 转换完成，提示用户手动提取证据
                     if (successCount > 0) {
-                      setProgress('正在提取证据清单...')
-                      try {
-                        const evResult = await api.extractEvidence(caseId!)
-                        if (evResult.success && evResult.evidence) {
-                          setEvidenceList(evResult.evidence)
-                          setEvidenceExtracted(true)
-                          setProgress(`✅ 已提取 ${evResult.total_evidence} 份证据，正在自动开始分析...`)
-                          if (defendant.trim()) {
-                            setTimeout(async () => {
-                              try {
-                                const analysisResult = await api.runAllStages(caseId!, defendant, crimeType || undefined)
-                                if (!analysisResult.success) throw new Error(analysisResult.detail || analysisResult.error || '分析执行失败')
-                                setProgress('✅ 分析任务已启动，正在跟踪进度...')
-                                setProcessing(true)
-                                pollAnalysisProgress()
-                              } catch (err) {
-                                setError(err instanceof Error ? err.message : '分析触发失败')
-                                setProcessing(false)
-                              }
-                            }, 500)
-                          } else {
-                            setProgress(`✅ 已提取 ${evResult.total_evidence} 份证据（请补充被告人信息后手动开始分析）`)
-                          }
-                        } else {
-                          throw new Error(evResult.detail || evResult.error || '提取失败')
-                        }
-                      } catch (extractErr) {
-                        const isStop = extractErr instanceof Error && extractErr.message === '用户已停止提取'
-                        if (isStop) {
-                          setProgress('⏹ 已停止提取，当前已提取的证据已保存')
-                        } else {
-                          setError(extractErr instanceof Error ? extractErr.message : '证据提取失败')
-                          setProgress('')
-                        }
-                      }
+                      setProgress(`✅ 已转换 ${successCount}/${data.total || 0} 个文件，请点击「提取证据」按钮继续`)
                     }
                   } else if (st2 === 'failed' || st2 === 'cancelled') {
                     clearInterval(pollInterval)
@@ -880,6 +856,50 @@ export function CaseDetailPage() {
     }
   }, [caseId, defendant, crimeType, navigate])
 
+  // 依次执行全部阶段
+  const handleRunAllAnalysis = useCallback(async () => {
+    if (!defendant.trim()) {
+      showAlert({ title: '提示', message: '案件缺少被告人信息，无法开始分析', variant: 'warning' })
+      return
+    }
+
+    setProcessing(true)
+    setError(null)
+    setProgress('正在执行全部分析...')
+
+    for (let i = 1; i <= 6; i++) {
+      const stage = STAGES.find(s => s.num === i)
+      setStageStatus(prev => ({ ...prev, [i]: 'running' }))
+      setStageMessages(prev => ({ ...prev, [i]: `正在执行：${stage?.name}...` }))
+      setStageErrors(prev => ({ ...prev, [i]: '' }))
+      setRunningStage(i)
+      setProgress(`${i}/6 — ${stage?.name}`)
+
+      try {
+        const result = await api.runSingleStage(caseId!, i, defendant, crimeType || undefined)
+        if (!result.success) {
+          throw new Error(result.detail || result.error || '阶段执行失败')
+        }
+        setStageStatus(prev => ({ ...prev, [i]: 'completed' }))
+        setStageMessages(prev => ({ ...prev, [i]: '' }))
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : '阶段执行失败'
+        setStageStatus(prev => ({ ...prev, [i]: 'error' }))
+        setStageErrors(prev => ({ ...prev, [i]: errorMsg }))
+        setStageMessages(prev => ({ ...prev, [i]: '' }))
+        setRunningStage(null)
+        setProcessing(false)
+        setProgress('')
+        return
+      }
+      setRunningStage(null)
+    }
+
+    setProcessing(false)
+    setProgress('✅ 全部分析已完成！')
+    setTimeout(() => navigate(`/case/${caseId}/report`), 2000)
+  }, [caseId, defendant, crimeType, navigate])
+
   // 停止运行中的阶段
   const handleStopStage = useCallback((stageNum: number) => {
     const controller = stageAbortRef.current[stageNum]
@@ -1075,24 +1095,7 @@ export function CaseDetailPage() {
             setEvidenceList(data.evidence || [])
             setEvidenceExtracted(true)
             setProcessing(false)
-            setProgress(`✅ 已提取 ${data.total_evidence} 份证据，正在自动开始分析...`)
-            // 自动触发分析
-            if (defendant.trim()) {
-              setTimeout(async () => {
-                try {
-                  const analysisResult = await api.runAllStages(caseId!, defendant, crimeType || undefined)
-                  if (!analysisResult.success) throw new Error(analysisResult.detail || analysisResult.error || '分析执行失败')
-                  setProgress('✅ 分析任务已启动，正在跟踪进度...')
-                  setProcessing(true)
-                  pollAnalysisProgress()
-                } catch (err) {
-                  setError(err instanceof Error ? err.message : '分析触发失败')
-                  setProcessing(false)
-                }
-              }, 500)
-            } else {
-              setProgress(`✅ 已提取 ${data.total_evidence} 份证据（请补充被告人信息后手动开始分析）`)
-            }
+            setProgress(`✅ 已提取 ${data.total_evidence} 份证据`)
           } else {
             const totalFiles = st.total_files || 0
             const processedFiles = st.processed_files || 0
@@ -1148,16 +1151,21 @@ export function CaseDetailPage() {
       setProcessing(false)
     }
   }, [caseId, defendant, crimeType, handleConvertAllToMd])
-  const handleStopExtract = useCallback(() => {
+  const handleStopExtract = useCallback(async () => {
     extractUserStoppedRef.current = true
     if (extractPollRef.current) {
       clearInterval(extractPollRef.current)
       extractPollRef.current = null
     }
     api.stopExtractEvidence()
+    // 调用后端 stop-extract，停止正在运行的提取任务，保留已提取的证据
+    try {
+      await fetch(`${API_BASE}/cases/${caseId}/stop-extract`, { method: 'POST' })
+    } catch { /* 忽略 */ }
     setProgress('⏹ 已停止提取，当前已提取的证据已保存')
     setProcessing(false)
-  }, [])
+    setEvidenceExtracted(false)
+  }, [caseId])
 
   // 清除证据
   const handleClearEvidence = useCallback(async () => {
@@ -1747,20 +1755,7 @@ export function CaseDetailPage() {
       // 转MD：一键全部转换
       handleConvertAllToMd()
     } else if (currentStep === 3) {
-      // 案卷分析：检查是否已提取证据，未提取则引导用户先提取
-      if (!evidenceExtracted) {
-        const confirmed = await showConfirm({
-          title: '尚未提取证据',
-          message: '查看报告前需要先提取证据清单，是否立即提取？',
-          confirmText: '提取证据',
-          cancelText: '取消',
-          variant: 'info',
-        })
-        if (confirmed) {
-          handleExtractEvidence()
-        }
-        return
-      }
+      // 案卷分析：进入报告页面
       navigate(`/case/${caseId}/report`)
     }
   }, [currentStep, files, handleBatchProcess, handleConvertAllToMd, handleRunAnalysis, optWatermark, optEnhance, optDeleteOriginal, password])
@@ -2523,7 +2518,22 @@ export function CaseDetailPage() {
 
                 {/* 5 阶段独立按钮 */}
                 <MacOSCard style={{ marginBottom: '16px' }}>
-                  <h4 style={{ fontSize: '14px', fontWeight: '600', marginBottom: '12px' }}>分析阶段（不建议并行处理）</h4>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                    <h4 style={{ fontSize: '14px', fontWeight: '600', margin: 0 }}>分析阶段（不建议并行处理）</h4>
+                    <button
+                      onClick={handleRunAllAnalysis}
+                      disabled={!evidenceExtracted || runningStage !== null}
+                      style={{
+                        padding: '6px 14px', borderRadius: '6px',
+                        border: 'none',
+                        background: (!evidenceExtracted || runningStage !== null) ? '#d1d1d6' : '#1e3a5f',
+                        color: '#fff', fontSize: '13px', fontWeight: '500',
+                        cursor: (!evidenceExtracted || runningStage !== null) ? 'not-allowed' : 'pointer'
+                      }}
+                    >
+                      全部分析
+                    </button>
+                  </div>
                   {!evidenceExtracted && (
                     <div style={{
                       padding: '8px 12px', borderRadius: '8px', marginBottom: '12px',

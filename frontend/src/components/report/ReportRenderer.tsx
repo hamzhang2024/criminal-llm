@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useRef, useEffect } from 'react'
 import { marked } from 'marked'
 import { EvidenceContrastTable } from './EvidenceContrastTable'
 import { ThreeTierCard } from './ThreeTierCard'
@@ -8,6 +8,8 @@ marked.setOptions({ async: false })
 
 interface ReportRendererProps {
   markdown: string
+  evidenceItems?: Array<{ id: string; mdFile: string; displayName: string }>
+  onEvidenceClick?: (mdFile: string) => void
 }
 
 // 解析 Markdown 表格数据，返回 header + rows
@@ -73,7 +75,39 @@ function extractThreeTierSections(markdown: string): Array<{ tier: 'constitutive
   return sections
 }
 
-export function ReportRenderer({ markdown }: ReportRendererProps) {
+export function ReportRenderer({ markdown, evidenceItems, onEvidenceClick }: ReportRendererProps) {
+  const contentRef = useRef<HTMLDivElement>(null)
+  const onClickRef = useRef(onEvidenceClick)
+  // 始终持有最新的 onEvidenceClick
+  onClickRef.current = onEvidenceClick
+
+  // 构建证据编号 → 文件映射（从文件名提取编号，如 001_xxx.md → 1）
+  const evidenceNumMap = useMemo(() => {
+    if (!evidenceItems || evidenceItems.length === 0) return {}
+    const map: Record<number, { id: string; mdFile: string }> = {}
+    for (const item of evidenceItems) {
+      const m = item.mdFile.match(/^(\d+)_/)
+      if (m) map[parseInt(m[1])] = item
+    }
+    return map
+  }, [evidenceItems])
+
+  // 点击事件委托（只注册一次，通过 ref 避免闭包过期）
+  useEffect(() => {
+    const el = contentRef.current
+    if (!el) return
+    const handler = (e: MouseEvent) => {
+      const target = (e.target as HTMLElement).closest('.evidence-link') as HTMLElement | null
+      if (!target) return
+      e.preventDefault()
+      e.stopPropagation()
+      const mdFile = target.getAttribute('data-mdfile')
+      if (mdFile && onClickRef.current) onClickRef.current(mdFile)
+    }
+    el.addEventListener('click', handler)
+    return () => el.removeEventListener('click', handler)
+  }, [])
+
   // 提取 mermaid 代码块
   const mermaidRegex = /```mermaid\n([\s\S]*?)```/g
   const mermaidCodes: string[] = []
@@ -132,13 +166,115 @@ export function ReportRenderer({ markdown }: ReportRendererProps) {
     }
   }, [markdown])
 
+  // 后处理：将"证据NNN"替换为可点击链接
+  const processedHtml = useMemo(() => {
+    if (!baseHtml || Object.keys(evidenceNumMap).length === 0) return baseHtml
+    let html = baseHtml
+    html = html.replace(/证据(\d{1,4})/g, (match, num) => {
+      const n = parseInt(num)
+      const ev = evidenceNumMap[n]
+      if (!ev) return match
+      return `<a class="evidence-link" data-mdfile="${ev.mdFile}">${match}</a>`
+    })
+    return html
+  }, [baseHtml, evidenceNumMap])
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column' }}>
-      {/* 基础 Markdown 内容 */}
+      {/* 证据链接样式 + 基础 Markdown 内容 */}
+      <style>{`
+        .evidence-link {
+          display: inline-block;
+          padding: 1px 6px;
+          border-radius: 4px;
+          background: rgba(0,122,255,0.08);
+          border: 1px solid rgba(0,122,255,0.2);
+          color: #007aff;
+          font-size: 12px;
+          font-weight: 500;
+          cursor: pointer;
+          text-decoration: none;
+          transition: background 0.15s;
+        }
+        .evidence-link:hover {
+          background: rgba(0,122,255,0.18);
+        }
+        .report-content table {
+          width: 100%;
+          border-collapse: separate;
+          border-spacing: 0;
+          margin: 12px 0 20px;
+          border: 1px solid #e5e5ea;
+          border-radius: 8px;
+          overflow: hidden;
+          font-size: 13px;
+          box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+        }
+        .report-content thead th {
+          background: #1e3a5f;
+          color: #fff;
+          font-weight: 600;
+          font-size: 12px;
+          padding: 10px 14px;
+          text-align: left;
+          border: none;
+        }
+        .report-content tbody tr:nth-child(even) {
+          background: #f8f9fa;
+        }
+        .report-content tbody tr:hover {
+          background: #f0f4f8;
+        }
+        .report-content td {
+          padding: 9px 14px;
+          border-top: 1px solid #e5e5ea;
+          vertical-align: top;
+          line-height: 1.6;
+        }
+        .report-content td:first-child {
+          font-weight: 500;
+        }
+        .report-content ul, .report-content ol {
+          padding-left: 20px;
+          margin: 8px 0;
+        }
+        .report-content li {
+          margin: 4px 0;
+          line-height: 1.7;
+        }
+        .report-content blockquote {
+          border-left: 3px solid #1e3a5f;
+          margin: 12px 0;
+          padding: 8px 16px;
+          background: rgba(30,58,95,0.03);
+          border-radius: 0 6px 6px 0;
+          color: #4a4a4a;
+        }
+        .report-content pre {
+          background: #f8f9fa;
+          border: 1px solid #e5e5ea;
+          border-radius: 6px;
+          padding: 12px 16px;
+          overflow-x: auto;
+          font-size: 12px;
+          line-height: 1.6;
+        }
+        .report-content code {
+          background: #f0f1f3;
+          padding: 2px 6px;
+          border-radius: 4px;
+          font-size: 12px;
+        }
+        .report-content pre code {
+          background: none;
+          padding: 0;
+        }
+      `}</style>
       <div
+        ref={contentRef}
         className="report-content"
         style={{ fontSize: '13px', lineHeight: '1.85' }}
-        dangerouslySetInnerHTML={{ __html: baseHtml }}
+        dangerouslySetInnerHTML={{ __html: processedHtml }}
       />
 
       {/* 三阶层分析卡片 */}

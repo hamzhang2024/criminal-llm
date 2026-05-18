@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 use tauri::{Manager, State, WebviewWindowBuilder, WebviewUrl};
-use tauri_plugin_shell::{ShellExt, process::{Command, CommandEvent}};
 use reqwest::Client;
 use serde_json;
 use serde::Serialize;
@@ -21,6 +20,9 @@ struct BackendClient(pub Client);
 
 /// 后端进程 PID
 struct BackendPid(Mutex<Option<u32>>);
+
+/// 电源管理：caffeinate 进程
+struct CaffeinateProcess(Mutex<Option<u32>>);
 
 /// 调用认证服务器，自动处理成功/错误响应
 #[allow(dead_code)]
@@ -385,6 +387,7 @@ pub fn run() {
     .plugin(tauri_plugin_dialog::init())
     .manage(BackendClient(Client::new()))
     .manage(BackendPid(Mutex::new(None)))
+    .manage(CaffeinateProcess(Mutex::new(start_caffeinate())))
     .invoke_handler(tauri::generate_handler![
       get_app_version,
       check_update,
@@ -503,25 +506,84 @@ pub fn run() {
       Ok(())
     })
     .on_window_event(|window, event| {
-      if let tauri::WindowEvent::CloseRequested { api: _, .. } = event {
-        // 关闭时清理后端进程
-        let pid_state = window.state::<BackendPid>();
-        let maybe_pid = pid_state.0.lock().unwrap().take();
+      if let tauri::WindowEvent::CloseRequested { .. } = event {
+        // 关闭窗口时强制终止后端进程及其子进程
+        kill_backend_process(window);
+        // 停止 caffeinate，恢复系统休眠
+        let caffeinate = window.state::<CaffeinateProcess>();
+        let maybe_pid = caffeinate.0.lock().unwrap().take();
         if let Some(pid) = maybe_pid {
-          eprintln!("🛑 关闭后端 PID: {}", pid);
-          #[cfg(unix)]
-          unsafe {
-            libc::kill(pid as i32, libc::SIGTERM);
-          }
-          #[cfg(windows)]
-          {
-            let _ = std::process::Command::new("taskkill")
-              .args(["/F", "/PID", &pid.to_string()])
-              .output();
-          }
+          stop_caffeinate(pid);
         }
       }
     })
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
+}
+
+/// 强制终止后端进程（SIGKILL，整个进程组）
+fn kill_backend_process(window: &tauri::Window) {
+  let pid_state = window.state::<BackendPid>();
+  let maybe_pid = pid_state.0.lock().unwrap().take();
+  if let Some(pid) = maybe_pid {
+    eprintln!("🛑 关闭后端 PID: {}", pid);
+    #[cfg(unix)]
+    unsafe {
+      // 先杀整个进程组（包括子进程），再杀主进程
+      // 使用负 PID 向整个进程组发送信号
+      libc::kill(-(pid as i32), libc::SIGKILL);
+      libc::kill(pid as i32, libc::SIGKILL);
+    }
+    #[cfg(windows)]
+    {
+      // Windows 上递归终止进程树
+      let _ = std::process::Command::new("taskkill")
+        .args(["/F", "/T", "/PID", &pid.to_string()])
+        .output();
+    }
+    eprintln!("✅ 后端已退出");
+  }
+}
+
+/// 启动 caffeinate 阻止系统休眠（macOS 全局）
+fn start_caffeinate() -> Option<u32> {
+  #[cfg(target_os = "macos")]
+  {
+    let child = std::process::Command::new("caffeinate")
+      .arg("-d")  // 阻止显示器休眠
+      .arg("-i")  // 阻止系统空闲休眠
+      .stdin(std::process::Stdio::piped())
+      .stdout(std::process::Stdio::null())
+      .stderr(std::process::Stdio::null())
+      .spawn();
+    match child {
+      Ok(c) => {
+        eprintln!("🔋 已阻止系统休眠（应用运行期间）");
+        Some(c.id())
+      }
+      Err(e) => {
+        eprintln!("⚠️ caffeinate 启动失败: {}", e);
+        None
+      }
+    }
+  }
+  #[cfg(not(target_os = "macos"))]
+  {
+    None
+  }
+}
+
+/// 停止 caffeinate
+fn stop_caffeinate(pid: u32) {
+  #[cfg(unix)]
+  unsafe {
+    libc::kill(pid as i32, libc::SIGTERM);
+  }
+  #[cfg(windows)]
+  {
+    let _ = std::process::Command::new("taskkill")
+      .args(["/F", "/PID", &pid.to_string()])
+      .output();
+  }
+  eprintln!("🔋 已恢复系统休眠");
 }
