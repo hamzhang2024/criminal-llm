@@ -772,6 +772,7 @@ export function CaseDetailPage() {
   // 证据提取轮询和停止状态
   const extractPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const extractUserStoppedRef = useRef(false)
+  const extractPollFailuresRef = useRef(0)
 
   // 运行单个阶段
   const handleRunStage = useCallback(async (stageNum: number) => {
@@ -1004,6 +1005,7 @@ export function CaseDetailPage() {
   // 提取证据（独立按钮，转 MD 后手动触发）
   const handleExtractEvidence = useCallback(async () => {
     extractUserStoppedRef.current = false
+    extractPollFailuresRef.current = 0
     if (extractPollRef.current) {
       clearInterval(extractPollRef.current)
       extractPollRef.current = null
@@ -1049,27 +1051,32 @@ export function CaseDetailPage() {
         }
         try {
           const st = await api.getExtractStatus(caseId!)
-          if (st.status === 'idle' && st.total_files === 0) {
-            // 后端还没开始，继续等待（最多等 15 秒）
-            return
-          }
+          // 单次成功，重置失败计数
+          extractPollFailuresRef.current = 0
+
           if (st.status !== 'running') {
+            // 任务已结束（idle/cancelled/error），直接读取证据
             clearInterval(extractPollRef.current!)
             extractPollRef.current = null
-            const data = await api.getEvidenceIndex(caseId!)
-            const totalEvidence = data.total_evidence || 0
-            // 如果任务不是 running 且没有证据，说明任务可能失败了
-            if (totalEvidence === 0) {
-              setEvidenceList([])
-              setError('证据提取未成功，请检查 LLM 配置或稍后重试')
-              setProgress('')
-            } else {
-              setEvidenceList(data.evidence || [])
-              setEvidenceExtracted(true)
-              setProgress(`✅ 已提取 ${totalEvidence} 份证据`)
+            try {
+              const data = await api.getEvidenceIndex(caseId!)
+              const totalEvidence = data.total_evidence || 0
+              if (totalEvidence === 0) {
+                setEvidenceList([])
+                setError('证据提取未成功，请检查 LLM 配置或稍后重试')
+                setProgress('')
+              } else {
+                setEvidenceList(data.evidence || [])
+                setEvidenceExtracted(true)
+                setProgress(`✅ 已提取 ${totalEvidence} 份证据`)
+              }
+            } catch {
+              // 读取证据失败，但任务已结束
+              setProgress('提取已完成，但未能加载证据列表，请刷新页面后查看')
             }
             setProcessing(false)
           } else {
+            // 运行中：更新进度和证据列表
             const totalFiles = st.total_files || 0
             const processedFiles = st.processed_files || 0
             const currentFile = st.current_file || ''
@@ -1081,9 +1088,15 @@ export function CaseDetailPage() {
             if (data.total_evidence > 0) setEvidenceList(data.evidence || [])
           }
         } catch {
-          clearInterval(extractPollRef.current!)
-          extractPollRef.current = null
-          setProcessing(false)
+          extractPollFailuresRef.current += 1
+          // 连续 3 次失败才停止轮询
+          if (extractPollFailuresRef.current >= 3) {
+            clearInterval(extractPollRef.current!)
+            extractPollRef.current = null
+            setProcessing(false)
+            setProgress('')
+            setError('提取过程出错，请检查后端服务是否正常')
+          }
         }
       }, 3000)
 
@@ -1124,6 +1137,37 @@ export function CaseDetailPage() {
       setProcessing(false)
     }
   }, [caseId, defendant, crimeType, handleConvertAllToMd])
+
+  // 手动刷新证据列表（用于轮询失败但后台可能已完成提取的情况）
+  const handleRefreshEvidence = useCallback(async () => {
+    try {
+      setProgress('正在检查提取状态...')
+      setError(null)
+      const st = await api.getExtractStatus(caseId!)
+      if (st.status === 'running') {
+        setProgress('后台仍在提取中，请继续等待...')
+        setProcessing(true)
+        return
+      }
+      setProgress('正在读取证据列表...')
+      // 任务已结束，读取证据
+      const data = await api.getEvidenceIndex(caseId!)
+      const totalEvidence = data.total_evidence || 0
+      if (totalEvidence > 0) {
+        setEvidenceList(data.evidence || [])
+        setEvidenceExtracted(true)
+        setProgress(`✅ 已提取 ${totalEvidence} 份证据`)
+      } else {
+        setEvidenceList([])
+        setProgress('尚未提取证据，请先点击「提取证据」')
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      setError(`无法连接后端: ${msg}`)
+      setProgress('')
+    }
+  }, [caseId])
+
   const handleStopExtract = useCallback(async () => {
     extractUserStoppedRef.current = true
     if (extractPollRef.current) {
@@ -2148,15 +2192,26 @@ export function CaseDetailPage() {
                         >清除</button>
                       </>
                     ) : mdConversionComplete ? (
-                      <button
-                        onClick={handleExtractEvidence}
-                        style={{
-                          padding: '6px 12px', borderRadius: '6px',
-                          border: 'none', background: '#1e3a5f',
-                          color: '#fff', fontSize: '12px', fontWeight: '500',
-                          cursor: 'pointer'
-                        }}
-                      >提取证据</button>
+                      <>
+                        <button
+                          onClick={handleExtractEvidence}
+                          style={{
+                            padding: '6px 12px', borderRadius: '6px',
+                            border: 'none', background: '#1e3a5f',
+                            color: '#fff', fontSize: '12px', fontWeight: '500',
+                            cursor: 'pointer'
+                          }}
+                        >提取证据</button>
+                        <button
+                          onClick={handleRefreshEvidence}
+                          style={{
+                            padding: '6px 12px', borderRadius: '6px',
+                            border: '1px solid var(--macos-border)', background: 'transparent',
+                            color: 'var(--macos-text-primary)', fontSize: '12px', cursor: 'pointer', fontWeight: '500'
+                          }}
+                          title="检查后台是否已完成提取"
+                        >刷新证据</button>
+                      </>
                     ) : (
                       <button
                         disabled

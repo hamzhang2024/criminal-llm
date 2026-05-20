@@ -598,19 +598,13 @@ export async function stopExtractEvidence(caseId: string) {
 }
 
 export async function getEvidenceIndex(caseId: string): Promise<any> {
-  if (isTauri()) {
-    return tauriInvoke<any>('get_evidence_index', { case_id: caseId })
-  }
-  // 浏览器环境下直接从文件系统读取证据索引
+  // 统一使用 fetch，不区分环境（Tauri 的 CORS 已配置允许 localhost）
   const res = await safeFetch(`${API_BASE}/cases/${caseId}/evidence-index`)
   return res.json()
 }
 
 export async function getExtractStatus(caseId: string): Promise<any> {
-  if (isTauri()) {
-    return tauriInvoke<any>('get_extract_status', { case_id: caseId })
-  }
-  const res = await fetch(`${API_BASE}/cases/${caseId}/extract-status`)
+  const res = await safeFetch(`${API_BASE}/cases/${caseId}/extract-status`)
   return res.json()
 }
 

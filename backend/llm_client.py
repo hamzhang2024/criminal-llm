@@ -56,7 +56,7 @@ class LLMClient:
         self.base_url = base_url
         self.api_key = api_key
         self.model = default_model
-        self.timeout = 300.0
+        self.timeout = 600.0
         self.client = httpx.AsyncClient(timeout=self.timeout)
 
         # 并发限流保护器
