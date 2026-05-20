@@ -294,12 +294,24 @@ export async function deleteFile(caseId: string, fileName: string): Promise<any>
 }
 
 export async function batchProcess(caseId: string, step: number, fileNames: string[], options: Record<string, unknown> = {}): Promise<any> {
-  const res = await safeFetch(`${API_BASE}/cases/${caseId}/batch-process`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ step, file_names: fileNames, ...options })
-  })
-  return res.json()
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), 300000) // 5 分钟超时
+  try {
+    const res = await safeFetch(`${API_BASE}/cases/${caseId}/batch-process`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ step, file_names: fileNames, ...options }),
+      signal: controller.signal
+    })
+    return res.json()
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw new Error('PDF 处理超时（5 分钟），请检查文件是否正常或降低处理选项')
+    }
+    throw err
+  } finally {
+    clearTimeout(timeoutId)
+  }
 }
 
 export async function convertToMd(caseId: string, fileName: string): Promise<any> {
@@ -574,13 +586,31 @@ export async function extractEvidence(caseId: string): Promise<any> {
   }
 }
 
-export function stopExtractEvidence() {
+export async function stopExtractEvidence(caseId: string) {
   _extractController?.abort()
+  if (isTauri()) {
+    await tauriInvoke('stop_extract', { case_id: caseId }).catch(() => {})
+  } else {
+    try {
+      await fetch(`${API_BASE}/cases/${caseId}/stop-extract`, { method: 'POST' })
+    } catch { /* 忽略 */ }
+  }
 }
 
 export async function getEvidenceIndex(caseId: string): Promise<any> {
-  // 直接从文件系统读取证据索引
+  if (isTauri()) {
+    return tauriInvoke<any>('get_evidence_index', { case_id: caseId })
+  }
+  // 浏览器环境下直接从文件系统读取证据索引
   const res = await safeFetch(`${API_BASE}/cases/${caseId}/evidence-index`)
+  return res.json()
+}
+
+export async function getExtractStatus(caseId: string): Promise<any> {
+  if (isTauri()) {
+    return tauriInvoke<any>('get_extract_status', { case_id: caseId })
+  }
+  const res = await fetch(`${API_BASE}/cases/${caseId}/extract-status`)
   return res.json()
 }
 
@@ -862,6 +892,7 @@ export const api = {
   extractEvidence,
   stopExtractEvidence,
   getEvidenceIndex,
+  getExtractStatus,
   // 法律知识库
   listLegalKB,
   getLegalKBItem,

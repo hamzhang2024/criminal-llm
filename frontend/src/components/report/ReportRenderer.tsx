@@ -12,30 +12,29 @@ interface ReportRendererProps {
   onEvidenceClick?: (mdFile: string) => void
 }
 
-// 解析 Markdown 表格数据，返回 header + rows
-function parseMarkdownTable(text: string): { headers: string[]; rows: string[][] } | null {
-  const lines = text.split('\n').filter(l => l.trim() && !l.includes('---'))
-  if (lines.length < 2) return null
+// 按 mermaid 代码块拆分 markdown，返回交替的 text/mermaid 片段
+function splitByMermaid(markdown: string): Array<{ type: 'text' | 'mermaid'; content: string }> {
+  const segments: Array<{ type: 'text' | 'mermaid'; content: string }> = []
+  const regex = /```mermaid\s*\n([\s\S]*?)```/g
+  let lastIndex = 0
+  let match
 
-  const headers = lines[0].split('|').map(c => c.trim()).filter(c => c)
-  const rows: string[][] = []
-  for (let i = 1; i < lines.length; i++) {
-    const cells = lines[i].split('|').map(c => c.trim()).filter(c => c)
-    if (cells.length === headers.length) {
-      rows.push(cells)
+  while ((match = regex.exec(markdown)) !== null) {
+    // 文字片段（可能为空）
+    if (match.index > lastIndex) {
+      segments.push({ type: 'text', content: markdown.slice(lastIndex, match.index) })
     }
+    // mermaid 代码块
+    segments.push({ type: 'mermaid', content: match[1].trim() })
+    lastIndex = regex.lastIndex
   }
-  return headers.length > 0 ? { headers, rows } : null
-}
 
-// 判断是否是人物关系表格
-function isRelationshipTable(html: string): boolean {
-  return html.includes('人物') && html.includes('角色') && html.includes('关联人物')
-}
+  // 剩余文字
+  if (lastIndex < markdown.length) {
+    segments.push({ type: 'text', content: markdown.slice(lastIndex) })
+  }
 
-// 判断是否是对比表格（包含"是否矛盾"列）
-function isContrastTable(html: string): boolean {
-  return html.includes('矛盾') && html.includes('证据')
+  return segments
 }
 
 // 检测三阶层分析段落
@@ -48,7 +47,6 @@ function extractThreeTierSections(markdown: string): Array<{ tier: 'constitutive
     { key: 'responsibility' as const, regex: /(?:有责性)/ },
   ]
 
-  // 查找 h2/h3 级别的三阶层标题
   const headingRegex = /^(#{2,3})\s+(.+)$/gm
   const headings = [...markdown.matchAll(headingRegex)]
 
@@ -75,13 +73,47 @@ function extractThreeTierSections(markdown: string): Array<{ tier: 'constitutive
   return sections
 }
 
+// 检测对比表格
+function extractContrastTable(markdown: string): string {
+  const lines = markdown.split('\n')
+  let currentTable: string[] = []
+  const tables: string[] = []
+
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (trimmed.startsWith('|') && !trimmed.startsWith('---')) {
+      if (trimmed.includes('人物') && trimmed.includes('角色') && trimmed.includes('关联人物')) {
+        currentTable = []
+        continue
+      }
+      currentTable.push(trimmed)
+    } else if (currentTable.length > 0) {
+      if (currentTable.length >= 2) {
+        const raw = currentTable.join('\n')
+        if (raw.includes('矛盾') || raw.includes('不一致') || raw.includes('印证')) {
+          tables.push(raw)
+        }
+      }
+      currentTable = []
+    }
+  }
+
+  if (currentTable.length >= 2) {
+    const raw = currentTable.join('\n')
+    if (raw.includes('矛盾') || raw.includes('不一致') || raw.includes('印证')) {
+      tables.push(raw)
+    }
+  }
+
+  return tables.join('\n\n---\n\n')
+}
+
 export function ReportRenderer({ markdown, evidenceItems, onEvidenceClick }: ReportRendererProps) {
   const contentRef = useRef<HTMLDivElement>(null)
   const onClickRef = useRef(onEvidenceClick)
-  // 始终持有最新的 onEvidenceClick
   onClickRef.current = onEvidenceClick
 
-  // 构建证据编号 → 文件映射（从文件名提取编号，如 001_xxx.md → 1）
+  // 构建证据编号 → 文件映射
   const evidenceNumMap = useMemo(() => {
     if (!evidenceItems || evidenceItems.length === 0) return {}
     const map: Record<number, { id: string; mdFile: string }> = {}
@@ -92,7 +124,7 @@ export function ReportRenderer({ markdown, evidenceItems, onEvidenceClick }: Rep
     return map
   }, [evidenceItems])
 
-  // 点击事件委托（只注册一次，通过 ref 避免闭包过期）
+  // 点击事件委托
   useEffect(() => {
     const el = contentRef.current
     if (!el) return
@@ -108,85 +140,25 @@ export function ReportRenderer({ markdown, evidenceItems, onEvidenceClick }: Rep
     return () => el.removeEventListener('click', handler)
   }, [])
 
-  // 提取 mermaid 代码块（支持 trailing space、\r\n 等）
-  const mermaidRegex = /```mermaid\s*\n([\s\S]*?)```/g
-  const mermaidCodes: string[] = []
-  let m
-  while ((m = mermaidRegex.exec(markdown)) !== null) {
-    mermaidCodes.push(m[1].trim())
-  }
-  if (mermaidCodes.length > 0) {
-    console.log('[ReportRenderer] 提取到', mermaidCodes.length, '个 mermaid 块, 首个长度:', mermaidCodes[0].length)
-  } else if (markdown.length > 100) {
-    console.log('[ReportRenderer] 未提取到 mermaid 块, markdown长度:', markdown.length, '包含```mermaid:', markdown.includes('```mermaid'))
-  }
+  // 拆分 markdown 为 text/mermaid 片段（内联渲染）
+  const segments = useMemo(() => splitByMermaid(markdown), [markdown])
 
-  // 提取三阶层段落
-  const threeTierSections = useMemo(() => extractThreeTierSections(markdown), [markdown])
+  // 不含 mermaid 的纯文字部分（用于三阶层和对比表格提取）
+  const textOnly = useMemo(() => {
+    return segments
+      .filter(s => s.type === 'text')
+      .map(s => s.content)
+      .join('\n\n')
+  }, [segments])
 
-  // 检测对比表格
-  const contrastMarkdown = useMemo(() => {
-    const tableRegex = /\|[^|]+\|[^|]+\|[^|]+\|[^|]+\|[^|]*\|/g
-    const matches = markdown.match(tableRegex)
-    if (!matches) return ''
-    const lines = markdown.split('\n')
-    let currentTable: string[] = []
-    const tables: string[] = []
-    for (const line of lines) {
-      const trimmed = line.trim()
-      if (trimmed.startsWith('|') && !trimmed.startsWith('---')) {
-        if (trimmed.includes('人物') && trimmed.includes('角色') && trimmed.includes('关联人物')) {
-          currentTable = []
-          continue
-        }
-        currentTable.push(trimmed)
-      } else if (currentTable.length > 0) {
-        if (currentTable.length >= 2) {
-          const raw = currentTable.join('\n')
-          if (raw.includes('矛盾') || raw.includes('不一致') || raw.includes('印证')) {
-            tables.push(raw)
-          }
-        }
-        currentTable = []
-      }
-    }
-    if (currentTable.length >= 2) {
-      const raw = currentTable.join('\n')
-      if (raw.includes('矛盾') || raw.includes('不一致') || raw.includes('印证')) {
-        tables.push(raw)
-      }
-    }
-    return tables.join('\n\n---\n\n')
-  }, [markdown])
+  // 三阶层段落
+  const threeTierSections = useMemo(() => extractThreeTierSections(textOnly), [textOnly])
 
-  // 基础 HTML 渲染
-  const baseHtml = useMemo(() => {
-    if (!markdown) return ''
-    try {
-      // 移除 mermaid 代码块，避免重复渲染
-      const withoutMermaid = markdown.replace(/```mermaid\s*\n[\s\S]*?```/g, '')
-      return marked.parse(withoutMermaid, { async: false }) as string
-    } catch {
-      return markdown
-    }
-  }, [markdown])
-
-  // 后处理：将"证据NNN"替换为可点击链接
-  const processedHtml = useMemo(() => {
-    if (!baseHtml || Object.keys(evidenceNumMap).length === 0) return baseHtml
-    let html = baseHtml
-    html = html.replace(/证据(\d{1,4})/g, (match, num) => {
-      const n = parseInt(num)
-      const ev = evidenceNumMap[n]
-      if (!ev) return match
-      return `<a class="evidence-link" data-mdfile="${ev.mdFile}">${match}</a>`
-    })
-    return html
-  }, [baseHtml, evidenceNumMap])
+  // 对比表格
+  const contrastMarkdown = useMemo(() => extractContrastTable(textOnly), [textOnly])
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column' }}>
-      {/* 证据链接样式 + 基础 Markdown 内容 */}
       <style>{`
         .evidence-link {
           display: inline-block;
@@ -214,13 +186,27 @@ export function ReportRenderer({ markdown, evidenceItems, onEvidenceClick }: Rep
           overflow: hidden;
           font-size: 13px;
           box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+          table-layout: fixed;
         }
+        /* 各列宽度分配 */
+        .report-content th:nth-child(1),
+        .report-content td:nth-child(1) { width: 70px; }
+        .report-content th:nth-child(2),
+        .report-content td:nth-child(2) { width: 100px; }
+        .report-content th:nth-child(3),
+        .report-content td:nth-child(3) { width: 120px; }
+        .report-content th:nth-child(4),
+        .report-content td:nth-child(4) { width: 56px; }
+        .report-content th:nth-child(5),
+        .report-content td:nth-child(5) { width: 80px; }
+        .report-content th:nth-child(6),
+        .report-content td:nth-child(6) { width: auto; }
         .report-content thead th {
           background: #1e3a5f;
           color: #fff;
           font-weight: 600;
           font-size: 12px;
-          padding: 10px 14px;
+          padding: 10px 12px;
           text-align: left;
           border: none;
         }
@@ -275,12 +261,28 @@ export function ReportRenderer({ markdown, evidenceItems, onEvidenceClick }: Rep
           padding: 0;
         }
       `}</style>
-      <div
-        ref={contentRef}
-        className="report-content"
-        style={{ fontSize: '13px', lineHeight: '1.85' }}
-        dangerouslySetInnerHTML={{ __html: processedHtml }}
-      />
+
+      <div ref={contentRef} className="report-content" style={{ display: 'flex', flexDirection: 'column', fontSize: '13px', lineHeight: '1.85' }}>
+      {segments.map((segment, i) => {
+        if (segment.type === 'mermaid') {
+          return (
+            <div key={`mermaid-${i}`} style={{ margin: '16px 0' }}>
+              <MermaidRenderer code={segment.content} />
+            </div>
+          )
+        }
+
+        if (!segment.content.trim()) return null
+        const html = marked.parse(segment.content, { async: false }) as string
+        const processed = processEvidenceLinks(html, evidenceNumMap)
+
+        return (
+          <div
+            key={`text-${i}`}
+            dangerouslySetInnerHTML={{ __html: processed }}
+          />
+        )
+      })}
 
       {/* 三阶层分析卡片 */}
       {threeTierSections.length > 0 && (
@@ -314,15 +316,18 @@ export function ReportRenderer({ markdown, evidenceItems, onEvidenceClick }: Rep
           <EvidenceContrastTable markdown={contrastMarkdown} />
         </div>
       )}
-
-      {/* Mermaid 图表 */}
-      {mermaidCodes.length > 0 && (
-        <div style={{ marginTop: '20px', borderTop: '1px solid #e5e5ea', paddingTop: '16px' }}>
-          {mermaidCodes.map((code, i) => (
-            <MermaidRenderer key={i} code={code} />
-          ))}
-        </div>
-      )}
+      </div>
     </div>
   )
+}
+
+// 处理证据链接（独立函数，避免嵌套 useMemo）
+function processEvidenceLinks(html: string, evidenceNumMap: Record<number, { id: string; mdFile: string }>): string {
+  if (!html || Object.keys(evidenceNumMap).length === 0) return html
+  return html.replace(/证据(\d{1,4})/g, (match, num) => {
+    const n = parseInt(num)
+    const ev = evidenceNumMap[n]
+    if (!ev) return match
+    return `<a class="evidence-link" data-mdfile="${ev.mdFile}">${match}</a>`
+  })
 }

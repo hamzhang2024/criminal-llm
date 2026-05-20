@@ -8,6 +8,7 @@
 4. 导入文件夹为合法案件
 """
 from pathlib import Path
+import re
 from datetime import datetime
 import shutil
 from typing import List, Dict, Optional
@@ -496,10 +497,10 @@ async def get_step_files(case_id: str, step: int):
     elif step == 1:
         input_dir = case_path / "original"
     elif step == 2:
-        # 转MD：从 processed/ 读取
-        input_dir = case_path / "processed"
+        # 转MD：读取 md/ 目录下已转换的 MD 文件
+        input_dir = case_path / "md"
     elif step == 3:
-        # 分析：从 md/ 读取
+        # 分析：同样读取 md/ 目录
         input_dir = case_path / "md"
     else:
         return []
@@ -509,14 +510,11 @@ async def get_step_files(case_id: str, step: int):
 
     # 扫描文件（按步骤类型过滤）
     files = []
-    # 步骤0-2 只加载 PDF，步骤3 只加载 MD
-    allowed_suffixes = {".pdf"} if step <= 2 else {".md"}
+    # 步骤0-1 只加载 PDF，步骤2-3 只加载 MD
+    allowed_suffixes = {".pdf"} if step <= 1 else {".md"}
 
     # 对于步骤1，检查 processed/ 中是否已有对应文件（标记为 done）
     processed_dir = case_path / "processed"
-
-    # 对于步骤2（转MD），检查 md/ 中是否已有对应文件
-    md_dir = case_path / "md"
 
     def _is_freshly_processed(src: Path, dst: Path) -> bool:
         """检查目标文件是否确实是在源文件之后生成的（防止误判）"""
@@ -524,14 +522,22 @@ async def get_step_files(case_id: str, step: int):
             return False
         src_stat = src.stat()
         dst_stat = dst.stat()
-        # 处理后文件的修改时间必须晚于或等于源文件的修改时间，
-        # 且两者大小明显不同（处理后通常更大或更小），才认为是对应的输出
-        return dst_stat.st_mtime >= src_stat.st_mtime and abs(dst_stat.st_size - src_stat.st_size) > src_stat.st_size * 0.1
+        # 处理后文件的修改时间必须晚于或等于源文件的修改时间。
+        # 不再强制要求大小差异——去水印/去密码可能只改变很小一部分内容，
+        # 特别是大文件差异可能不到 1%。
+        # 只要求：时间戳合理 + 文件不完全相同（inode 不同）。
+        if dst_stat.st_mtime < src_stat.st_mtime:
+            return False
+        # 如果大小完全相同，检查是否是硬链接或同一文件
+        if dst_stat.st_size == src_stat.st_size and dst_stat.st_ino == src_stat.st_ino:
+            return False  # 同一 inode，不是处理后生成的文件
+        return True
 
     for f in sorted(input_dir.iterdir(), key=natural_sort_key):
         if f.is_file() and f.suffix.lower() in allowed_suffixes:
             stat = f.stat()
             # 步骤1：检查 processed/ 中是否已有同名文件（含 _去水印 后缀变体）
+            # 步骤2/3：MD 文件已存在说明已转换完成，直接标记 done
             status = "pending"
             if step == 1 and processed_dir.exists():
                 processed_file = processed_dir / f.name
@@ -544,12 +550,9 @@ async def get_step_files(case_id: str, step: int):
                         if pf.is_file() and pf.stem.startswith(stem_no_ext) and _is_freshly_processed(f, pf):
                             status = "done"
                             break
-
-            # 步骤2：检查 md/ 中是否已有对应 MD 文件
-            if step == 2 and md_dir.exists():
-                md_file = md_dir / f"{f.stem}.md"
-                if md_file.exists():
-                    status = "done"
+            elif step >= 2:
+                # MD 文件已存在于 md/ 目录，说明转换已完成
+                status = "done"
 
             file_info = {
                 "id": f"file_{f.stem}",
@@ -584,6 +587,7 @@ async def batch_process(case_id: str, request: BatchProcessRequest):
     import asyncio
     loop = asyncio.get_event_loop()
 
+    # 处理完成后直接返回结果，前端用 PdfViewer 直接预览 PDF
     result = await loop.run_in_executor(
         None,
         _do_batch_process,
@@ -596,6 +600,7 @@ async def batch_process(case_id: str, request: BatchProcessRequest):
         request.enhance_resolution,
         request.delete_original
     )
+
     return result
 
 
@@ -687,20 +692,6 @@ def _do_batch_process(case_id: str, step: int, file_names: list, password: str =
                         json.dump(ocr_texts, f, ensure_ascii=False)
                 except Exception:
                     pass  # 页头页尾提取失败不影响主流程
-
-                # 预生成缩略图（拆分预览用），去水印完成后立即生成，避免拆分时等待
-                try:
-                    import subprocess
-                    for w in [500, 1000]:
-                        thumb_cache = case_path / ".thumbs" / Path(file_name).stem / str(w)
-                        if not (thumb_cache / "thumb-001.png").exists():
-                            thumb_cache.mkdir(parents=True, exist_ok=True)
-                            subprocess.run(
-                                ['pdftoppm', '-png', '-scale-to', str(w), str(current_path), str(thumb_cache / 'thumb')],
-                                capture_output=True, timeout=300
-                            )
-                except Exception as e:
-                    print(f"[缩略图预生成] 警告: {e}")
 
                 results.append({
                     "file": file_name,
@@ -1083,7 +1074,7 @@ async def extract_evidence(case_id: str):
     if EXTRACT_TASKS.get(case_id) == "running":
         raise HTTPException(status_code=409, detail="证据提取已在运行中")
 
-    # 统计文件总数（用于进度显示，排序前后数量一致，此处用未排序的计数）
+    # 统计文件总数（用于进度显示）
     total_md_count = len(list(md_dir.glob("*.md")))
 
     EXTRACT_TASKS[case_id] = {
@@ -1094,12 +1085,10 @@ async def extract_evidence(case_id: str):
         "started_at": time.time(),
     }
 
-    # 确保异常时清理任务状态
-    try:
-        await _do_extract_evidence(case_id, case_path, md_dir, evidence_dir)
-    except Exception:
-        EXTRACT_TASKS.pop(case_id, None)
-        raise
+    # 在后台启动提取任务，不阻塞 HTTP 响应
+    asyncio.create_task(
+        _run_extract_background(case_id, case_path, md_dir, evidence_dir)
+    )
 
     return {
         "success": True,
@@ -1107,6 +1096,20 @@ async def extract_evidence(case_id: str):
         "total_evidence": 0,
         "evidence": [],
     }
+
+
+async def _run_extract_background(case_id: str, case_path, md_dir, evidence_dir):
+    """后台运行证据提取，不阻塞 HTTP 响应"""
+    try:
+        print(f"[证据提取] 后台任务启动: {case_id}")
+        await _do_extract_evidence(case_id, case_path, md_dir, evidence_dir)
+        print(f"[证据提取] 后台任务完成: {case_id}")
+    except Exception as e:
+        print(f"[证据提取] 后台任务失败: {e}")
+        import traceback
+        traceback.print_exc()
+        EXTRACT_TASKS.pop(case_id, None)
+        raise
 
 
 async def _do_extract_evidence(
@@ -1188,6 +1191,8 @@ async def _do_extract_evidence(
             from config_manager import load_config
             config = load_config()
             initial_concurrency = config.get("evidence_concurrency", 3)
+            # 自动修正：并发数不超过待处理文件数
+            initial_concurrency = min(initial_concurrency, len(pending_files))
             semaphore = asyncio.Semaphore(initial_concurrency)
             controller = ConcurrencyController(initial=initial_concurrency)
             print(f"[证据提取] 并发提取 {len(pending_files)} 个文件，初始并发={initial_concurrency}")
@@ -1502,6 +1507,14 @@ async def get_evidence_summary(case_id: str, filename: str):
 
     evidence_dir = case_path / "evidence"
     ev_file = evidence_dir / filename
+
+    # fallback：带前缀的文件名找不到时，去掉前缀再试
+    if not ev_file.exists():
+        # 如 "001_证据1：xxx.md" → "证据1：xxx.md"
+        m = re.match(r"^\d+_(.+)$", filename)
+        if m:
+            ev_file = evidence_dir / m.group(1)
+
     if not ev_file.exists():
         raise HTTPException(status_code=404, detail=f"证据文件不存在：{filename}")
 
@@ -1788,123 +1801,6 @@ async def open_file_endpoint(case_id: str, file_path: str):
         return {"success": True, "message": "已打开文件", "path": actual_path}
     except Exception as e:
         return {"success": False, "error": str(e)}
-
-
-def _generate_thumbnails_with_pymupdf(pdf_path: Path, thumb_cache: Path, width: int) -> list:
-    """用 PyMuPDF 生成缩略图（支持部分加密 PDF）"""
-    import fitz
-
-    try:
-        doc = fitz.open(str(pdf_path))
-        if doc.is_encrypted:
-            # 尝试空密码认证
-            auth_result = doc.authenticate('')
-            if auth_result == 0:
-                doc.close()
-                raise Exception("PDF 已加密且无密码，无法预览")
-    except Exception as e:
-        if "加密" in str(e) or "encrypt" in str(e).lower() or "closed" in str(e).lower():
-            raise
-        # 其他异常，尝试继续
-
-    generated = []
-    try:
-        doc = fitz.open(str(pdf_path))
-        for page_num in range(len(doc)):
-            page = doc[page_num]
-            pix = page.get_pixmap(matrix=fitz.Matrix(width / page.rect.width, width / page.rect.height))
-            output = thumb_cache / f"thumb-{page_num + 1:04d}.png"
-            pix.save(str(output))
-            generated.append(output)
-        doc.close()
-    except Exception as e:
-        raise Exception(f"PDF 已加密，无法生成预览: {str(e)}")
-    return sorted(generated)
-
-
-
-@router.get("/{case_id}/pdf-thumbnails")
-async def pdf_thumbnails(case_id: str, file_path: str, dir: Optional[str] = None, width: int = 500):
-    """生成 PDF 缩略图并返回页码-图片路径映射"""
-    import urllib.parse
-    from fastapi.responses import FileResponse
-    from fastapi import HTTPException
-
-    file_path = urllib.parse.unquote(file_path)
-
-    case_root = find_case_path(case_id)
-    if not case_root:
-        raise HTTPException(status_code=404, detail="案件不存在")
-
-    # 查找文件
-    p = Path(file_path)
-    target_name = p.name
-    if dir:
-        target_dir = case_root / dir
-        if not target_dir.exists():
-            raise HTTPException(status_code=404, detail=f"目录不存在：{dir}")
-        matched = list(target_dir.rglob(target_name))
-        if not matched:
-            raise HTTPException(status_code=404, detail=f"文件不存在：{target_name}")
-    else:
-        matched = list(case_root.rglob(target_name))
-        if not matched:
-            raise HTTPException(status_code=404, detail=f"文件不存在：{target_name}")
-
-    pdf_path = matched[0]
-
-    # 生成缩略图缓存目录（按分辨率分开缓存）
-    thumb_cache = case_root / ".thumbs" / pdf_path.stem / str(width)
-    thumb_cache.mkdir(parents=True, exist_ok=True)
-
-    # 检查已生成的缩略图，并验证缓存是否过期
-    existing = sorted(thumb_cache.glob("thumb-*.png"))
-    cache_stale = False
-    if len(existing) > 0:
-        # 检查 PDF 文件是否在缩略图之后被修改过
-        pdf_mtime = pdf_path.stat().st_mtime
-        thumb_mtime = existing[0].stat().st_mtime
-        if pdf_mtime > thumb_mtime:
-            # PDF 已更新，缓存失效，清理旧缩略图
-            for t in existing:
-                t.unlink()
-            existing = []
-            cache_stale = True
-
-    if len(existing) > 0 and not cache_stale:
-        # 全部存在，返回路径列表
-        thumb_urls = [
-            f"http://localhost:8080/api/cases/{case_id}/pdf-thumb-cache?path={urllib.parse.quote(str(t))}"
-            for t in existing
-        ]
-        return {"success": True, "thumbnails": thumb_urls, "total": len(existing)}
-
-    # 优先用 PyMuPDF 生成缩略图（比 pdftoppm 快很多，且支持加密 PDF）
-    generated = _generate_thumbnails_with_pymupdf(pdf_path, thumb_cache, width)
-
-    thumb_urls = [
-        f"http://localhost:8080/api/cases/{case_id}/pdf-thumb-cache?path={urllib.parse.quote(str(t))}"
-        for t in generated
-    ]
-    return {"success": True, "thumbnails": thumb_urls, "total": len(generated)}
-
-
-@router.get("/{case_id}/pdf-thumb-cache")
-async def serve_thumb_cache(case_id: str, path: str):
-    import urllib.parse
-    from fastapi.responses import FileResponse
-    from fastapi import HTTPException
-
-    actual_path = urllib.parse.unquote(path)
-    resolved = Path(actual_path).resolve()
-
-    # 安全验证：路径必须在某案件的 .thumbs 缓存目录内
-    if not any(part == ".thumbs" for part in resolved.parts):
-        raise HTTPException(status_code=403, detail="拒绝访问")
-
-    if not resolved.exists():
-        raise HTTPException(status_code=404, detail="缩略图不存在")
-    return FileResponse(str(resolved), media_type="image/png")
 
 
 @router.get("/{case_id}/serve-file")

@@ -162,8 +162,15 @@ async fn batch_process(
     .json(&body)
     .send().await
     .map_err(|e| format!("网络错误: {}", e))?;
+  let status = resp.status();
   let result: serde_json::Value = resp.json().await
     .map_err(|e| format!("解析失败: {}", e))?;
+  if !status.is_success() {
+    let msg = result.get("error").and_then(|v| v.as_str())
+      .or_else(|| result.get("detail").and_then(|v| v.as_str()))
+      .unwrap_or("处理失败");
+    return Err(msg.to_string());
+  }
   Ok(result)
 }
 
@@ -312,6 +319,69 @@ async fn auth_register(email: String, password: String, client: State<'_, Backen
   })
 }
 
+/// 证据提取
+#[tauri::command]
+async fn extract_evidence(
+  case_id: String,
+  client: State<'_, BackendClient>,
+) -> Result<serde_json::Value, String> {
+  let resp = client.0.post(format!("{}/api/cases/{}/extract-evidence", BACKEND_URL, case_id))
+    .send().await
+    .map_err(|e| format!("网络错误: {}", e))?;
+  let status = resp.status();
+  let body: serde_json::Value = resp.json().await
+    .map_err(|e| format!("解析失败: {}", e))?;
+  if !status.is_success() {
+    let msg = body.get("detail").and_then(|v| v.as_str())
+      .or_else(|| body.get("error").and_then(|v| v.as_str()))
+      .unwrap_or("提取失败");
+    return Err(msg.to_string());
+  }
+  Ok(body)
+}
+
+/// 获取证据提取状态
+#[tauri::command]
+async fn get_extract_status(
+  case_id: String,
+  client: State<'_, BackendClient>,
+) -> Result<serde_json::Value, String> {
+  let resp = client.0.get(format!("{}/api/cases/{}/extract-status", BACKEND_URL, case_id))
+    .send().await
+    .map_err(|e| format!("网络错误: {}", e))?;
+  let body: serde_json::Value = resp.json().await
+    .map_err(|e| format!("解析失败: {}", e))?;
+  Ok(body)
+}
+
+/// 停止证据提取
+#[tauri::command]
+async fn stop_extract(
+  case_id: String,
+  client: State<'_, BackendClient>,
+) -> Result<serde_json::Value, String> {
+  let resp = client.0.post(format!("{}/api/cases/{}/stop-extract", BACKEND_URL, case_id))
+    .send().await
+    .map_err(|e| format!("网络错误: {}", e))?;
+  let body: serde_json::Value = resp.json().await
+    .map_err(|e| format!("解析失败: {}", e))?;
+  Ok(body)
+}
+
+/// 获取证据索引
+#[tauri::command]
+async fn get_evidence_index(
+  case_id: String,
+  client: State<'_, BackendClient>,
+) -> Result<serde_json::Value, String> {
+  let resp = client.0.get(format!("{}/api/cases/{}/evidence-index", BACKEND_URL, case_id))
+    .send().await
+    .map_err(|e| format!("网络错误: {}", e))?;
+  let body: serde_json::Value = resp.json().await
+    .map_err(|e| format!("解析失败: {}", e))?;
+  Ok(body)
+}
+
 /// 认证：重置密码
 #[tauri::command]
 async fn auth_reset_password(email: String, old_password: String, new_password: String, client: State<'_, BackendClient>) -> Result<AuthResponse, String> {
@@ -402,6 +472,10 @@ pub fn run() {
       open_file,
       open_url,
       convert_to_md,
+      extract_evidence,
+      get_extract_status,
+      stop_extract,
+      get_evidence_index,
       delete_case,
       auth_login,
       auth_register,

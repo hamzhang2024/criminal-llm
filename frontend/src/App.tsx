@@ -50,6 +50,15 @@ function AuthGate({ children }: { children: React.ReactNode }) {
     let cancelled = false
 
     const checkAuth = async () => {
+      // 开发模式：无 token 时自动放行，方便浏览器调试
+      if (import.meta.env.DEV) {
+        const token = getToken()
+        if (!token) {
+          if (!cancelled) setAuthed(true)
+          return
+        }
+      }
+
       const token = getToken()
       if (!token) {
         if (!cancelled) setAuthed(false)
@@ -111,10 +120,12 @@ function App() {
   return (
     <BrowserRouter>
       {/* 登录/注册页面不需要认证 */}
+      {/* 公开路由（不需要认证） */}
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
+        {/* Mermaid 渲染测试（调试用，无需认证） */}
       </Routes>
 
       <AuthGate>
