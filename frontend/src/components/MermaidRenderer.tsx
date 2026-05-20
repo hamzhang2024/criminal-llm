@@ -1,20 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
-import mermaid from 'mermaid'
-
-// 初始化 mermaid
-mermaid.initialize({
-  startOnLoad: false,
-  theme: 'default',
-  securityLevel: 'loose',
-  fontSize: 18,
-  fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-  flowchart: {
-    padding: 20,
-    nodeSpacing: 40,
-    rankSpacing: 80,
-    diagramPadding: 10,
-  },
-})
+import { useEffect, useState } from 'react'
 
 let nextId = 0
 
@@ -23,104 +7,126 @@ interface MermaidRendererProps {
 }
 
 export function MermaidRenderer({ code }: MermaidRendererProps) {
-  const containerRef = useRef<HTMLDivElement>(null)
+  const [svgHtml, setSvgHtml] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [rendered, setRendered] = useState(false)
+  const [loading, setLoading] = useState(true)
   const [zoom, setZoom] = useState(1.2)
 
   useEffect(() => {
-    let cancelled = false
-    const id = `mermaid-${nextId++}`
+    if (!code || !code.trim()) {
+      setError('Mermaid 代码为空')
+      setLoading(false)
+      return
+    }
 
-    // 预处理：清理 Mermaid 语法错误
+    let cancelled = false
+    const id = `m-${Date.now()}-${nextId++}`
+
+    // 预处理
     const sanitized = code
+      .replace(/\r\n/g, '\n')
+      .replace(/\r/g, '\n')
       .split('\n')
       .map(line => {
-        // 移除 emoji
         const cleaned = line.replace(/[\u{1F300}-\u{1F9FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]|[\u{FE00}-\u{FE0F}]|[\u{1F1E0}-\u{1F1FF}]|[\u{200D}]/gu, '')
-        // 修复 subgraph 中的方括号
         return cleaned.replace(/subgraph\s+([^\n\[]+)\[([^\]]+)\]/g, 'subgraph $1-$2')
       })
       .join('\n')
+      .trim()
 
-    mermaid
-      .render(id, sanitized)
-      .then(({ svg }) => {
-        console.log('[MermaidRenderer] 渲染成功, id:', id, 'SVG长度:', svg.length)
-        if (!cancelled && containerRef.current) {
-          // 设置 SVG 尺寸
-          const scaled = svg.replace(/<svg /, '<svg style="width: auto; height: auto; display: block;" ')
-          containerRef.current.innerHTML = scaled
-          console.log('[MermaidRenderer] SVG 已注入 DOM')
-          setRendered(true)
-          setError(null)
-        }
+    if (!sanitized) {
+      setError('Mermaid 代码预处理后为空')
+      setLoading(false)
+      return
+    }
+
+    // 动态导入 mermaid（与 MermaidTestInline 一致）
+    import('mermaid').then(async (mermaidModule) => {
+      const mermaid = mermaidModule.default
+
+      // 初始化
+      mermaid.initialize({
+        startOnLoad: false,
+        theme: 'default',
+        securityLevel: 'loose',
+        fontSize: 18,
+        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        flowchart: {
+          diagramPadding: 10,
+          nodeSpacing: 40,
+          rankSpacing: 80,
+          curve: 'basis',
+        },
+        layout: 'dagre',
       })
-      .catch((err) => {
-        console.error('[MermaidRenderer] 首次渲染失败:', err.message)
-        if (!cancelled) {
-          // 尝试二次修复：移除 %% 注释行
-          const retry = sanitized
-            .split('\n')
-            .filter(l => !/^\s*(%%|\/\/)/.test(l))
-            .join('\n')
-          if (retry !== sanitized) {
-            mermaid.render(`${id}-retry`, retry)
-              .then(({ svg }) => {
-                if (!cancelled && containerRef.current) {
-                  const scaled = svg.replace(/<svg /, '<svg style="width: auto; height: auto; display: block;" ')
-                  containerRef.current.innerHTML = scaled
-                  setRendered(true)
-                  setError(null)
-                }
-              })
-              .catch((err2) => {
-                if (!cancelled) setError(`Mermaid 渲染失败：${err2.message || '语法错误'}`)
-              })
-            return
-          }
-          setError(`Mermaid 渲染失败：${err.message || '语法错误'}`)
-          setRendered(false)
-        }
-      })
+
+      // 先解析检查语法
+      await mermaid.parse(sanitized)
+
+      if (cancelled) return
+
+      // 渲染
+      const result = await mermaid.render(id, sanitized)
+      const svg = (result as { svg: string }).svg
+
+      if (cancelled) return
+
+      // 与 MermaidTestInline 一致：使用 state + dangerouslySetInnerHTML
+      setSvgHtml(svg)
+      setLoading(false)
+      setError(null)
+    }).catch((err) => {
+      if (cancelled) return
+      const msg = err instanceof Error ? err.message : '语法错误'
+      setError(`Mermaid 渲染失败：${msg}`)
+      setLoading(false)
+    })
 
     return () => { cancelled = true }
   }, [code])
 
-  if (error) {
+  if (loading && !error && !svgHtml) {
+    return (
+      <div style={{ padding: '12px', textAlign: 'center', fontSize: '12px', color: '#6e6e73' }}>
+        正在渲染图表...
+      </div>
+    )
+  }
+
+  if (error && !svgHtml) {
     return (
       <div style={{ padding: '12px', background: '#fff3f3', borderRadius: '8px', border: '1px solid #ffc9c9', fontSize: '12px', color: '#c0392b' }}>
-        ⚠️ {error}
+        &#9888;&#65039; {error}
       </div>
     )
   }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', padding: '12px 0' }}>
-      {/* 缩放控制 */}
-      {rendered && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 10px', background: '#f5f5f7', borderRadius: '6px', fontSize: '12px' }}>
-          <button onClick={() => setZoom(z => Math.max(z - 0.2, 0.4))}
-            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px', color: 'var(--macos-accent)', padding: '0 4px' }}>−</button>
-          <span style={{ color: 'var(--macos-text-secondary)', minWidth: '40px', textAlign: 'center' }}>{Math.round(zoom * 100)}%</span>
-          <button onClick={() => setZoom(z => Math.min(z + 0.2, 3))}
-            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px', color: 'var(--macos-accent)', padding: '0 4px' }}>+</button>
-          <button onClick={() => setZoom(1.2)}
-            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '11px', color: 'var(--macos-accent)', marginLeft: '4px' }}>重置</button>
-        </div>
+      {svgHtml && (
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 10px', background: '#f5f5f7', borderRadius: '6px', fontSize: '12px' }}>
+            <button onClick={() => setZoom(z => Math.max(z - 0.2, 0.4))}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px', color: 'var(--macos-accent)', padding: '0 4px' }}>−</button>
+            <span style={{ color: 'var(--macos-text-secondary)', minWidth: '40px', textAlign: 'center' }}>{Math.round(zoom * 100)}%</span>
+            <button onClick={() => setZoom(z => Math.min(z + 0.2, 3))}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px', color: 'var(--macos-accent)', padding: '0 4px' }}>+</button>
+            <button onClick={() => setZoom(1.2)}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '11px', color: 'var(--macos-accent)', marginLeft: '4px' }}>重置</button>
+          </div>
+          <div style={{ overflow: 'auto', width: '100%', padding: '8px 0' }}>
+            <div
+              style={{
+                transform: `scale(${zoom})`,
+                transformOrigin: 'top left',
+                transition: 'transform 0.15s ease',
+                minWidth: 'fit-content',
+              }}
+              dangerouslySetInnerHTML={{ __html: svgHtml }}
+            />
+          </div>
+        </>
       )}
-      {/* 可滚动的图容器 */}
-      <div style={{ overflow: 'auto', width: '100%', padding: '8px 0' }}>
-        <div
-          ref={containerRef}
-          style={{
-            transform: `scale(${zoom})`,
-            transformOrigin: 'top left',
-            transition: 'transform 0.15s ease',
-            minWidth: rendered ? 'fit-content' : undefined,
-          }}
-        />
-      </div>
     </div>
   )
 }

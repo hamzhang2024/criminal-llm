@@ -2,7 +2,7 @@
 PDF 处理模块
 
 负责 PDF 上传、缩略图生成、拆分等核心功能
-使用 pypdf + pdf2image 替代 PyMuPDF
+使用 PyMuPDF + pdf2image 替代 pypdf
 """
 import json
 import uuid
@@ -12,9 +12,9 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
+import fitz
 from pdf2image import convert_from_path
 from PIL import Image
-from pypdf import PdfReader, PdfWriter
 
 from config import (
     UPLOAD_DIR, OUTPUT_DIR, CACHE_DIR,
@@ -100,68 +100,61 @@ class PDFProcessor:
     def extract_text(self, pdf_path: Path, max_pages: int = 200) -> Dict[int, str]:
         """
         提取 PDF 文本内容
-        
+
         Args:
             pdf_path: PDF 文件路径
             max_pages: 最大提取页数（默认200页，-1表示全部）
-        
+
         Returns:
             页码 -> 文本内容的映射
         """
         texts = {}
-        reader = PdfReader(pdf_path)
-        total_pages = len(reader.pages)
-        
+        doc = fitz.open(str(pdf_path))
+        total_pages = len(doc)
+
         # 如果 max_pages 为 -1，提取全部页面
         pages_to_extract = total_pages if max_pages == -1 else min(total_pages, max_pages)
-        
+
         for i in range(pages_to_extract):
-            page = reader.pages[i]
-            text = page.extract_text()
+            page = doc[i]
+            text = page.get_text()
             if text and text.strip():
                 texts[i + 1] = text.strip()
-        
+
+        doc.close()
         return texts
-    
+
     def get_page_count(self, pdf_path: Path) -> int:
         """获取 PDF 页数"""
-        reader = PdfReader(pdf_path)
-        return len(reader.pages)
-    
-    def split_pdf(
-        self, 
-        pdf_path: Path, 
-        splits: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        """
-        按 split 方案拆分 PDF（简化版，不支持删除）
-        """
-        return self.split_pdf_with_deletions(pdf_path, splits, set())
-    
+        doc = fitz.open(str(pdf_path))
+        count = len(doc)
+        doc.close()
+        return count
+
     def split_pdf_with_deletions(
-        self, 
-        pdf_path: Path, 
+        self,
+        pdf_path: Path,
         splits: List[Dict[str, Any]],
         deleted_pages: set
     ) -> List[Dict[str, Any]]:
         """
         按 split 方案拆分 PDF（支持删除页面和不连续页面）
-        
+
         Args:
             pdf_path: 原始 PDF 路径
             splits: 拆分方案
             deleted_pages: 要删除的页面集合（1-indexed）
-        
+
         Returns:
             拆分结果列表
         """
         results = []
-        reader = PdfReader(pdf_path)
-        total_pages = len(reader.pages)
-        
+        doc = fitz.open(str(pdf_path))
+        total_pages = len(doc)
+
         for split in splits:
             name = split["name"]
-            
+
             # 获取要包含的页面列表
             if "pages" in split and split["pages"]:
                 # 使用显式的页面列表（支持不连续）
@@ -170,23 +163,23 @@ class PDFProcessor:
                 # 使用 start_page/end_page 范围
                 start = split["start_page"]
                 end = split["end_page"]
-                pages_to_include = [p for p in range(start, end + 1) 
+                pages_to_include = [p for p in range(start, end + 1)
                                    if p <= total_pages and p not in deleted_pages]
-            
+
             if not pages_to_include:
                 continue  # 跳过空分组
-            
-            # 创建新 PDF
-            writer = PdfWriter()
+
+            # 创建新 PDF（PyMuPDF 方式）
+            new_doc = fitz.open()
             for page_num in pages_to_include:
                 # 转为 0-indexed
-                writer.add_page(reader.pages[page_num - 1])
-            
+                new_doc.insert_pdf(doc, from_page=page_num - 1, to_page=page_num - 1)
+
             # 保存文件
             output_path = self.output_dir / f"{name}.pdf"
-            with open(output_path, "wb") as f:
-                writer.write(f)
-            
+            new_doc.save(str(output_path), garbage=4, deflate=True)
+            new_doc.close()
+
             results.append({
                 "name": name,
                 "path": str(output_path),
@@ -194,7 +187,8 @@ class PDFProcessor:
                 "page_count": len(pages_to_include),
                 "actual_pages": pages_to_include
             })
-        
+
+        doc.close()
         return results
     
     def save_split_plan(self, splits: List[Dict[str, Any]], deleted_pages: List[int] = None) -> Path:

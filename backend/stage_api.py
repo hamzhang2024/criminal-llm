@@ -383,7 +383,13 @@ async def get_status(case_id: str):
     }
 
     for stage in [1, 2, 3, 4, 5, 6, 51, 52, 53]:
-        result_file = analysis_dir / f"stage_{stage}" / "output.json"
+        # 阶段 6 路径特殊处理
+        if stage == 6:
+            result_file = analysis_dir / "04.5-控辩对抗" / "对抗分析.md"
+        elif stage in (51, 52, 53):
+            result_file = analysis_dir / f"stage_{stage}" / "output.json"
+        else:
+            result_file = analysis_dir / f"stage_{stage}" / "output.json"
         status[f"stage_{stage}"] = {
             "name": stage_names[stage],
             "completed": result_file.exists(),

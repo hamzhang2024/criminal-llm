@@ -214,7 +214,7 @@ export function ReportPage() {
   const [rightWidth, setRightWidth] = useState(360)
   const scrollContentRef = useRef<HTMLDivElement>(null)
 
-  // PDF 浏览 - 用 useReducer 代替 useState 确保状态更新
+  // PDF 浏览 - 默认 PDF（有 PDF 时）或 MD（有证据时）
   const [viewModeState, viewModeDispatch] = useReducer(
     (_state: 'md' | 'pdf', action: 'md' | 'pdf') => action,
     'pdf'
@@ -371,6 +371,8 @@ export function ReportPage() {
             }
           })
           setEvidenceItems(items)
+          // 有证据时默认 MD 模式
+          if (viewModeState !== 'md') viewModeDispatch('md')
           setSelectedEvidenceId(items[0].id)
           loadEvidenceContent(items[0])
         }
@@ -839,8 +841,9 @@ export function ReportPage() {
     }
 
     return (
-      <ReportRenderer
-        markdown={activeContent}
+      <>
+        <ReportRenderer
+          markdown={activeContent}
         evidenceItems={evidenceItems}
         onEvidenceClick={(mdFile) => {
           // 确保左栏处于 MD 模式（而非 PDF 模式）
@@ -852,6 +855,7 @@ export function ReportPage() {
           }
         }}
       />
+      </>
     )
   }
 
