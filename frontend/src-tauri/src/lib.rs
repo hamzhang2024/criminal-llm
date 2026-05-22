@@ -500,6 +500,9 @@ pub fn run() {
           .resolve("resources/backend", tauri::path::BaseDirectory::Resource)
           .map_err(|e| format!("无法解析资源路径: {}", e))?;
 
+        #[cfg(target_os = "windows")]
+        let backend_exe = resource_path.join("criminal-llm.exe");
+        #[cfg(not(target_os = "windows"))]
         let backend_exe = resource_path.join("criminal-llm");
 
         if !backend_exe.exists() {
@@ -511,8 +514,13 @@ pub fn run() {
           // 设置数据目录环境变量，确保后端使用正确的路径
           let home = app.path().home_dir()
             .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|_| std::env::var("HOME").unwrap_or_else(|_| "/Users/zhanghan".to_string()));
+            .unwrap_or_else(|_| std::env::var("HOME")
+              .or_else(|_| std::env::var("USERPROFILE"))
+              .unwrap_or_default());
+          #[cfg(target_os = "macos")]
           let data_dir = format!("{}/Documents/.criminal-llm-data", home);
+          #[cfg(not(target_os = "macos"))]
+          let data_dir = format!("{}/AppData/Roaming/criminal-llm-data", home);
 
           let child = std::process::Command::new(&backend_exe)
             .env("CRIMINAL_LLM_DATA_DIR", &data_dir)
@@ -562,10 +570,15 @@ pub fn run() {
         .center()
         .resizable(true)
         .on_navigation(move |url| {
-          // 允许本地地址正常加载
-          let is_local = url.scheme() == "tauri"
-            || url.scheme() == "file"
-            || url.host_str() == Some("localhost");
+          // 允许本地/内部地址正常加载
+          let scheme = url.scheme();
+          let is_local = scheme == "tauri"
+            || scheme == "file"
+            || scheme == "asset"
+            || scheme == "http"
+            || scheme == "https"
+            || url.host_str() == Some("localhost")
+            || url.host_str() == Some("127.0.0.1");
           if is_local {
             return true;
           }

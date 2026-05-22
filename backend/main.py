@@ -350,48 +350,45 @@ async def storage_stats():
 @app.on_event("startup")
 async def startup():
     """应用启动时初始化"""
-    print(f"🚀 Criminal PDF WebUI 启动中...")
-    print(f"📂 数据目录: {UPLOAD_DIR.parent}")
-    print(f"🔗 API: http://{HOST}:{PORT}/api")
+    # Windows GBK 控制台不支持 emoji，使用纯文本
+    print("[START] Criminal PDF WebUI 启动中...")
+    print(f"[DATA] 数据目录: {UPLOAD_DIR.parent}")
+    print(f"[API] http://{HOST}:{PORT}/api")
 
-    # 打印配置文件路径和内容（诊断用）
     try:
         from config_manager import CONFIG_PATH, load_config
-        print(f"⚙️ 配置文件路径: {CONFIG_PATH}")
+        print(f"[CONFIG] 配置文件路径: {CONFIG_PATH}")
         if CONFIG_PATH.exists():
             cfg = load_config()
-            print(f"⚙️ 配置内容: llm_base_url={cfg.get('llm_base_url', '(未设置)')}, llm_model={cfg.get('llm_model', '(未设置)')}, llm_api_key={'已配置' if cfg.get('llm_api_key') else '未配置'}, mineru_token={'已配置' if cfg.get('mineru_token') else '未配置'}")
+            print(f"[CONFIG] llm_base_url={cfg.get('llm_base_url', '(未设置)')}, llm_model={cfg.get('llm_model', '(未设置)')}")
         else:
-            print(f"⚙️ 配置文件不存在，使用默认值")
+            print(f"[CONFIG] 配置文件不存在，使用默认值")
     except Exception as e:
-        print(f"⚙️ 读取配置失败: {e}")
+        print(f"[CONFIG] 读取配置失败: {e}")
 
-    # 初始化后台任务管理器
     from background_tasks import init_tasks
     init_tasks()
 
-    # 自动清理过期文件
-    print(f"🧹 检查并清理超过 7 天的文件...")
+    print(f"[CLEANUP] 检查并清理超过 7 天的文件...")
     stats = cleanup_old_files()
     if stats["deleted_files"] > 0:
-        print(f"   ✅ 已清理 {stats['deleted_files']} 个任务，释放 {stats['freed_size']}")
+        print(f"   已清理 {stats['deleted_files']} 个任务，释放 {stats['freed_size']}")
     else:
-        print(f"   ✅ 无需清理")
+        print(f"   无需清理")
 
-    # 清理回收站中超过 5 天的案件
-    print(f"🗑️ 检查回收站...")
+    print(f"[TRASH] 检查回收站...")
     cleaned = cleanup_trash()
     if cleaned:
-        print(f"   ✅ 已彻底删除 {len(cleaned)} 个过期案件")
+        print(f"   已彻底删除 {len(cleaned)} 个过期案件")
     else:
-        print(f"   ✅ 回收站无需清理")
+        print(f"   回收站无需清理")
 
 
 @app.on_event("shutdown")
 async def shutdown():
     """应用关闭时清理"""
     await close_llm_client()
-    print("👋 Criminal PDF WebUI 已关闭")
+    print("[SHUTDOWN] Criminal PDF WebUI 已关闭")
 
 
 # ========== 静态资源回退（favicon 等） ==========
@@ -426,13 +423,11 @@ async def serve_spa(full_path: str):
 
 if __name__ == "__main__":
     print(f"""
-╔════════════════════════════════════════════╗
-║   Criminal PDF WebUI v1.0.0               ║
-║   刑事案卷 PDF 智能拆分可视化工具            ║
-╠════════════════════════════════════════════╣
-║   API:  http://{HOST}:{PORT}/api           ║
-║   Docs: http://{HOST}:{PORT}/docs          ║
-╚════════════════════════════════════════════╝
+========================================
+  Criminal PDF WebUI v1.0.0
+  API:  http://{HOST}:{PORT}/api
+  Docs: http://{HOST}:{PORT}/docs
+========================================
     """)
 
     # PyInstaller 模式下直接传递 app 对象（不能通过模块名导入）
