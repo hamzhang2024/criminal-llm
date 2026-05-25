@@ -715,7 +715,7 @@ def _do_batch_process(case_id: str, step: int, file_names: list, password: str =
                     original_file = input_dir / r["file"]
                     if original_file.exists():
                         original_file.unlink()
-                        print(f"🗑️ 已删除原始文件: {r['file']}")
+                        print(f"[DELETE] 已删除原始文件: {r['file']}")
 
     return {"results": results}
 
@@ -761,13 +761,16 @@ def _get_source_from_evidence_file(ev_path: Path) -> str:
     return ""
 
 
-async def _process_indictment_single(md_file: Path, md_text: str, evidence_dir: Path):
-    """将起诉书/起诉意见书作为一份独立证据提取，真实记录指控的全部事实"""
+async def _process_indictment_single(md_file: Path, md_text: str, evidence_dir: Path, next_id: int) -> Path:
+    """将起诉书/起诉意见书作为一份独立证据提取，真实记录指控的全部事实。
+
+    Returns: 生成的证据文件路径
+    """
     from llm_client import get_llm_client
     client = get_llm_client()
 
     # 确定文书类型
-    doc_type = "起诉书" if "起诉书" in md_file.name and "意见" not in md_file.name else "起诉意见书"
+    doc_type = "起诉意见书" if "意见" in md_file.name else "起诉书"
 
     result = await client.chat([
         {"role": "system", "content": f"""你是刑事案卷审查专家，正在审查一份{doc_type}。
@@ -819,9 +822,9 @@ async def _process_indictment_single(md_file: Path, md_text: str, evidence_dir: 
 （电话号码、微信号、银行账号、车牌号、地址信息等，每项格式：`[类型] 内容 — 涉及人员/说明`）"""},
     ])
 
-    # 保存为一份独立证据文件
+    # 保存为一份独立证据文件，使用传入的 next_id 编号
     safe_name = _sanitize_filename(f"{doc_type} — {md_file.stem}")
-    ev_md_file = evidence_dir / f"{len(list(evidence_dir.glob('*.md'))) + 1:03d}_{safe_name}.md"
+    ev_md_file = evidence_dir / f"{next_id:03d}_{safe_name}.md"
 
     content = f"""# {doc_type} — {md_file.stem}
 
@@ -836,12 +839,14 @@ async def _process_indictment_single(md_file: Path, md_text: str, evidence_dir: 
 """
     ev_md_file.write_text(content, encoding="utf-8")
     print(f"[证据提取] 已保存{doc_type}完整记录: {ev_md_file.name}")
-    return 1
+    return ev_md_file
 
 
 # ── 证据提取系统提示词（提取为模块常量） ──
-_EVIDENCE_SYSTEM_PROMPT = """你是刑事案卷审查专家，正在逐份审查案卷材料。
+_EVIDENCE_SYSTEM_PROMPT = """你是刑事案卷审查专家，正在逐份审查案卷材料。"""
 
+# 固定的提取规则（作为 assistant 消息，构成稳定缓存前缀）
+_EVIDENCE_EXTRACTION_RULES = """
 **第一步：识别文书边界**
 
 一个 MD 文件可能包含多份独立文书（如卷内目录、起诉意见书、移送告知书、讯问笔录等）。
@@ -902,30 +907,7 @@ _EVIDENCE_SYSTEM_PROMPT = """你是刑事案卷审查专家，正在逐份审查
 - **网络账号**：QQ号、抖音号、快手号等其他网络身份
 - **其他标识**：绰号、代号、暗语中的人物代号
 
-每项关联信息格式：`[类型] 内容 — 涉及人员/说明`（如：`手机号 13800138000 — 项少甫使用`）"""
-
-
-async def _extract_single_file(
-    md_file: Path,
-    md_text: str,
-    temp_dir: Path,
-    semaphore: asyncio.Semaphore,
-) -> tuple:
-    """
-    并发提取单个 MD 文件的证据（受信号量限制）。
-
-    返回：(md_filename, evidence_list)
-    evidence_list 中每项包含证据数据，文件保存在 temp_dir 中。
-    """
-    async with semaphore:
-        from llm_client import get_llm_client
-        client = get_llm_client()
-
-        result = await client.chat([
-            {"role": "system", "content": _EVIDENCE_SYSTEM_PROMPT},
-            {"role": "user", "content": f"""## 案卷文件：{md_file.name}
-
-{md_text[:100000]}
+每项关联信息格式：`[类型] 内容 — 涉及人员/说明`（如：`手机号 13800138000 — 项少甫使用`）
 
 ---
 
@@ -934,7 +916,7 @@ async def _extract_single_file(
 ### 证据N：[证据名称]
 
 - **证据类型**：[物证/书证/证人证言/被害人陈述/犯罪嫌疑人供述和辩解/鉴定意见/勘验检查辨认笔录/视听资料、电子数据/程序性文书]
-- **来源文件**：{md_file.name}
+- **来源文件**：[与案卷文件名一致]
 - **页码范围**：[如原文有标注]
 - **涉案人员**：[列出涉及的人员姓名及角色，区分主从犯/证人/被害人等]
 - **关键事实**：[按时间顺序列出关键事实，每条带"时间+主体+行为+结果"，保留具体金额、时间、地点等数据，不少于5条]
@@ -957,20 +939,55 @@ async def _extract_single_file(
 - **保持原文的关键细节，不要过度概括**
 - 页码引用必须准确
 - 金额、时间、人名等数据必须精确，不要用"约"、"左右"等模糊词
-- **关联信息是重点**：手机号、微信号、银行账号、车牌号等是证据互相关联印证的关键线索，务必逐一提取"""},
-        ])
+- **关联信息是重点**：手机号、微信号、银行账号、车牌号等是证据互相关联印证的关键线索，务必逐一提取"""
 
-        evidence_blocks = _parse_evidence_blocks(result, md_file.name)
 
-        # 保存到临时目录，用临时编号（最终编号由合并阶段分配）
-        evidence_list = []
-        for i, ev_block in enumerate(evidence_blocks):
-            ev_name = ev_block["name"]
-            safe_name = _sanitize_filename(ev_name)
-            temp_name = f"evid_{i:03d}_{safe_name}.md"
-            ev_path = temp_dir / temp_name
+async def _extract_single_file(
+    md_file: Path,
+    md_text: str,
+    temp_dir: Path,
+) -> tuple:
+    """
+    提取单个 MD 文件的证据（不含信号量和重试控制，由调用方管理）。
 
-            ev_content = f"""# {ev_name}
+    返回：(md_filename, evidence_list)
+    evidence_list 中每项包含证据数据，文件保存在 temp_dir 中。
+    """
+    from llm_client import get_llm_client, LLMRetryExhaustedError
+    client = get_llm_client()
+
+    # 无重试的直接调用，超时由调用方控制
+    timeout_seconds = 600  # 10 分钟
+
+    # 截断超长文本（LLM 上下文限制）
+    max_chars = 100000
+    if len(md_text) > max_chars:
+        print(f"[证据提取] {md_file.name}: 文件过长（{len(md_text)} 字符），截断至 {max_chars} 字符，后续内容将被忽略")
+        md_text = md_text[:max_chars]
+
+    result = await asyncio.wait_for(
+        client.chat([
+            # system 消息：短角色定义（固定前缀的一部分）
+            {"role": "system", "content": _EVIDENCE_SYSTEM_PROMPT},
+            # assistant 消息：完整提取规则（固定前缀，每次请求完全相同）
+            {"role": "assistant", "content": _EVIDENCE_EXTRACTION_RULES},
+            # user 消息：文件名 + 文件内容（变化的部分，放在最后）
+            {"role": "user", "content": f"## 案卷文件：{md_file.name}\n\n{md_text}"},
+        ]),
+        timeout=timeout_seconds,
+    )
+
+    evidence_blocks = _parse_evidence_blocks(result, md_file.name)
+
+    # 保存到临时目录，用临时编号（最终编号由合并阶段分配）
+    evidence_list = []
+    for i, ev_block in enumerate(evidence_blocks):
+        ev_name = ev_block["name"]
+        safe_name = _sanitize_filename(ev_name)
+        temp_name = f"evid_{i:03d}_{safe_name}.md"
+        ev_path = temp_dir / temp_name
+
+        ev_content = f"""# {ev_name}
 
 | 项目 | 内容 |
 |------|------|
@@ -1004,23 +1021,23 @@ async def _extract_single_file(
 ## LLM 原始输出
 
 {ev_block['raw_text']}"""
-            ev_path.write_text(ev_content, encoding="utf-8")
+        ev_path.write_text(ev_content, encoding="utf-8")
 
-            evidence_list.append({
-                "name": ev_name,
-                "type": ev_block["type"],
-                "source": md_file.name,
-                "page_range": ev_block.get("page_range", ""),
-                "persons": ev_block.get("persons", ""),
-                "related_entities": ev_block.get("related_entities", ""),
-                "summary_preview": ev_block["summary"][:200],
-                "has_quotes": bool(ev_block.get("original_quotes", "").strip()),
-                "md_file": ev_path.name,
-                "_temp_dir": str(temp_dir),
-            })
+        evidence_list.append({
+            "name": ev_name,
+            "type": ev_block["type"],
+            "source": md_file.name,
+            "page_range": ev_block.get("page_range", ""),
+            "persons": ev_block.get("persons", ""),
+            "related_entities": ev_block.get("related_entities", ""),
+            "summary_preview": ev_block["summary"][:200],
+            "has_quotes": bool(ev_block.get("original_quotes", "").strip()),
+            "md_file": ev_path.name,
+            "_temp_dir": str(temp_dir),
+        })
 
-        print(f"[证据提取] {md_file.name} → {len(evidence_list)} 份证据")
-        return (md_file.name, evidence_list)
+    print(f"[证据提取] {md_file.name} → {len(evidence_list)} 份证据")
+    return (md_file.name, evidence_list)
 
 
 async def _extract_single_file_with_tracking(
@@ -1030,22 +1047,47 @@ async def _extract_single_file_with_tracking(
     semaphore: asyncio.Semaphore,
     controller: 'ConcurrencyController',
 ) -> tuple:
-    """包装 _extract_single_file，记录成功/失败到并发控制器。"""
+    """
+    包装 _extract_single_file，管理信号量和重试。
+    重试等待期间释放信号量，让其他文件获得并发机会。
+    """
     start = time.time()
-    try:
-        result = await _extract_single_file(md_file, md_text, temp_dir, semaphore)
-        latency_ms = (time.time() - start) * 1000
-        controller.record_success(latency_ms)
-        return result
-    except Exception as e:
-        error_msg = str(e).lower()
-        if any(kw in error_msg for kw in ['429', 'rate limit', 'too many', 'quota']):
-            controller.record_error('rate_limit')
-        elif any(kw in error_msg for kw in ['timeout', 'timed out', 'connection error']):
-            controller.record_timeout()
-        else:
-            controller.record_error('other')
-        raise
+    max_retries = 2
+    last_error = None
+
+    for attempt in range(1, max_retries + 1):
+        # 获取信号量，执行提取
+        async with semaphore:
+            try:
+                result = await _extract_single_file(md_file, md_text, temp_dir)
+                latency_ms = (time.time() - start) * 1000
+                controller.record_success(latency_ms)
+                return result
+            except asyncio.TimeoutError:
+                last_error = f"LLM 调用超时（600s）"
+                print(f"[证据提取] {md_file.name}: 第 {attempt} 次尝试超时")
+            except Exception as e:
+                last_error = str(e)
+                error_msg = str(e).lower()
+                if any(kw in error_msg for kw in ['429', 'rate limit', 'too many', 'quota']):
+                    controller.record_error('rate_limit')
+                    print(f"[证据提取] {md_file.name}: 触发限流，退避后重试")
+                    if attempt < max_retries:
+                        # 信号量已释放（with 块退出），其他文件可继续
+                        await asyncio.sleep(30 * attempt)
+                        continue
+                elif any(kw in error_msg for kw in ['timeout', 'timed out', 'connection error']):
+                    controller.record_timeout()
+                else:
+                    controller.record_error('other')
+                raise
+
+        # 重试等待在信号量之外（其他文件可在此期间获得并发机会）
+        if attempt < max_retries:
+            print(f"[证据提取] {md_file.name}: {attempt * 10}s 退避等待中...")
+            await asyncio.sleep(10 * attempt)
+
+    raise RuntimeError(f"[证据提取] {md_file.name}: 重试 {max_retries} 次均失败，最后错误: {last_error}")
 
 
 @router.post("/{case_id}/extract-evidence")
@@ -1213,11 +1255,17 @@ async def _do_extract_evidence(
 
             async def extract_and_save_temp(md_file: Path) -> tuple:
                 """并发提取单个文件，证据保存到独立子目录，完成后写 .done 标记"""
+                nonlocal last_progress_time
                 try:
                     md_text = md_file.read_text(encoding="utf-8")
                     if not md_text.strip():
                         # 空文件也写标记，避免重复检查
                         (temp_dir / f"{md_file.stem}.done").write_text("", encoding="utf-8")
+                        # 更新进度计数，避免前端进度条永远差一格
+                        task = EXTRACT_TASKS.get(case_id)
+                        if task:
+                            task["processed_files"] = task.get("processed_files", 0) + 1
+                        last_progress_time = time.time()
                         return (md_file.name, [])
 
                     # 每个文件用独立子目录，避免文件名冲突
@@ -1225,14 +1273,23 @@ async def _do_extract_evidence(
                     file_temp_dir.mkdir(exist_ok=True)
 
                     # 更新进度
+                    req_start = time.time()
                     task = EXTRACT_TASKS.get(case_id)
                     if task:
                         task["current_file"] = md_file.name
+                        task["llm_waiting"] = True
 
                     print(f"[证据提取] 处理: {md_file.name}")
                     source_name, evidence_list = await _extract_single_file_with_tracking(
                         md_file, md_text, file_temp_dir, semaphore, controller
                     )
+
+                    # LLM 调用成功，立即更新心跳（细粒度心跳）
+                    last_progress_time = time.time()
+
+                    if task:
+                        task["llm_waiting"] = False
+                        task["llm_latency"] = round((time.time() - req_start) * 1000)
 
                     # 写完成标记（断点续传用）
                     (temp_dir / f"{md_file.stem}.done").write_text("", encoding="utf-8")
@@ -1240,7 +1297,10 @@ async def _do_extract_evidence(
                     if task:
                         task["processed_files"] = task.get("processed_files", 0) + 1
 
-                    print(f"[证据提取] {md_file.name}: 提取 {len(evidence_list)} 条证据")
+                    # 更新进度时间，让卡死检测器知道有进展
+                    last_progress_time = time.time()
+
+                    print(f"[证据提取] {md_file.name}: 提取 {len(evidence_list)} 条证据，耗时 {(time.time() - req_start):.1f}s")
                     return (source_name, evidence_list)
                 except asyncio.CancelledError:
                     print(f"[证据提取] {md_file.name}: 提取被取消")
@@ -1253,6 +1313,8 @@ async def _do_extract_evidence(
                 nonlocal gather_task
                 while True:
                     await asyncio.sleep(1)
+                    if gather_task and gather_task.done():
+                        return  # gather 已完成，自动退出
                     if EXTRACT_TASKS.get(case_id) == "cancelled":
                         print(f"[证据提取] 检测到取消信号，停止并发提取")
                         if gather_task and not gather_task.done():
@@ -1261,6 +1323,26 @@ async def _do_extract_evidence(
 
             # 创建取消监视器
             watcher = asyncio.create_task(cancel_watcher())
+
+            # 卡死检测监视器：如果超过 N 秒没有任何文件完成，发出警告
+            last_progress_time = time.time()
+            stall_threshold = 180  # 3 分钟无进展视为可能卡死（配合 10 秒轮询）
+
+            async def stall_detector():
+                """检测长时间无进展，自动取消任务"""
+                nonlocal last_progress_time
+                while True:
+                    await asyncio.sleep(10)
+                    if gather_task and gather_task.done():
+                        return  # gather 已完成，自动退出
+                    elapsed = time.time() - last_progress_time
+                    if elapsed > stall_threshold:
+                        print(f"[证据提取] 检测到卡死：{elapsed:.0f}s 无进展（阈值 {stall_threshold}s），自动取消提取")
+                        if gather_task and not gather_task.done():
+                            gather_task.cancel()
+                        return
+
+            stall_task = asyncio.create_task(stall_detector())
 
             try:
                 # 创建提取任务（只提取未完成的文件）
@@ -1280,8 +1362,13 @@ async def _do_extract_evidence(
             finally:
                 # 取消监视器
                 watcher.cancel()
+                stall_task.cancel()
                 try:
                     await watcher
+                except (asyncio.CancelledError, Exception):
+                    pass
+                try:
+                    await stall_task
                 except (asyncio.CancelledError, Exception):
                     pass
 
@@ -1353,8 +1440,45 @@ async def _do_extract_evidence(
         else:
             print("[证据提取] 所有文件已提取，跳过并发处理")
 
-        # ── 第2步：起诉书/起诉意见书最后处理（直接复制，不调用 LLM）──
+        # ── 第2步：起诉书/起诉意见书处理（内容优先判断：单独 / 混合 / 公安文书）──
         indictment_files.sort(key=lambda f: (0 if "起诉意见书" not in f.name else 1))
+
+        # 内容判断辅助函数：读取文件内容，判断文书类型和处理方式
+        def _classify_indictment_doc(md_file: Path) -> dict:
+            """
+            读取文件内容，判断文书类型。
+
+            返回：
+              {"type": "procuratorate_standalone", "doc_name": "起诉书"}  → 直接复制
+              {"type": "procuratorate_mixed", "doc_name": "起诉书"}      → LLM 提取
+              {"type": "police", "doc_name": "起诉意见书"}               → LLM 提取
+            """
+            text = md_file.read_text(encoding="utf-8")
+            head = text[:5000]  # 文书编号通常在文件最开头
+
+            # 公安文书编号特征：任意长度的地名前缀 + "公" + 业务类型 + "字"
+            has_police_number = bool(re.search(r'.+公(刑|治|行|刑立|刑强|刑诉)\w*字', head[:2000]))
+            # 检察院文书编号特征：任意长度的地名前缀 + "检" + 业务类型 + "字"
+            has_procuratorate_number = bool(re.search(r'.+检(刑诉|公诉|刑执)\w*字', head[:2000]))
+
+            # 文书抬头判断（抬头通常在文件名附近）
+            has_police_title = bool(re.search(r'起诉意见书', head[:1000]))
+            has_procuratorate_title = bool(re.search(r'起\s*诉\s*书', head[:300]))
+
+            # 公安文书：有公安编号 或 抬头为"起诉意见书"
+            is_police_doc = has_police_number or has_police_title
+            # 检察院文书：有检察院编号 或 抬头为"起诉书"
+            is_procuratorate_doc = has_procuratorate_number or has_procuratorate_title
+
+            # 判断逻辑
+            if is_procuratorate_doc and not is_police_doc:
+                return {"type": "procuratorate_standalone", "doc_name": "起诉书"}
+            if is_procuratorate_doc and is_police_doc:
+                return {"type": "procuratorate_mixed", "doc_name": "起诉书（混合文件）"}
+            # 兜底：两者都无，按文件名判断
+            if "起诉书" in md_file.name and "意见" not in md_file.name:
+                return {"type": "procuratorate_standalone", "doc_name": "起诉书"}
+            return {"type": "police", "doc_name": "起诉意见书"}
 
         for md_file in indictment_files:
             if EXTRACT_TASKS.get(case_id) == "cancelled":
@@ -1366,47 +1490,54 @@ async def _do_extract_evidence(
                 print(f"[证据提取] 跳过已处理: {md_file.name}")
                 continue
 
-            # 清理旧的起诉书证据
-            old_files = [f for f in evidence_dir.iterdir()
-                         if f.suffix == ".md" and _get_source_from_evidence_file(f) == md_file.name]
-            if old_files:
-                print(f"[证据提取] 清理 {md_file.name} 的旧证据 ({len(old_files)} 个文件)，重新处理")
-                for f in old_files:
-                    f.unlink()
-                all_evidence = [ev for ev in all_evidence if ev["source"] != md_file.name]
+            # 读内容判断类型
+            classification = _classify_indictment_doc(md_file)
+            is_standalone = classification["type"] == "procuratorate_standalone"
 
-            # 直接复制 MD 文件到 evidence 目录
-            dest_name = f"{next_id:03d}_{md_file.name}"
-            dest_path = evidence_dir / dest_name
-            shutil.copy2(str(md_file), str(dest_path))
-            print(f"[证据提取] {md_file.name} → {dest_name}（直接复制）")
+            if is_standalone:
+                # 检察院起诉书单独存在 → 直接复制
+                dest_name = f"{next_id:03d}_{md_file.name}"
+                dest_path = evidence_dir / dest_name
+                shutil.copy2(str(md_file), str(dest_path))
+                print(f"[证据提取] {md_file.name} → {dest_name}（{classification['doc_name']}，直接复制）")
 
+                all_evidence.append({
+                    "name": md_file.stem,
+                    "type": classification["doc_name"],
+                    "source": md_file.name,
+                    "page_range": "",
+                    "persons": "",
+                    "related_entities": "",
+                    "summary_preview": f"{md_file.name}（待案卷分析时详细提取）",
+                    "has_quotes": True,
+                    "md_file": dest_name,
+                })
+                next_id += 1
+            else:
+                # 起诉意见书 / 混合文件 → LLM 提取
+                md_text = md_file.read_text(encoding="utf-8")
+                print(f"[证据提取] {md_file.name} → LLM 提取（{classification['doc_name']}）")
+                ev_path = await _process_indictment_single(md_file, md_text, evidence_dir, next_id)
+
+                ev_text = ev_path.read_text(encoding="utf-8")
+                all_evidence.append({
+                    "name": ev_path.stem.split("_", 1)[1] if "_" in ev_path.stem else ev_path.stem,
+                    "type": doc_type if doc_type != "混合文件" else "起诉意见书",
+                    "source": md_file.name,
+                    "page_range": "",
+                    "persons": "",
+                    "related_entities": "",
+                    "summary_preview": ev_text[:200],
+                    "has_quotes": True,
+                    "md_file": ev_path.name,
+                })
+                next_id += 1
+
+            # 更新进度
             task = EXTRACT_TASKS.get(case_id)
             if task:
                 task["current_file"] = md_file.name
                 task["processed_files"] = task.get("processed_files", 0) + 1
-
-            all_evidence.append({
-                "name": md_file.stem,
-                "type": "起诉意见书" if "意见" in md_file.name else "起诉书",
-                "source": md_file.name,
-                "page_range": "",
-                "persons": "",
-                "related_entities": "",
-                "summary_preview": f"{md_file.name}（待案卷分析时详细提取）",
-                "has_quotes": True,
-                "md_file": dest_name,
-            })
-            next_id += 1
-
-            index_file.write_text(json.dumps({
-                "case_id": case_id,
-                "total_evidence": len(all_evidence),
-                "evidence": all_evidence,
-                "generated_at": datetime.now().isoformat(),
-            }, ensure_ascii=False, indent=2), encoding="utf-8")
-
-            processed_sources.add(md_file.name)
 
         # ── 最终保存 ──
         index_file.write_text(json.dumps({
@@ -1488,12 +1619,16 @@ async def get_extract_status(case_id: str):
     if task == "cancelled":
         return {"case_id": case_id, "status": "cancelled"}
     if task and isinstance(task, dict):
+        elapsed = time.time() - task.get("started_at", time.time())
         return {
             "case_id": case_id,
             "status": "running",
             "total_files": task.get("total_files", 0),
             "processed_files": task.get("processed_files", 0),
             "current_file": task.get("current_file", ""),
+            "elapsed_seconds": round(elapsed),
+            "llm_waiting": task.get("llm_waiting", False),
+            "llm_latency_ms": task.get("llm_latency", 0),
         }
     return {"case_id": case_id, "status": "idle"}
 
@@ -1638,16 +1773,57 @@ async def clear_stage(case_id: str, stage_num: int):
 
 
 def _parse_evidence_blocks(llm_output: str, source_file: str) -> list:
-    """解析 LLM 返回的证据块"""
+    """
+    解析 LLM 返回的证据块。
+
+    优先尝试 JSON 数组解析（LLM 返回 JSON 格式），
+    失败后回退到文本格式解析（兼容已有的输出格式）。
+    """
     import re
+    import json
     blocks = []
 
-    # 支持多种证据标记格式（LLM 可能输出不同格式）：
-    # 1. ### 证据N：xxx
-    # 2. ## 证据N：xxx
-    # 3. **【证据 N】**
-    # 4. **证据N**
-    # 5. ## 证据 N
+    # ── 第1优先：JSON 数组解析 ──
+    # 匹配 ```json ... ``` 代码块，或直接查找 JSON 数组
+    json_text = llm_output
+    code_block = re.search(r'```json\s*(\[.*?\])\s*```', llm_output, re.DOTALL)
+    if code_block:
+        json_text = code_block.group(1)
+    elif llm_output.strip().startswith('['):
+        # 尝试直接解析整个输出为 JSON 数组
+        json_text = llm_output.strip()
+
+    if json_text.startswith('['):
+        try:
+            # 尝试截断到最后一个 ] 以处理 LLM 多余输出
+            bracket_end = json_text.rfind(']')
+            if bracket_end > 0:
+                json_text = json_text[:bracket_end + 1]
+            data = json.loads(json_text)
+            if isinstance(data, list) and len(data) > 0:
+                for item in data:
+                    if isinstance(item, dict):
+                        blocks.append({
+                            "name": item.get("name", item.get("证据名称", "未命名证据")),
+                            "type": item.get("type", item.get("证据类型", "其他证据")),
+                            "source": source_file,
+                            "page_range": item.get("page_range", item.get("页码范围", "")),
+                            "persons": item.get("persons", item.get("涉案人员", "")),
+                            "key_facts": item.get("key_facts", item.get("关键事实", "")),
+                            "summary": item.get("summary", item.get("详细摘要", ""))[:2000],
+                            "original_quotes": item.get("original_quotes", item.get("原文摘录", "")),
+                            "contradiction_hints": item.get("contradiction_hints", item.get("矛盾提示", "无")),
+                            "related_entities": item.get("related_entities", item.get("关联信息", "")),
+                            "raw_text": json.dumps(item, ensure_ascii=False, indent=2),
+                        })
+                if blocks:
+                    print(f"[证据解析] {source_file}: JSON 模式解析成功，{len(blocks)} 份证据")
+                    return blocks
+        except (json.JSONDecodeError, Exception) as e:
+            print(f"[证据解析] {source_file}: JSON 解析失败，回退到文本模式: {e}")
+            blocks = []
+
+    # ── 第2优先：文本格式解析（兼容原有格式）──
     patterns = [
         r'#{1,3}\s*证据(\d+)[：:]\s*(.+)$',           # ### 证据1：名称
         r'\*\*【证据\s*(\d+)】\*\*',                   # **【证据 1】**
@@ -1675,6 +1851,7 @@ def _parse_evidence_blocks(llm_output: str, source_file: str) -> list:
 
     if sections is None or len(sections) < 3:
         # 没找到证据块标记，整个输出作为一份证据
+        print(f"[证据解析] {source_file}: 未找到证据标记，整个输出作为一份证据（LLM 可能未按格式输出）")
         blocks.append({
             "name": source_file.replace(".md", ""),
             "type": "其他证据",

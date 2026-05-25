@@ -223,6 +223,46 @@ def start_convert_task(case_id: str):
                             "error": str(e)[:200],
                         })
 
+                # 失败文件自动重试一轮（MinerU 偶发失败）
+                failed_files = [r for r in results if not r.get("success") and not r.get("skipped")]
+                if failed_files:
+                    _update_task(case_id, message=f"对 {len(failed_files)} 个失败文件重试中...")
+                    print(f"[后台任务] {case_id}: {len(failed_files)} 个文件失败，等待 20s 后重试...")
+                    time.sleep(20)
+                    for fail_result in failed_files:
+                        fail_name = fail_result.get("file", "")
+                        fail_pdf = processed_dir / fail_name
+                        if not fail_pdf.exists():
+                            continue
+                        _update_task(case_id, message=f"重试: {fail_name}")
+                        try:
+                            text, images_dir = get_evidence_text(
+                                str(fail_pdf), True, str(md_dir),
+                                progress_cb=lambda stage, detail: _update_task(
+                                    case_id, message=f"重试中: {fail_name} - {detail}"
+                                ),
+                            )
+                            if text:
+                                md_file = md_dir / f"{fail_pdf.stem}.md"
+                                if not md_file.exists():
+                                    md_file.write_text(text, encoding="utf-8")
+                                md_size = md_file.stat().st_size if md_file.exists() else 0
+                                # 更新 results 中对应的记录
+                                for r in results:
+                                    if r.get("file") == fail_name:
+                                        r["success"] = True
+                                        r["md_name"] = md_file.name
+                                        r["md_size"] = md_size
+                                        r.pop("error", None)
+                                        r["retried"] = True
+                                        break
+                                converted += 1
+                                print(f"[后台任务] 重试成功: {fail_name}")
+                            else:
+                                print(f"[后台任务] 重试仍失败: {fail_name}")
+                        except Exception as e:
+                            print(f"[后台任务] 重试异常: {fail_name}, {e}")
+
                 # 安全清理
                 pdf_stems = {f.stem for f in pdf_files}
                 for item in list(md_dir.iterdir()):
