@@ -643,8 +643,8 @@ def _mineru_convert(
                 # 失败重试一次，避免偶尔的网络/API错误丢失整段
                 result = _mineru_convert_single(chunk_path, chunk_output, timeout, progress_cb)
                 if not result or not result[0]:
-                    print(f"[分段转换] chunk {chunk_index} 首次失败，重试中...")
-                    import time; time.sleep(10)
+                    print(f"[分段转换] chunk {chunk_index} 首次失败，15s 后重试...")
+                    import time; time.sleep(15)
                     result = _mineru_convert_single(chunk_path, chunk_output, timeout, progress_cb)
 
                 chunk_path.unlink(missing_ok=True)  # 清理临时分段文件
@@ -709,12 +709,35 @@ def _mineru_convert_single(
 ) -> Optional[tuple[str, Optional[Path]]]:
     """使用 MinerU API 转换单个 PDF → MD（调用方已确保文件大小在限制内）
 
+    失败时自动重试 2 次（共 3 次尝试），指数退避间隔 15s → 30s。
     直接使用 full.md（MinerU 最佳输出），并应用 OCR 纠错规则。
     图片目录会被保留并移动到输出目录。
 
     Args:
         progress_cb: 可选的进度回调，签名 (stage: str, detail: str)
     """
+    max_retries = 3
+    for attempt in range(1, max_retries + 1):
+        result = _do_mineru_convert(pdf_path, output_dir, timeout, progress_cb)
+        if result and result[0]:
+            return result
+        if attempt < max_retries:
+            delay = 15 * attempt  # 15s, 30s
+            print(f"[MinerU] 第 {attempt} 次尝试失败，{delay}s 后重试 ({attempt + 1}/{max_retries}): {pdf_path.name}")
+            if progress_cb:
+                progress_cb("retrying", f"第 {attempt} 次失败，{delay}s 后自动重试...")
+            time.sleep(delay)
+    print(f"[MinerU] 已重试 {max_retries} 次，仍失败: {pdf_path.name}")
+    return None, None
+
+
+def _do_mineru_convert(
+    pdf_path: Path,
+    output_dir: Path,
+    timeout: int = 3600,
+    progress_cb: Optional[callable] = None,
+) -> Optional[tuple[str, Optional[Path]]]:
+    """执行一次 MinerU 转换调用（单次，不含重试）"""
     token = _get_mineru_token()
     if not token:
         print(f"[MinerU] Token 未配置，跳过 {pdf_path.name}")

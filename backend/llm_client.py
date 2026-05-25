@@ -3,6 +3,7 @@ LLM 客户端 - 支持多种 LLM 提供商
 
 从应用配置 (DATA_DIR/criminal-llm-config.json) 获取 API Key、Base URL 和模型
 """
+import asyncio
 import httpx
 import time
 from pathlib import Path
@@ -48,6 +49,11 @@ def _get_bailian_config() -> tuple[str, Optional[str], str]:
     return base_url, api_key, default_model
 
 
+class LLMRetryExhaustedError(Exception):
+    """LLM 请求已耗尽所有内部重试，上层不应再次重试。"""
+    pass
+
+
 class LLMClient:
     """LLM 客户端 - 支持 OpenAI 兼容 API"""
 
@@ -58,6 +64,11 @@ class LLMClient:
         self.model = default_model
         self.timeout = 600.0
         self.client = httpx.AsyncClient(timeout=self.timeout)
+
+        # 缓存命中率统计（会话级别累计）
+        self._cache_hit_tokens = 0
+        self._cache_miss_tokens = 0
+        self._total_requests = 0
 
         # 并发限流保护器
         try:
@@ -84,6 +95,16 @@ class LLMClient:
         self.api_key = api_key
         self.model = default_model
         print(f"[LLM 客户端] 配置已重载 baseUrl: {base_url}, model: {default_model}")
+
+    def get_cache_stats(self) -> dict:
+        """获取缓存命中率统计"""
+        total = self._cache_hit_tokens + self._cache_miss_tokens
+        return {
+            "hit_tokens": self._cache_hit_tokens,
+            "miss_tokens": self._cache_miss_tokens,
+            "total_requests": self._total_requests,
+            "hit_rate": round(self._cache_hit_tokens / total * 100, 1) if total > 0 else 0.0,
+        }
 
     async def chat(
         self,
@@ -122,7 +143,20 @@ class LLMClient:
         for attempt in range(3):
             try:
                 req_start = time.time()
-                response = await self.client.post(url, json=payload, headers=headers)
+
+                # 后台进度：每 30 秒打印一次等待状态
+                async def progress_tick():
+                    while True:
+                        await asyncio.sleep(30)
+                        elapsed = time.time() - req_start
+                        print(f"[LLM 请求] 等待响应... {elapsed:.0f}s")
+
+                tick = asyncio.create_task(progress_tick())
+                try:
+                    response = await self.client.post(url, json=payload, headers=headers)
+                finally:
+                    tick.cancel()
+
                 response.raise_for_status()
                 latency_ms = (time.time() - req_start) * 1000
 
@@ -132,6 +166,22 @@ class LLMClient:
                 data = response.json()
 
                 if "choices" in data and len(data["choices"]) > 0:
+                    print(f"[LLM 请求] 成功，耗时 {latency_ms/1000:.1f}s")
+
+                    # 缓存命中率统计
+                    usage = data.get("usage", {})
+                    hit = usage.get("prompt_cache_hit_tokens", 0)
+                    miss = usage.get("prompt_cache_miss_tokens", 0)
+                    if hit > 0 or miss > 0:
+                        self._cache_hit_tokens += hit
+                        self._cache_miss_tokens += miss
+                        self._total_requests += 1
+                        total = hit + miss
+                        hit_rate = (hit / total * 100) if total > 0 else 0
+                        overall_total = self._cache_hit_tokens + self._cache_miss_tokens
+                        overall_rate = (self._cache_hit_tokens / overall_total * 100) if overall_total > 0 else 0
+                        print(f"[LLM 缓存] 本次命中: {hit}/{total} tokens ({hit_rate:.0f}%), 累计: {self._cache_hit_tokens}/{overall_total} ({overall_rate:.0f}%), 共 {self._total_requests} 次请求")
+
                     return data["choices"][0]["message"]["content"]
 
                 return str(data)
@@ -141,7 +191,7 @@ class LLMClient:
                     self.concurrency_controller.record_timeout()
                 import asyncio
                 wait = 5 * (attempt + 1)  # 5s, 10s, 15s, 20s, 25s
-                print(f"[LLM 超时] 第 {attempt+1}/5 次重试，等待 {wait}s...")
+                print(f"[LLM 超时] 第 {attempt+1}/3 次重试，等待 {wait}s...")
                 await asyncio.sleep(wait)
             except httpx.HTTPStatusError as e:
                 if self.concurrency_controller:
@@ -149,7 +199,7 @@ class LLMClient:
                 error_body = e.response.text[:500] if e.response else "无响应内容"
                 raise Exception(f"API 请求失败：{e.response.status_code}\n{error_body}")
 
-        raise Exception(f"LLM 请求超时（已重试 {3-1} 次）: {last_error}")
+        raise LLMRetryExhaustedError(f"LLM 请求超时（已重试 {3} 次）: {last_error}")
     
     async def analyze_case(
         self,
