@@ -24,8 +24,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | **前端地址** | http://localhost:5173 |
 | **后端地址** | http://localhost:8080 |
 | **认证服务器** | http://118.196.83.43:8000 |
-| **项目路径** | /Users/zhanghan/.openclaw/workspace/criminal-llm/ |
-| **认证服务路径** | /Users/zhanghan/.openclaw/workspace/criminal-llm-auth/ |
+| **项目路径** | D:\criminal-llm-win |
+| **认证服务路径** | /opt/criminal-llm-auth/（远程服务器） |
 
 ### 核心业务逻辑
 - **辩护理论**：三阶层犯罪论体系
@@ -41,18 +41,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```
 criminal-llm/
 ├── backend/
-│   ├── main.py                 # FastAPI 主入口
+│   ├── main.py                 # FastAPI 主入口（路由注册、生命周期、SPA 回退）
 │   ├── case_manager.py         # 案件管理 API（CRUD、文件扫描、导入、证据提取）
 │   ├── process_api.py          # PDF 处理 API（去水印、OCR）
 │   ├── pdf_to_md.py            # PDF → Markdown 转换模块（MinerU 云端）
 │   ├── analyzer_api.py         # 案卷分析 API（拆分、证据识别）
-│   ├── llm_client.py           # LLM 客户端（百炼 API）
+│   ├── llm_client.py           # LLM 客户端（百炼 API，超时 600s，3 次重试，并发限流，缓存命中率统计）
 │   ├── legal_knowledge.py      # 法律知识库（内置刑法/刑诉法 + 三阶层理论）
 │   ├── legal_db/               # 内置法律文件目录
 │   │   ├── criminal_law.md     # 刑法全文
 │   │   └── criminal_procedure_law.md  # 刑诉法全文
 │   ├── background_tasks.py     # 后台任务管理（PDF 转 MD 异步执行 + 进度持久化）
-│   ├── power_manager.py        # macOS 电源管理（caffeinate 防止系统休眠）
+│   ├── power_manager.py        # 电源管理（防止系统休眠中断长时间处理）
 │   ├── ocr_acceleration.py     # OCR 加速模块
 │   ├── check_md_quality.py     # MD 质量检查工具
 │   ├── stage_api.py            # 分析阶段状态管理 API（5阶段 + 5A/5B/53子阶段）
@@ -64,11 +64,11 @@ criminal-llm/
 │   ├── pdf_processor.py        # PDF 处理核心（水印移除、OCR）
 │   ├── legal_search.py         # 法律条文联网搜索
 │   ├── legal_kb_api.py         # 法律知识库 CRUD API
-│   ├── legal_knowledge.py      # 法律知识库（内置刑法/刑诉法 + 三阶层理论）
-│   ├── config_manager.py       # 配置管理（JSON 持久化）
-│   ├── config.py               # 全局配置
+│   ├── config_manager.py       # 配置管理（JSON 持久化，DATA_DIR/criminal-llm-config.json）
+│   ├── config.py               # 全局配置（DATA_DIR 解析、HOST/PORT、MAX_FILE_SIZE=500MB）
 │   └── watermark_remover.py    # 水印移除模块
 ├── frontend/
+│   ├── vite.config.ts          # Vite 配置（代理 /api → http://localhost:8080）
 │   ├── src/
 │   │   ├── App.tsx             # 路由入口（含 AuthGate 认证门禁）
 │   │   ├── components/
@@ -76,25 +76,29 @@ criminal-llm/
 │   │   │   ├── MacOSDialog.tsx   # 模态对话框（showAlert/showConfirm）
 │   │   │   ├── PdfViewer.tsx     # PDF 查看器（pdf.js CDN + 懒加载 + 批注）
 │   │   │   ├── StickyNoteOverlay.tsx # 区域便签批注
-│   │   │   ├── MermaidRenderer.tsx   # Mermaid 图表
-│   │   │   └── case-detail/      # （空目录，预留）
+│   │   │   ├── MermaidRenderer.tsx   # Mermaid 图表渲染
+│   │   │   └── report/           # 报告页专用组件
+│   │   │       ├── ReportRenderer.tsx    # Markdown→HTML 转换 + 证据链接注入
+│   │   │       ├── ThreeTierCard.tsx     # 三阶层分析卡片组件
+│   │   │       ├── EvidenceContrastTable.tsx # 证据对照表组件
+│   │   │       └── SectionSkeleton.tsx   # 报告章节骨架
 │   │   ├── api/
-│   │   │   ├── index.ts         # API 客户端（含认证方法 + localStorage token 管理）
+│   │   │   ├── index.ts         # API 客户端（含认证 + 证据接口用 fetch 绕过 Tauri invoke）
 │   │   │   └── types.ts         # 类型定义
 │   │   ├── pages/
-│   │   │   ├── HomePage.tsx      # 首页：案件列表（toolbar 显示登录用户头像+邮箱）
+│   │   │   ├── HomePage.tsx      # 首页：案件列表（toolbar 显示用户头像+邮箱）
 │   │   │   ├── LoginPage.tsx     # 登录页面（认证门禁）
 │   │   │   ├── RegisterPage.tsx  # 注册页面（跳转远程认证服务器）
 │   │   │   ├── ResetPasswordPage.tsx # 密码重置页面
-│   │   │   ├── CaseDetailPage.tsx # 案件详情：流水线处理（主页面）
+│   │   │   ├── CaseDetailPage.tsx # 案件详情：流水线处理 + 证据提取 + 刷新按钮
 │   │   │   ├── AnalyzePage.tsx   # 案卷分析页面
-│   │   │   ├── ReportPage.tsx    # 辩护报告页面
+│   │   │   ├── ReportPage.tsx    # 辩护报告页面（3面板 + 9标签 + 批注 + 编辑）
 │   │   │   ├── ConvertPage.tsx   # PDF 转 MD 页面
 │   │   │   ├── ProcessPage.tsx   # PDF 处理页面
-│   │   │   ├── SettingsPage.tsx  # 设置页面（含账号管理 + 退出登录）
+│   │   │   ├── SettingsPage.tsx  # 设置页面（账号管理 + LLM/MinerU 配置 + 退出登录）
 │   │   │   └── ManualPage.tsx    # 使用说明书页面
 │   │   └── styles/              # 全局样式
-│   └── src-tauri/              # Tauri 桌面壳（Rust 后端骨架，阶段 1 实施中）
+│   └── src-tauri/              # Tauri 桌面壳（Rust，阶段 1 实施中）
 │       ├── Cargo.toml          # Rust 依赖（reqwest, tokio, Tauri plugins）
 │       ├── src/main.rs         # Tauri 入口
 │       ├── src/lib.rs          # Tauri commands 库
@@ -103,16 +107,19 @@ criminal-llm/
 │   └── user-manual.html        # 使用说明书（HTML 格式）
 ├── scripts/
 │   └── sync-manual.sh          # 说明书同步脚本
+├── tests/
+│   ├── playwright.config.ts    # Playwright 配置（timeout 30s）
+│   └── frontend-render.spec.ts # E2E 测试用例
 └── data/
-    ├── cases/                   # 案件数据存储（symlink → ~/.openclaw/workspace/data/cases）
+    ├── cases/                   # 案件数据存储（symlink → 数据目录/cases）
     │   └── case_xxx/
     │       └── 案件_名称_日期/
     │           ├── case.json
     │           ├── original/    # 原始上传的 PDF
     │           ├── processed/   # 去水印后的 PDF
     │           ├── md/          # 转换后的 Markdown
-    │           ├── evidence/    # 提取的证据清单
-    │           └── analysis/    # 分析报告
+    │           ├── evidence/    # 提取的证据清单（index.json + md 文件）
+    │           └── analysis/    # 分析报告（stage_N/output.md + analysis_state.json）
     └── cache/                   # 缓存（缩略图等）
 ```
 
@@ -207,18 +214,27 @@ criminal-llm/
 1. **写代码必须使用 qwen3.6-plus**（用户明确要求）
 2. **前端构建**：`cd frontend && npm run build`
 3. **前端类型检查**：`cd frontend && npx tsc --noEmit`
-4. **前端开发服务器**：`cd frontend && npm run dev`（默认端口 5173）
-5. **后端启动**：`cd backend && python3 main.py`
+4. **前端开发服务器**：`cd frontend && npm run dev`（默认端口 5173，host 0.0.0.0）
+5. **后端启动**：`cd backend && python main.py`（Windows）或 `python3 main.py`（macOS/Linux，默认 http://127.0.0.1:8080）
 6. **Tauri 开发**：`cd frontend && npx tauri dev`（前端 Vite dev + Rust 热重载）
 7. **Tauri 构建**：`cd frontend && npx tauri build`（打包三平台桌面应用）
 8. **测试 API**：`curl -s http://localhost:8080/api/cases/list | jq '.'`
-9. **后端无热重载**：修改后端后需手动重启（`kill` 进程再启动）
+9. **后端无热重载**：修改后端后需手动重启（Windows: `taskkill /F /IM python.exe` 或关闭终端；macOS: `pkill -f 'uvicorn main:app'`）
 10. **用中文注释**：代码注释用中文
 11. **版本号管理**：`cd frontend && python3 bump-version.py`（自动递增 package.json + tauri.conf.json 版本号）
 12. **图标生成**：`cd frontend && python3 generate-icon.py`（从桌面图片生成多尺寸图标 + icns）
 
+### Vite 代理配置
+开发环境 `vite.config.ts` 将 `/api` 请求代理到 `http://localhost:8080`：
+```ts
+proxy: { '/api': { target: 'http://localhost:8080', changeOrigin: true } }
+```
+生产环境构建后由 Tauri 壳提供后端服务（Rust 启动内嵌的 Python/FastAPI）。
+
 ### 测试
-- **E2E 测试**：`npx playwright test`（配置文件 `tests/playwright.config.ts`）
+- **E2E 测试**：`npx playwright test`（配置文件 `tests/playwright.config.ts`，timeout 30s）
+- **运行单个测试**：`npx playwright test frontend-render.spec.ts`
+- **运行单个用例**：`npx playwright test -g "具体测试名称"`
 - 测试用例在 `tests/frontend-render.spec.ts`
 
 ### 使用说明书更新
@@ -260,8 +276,14 @@ criminal-llm/
 | `mineru_token` | string | - | MinerU API Token |
 | `llm_api_key` | string | - | LLM API Key |
 | `llm_base_url` | string | 百炼 URL | LLM 服务地址 |
-| `llm_model` | string | `qwen3.5-plus` | 模型名称 |
+| `llm_model` | string | `qwen3.6-plus` | 模型名称 |
 | `evidence_concurrency` | int | `3` | 证据提取并发数（1-10） |
+
+**config.py 全局常量**：
+- `DATA_DIR`：优先级 `CRIMINAL_LLM_DATA_DIR` 环境变量 → PyInstaller 模式 `~/Documents/.criminal-llm-data` → 开发模式同前 → 回退 `project/data`
+- `HOST` = `127.0.0.1`, `PORT` = `8080`
+- `MAX_FILE_SIZE` = 500MB
+- `THUMBNAIL_WIDTH` = 400px, `THUMBNAIL_DPI` = 150
 
 ### API 设计
 - 所有 API 接收 JSON body（使用 Pydantic 模型）或 query params
@@ -334,28 +356,35 @@ python3 -m uvicorn main:app --host 0.0.0.0 --port 8000
 - 证据清单在 `evidence/index.json`，每条记录有 `md_file` 字段指向实际文件
 - **后期添加的文件**：index.json 中的 `md_file` 可能带有数字前缀（如 `104_xxx.md`），但实际文件名可能没有前缀
 - `_load_evidence_texts()` 会 fallback 匹配无前缀的文件名
+- **DeepSeek 缓存命中率优化**：请求采用 system（短角色）+ assistant（固定提取规则）+ user（文件内容）三层结构，固定前缀完全一致，变化的文件内容放在最后，最大化 prompt cache 命中率。每次请求后打印缓存命中率统计
+- **重试分层**：`llm_client` 负责网络层重试（3 次，5s→10s→15s），`_extract_single_file_with_tracking` 负责业务层重试（2 次，10s→20s），两者不重叠。网络层重试耗尽后抛出 `LLMRetryExhaustedError`，上层识别后不再重复重试
+- **信号量释放**：重试等待在信号量之外执行，其他文件不阻塞
+- **卡死检测**：3 分钟无进展自动取消，10 秒轮询，LLM 调用成功后立即更新心跳
 
 ### 后台任务
 - PDF 转 MD 使用 `background_tasks.py` 的 `ThreadPoolExecutor(max_workers=1)` 异步执行
-- 任务状态持久化到 `~/.openclaw/criminal-llm-tasks.json`，重启可恢复
+- 任务状态持久化到 `DATA_DIR/criminal-llm-tasks.json`，重启可恢复
+- MinerU 转换失败自动重试 3 次（15s→30s 退避），全部转换完成后对失败文件再统一重试一轮
 - 前端轮询 `/api/tasks/{case_id}/convert-status` 获取进度
 - 前端刷新页面后自动恢复当前步骤和转换进度（localStorage + 任务状态检查）
 - 证据提取支持断点续传：已处理的 MD 文件跳过，部分处理的文件会清理后重新提取
-- 转换/提取期间自动阻止 macOS 休眠（`power_manager.py`，使用 `caffeinate -d -i`）
+- 转换/提取期间自动阻止系统休眠（`power_manager.py`）
 
-### 证据提取
+### 证据提取（详细）
 - **PDF 转 MD 完成后自动触发证据提取**，无需用户手动点击。流程：
   1. 用户点击"转换" → PDF 转 MD
   2. 转换完成 → 自动开始证据提取
   3. 提取完成 → 自动开始分析（如果被告人信息已填写）
 - 手动"提取证据"按钮保留，用于重新提取/错误恢复
+- **"刷新证据"按钮**：提取完成后若轮询失败但后台可能已完成，用户可手动刷新检查
+- **轮询容错**：连续 3 次请求失败才停止轮询（非单次失败即停止）
 - **并发数可配置**：默认 3，用户可在设置页面调整为 1-10。配置存储在 `DATA_DIR/criminal-llm-config.json` 的 `evidence_concurrency` 字段
+- **并发控制器自适应**：遇到 429/超时时自动降档，连续成功 10 次后逐步恢复到初始值，不再一次限流导致全程低并发
 - 起诉书/起诉意见书优先串行处理（依赖前一步输出）
 - 非起诉书文件并发处理，按卷号排序后分配连续证据编号
 - 提取时自动识别文书边界，逐笔提取犯罪事实
-- 证据清单在 `evidence/index.json`，每条记录有 `md_file` 字段指向实际文件
-- **后期添加的文件**：index.json 中的 `md_file` 可能带有数字前缀（如 `104_xxx.md`），但实际文件名可能没有前缀，加载时需 fallback 匹配
-- **卡死排查**：用户反馈并发过高会导致 API 限流卡死，建议在设置页引导用户降低并发数至 1-2
+- **解析容错**：优先尝试 JSON 数组解析，失败后回退到文本标记解析
+- **证据接口**：`getEvidenceIndex` 和 `getExtractStatus` 使用 `fetch` 直接调用后端 API，不经过 Tauri invoke（避免参数名 `caseId` vs `case_id` 不匹配问题）
 
 ### 知识库
 - **内置**：刑法全文 + 刑诉法全文（`backend/legal_db/`）
@@ -368,14 +397,14 @@ python3 -m uvicorn main:app --host 0.0.0.0 --port 8000
 
 1. **MinerU 配额** — 每日 1000 页免费，超额后需排队；转换超时设为 1 小时（3600 秒）
 2. **DMG 打包** — `bundle_dmg.sh` 对中文文件名有兼容问题，需用 `hdiutil create` 手动创建
-3. **证据提取卡死** — 并发过高可能触发 API 限流，引导用户降低并发数至 1-2
+3. ~~**证据提取卡死**~~ — 已修复：600s 超时保护 + 2 次重试 + 3 分钟无进展自动取消 + 并发自适应降级/恢复
 
 ---
 
 ## 📌 重要提醒
 
 - **不要修改用户数据**：`data/cases/` 里的案件数据不要随意删除
-- **数据目录**：开发模式优先使用 `~/Documents/.criminal-llm-data/`（config.py 已修复 symlink 丢失问题）
+- **数据目录**：优先使用 `CRIMINAL_LLM_DATA_DIR` 环境变量，否则默认 `~/Documents/.criminal-llm-data/`（Windows 下为 `%USERPROFILE%\.criminal-llm-data`）
 - **保持向后兼容**：已有的 API 端点不要破坏
 - **测试后提交**：修改后确认 `npm run build` 通过
 - **用中文注释**：代码注释用中文
