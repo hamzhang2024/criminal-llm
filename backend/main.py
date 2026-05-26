@@ -6,18 +6,10 @@
 """
 # 初始化环境：加载 DATA_DIR/.env（必须在所有 import 之前）
 import os
-import sys
-from pathlib import Path
+from _bootstrap import DATA_DIR
 
-# 复制 DATA_DIR 计算逻辑（此时不能 import config，避免循环依赖）
-_is_frozen = getattr(sys, 'frozen', False)
-if _is_frozen:
-    _data_dir = Path.home() / "Documents" / ".criminal-llm-data"
-else:
-    _data_dir = Path(__file__).parent.parent / "data"
-_env_file = _data_dir / ".env"
-del _is_frozen, _data_dir
-
+# 加载 .env 文件（此时不能 import config，避免循环依赖）
+_env_file = DATA_DIR / ".env"
 if _env_file.exists():
     for line in _env_file.read_text().splitlines():
         line = line.strip()
@@ -26,6 +18,25 @@ if _env_file.exists():
             if k.strip() not in os.environ:
                 os.environ[k.strip()] = v.strip()
 del _env_file
+
+# 文件日志（--noconsole 模式下 print 被丢弃，日志写入文件）
+_log_path = DATA_DIR / "backend.log"
+DATA_DIR.mkdir(parents=True, exist_ok=True)  # 确保目录存在
+import logging
+
+_handlers = [logging.StreamHandler()]  # 开发模式输出控制台
+try:
+    _handlers.insert(0, logging.FileHandler(str(_log_path), encoding="utf-8"))
+except (PermissionError, OSError):
+    # 文件被占用或无权限，降级为纯控制台输出
+    pass
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=_handlers,
+)
+del _log_path, _handlers
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
@@ -55,11 +66,10 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# CORS 配置（桌面应用限定 localhost）
+# CORS 配置（桌面应用，允许所有来源，安全因为仅监听 localhost）
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"https?://localhost(:\d+)?|https?://127\.0\.0\.1(:\d+)?|tauri://localhost|http://tauri\.localhost",
-    allow_credentials=True,
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -98,20 +108,6 @@ if docs_dir.exists():
 async def health_check():
     """健康检查"""
     return {"status": "ok", "version": "1.0.0"}
-
-
-@app.get("/api/config/concurrency-status")
-async def get_concurrency_status():
-    """返回当前 LLM 并发状态"""
-    from llm_client import get_llm_client
-    try:
-        llm = get_llm_client()
-        if llm.concurrency_controller:
-            status = llm.concurrency_controller.get_status()
-            return {"success": True, **status}
-        return {"success": False, "error": "并发控制器未启用"}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
 
 
 @app.get("/api/config")
@@ -350,45 +346,44 @@ async def storage_stats():
 @app.on_event("startup")
 async def startup():
     """应用启动时初始化"""
-    # Windows GBK 控制台不支持 emoji，使用纯文本
-    print("[START] Criminal PDF WebUI 启动中...")
-    print(f"[DATA] 数据目录: {UPLOAD_DIR.parent}")
-    print(f"[API] http://{HOST}:{PORT}/api")
+    logging.info("[START] Criminal PDF WebUI 启动中...")
+    logging.info(f"[DATA] 数据目录: {UPLOAD_DIR.parent}")
+    logging.info(f"[API] http://{HOST}:{PORT}/api")
 
     try:
         from config_manager import CONFIG_PATH, load_config
-        print(f"[CONFIG] 配置文件路径: {CONFIG_PATH}")
+        logging.info(f"[CONFIG] 配置文件路径: {CONFIG_PATH}")
         if CONFIG_PATH.exists():
             cfg = load_config()
-            print(f"[CONFIG] llm_base_url={cfg.get('llm_base_url', '(未设置)')}, llm_model={cfg.get('llm_model', '(未设置)')}")
+            logging.info(f"[CONFIG] llm_base_url={cfg.get('llm_base_url', '(未设置)')}, llm_model={cfg.get('llm_model', '(未设置)')}")
         else:
-            print(f"[CONFIG] 配置文件不存在，使用默认值")
+            logging.info(f"[CONFIG] 配置文件不存在，使用默认值")
     except Exception as e:
-        print(f"[CONFIG] 读取配置失败: {e}")
+        logging.error(f"[CONFIG] 读取配置失败: {e}")
 
     from background_tasks import init_tasks
     init_tasks()
 
-    print(f"[CLEANUP] 检查并清理超过 7 天的文件...")
+    logging.info(f"[CLEANUP] 检查并清理超过 7 天的文件...")
     stats = cleanup_old_files()
     if stats["deleted_files"] > 0:
-        print(f"   已清理 {stats['deleted_files']} 个任务，释放 {stats['freed_size']}")
+        logging.info(f"   已清理 {stats['deleted_files']} 个任务，释放 {stats['freed_size']}")
     else:
-        print(f"   无需清理")
+        logging.info(f"   无需清理")
 
-    print(f"[TRASH] 检查回收站...")
+    logging.info(f"[TRASH] 检查回收站...")
     cleaned = cleanup_trash()
     if cleaned:
-        print(f"   已彻底删除 {len(cleaned)} 个过期案件")
+        logging.info(f"   已彻底删除 {len(cleaned)} 个过期案件")
     else:
-        print(f"   回收站无需清理")
+        logging.info(f"   回收站无需清理")
 
 
 @app.on_event("shutdown")
 async def shutdown():
     """应用关闭时清理"""
     await close_llm_client()
-    print("[SHUTDOWN] Criminal PDF WebUI 已关闭")
+    logging.info("[SHUTDOWN] Criminal PDF WebUI 已关闭")
 
 
 # ========== 静态资源回退（favicon 等） ==========

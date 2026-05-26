@@ -1045,13 +1045,11 @@ async def _extract_single_file_with_tracking(
     md_text: str,
     temp_dir: Path,
     semaphore: asyncio.Semaphore,
-    controller: 'ConcurrencyController',
 ) -> tuple:
     """
     包装 _extract_single_file，管理信号量和重试。
     重试等待期间释放信号量，让其他文件获得并发机会。
     """
-    start = time.time()
     max_retries = 2
     last_error = None
 
@@ -1060,8 +1058,6 @@ async def _extract_single_file_with_tracking(
         async with semaphore:
             try:
                 result = await _extract_single_file(md_file, md_text, temp_dir)
-                latency_ms = (time.time() - start) * 1000
-                controller.record_success(latency_ms)
                 return result
             except asyncio.TimeoutError:
                 last_error = f"LLM 调用超时（600s）"
@@ -1070,16 +1066,11 @@ async def _extract_single_file_with_tracking(
                 last_error = str(e)
                 error_msg = str(e).lower()
                 if any(kw in error_msg for kw in ['429', 'rate limit', 'too many', 'quota']):
-                    controller.record_error('rate_limit')
                     print(f"[证据提取] {md_file.name}: 触发限流，退避后重试")
                     if attempt < max_retries:
                         # 信号量已释放（with 块退出），其他文件可继续
                         await asyncio.sleep(30 * attempt)
                         continue
-                elif any(kw in error_msg for kw in ['timeout', 'timed out', 'connection error']):
-                    controller.record_timeout()
-                else:
-                    controller.record_error('other')
                 raise
 
         # 重试等待在信号量之外（其他文件可在此期间获得并发机会）
@@ -1228,16 +1219,14 @@ async def _do_extract_evidence(
         next_id = len(all_evidence) + 1
 
         if pending_files:
-            # 并发控制器 + 信号量
-            from concurrency_controller import ConcurrencyController
+            # 信号量控制并发
             from config_manager import load_config
             config = load_config()
             initial_concurrency = config.get("evidence_concurrency", 3)
             # 自动修正：并发数不超过待处理文件数
             initial_concurrency = min(initial_concurrency, len(pending_files))
             semaphore = asyncio.Semaphore(initial_concurrency)
-            controller = ConcurrencyController(initial=initial_concurrency)
-            print(f"[证据提取] 并发提取 {len(pending_files)} 个文件，初始并发={initial_concurrency}")
+            print(f"[证据提取] 并发提取 {len(pending_files)} 个文件，并发={initial_concurrency}")
 
             temp_dir = evidence_dir / "_temp_extract"
             temp_dir.mkdir(exist_ok=True)
@@ -1281,7 +1270,7 @@ async def _do_extract_evidence(
 
                     print(f"[证据提取] 处理: {md_file.name}")
                     source_name, evidence_list = await _extract_single_file_with_tracking(
-                        md_file, md_text, file_temp_dir, semaphore, controller
+                        md_file, md_text, file_temp_dir, semaphore
                     )
 
                     # LLM 调用成功，立即更新心跳（细粒度心跳）

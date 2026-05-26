@@ -1,0 +1,19 @@
+2026-05-23 22:39:02,250 [INFO] [START] Criminal PDF WebUI 启动中...
+2026-05-23 22:39:02,250 [INFO] [DATA] 数据目录: D:\criminal-llm-win\data
+2026-05-23 22:39:02,251 [INFO] [API] http://127.0.0.1:8080/api
+2026-05-23 22:39:02,251 [INFO] [CONFIG] 配置文件路径: D:\criminal-llm-win\data\criminal-llm-config.json
+2026-05-23 22:39:02,251 [INFO] [CONFIG] llm_base_url=https://ark.cn-beijing.volces.com/api/coding/v3, llm_model=GLM-5.1
+2026-05-23 22:39:02,251 [INFO] [CLEANUP] 检查并清理超过 7 天的文件...
+2026-05-23 22:39:02,251 [INFO]    无需清理
+2026-05-23 22:39:02,251 [INFO] [TRASH] 检查回收站...
+2026-05-23 22:39:02,251 [INFO]    回收站无需清理
+2026-05-23 22:59:56,137 [ERROR] Exception in callback _ProactorBasePipeTransport._call_connection_lost()
+handle: <Handle _ProactorBasePipeTransport._call_connection_lost()>
+Traceback (most recent call last):
+  File "C:\Users\Tammy\AppData\Local\Programs\Python\Python313\Lib\asyncio\events.py", line 89, in _run
+    self._context.run(self._callback, *self._args)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Tammy\AppData\Local\Programs\Python\Python313\Lib\asyncio\proactor_events.py", line 165, in _call_connection_lost
+    self._sock.shutdown(socket.SHUT_RDWR)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+ConnectionResetError: [WinError 10054] 远程主机强迫关闭了一个现有的连接。

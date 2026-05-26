@@ -60,11 +60,10 @@ criminal-llm/
 │   ├── analysis_pipeline.py    # 分析流水线编排（步骤 0-5 串联）
 │   ├── analysis_engine.py      # 分析引擎（三阶层分析核心）
 │   ├── case_splitter.py        # 文书拆分模块
-│   ├── concurrency_controller.py # 证据提取并发控制器
+│   ├── config_manager.py       # 配置管理（JSON 持久化，DATA_DIR/criminal-llm-config.json）
 │   ├── pdf_processor.py        # PDF 处理核心（水印移除、OCR）
 │   ├── legal_search.py         # 法律条文联网搜索
 │   ├── legal_kb_api.py         # 法律知识库 CRUD API
-│   ├── config_manager.py       # 配置管理（JSON 持久化，DATA_DIR/criminal-llm-config.json）
 │   ├── config.py               # 全局配置（DATA_DIR 解析、HOST/PORT、MAX_FILE_SIZE=500MB）
 │   └── watermark_remover.py    # 水印移除模块
 ├── frontend/
@@ -187,6 +186,8 @@ criminal-llm/
 - **表格美化**：深蓝表头、隔行变色、hover 高亮、圆角边框、阴影效果
 - **全部分析按钮**：步骤 3 面板新增一键执行全部 6 个分析阶段
 - 渲染组件：`ReportRenderer.tsx` 负责 Markdown→HTML 转换 + 证据链接注入 + 表格/三阶层卡片/Mermaid 渲染
+- **渐进式报告**：步骤 5 拆分为 5a-5f 六个子阶段（案件概述→证据评估→矛盾利用→三阶层辩护→量刑情节→结论建议），每阶段独立保存。报告页轮询 `/api/pipeline/{caseId}/defense-stages` 检测完成状态，已完成的子阶段自动加载并组合展示，带进度条
+- **HTML 增强渲染**：`components/report/` 目录下包含 `ReportRenderer`、`ThreeTierCard`、`EvidenceContrastTable`、`SectionSkeleton`，支持 mermaid 内联渲染、矛盾表格红绿高亮、三阶层卡片布局
 
 ### 两套分析系统
 
@@ -201,7 +202,7 @@ criminal-llm/
 
 ### 分析流水线（含断点续传）
 
-分析流水线支持断点续传：每一步完成后将状态持久化到 `analysis/analysis_state.json`，中断后可从最后完成的步骤继续。
+分析流水线支持断点续传：每一步完成后将状态持久化到 `analysis/analysis_state.json`，中断后可从最后完成的步骤继续。`AnalysisPipeline` 提供 `_save_analysis_state()`、`_load_analysis_state()`、`_mark_step_done()`、`_mark_substep_done()`、`_get_next_unfinished_step()`、`_get_resume_summary()` 等方法管理状态。步骤 2/3/4 的子步骤通过文件存在性检查自动跳过已完成的，步骤 5 拆分为 5a-5f 六个子阶段。
 
 **步骤 4.5（控辩对抗）**：位于步骤 4（案件 Wiki）和步骤 5（辩护意见）之间，通过红蓝对抗模拟生成攻防对照表。子步骤：45a 红方指控 → 45b 蓝方辩护 → 45c 红方反驳 → 45d 蓝方回应 → 45e 法官裁决。中间结果保存到 `analysis/04.5-控辩对抗/` 目录。
 
@@ -277,7 +278,7 @@ proxy: { '/api': { target: 'http://localhost:8080', changeOrigin: true } }
 | `llm_api_key` | string | - | LLM API Key |
 | `llm_base_url` | string | 百炼 URL | LLM 服务地址 |
 | `llm_model` | string | `qwen3.6-plus` | 模型名称 |
-| `evidence_concurrency` | int | `3` | 证据提取并发数（1-10） |
+| `evidence_concurrency` | int | `3` | 证据提取并发数（1-50） |
 
 **config.py 全局常量**：
 - `DATA_DIR`：优先级 `CRIMINAL_LLM_DATA_DIR` 环境变量 → PyInstaller 模式 `~/Documents/.criminal-llm-data` → 开发模式同前 → 回退 `project/data`
@@ -299,7 +300,7 @@ proxy: { '/api': { target: 'http://localhost:8080', changeOrigin: true } }
 | `process_router` | `/api/process/*` | PDF 处理（去水印、OCR） |
 | `analyzer_router` | `/api/analyze/*` | 案卷分析、证据识别 |
 | `stage_router` | `/api/stage-analysis/*` | 5 阶段分析（运行、进度、结果、Markdown 读写） |
-| `pipeline_router` | `/api/pipeline/*` | 流水线处理 |
+| `pipeline_router` | `/api/pipeline/*` | 流水线处理（含断点续传 `/resume`、状态查询 `/analysis-state`、防御阶段 `/defense-stages`、`/defense-stage/{name}`） |
 | `legal_kb_router` | `/api/legal-kb/*` | 法律知识库 CRUD |
 | `bg_task_router` | `/api/tasks/*` | 后台任务（PDF 转 MD 进度） |
 
@@ -340,6 +341,10 @@ python3 -m uvicorn main:app --host 0.0.0.0 --port 8000
 
 ### 打包与部署
 
+#### CI 自动构建
+- `.github/workflows/release.yml`：推送 `v*` 标签或手动触发，GitHub Actions 在三台 runner 上并行构建（Windows + macOS Intel + macOS Apple Silicon），产物自动发布 GitHub Release
+- 触发：`git tag v1.0.10 && git push origin --tags` 或在 GitHub Actions 页面手动 Run workflow
+
 #### 本地打包
 1. **PyInstaller 打包后端**：`cd backend && pyinstaller criminal-llm.spec --noconfirm`
 2. **前端构建**：`cd frontend && npm run build`
@@ -378,8 +383,8 @@ python3 -m uvicorn main:app --host 0.0.0.0 --port 8000
 - 手动"提取证据"按钮保留，用于重新提取/错误恢复
 - **"刷新证据"按钮**：提取完成后若轮询失败但后台可能已完成，用户可手动刷新检查
 - **轮询容错**：连续 3 次请求失败才停止轮询（非单次失败即停止）
-- **并发数可配置**：默认 3，用户可在设置页面调整为 1-10。配置存储在 `DATA_DIR/criminal-llm-config.json` 的 `evidence_concurrency` 字段
-- **并发控制器自适应**：遇到 429/超时时自动降档，连续成功 10 次后逐步恢复到初始值，不再一次限流导致全程低并发
+- **并发数可配置**：默认 3，用户可在设置页面调整为 1-50。配置存储在 `DATA_DIR/criminal-llm-config.json` 的 `evidence_concurrency` 字段
+- **固定并发 + 内置重试**：`llm_client` 3 次指数退避重试（5s→10s→15s），上层 2 次业务重试（10s→20s），无自适应并发
 - 起诉书/起诉意见书优先串行处理（依赖前一步输出）
 - 非起诉书文件并发处理，按卷号排序后分配连续证据编号
 - 提取时自动识别文书边界，逐笔提取犯罪事实
@@ -397,7 +402,7 @@ python3 -m uvicorn main:app --host 0.0.0.0 --port 8000
 
 1. **MinerU 配额** — 每日 1000 页免费，超额后需排队；转换超时设为 1 小时（3600 秒）
 2. **DMG 打包** — `bundle_dmg.sh` 对中文文件名有兼容问题，需用 `hdiutil create` 手动创建
-3. ~~**证据提取卡死**~~ — 已修复：600s 超时保护 + 2 次重试 + 3 分钟无进展自动取消 + 并发自适应降级/恢复
+3. ~~**证据提取卡死**~~ — 已修复：600s 超时保护 + 2 次重试 + 3 分钟无进展自动取消
 
 ---
 

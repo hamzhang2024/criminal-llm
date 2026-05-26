@@ -99,6 +99,8 @@ export function ReportPage() {
 
   // Stage content cache (keyed by tab key: stage_1, stage_2, etc.)
   const [stageContent, setStageContent] = useState<Record<string, string>>({})
+  const stageContentRef = useRef(stageContent)
+  useEffect(() => { stageContentRef.current = stageContent }, [stageContent])
 
   // View mode is no longer needed — keeping for potential future use
 
@@ -155,8 +157,21 @@ export function ReportPage() {
       const data = await api.getDefenseStages(caseId)
       if (data && data.stages) {
         const done = new Set<string>()
+        // 加载已完成阶段的内容（渐进式报告）
         for (const [key, status] of Object.entries(data.stages)) {
-          if (status === 'done') done.add(key)
+          if (status === 'done') {
+            done.add(key)
+            // 将 defense stage 内容加载到 stageContent 中（使用 defense_ 前缀避免与旧 stage 冲突）
+            const contentKey = `defense_${key}`
+            if (!stageContentRef.current[contentKey]) {
+              try {
+                const stageData = await api.getDefenseStageContent(caseId, key)
+                if (stageData?.content) {
+                  setStageContent(prev => ({ ...prev, [contentKey]: stageData.content }))
+                }
+              } catch { /* ignore — 下次轮询重试 */ }
+            }
+          }
         }
         setCompletedStages(done)
       }
@@ -826,9 +841,98 @@ export function ReportPage() {
   // ===== 渲染器 =====
 
   const activeTabDef = TABS.find(t => t.key === activeTab)
-  const activeContent = stageContent[activeTab] || ''
+
+  // 综合结论 tab：优先使用完整报告，其次组合已完成的 defense stages
+  const activeContent = (() => {
+    // 旧 API 直接内容
+    const directContent = stageContent[activeTab] || ''
+    if (directContent) return directContent
+
+    // 综合结论 tab（stage_53）：组合已完成的 defense stages
+    if (activeTab === 'stage_53') {
+      const defenseKeys = [
+        'defense_01-案件概述.md',
+        'defense_02-证据评估.md',
+        'defense_03-矛盾利用.md',
+        'defense_04-三阶层辩护.md',
+        'defense_05-量刑情节.md',
+        'defense_06-结论建议.md',
+      ]
+      const parts: string[] = []
+      for (const key of defenseKeys) {
+        const content = stageContent[key]
+        if (content) {
+          const label = key.replace('defense_', '').replace('.md', '')
+          parts.push(`## ${label}\n\n${content}`)
+        }
+      }
+      return parts.join('\n\n---\n\n')
+    }
+
+    return ''
+  })()
+
+  // 综合结论 tab 的进度信息
+  const defenseProgress = (() => {
+    if (activeTab !== 'stage_53') return null
+    const allDefenseKeys = [
+      'defense_01-案件概述.md',
+      'defense_02-证据评估.md',
+      'defense_03-矛盾利用.md',
+      'defense_04-三阶层辩护.md',
+      'defense_05-量刑情节.md',
+      'defense_06-结论建议.md',
+    ]
+    const done = allDefenseKeys.filter(k => stageContent[k]).length
+    const total = allDefenseKeys.length
+    if (done === 0 && !stageContent.stage_53) return null
+    if (done === total) return null // 全部完成，不显示进度
+    return { done, total, percent: Math.round(done / total * 100) }
+  })()
 
   const renderActiveTab = () => {
+    // 综合结论 tab 进度条
+    if (defenseProgress) {
+      return (
+        <div style={{ padding: '24px 20px' }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            marginBottom: '16px',
+          }}>
+            <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--macos-text-primary)' }}>
+              报告生成中...
+            </div>
+            <div style={{ fontSize: '12px', color: 'var(--macos-text-tertiary)' }}>
+              {defenseProgress.done}/{defenseProgress.total} 已完成
+            </div>
+          </div>
+          <div style={{
+            width: '100%', height: '6px', background: 'var(--macos-bg-secondary)',
+            borderRadius: '3px', overflow: 'hidden', marginBottom: '20px',
+          }}>
+            <div style={{
+              width: `${defenseProgress.percent}%`, height: '100%',
+              background: 'linear-gradient(90deg, #007aff, #34c759)',
+              borderRadius: '3px', transition: 'width 0.5s ease',
+            }} />
+          </div>
+          {/* 已完成的子阶段内容 */}
+          <ReportRenderer
+            markdown={activeContent}
+            evidenceItems={evidenceItems}
+            onEvidenceClick={(mdFile) => {
+              if (viewModeState !== 'md') viewModeDispatch('md')
+              const item = evidenceItems.find(i => i.mdFile === mdFile)
+              if (item) {
+                setSelectedEvidenceId(item.id)
+                loadEvidenceContent(item)
+              }
+            }}
+          />
+        </div>
+      )
+    }
+
     if (!activeContent) {
       const Icon = activeTabDef?.icon || FileText
       return (

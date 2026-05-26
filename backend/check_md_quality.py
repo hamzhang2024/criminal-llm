@@ -172,7 +172,7 @@ if __name__ == "__main__":
         print(f"乱码字符：{result['garbled_chars']} 个")
         print(f"建议：{result['suggestion']}")
         if result['need_ocr']:
-            print("\n⚠️ 建议启用 OCR 重新转换")
+            print("\n[WARN] 建议启用 OCR 重新转换")
     else:
         # 批量检查
         result = batch_check_quality(sys.argv[1:])

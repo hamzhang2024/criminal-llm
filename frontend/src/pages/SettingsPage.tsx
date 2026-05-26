@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, Check, Eye, EyeOff, Settings as SettingsIcon, RotateCw, Download } from 'lucide-react'
 import { MacOSTitlebar, MacOSCard } from '../components/MacOSLayout'
-import { API_BASE, getAuthEmail, clearToken, clearAuthEmail, getAppVersion, checkUpdate } from '../api'
+import { API_BASE, getAuthEmail, clearToken, clearAuthEmail, getAppVersion, checkUpdate, openUrl } from '../api'
 import { showAlert, showConfirm } from '../components/MacOSDialog'
 
 interface ConfigStatus {
@@ -88,7 +88,6 @@ export function SettingsPage() {
       const res = await fetch(`${API_BASE}/config`)
       const data = await res.json()
       setStatus(data)
-      // 填充表单：如果有已保存的值，填入
       const updates: Partial<ConfigForm> = {}
       if (data.mineru_token_value) updates.mineru_token = data.mineru_token_value
       if (data.llm_api_key_value) updates.llm_api_key = data.llm_api_key_value
@@ -97,7 +96,6 @@ export function SettingsPage() {
       if (data.evidence_concurrency) updates.evidence_concurrency = data.evidence_concurrency
       const loaded = { ...config, ...updates }
       setConfig(loaded)
-      // 记录初始快照，用于检测未保存的变更
       setInitialConfig(loaded)
     } catch (err) {
       console.error('加载配置状态失败:', err)
@@ -116,6 +114,7 @@ export function SettingsPage() {
 
     setSaving(true)
     try {
+      // 先保存主配置
       const res = await fetch(`${API_BASE}/config`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -576,11 +575,11 @@ export function SettingsPage() {
                 <input
                   type="number"
                   min={1}
-                  max={10}
+                  max={50}
                   value={config.evidence_concurrency}
                   onChange={e => {
                     const v = parseInt(e.target.value, 10)
-                    if (!isNaN(v) && v >= 1 && v <= 10) {
+                    if (!isNaN(v) && v >= 1 && v <= 50) {
                       setConfig(prev => ({ ...prev, evidence_concurrency: v }))
                     }
                   }}
@@ -591,7 +590,7 @@ export function SettingsPage() {
                   }}
                 />
                 <span style={{ fontSize: '12px', color: '#86868b' }}>
-                  范围 1-10，默认 3。并发过高可能导致 API 限流，建议 1-2
+                  范围 1-50，默认 3。过高可能导致 API 限流，建议 1-5
                 </span>
               </div>
             </div>

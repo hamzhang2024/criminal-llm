@@ -1,0 +1,117 @@
+name: Release Build
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag (e.g. v1.0.10)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.platform.os }} (${{ matrix.platform.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            tauri-args: ""
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            tauri-args: "--target x86_64-apple-darwin"
+          - os: macos-14
+            target: aarch64-apple-darwin
+            tauri-args: "--target aarch64-apple-darwin"
+
+    runs-on: ${{ matrix.platform.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # ---- Rust ----
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform.target }}
+
+      # ---- Node ----
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      # ---- Python (backend) ----
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      # ---- Frontend deps ----
+      - name: Install frontend deps
+        working-directory: frontend
+        run: |
+          npm install
+
+      # ---- Backend deps ----
+      - name: Install backend deps
+        run: |
+          pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      # ---- Build frontend ----
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+
+      # ---- Build backend ----
+      - name: Build backend
+        run: |
+          cd backend
+          python -m PyInstaller --noconfirm criminal-llm.spec
+
+      # ---- Copy backend build to Tauri resources ----
+      - name: Prepare backend resources
+        shell: bash
+        run: |
+          RES_DIR="frontend/src-tauri/resources/backend"
+          mkdir -p "$RES_DIR"
+          # Linux
+          if [ -d "backend/dist" ]; then
+            cp -r backend/dist/* "$RES_DIR/" 2>/dev/null || true
+          fi
+          # Windows
+          if [ -d "backend/dist" ]; then
+            cp -r backend/dist/* "$RES_DIR/" 2>/dev/null || true
+          fi
+
+      # ---- Tauri build ----
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: frontend/src-tauri
+          args: ${{ matrix.platform.tauri-args }}
+
+      # ---- Upload artifacts ----
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            frontend/src-tauri/target/${{ matrix.platform.target }}/release/bundle/**/*.exe
+            frontend/src-tauri/target/${{ matrix.platform.target }}/release/bundle/**/*.msi
+            frontend/src-tauri/target/${{ matrix.platform.target }}/release/bundle/**/*.dmg
+            frontend/src-tauri/target/${{ matrix.platform.target }}/release/bundle/**/*.app.tar.gz
+          draft: false
+          prerelease: false
+          generateReleaseNotes: true

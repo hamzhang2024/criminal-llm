@@ -232,7 +232,7 @@ async def scan_directory(request: ScanRequest):
             files_info.append(info.model_dump())
             total_size += info.size
         except Exception as e:
-            print(f"⚠️ 无法读取文件 {pdf}: {e}")
+            print(f"[WARN] 无法读取文件 {pdf}: {e}")
     
     # 格式化总大小
     if total_size > 1024 * 1024 * 1024:
@@ -409,7 +409,7 @@ async def start_process(request: ProcessRequest):
         except Exception as e:
             # 记录异常，标记任务为失败
             import traceback
-            print(f"❌ 任务 {task_id} 异常: {e}\n{traceback.format_exc()}")
+            print(f"[ERROR] 任务 {task_id} 异常: {e}\n{traceback.format_exc()}")
             tasks[task_id]["status"] = "failed"
             tasks[task_id]["error"] = str(e)[:500]
             tasks[task_id]["completed_at"] = datetime.now().isoformat()

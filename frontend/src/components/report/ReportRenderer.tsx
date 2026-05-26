@@ -113,17 +113,6 @@ export function ReportRenderer({ markdown, evidenceItems, onEvidenceClick }: Rep
   const onClickRef = useRef(onEvidenceClick)
   onClickRef.current = onEvidenceClick
 
-  // 构建证据编号 → 文件映射
-  const evidenceNumMap = useMemo(() => {
-    if (!evidenceItems || evidenceItems.length === 0) return {}
-    const map: Record<number, { id: string; mdFile: string }> = {}
-    for (const item of evidenceItems) {
-      const m = item.mdFile.match(/^(\d+)_/)
-      if (m) map[parseInt(m[1])] = item
-    }
-    return map
-  }, [evidenceItems])
-
   // 点击事件委托
   useEffect(() => {
     const el = contentRef.current
@@ -274,7 +263,7 @@ export function ReportRenderer({ markdown, evidenceItems, onEvidenceClick }: Rep
 
         if (!segment.content.trim()) return null
         const html = marked.parse(segment.content, { async: false }) as string
-        const processed = processEvidenceLinks(html, evidenceNumMap)
+        const processed = processEvidenceLinks(html, evidenceItems || [])
 
         return (
           <div
@@ -321,13 +310,43 @@ export function ReportRenderer({ markdown, evidenceItems, onEvidenceClick }: Rep
   )
 }
 
-// 处理证据链接（独立函数，避免嵌套 useMemo）
-function processEvidenceLinks(html: string, evidenceNumMap: Record<number, { id: string; mdFile: string }>): string {
-  if (!html || Object.keys(evidenceNumMap).length === 0) return html
-  return html.replace(/证据(\d{1,4})/g, (match, num) => {
-    const n = parseInt(num)
-    const ev = evidenceNumMap[n]
-    if (!ev) return match
-    return `<a class="evidence-link" data-mdfile="${ev.mdFile}">${match}</a>`
-  })
+// 处理证据链接：支持名称匹配（如"张某某讯问笔录"）和编号匹配（如"证据1"）
+function processEvidenceLinks(html: string, evidenceItems: Array<{ id: string; mdFile: string }>): string {
+  if (!html || evidenceItems.length === 0) return html
+
+  // 先按名称匹配：证据名按长度降序，先匹配长的避免子串误匹配
+  const sortedByName = [...evidenceItems].sort((a, b) => b.mdFile.length - a.mdFile.length)
+
+  for (const item of sortedByName) {
+    const name = item.mdFile.replace(/\.md$/, '')
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const regex = new RegExp(escaped, 'g')
+    html = html.replace(regex, `<a class="evidence-link" data-mdfile="${item.mdFile}">${name}</a>`)
+  }
+
+  // 再按编号匹配：仅匹配尚未被名称匹配包裹的 "证据N"
+  // 跳过已有名称匹配的项（避免重复包裹）
+  const numMap: Record<number, { id: string; mdFile: string }> = {}
+  const matchedMdFiles = new Set(sortedByName.map(i => i.mdFile))
+  for (const item of evidenceItems) {
+    const m = item.mdFile.match(/^(\d+)_/)
+    if (m && !matchedMdFiles.has(item.mdFile)) {
+      numMap[parseInt(m[1])] = item
+    }
+  }
+
+  if (Object.keys(numMap).length > 0) {
+    // 只匹配 HTML 标签之间的纯文本中的 "证据N"
+    // 分段处理：以 < 为分隔，只在 > 和 < 之间的文本中替换
+    html = html.replace(/(?<=>)([^<]*?)(?=<)/g, (textMatch) => {
+      return textMatch.replace(/证据(\d{1,4})/g, (m, num) => {
+        const n = parseInt(num)
+        const ev = numMap[n]
+        if (!ev) return m
+        return `<a class="evidence-link" data-mdfile="${ev.mdFile}">${m}</a>`
+      })
+    })
+  }
+
+  return html
 }
