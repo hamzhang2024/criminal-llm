@@ -613,7 +613,7 @@ pub fn run() {
     .on_window_event(|window, event| {
       if let tauri::WindowEvent::CloseRequested { api, .. } = event {
         // 阻止默认关闭行为
-        api.prevent_default();
+        api.prevent_close();
         // 通知前端弹出确认对话框
         let _ = window.emit("close-requested", ());
       }
