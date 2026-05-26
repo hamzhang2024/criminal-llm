@@ -6,9 +6,12 @@ LLM 客户端 - 支持多种 LLM 提供商
 import asyncio
 import httpx
 import sys
+import logging
 import time
 from pathlib import Path
 from typing import Optional, Dict, Any, List
+
+logger = logging.getLogger(__name__)
 
 # 打包后 certifi 证书路径可能失效，macOS 用系统证书
 if sys.platform == "darwin" and getattr(sys, "frozen", False):
@@ -77,9 +80,9 @@ class LLMClient:
         self._cache_miss_tokens = 0
         self._total_requests = 0
 
-        print(f"[LLM 客户端] baseUrl: {base_url}")
-        print(f"[LLM 客户端] model: {default_model}")
-        print(f"[LLM 客户端] apiKey: {'已配置' if api_key else '未配置'}")
+        logger.info("[LLM 客户端] baseUrl: %s", base_url)
+        logger.info("[LLM 客户端] model: %s", default_model)
+        logger.info("[LLM 客户端] apiKey: %s", '已配置' if api_key else '未配置')
 
     def reload_config(self):
         """重新读取配置"""
@@ -87,7 +90,7 @@ class LLMClient:
         self.base_url = base_url
         self.api_key = api_key
         self.model = default_model
-        print(f"[LLM 客户端] 配置已重载 baseUrl: {base_url}, model: {default_model}")
+        logger.info("[LLM 客户端] 配置已重载 baseUrl: %s, model: %s", base_url, default_model)
 
     def get_cache_stats(self) -> dict:
         """获取缓存命中率统计"""
@@ -129,7 +132,7 @@ class LLMClient:
             "Authorization": f"Bearer {self.api_key}"
         }
 
-        print(f"[LLM 请求] url={url}, model={payload['model']}, messages={len(messages)}")
+        logger.info("[LLM 请求] url=%s, model=%s, messages=%d", url, payload['model'], len(messages))
 
         # 重试 2 次，指数退避
         last_error = None
@@ -142,7 +145,7 @@ class LLMClient:
                     while True:
                         await asyncio.sleep(30)
                         elapsed = time.time() - req_start
-                        print(f"[LLM 请求] 等待响应... {elapsed:.0f}s")
+                        logger.info("[LLM 请求] 等待响应... %.0fs", elapsed)
 
                 tick = asyncio.create_task(progress_tick())
                 try:
@@ -156,7 +159,7 @@ class LLMClient:
                 data = response.json()
 
                 if "choices" in data and len(data["choices"]) > 0:
-                    print(f"[LLM 请求] 成功，耗时 {latency_ms/1000:.1f}s")
+                    logger.info("[LLM 请求] 成功，耗时 %.1fs", latency_ms/1000)
 
                     # 缓存命中率统计
                     usage = data.get("usage", {})
@@ -170,7 +173,7 @@ class LLMClient:
                         hit_rate = (hit / total * 100) if total > 0 else 0
                         overall_total = self._cache_hit_tokens + self._cache_miss_tokens
                         overall_rate = (self._cache_hit_tokens / overall_total * 100) if overall_total > 0 else 0
-                        print(f"[LLM 缓存] 本次命中: {hit}/{total} tokens ({hit_rate:.0f}%), 累计: {self._cache_hit_tokens}/{overall_total} ({overall_rate:.0f}%), 共 {self._total_requests} 次请求")
+                        logger.info("[LLM 缓存] 本次命中: %d/%d tokens (%.0f%%), 累计: %d/%d (%.0f%%), 共 %d 次请求", hit, total, hit_rate, self._cache_hit_tokens, overall_total, overall_rate, self._total_requests)
 
                     return data["choices"][0]["message"]["content"]
 
@@ -179,7 +182,7 @@ class LLMClient:
                 last_error = e
                 import asyncio
                 wait = 5 * (attempt + 1)  # 5s, 10s, 15s, 20s, 25s
-                print(f"[LLM 超时] 第 {attempt+1}/3 次重试，等待 {wait}s...")
+                logger.info("[LLM 超时] 第 %d/3 次重试，等待 %ds...", attempt+1, wait)
                 await asyncio.sleep(wait)
             except httpx.HTTPStatusError as e:
                 error_body = e.response.text[:500] if e.response else "无响应内容"
