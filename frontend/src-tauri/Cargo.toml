@@ -25,8 +25,12 @@ tauri = { version = "2.11.0", features = [] }
 tauri-plugin-log = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-shell = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-notification = "2"
 reqwest = { version = "0.12", features = ["json", "blocking"] }
 tokio = { version = "1", features = ["full"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+chrono = { version = "0.4", features = ["serde"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
