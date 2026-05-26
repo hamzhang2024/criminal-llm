@@ -1289,10 +1289,35 @@ async def _do_extract_evidence(
                         task["current_file"] = md_file.name
                         task["llm_waiting"] = True
 
+                    # 心跳：LLM 等待期间每 30 秒更新进度，避免卡死检测误杀
+                    heartbeat_cancelled = False
+
+                    async def heartbeat():
+                        nonlocal heartbeat_cancelled
+                        while not heartbeat_cancelled:
+                            await asyncio.sleep(30)
+                            if not heartbeat_cancelled:
+                                t = EXTRACT_TASKS.get(case_id)
+                                if t:
+                                    t["llm_waiting"] = True
+                                # 更新 last_progress_time（外部变量）
+                                nonlocal last_progress_time
+                                last_progress_time = time.time()
+
+                    heartbeat_task = asyncio.create_task(heartbeat())
+
                     print(f"[证据提取] 处理: {md_file.name}")
                     source_name, evidence_list = await _extract_single_file_with_tracking(
                         md_file, md_text, file_temp_dir, semaphore
                     )
+
+                    # 停止心跳
+                    heartbeat_cancelled = True
+                    heartbeat_task.cancel()
+                    try:
+                        await heartbeat_task
+                    except (asyncio.CancelledError, Exception):
+                        pass
 
                     # LLM 调用成功，立即更新心跳（细粒度心跳）
                     last_progress_time = time.time()
@@ -1336,7 +1361,7 @@ async def _do_extract_evidence(
 
             # 卡死检测监视器：如果超过 N 秒没有任何文件完成，发出警告
             last_progress_time = time.time()
-            stall_threshold = 180  # 3 分钟无进展视为可能卡死（配合 10 秒轮询）
+            stall_threshold = 600  # 10 分钟无进展视为可能卡死（大文件 LLM 可能需要 5-8 分钟）
 
             async def stall_detector():
                 """检测长时间无进展，自动取消任务"""
