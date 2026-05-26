@@ -25,6 +25,11 @@ backend/*.spec
 # Output
 output/
 
+# Installers
+*.dmg
+*.msi
+*.exe
+
 # Data (keep cases symlink only)
 data/cache/
 data/uploads/
