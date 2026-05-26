@@ -14,6 +14,9 @@ httpx
 # 工具
 python-dotenv
 
+# 打包
+PyInstaller
+
 # 注意：
 # - Pillow 使用系统安装的版本
 # - 移除 pydantic，使用 FastAPI 内置的类型验证

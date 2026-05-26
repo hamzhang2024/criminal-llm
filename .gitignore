@@ -20,6 +20,7 @@ frontend/src-tauri/resources/
 backend/build/
 backend/dist/
 backend/*.spec
+!backend/criminal-llm.spec
 
 # Output
 output/
