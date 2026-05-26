@@ -130,8 +130,9 @@ function App() {
         variant: 'warning',
       })
       if (confirmed) {
-        // 使用 destroy() 直接关闭窗口，避免再次触发 CloseRequested 事件
-        getCurrentWindow().destroy()
+        // 调用 Rust 端的 force_quit 命令，直接退出进程
+        const { invoke } = await import('@tauri-apps/api/core')
+        invoke('force_quit')
       }
     })
     return () => { unlisten.then(fn => fn()) }
