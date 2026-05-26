@@ -467,6 +467,33 @@ async fn auth_verify(token: String, client: State<'_, BackendClient>) -> Result<
   })
 }
 
+/// 强制退出应用（确认关闭时使用，绕过 prevent_close）
+#[tauri::command]
+fn force_quit(app: tauri::AppHandle) {
+  // 先杀后端进程
+  let pid_state = app.state::<BackendPid>();
+  let maybe_pid = pid_state.0.lock().unwrap().take();
+  if let Some(pid) = maybe_pid {
+    #[cfg(windows)]
+    {
+      let _ = std::process::Command::new("taskkill")
+        .args(["/F", "/T", "/PID", &pid.to_string()])
+        .output();
+    }
+    #[cfg(unix)]
+    unsafe {
+      libc::kill(-(pid as i32), libc::SIGKILL);
+      libc::kill(pid as i32, libc::SIGKILL);
+    }
+  }
+  // 停止 caffeinate
+  let caff_state = app.state::<CaffeinateProcess>();
+  if let Some(caff_pid) = *caff_state.0.lock().unwrap() {
+    stop_caffeinate(caff_pid);
+  }
+  app.exit(0);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
@@ -489,6 +516,7 @@ pub fn run() {
       open_file,
       open_url,
       convert_to_md,
+      force_quit,
       extract_evidence,
       get_extract_status,
       stop_extract,
