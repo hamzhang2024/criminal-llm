@@ -981,17 +981,17 @@ export function CaseDetailPage() {
           // 'pending' / 'interrupted' 继续轮询
         } catch (pollErr) {
           clearInterval(pollInterval)
-          throw pollErr
+          setProcessing(false)
+          setError('转换过程出错，请刷新页面后重试')
+          return
         }
       }, 2000)
 
       // 15 分钟超时自动停止轮询（后端 MinerU 转换超时为 1 小时）
       setTimeout(() => {
         clearInterval(pollInterval)
-        if (processing) {
-          setProgress('⚠️ 转换超时，任务可能仍在后台运行，请稍后刷新页面查看结果')
-          setProcessing(false)
-        }
+        setProcessing(false)
+        setProgress('⚠️ 转换超时，任务可能仍在后台运行，请稍后刷新页面查看结果')
       }, 900000)
 
     } catch (err) {
