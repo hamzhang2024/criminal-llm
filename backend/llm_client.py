@@ -5,9 +5,16 @@ LLM 客户端 - 支持多种 LLM 提供商
 """
 import asyncio
 import httpx
+import sys
 import time
 from pathlib import Path
 from typing import Optional, Dict, Any, List
+
+# 打包后 certifi 证书路径可能失效，macOS 用系统证书
+if sys.platform == "darwin" and getattr(sys, "frozen", False):
+    _SSL_VERIFY = "/etc/ssl/cert.pem"
+else:
+    _SSL_VERIFY = True
 
 # 导入法律知识库
 try:
@@ -63,7 +70,7 @@ class LLMClient:
         self.api_key = api_key
         self.model = default_model
         self.timeout = 600.0
-        self.client = httpx.AsyncClient(timeout=self.timeout)
+        self.client = httpx.AsyncClient(timeout=self.timeout, verify=_SSL_VERIFY)
 
         # 缓存命中率统计（会话级别累计）
         self._cache_hit_tokens = 0

@@ -21,6 +21,13 @@ from typing import Optional, Tuple, List, Dict
 
 import requests
 
+# 打包后 certifi 证书路径可能失效，macOS 用系统证书
+import sys
+if sys.platform == "darwin" and getattr(sys, "frozen", False):
+    _SSL_VERIFY = "/etc/ssl/cert.pem"
+else:
+    _SSL_VERIFY = True
+
 # ═══════════════════════════════════════════════════════════
 # MinerU 配置
 # ═══════════════════════════════════════════════════════════
@@ -762,6 +769,7 @@ def _do_mineru_convert(
                 "parse_method": "auto",
             },
             timeout=30,
+            verify=_SSL_VERIFY,
         )
         result = resp.json()
         if result.get("code") != 0:
@@ -777,7 +785,7 @@ def _do_mineru_convert(
         if progress_cb:
             progress_cb("uploading", "正在发送文件...")
         with open(pdf_path, "rb") as f:
-            r = requests.put(upload_url, data=f.read(), timeout=120)
+            r = requests.put(upload_url, data=f.read(), timeout=120, verify=_SSL_VERIFY)
         if r.status_code not in (200, 203):
             print(f"[MinerU] 上传失败: {pdf_path.name}, HTTP {r.status_code}")
             return None, None
@@ -791,6 +799,7 @@ def _do_mineru_convert(
                 f"{MINERU_API}/extract-results/batch/{batch_id}",
                 headers={"Authorization": f"Bearer {token}"},
                 timeout=30,
+                verify=_SSL_VERIFY,
             )
             data = r.json().get("data", {})
             results = data.get("extract_result", [])
@@ -812,7 +821,7 @@ def _do_mineru_convert(
                 temp_dir = output_dir / f"_tmp_mineru_{stem}"
                 temp_dir.mkdir(parents=True, exist_ok=True)
                 zip_path = temp_dir / f"{stem}.zip"
-                zip_path.write_bytes(requests.get(results[0]["full_zip_url"], timeout=120).content)
+                zip_path.write_bytes(requests.get(results[0]["full_zip_url"], timeout=120, verify=_SSL_VERIFY).content)
                 with zipfile.ZipFile(zip_path) as zf:
                     zf.extractall(temp_dir)
                 zip_path.unlink()
