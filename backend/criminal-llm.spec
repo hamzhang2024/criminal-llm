@@ -1,0 +1,112 @@
+# -*- mode: python ; coding: utf-8 -*-
+from PyInstaller.utils.hooks import collect_all
+
+datas = [('legal_db', 'legal_db')]
+binaries = []
+
+# 收集所有主要依赖
+tmp_pymupdf = collect_all('PyMuPDF')
+datas += tmp_pymupdf[0]; binaries += tmp_pymupdf[1]
+
+tmp_pil = collect_all('PIL')
+datas += tmp_pil[0]; binaries += tmp_pil[1]
+
+tmp_pdf2image = collect_all('pdf2image')
+datas += tmp_pdf2image[0]; binaries += tmp_pdf2image[1]
+
+hiddenimports = [
+    # 主要依赖
+    '_bootstrap',
+    'requests',
+    'fastapi',
+    'fastapi.routing',
+    'fastapi.dependencies.utils',
+    'starlette',
+    'starlette.routing',
+    'starlette.applications',
+    'starlette.middleware',
+    'starlette.middleware.cors',
+    'starlette.staticfiles',
+    'starlette.responses',
+    'starlette.requests',
+    'starlette.endpoints',
+    'uvicorn',
+    'uvicorn.logging',
+    'uvicorn.loops',
+    'uvicorn.loops.auto',
+    'uvicorn.protocols',
+    'uvicorn.protocols.http',
+    'uvicorn.protocols.http.auto',
+    'uvicorn.protocols.websockets',
+    'uvicorn.protocols.websockets.auto',
+    'uvicorn.lifespan',
+    'uvicorn.lifespan.on',
+    'python_multipart',
+    'pydantic',
+    'pydantic.networks',
+    'httpx',
+    'dotenv',
+    'fitz',
+    'pdf2image',
+    'PIL',
+    'pypdf',
+    'PIL.Image',
+    # requests 子模块
+    'requests.adapters',
+    'requests.auth',
+    'requests.models',
+    'requests.sessions',
+    'requests.status_codes',
+    'requests.utils',
+    # urllib3 (requests 依赖)
+    'urllib3',
+    'urllib3.util',
+    'urllib3.util.retry',
+    'urllib3.poolmanager',
+    # charset_normalizer / idna / certifi (requests 依赖)
+    'charset_normalizer',
+    'idna',
+    'certifi',
+    # annotated_types (pydantic 依赖)
+    'annotated_types',
+    'pydantic_core',
+    'pydantic_core.core_schema',
+    'typing_inspection',
+]
+
+
+a = Analysis(
+    ['main.py'],
+    pathex=[],
+    binaries=binaries,
+    datas=datas,
+    hiddenimports=hiddenimports,
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[],
+    excludes=[],
+    noarchive=False,
+    optimize=0,
+)
+pyz = PYZ(a.pure)
+
+exe = EXE(
+    pyz,
+    a.scripts,
+    a.binaries,
+    a.datas,
+    [],
+    name='criminal-llm',
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    runtime_tmpdir=None,
+    console=False,
+    disable_windowed_traceback=False,
+    argv_emulation=False,
+    target_arch=None,
+    codesign_identity=None,
+    entitlements_file=None,
+)
