@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
-use tauri::{Manager, State, WebviewWindowBuilder, WebviewUrl, Emitter};
+use tauri::{Emitter, Manager, State, WebviewWindowBuilder, WebviewUrl};
 use reqwest::Client;
 use serde_json;
 use serde::Serialize;
