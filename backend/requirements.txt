@@ -10,6 +10,7 @@ PyMuPDF  # PDF 文本提取
 
 # HTTP 客户端
 httpx
+requests
 
 # 工具
 python-dotenv
