@@ -130,7 +130,8 @@ function App() {
         variant: 'warning',
       })
       if (confirmed) {
-        getCurrentWindow().close()
+        // 使用 destroy() 直接关闭窗口，避免再次触发 CloseRequested 事件
+        getCurrentWindow().destroy()
       }
     })
     return () => { unlisten.then(fn => fn()) }
