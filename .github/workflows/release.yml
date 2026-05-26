@@ -108,10 +108,10 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         with:
           files: |
-            frontend/src-tauri/target/${{ matrix.platform.target }}/release/bundle/**/*.exe
-            frontend/src-tauri/target/${{ matrix.platform.target }}/release/bundle/**/*.msi
-            frontend/src-tauri/target/${{ matrix.platform.target }}/release/bundle/**/*.dmg
-            frontend/src-tauri/target/${{ matrix.platform.target }}/release/bundle/**/*.app.tar.gz
+            frontend/src-tauri/target/**/release/bundle/**/*.exe
+            frontend/src-tauri/target/**/release/bundle/**/*.msi
+            frontend/src-tauri/target/**/release/bundle/**/*.dmg
+            frontend/src-tauri/target/**/release/bundle/**/*.app.tar.gz
           draft: false
           prerelease: false
           generateReleaseNotes: true
