@@ -589,7 +589,7 @@ export async function extractEvidence(caseId: string): Promise<any> {
 export async function stopExtractEvidence(caseId: string) {
   _extractController?.abort()
   if (isTauri()) {
-    await tauriInvoke('stop_extract', { case_id: caseId }).catch(() => {})
+    await tauriInvoke('stop_extract', { caseId }).catch(() => {})
   } else {
     try {
       await fetch(`${API_BASE}/cases/${caseId}/stop-extract`, { method: 'POST' })

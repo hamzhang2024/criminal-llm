@@ -1,6 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "刑事案卷分析系统",
+  "productName": "Criminal-Case-Analyzer",
   "version": "1.0.9",
   "identifier": "com.criminal-pdf.app",
   "build": {

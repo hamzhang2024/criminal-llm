@@ -1,0 +1,42 @@
+{
+  "convert_case_bef5ffe9": {
+    "case_id": "case_bef5ffe9",
+    "status": "completed",
+    "total": 4,
+    "current": 4,
+    "current_file": "第3卷 高为峰开设赌场案电子数据_去水印.pdf",
+    "message": "完成: 4/4 个文件转换成功",
+    "started_at": "2026-05-22T22:48:50.409210",
+    "updated_at": "2026-05-22T23:26:02.841593",
+    "results": [
+      {
+        "file": "第1卷 高为峰开设赌场案_去水印.pdf",
+        "success": true,
+        "md_name": "第1卷 高为峰开设赌场案_去水印.md",
+        "md_size": 54848,
+        "error": null
+      },
+      {
+        "file": "第1卷 高为峰开设赌场案发破案与起诉意见书_去水印.pdf",
+        "success": true,
+        "md_name": "第1卷 高为峰开设赌场案发破案与起诉意见书_去水印.md",
+        "md_size": 56323,
+        "error": null
+      },
+      {
+        "file": "第2卷 高为峰开设赌场案嫌疑人供述_去水印.pdf",
+        "success": true,
+        "md_name": "第2卷 高为峰开设赌场案嫌疑人供述_去水印.md",
+        "md_size": 306242,
+        "skipped": true
+      },
+      {
+        "file": "第3卷 高为峰开设赌场案电子数据_去水印.pdf",
+        "success": true,
+        "md_name": "第3卷 高为峰开设赌场案电子数据_去水印.md",
+        "md_size": 214891,
+        "skipped": true
+      }
+    ]
+  }
+}

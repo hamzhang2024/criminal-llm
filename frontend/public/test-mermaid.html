@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Mermaid Test</title>
+  <style>
+    body { font-family: sans-serif; padding: 20px; }
+    #container { margin-top: 20px; }
+    .log { font-family: monospace; font-size: 12px; margin: 2px 0; color: #333; }
+    .error { color: red; }
+  </style>
+  <script type="importmap">
+  {
+    "imports": {
+      "mermaid": "/@fs/Users/zhanghan/.openclaw/workspace/criminal-llm/frontend/node_modules/mermaid/dist/mermaid.js"
+    }
+  }
+  </script>
+</head>
+<body>
+  <h2>Mermaid v11 渲染测试</h2>
+  <div id="container"></div>
+  <div id="log"></div>
+  <script type="module">
+    import mermaid from 'mermaid';
+    
+    const log = (msg, isError = false) => {
+      const div = document.createElement('div');
+      div.className = 'log' + (isError ? ' error' : '');
+      div.textContent = msg;
+      document.getElementById('log').appendChild(div);
+    };
+    
+    (async () => {
+      try {
+        mermaid.initialize({ startOnLoad: false, securityLevel: 'loose' });
+        log('mermaid initialized');
+        
+        const code = `graph LR
+    subgraph Core
+        A[Person1]
+    end
+    subgraph Others
+        B[Person2]
+        C[Person3]
+    end
+    A -- "test" --> B
+    A --> C`;
+        
+        log('Code length: ' + code.length);
+        
+        const result = await mermaid.render('test1', code);
+        log('SUCCESS! SVG length: ' + result.svg.length);
+        document.getElementById('container').innerHTML = result.svg;
+      } catch(e) {
+        log('ERROR: ' + e.message, true);
+        log('Stack: ' + e.stack, true);
+      }
+    })();
+  </script>
+</body>
+</html>

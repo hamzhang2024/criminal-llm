@@ -15,6 +15,7 @@
   "shell": {
     "scope": [
       { "name": "backend", "cmd": "**/criminal-llm", "args": true },
+      { "name": "backend-exe", "cmd": "**/criminal-llm.exe", "args": true },
       { "name": "open", "cmd": "open", "args": true }
     ]
   }

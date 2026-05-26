@@ -233,17 +233,35 @@ async fn chat_analysis(
 /// 打开文件（macOS）
 #[tauri::command]
 fn open_file(file_path: String) -> Result<bool, String> {
-  std::process::Command::new("open")
-    .arg(&file_path)
-    .output()
-    .map_err(|e| format!("无法打开文件: {}", e))?;
+  #[cfg(target_os = "macos")]
+  {
+    std::process::Command::new("open")
+      .arg(&file_path)
+      .output()
+      .map_err(|e| format!("无法打开文件: {}", e))?;
+  }
+  #[cfg(target_os = "windows")]
+  {
+    std::process::Command::new("explorer")
+      .arg("/select,")
+      .arg(&file_path)
+      .output()
+      .map_err(|e| format!("无法打开文件: {}", e))?;
+  }
   Ok(true)
 }
 
-/// 打开 URL（macOS）
+/// 打开 URL（跨平台）
 #[tauri::command]
 fn open_url(url: String) -> Result<bool, String> {
-  std::process::Command::new("open")
+  #[cfg(target_os = "macos")]
+  let cmd = "open";
+  #[cfg(target_os = "windows")]
+  let cmd = "explorer";
+  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+  let cmd = "xdg-open";
+
+  std::process::Command::new(cmd)
     .arg(&url)
     .output()
     .map_err(|e| format!("无法打开链接: {}", e))?;
@@ -275,48 +293,6 @@ async fn delete_case(case_id: String, client: State<'_, BackendClient>) -> Resul
   let body: serde_json::Value = resp.json().await
     .map_err(|e| format!("解析失败: {}", e))?;
   Ok(body)
-}
-
-/// 认证：登录
-#[derive(Serialize)]
-struct AuthResponse {
-  success: bool,
-  token: Option<String>,
-  email: Option<String>,
-  error: Option<String>,
-}
-
-#[tauri::command]
-async fn auth_login(email: String, password: String, client: State<'_, BackendClient>) -> Result<AuthResponse, String> {
-  let resp = client.0.post(format!("{}/api/login", AUTH_SERVER_URL))
-    .json(&serde_json::json!({ "email": email, "password": password }))
-    .send().await
-    .map_err(|e| format!("网络错误: {}", e))?;
-  let body: serde_json::Value = resp.json().await
-    .map_err(|e| format!("解析失败: {}", e))?;
-  Ok(AuthResponse {
-    success: body.get("success").and_then(|v| v.as_bool()).unwrap_or(false),
-    token: body.get("token").and_then(|v| v.as_str()).map(|s| s.to_string()),
-    email: body.get("email").and_then(|v| v.as_str()).map(|s| s.to_string()),
-    error: body.get("detail").and_then(|v| v.as_str()).map(|s| s.to_string()),
-  })
-}
-
-/// 认证：注册
-#[tauri::command]
-async fn auth_register(email: String, password: String, client: State<'_, BackendClient>) -> Result<AuthResponse, String> {
-  let resp = client.0.post(format!("{}/api/register", AUTH_SERVER_URL))
-    .json(&serde_json::json!({ "email": email, "password": password }))
-    .send().await
-    .map_err(|e| format!("网络错误: {}", e))?;
-  let body: serde_json::Value = resp.json().await
-    .map_err(|e| format!("解析失败: {}", e))?;
-  Ok(AuthResponse {
-    success: body.get("success").and_then(|v| v.as_bool()).unwrap_or(false),
-    token: None,
-    email: None,
-    error: body.get("detail").and_then(|v| v.as_str()).map(|s| s.to_string()),
-  })
 }
 
 /// 证据提取
@@ -380,6 +356,48 @@ async fn get_evidence_index(
   let body: serde_json::Value = resp.json().await
     .map_err(|e| format!("解析失败: {}", e))?;
   Ok(body)
+}
+
+/// 认证：重置密码
+#[derive(Serialize)]
+struct AuthResponse {
+  success: bool,
+  token: Option<String>,
+  email: Option<String>,
+  error: Option<String>,
+}
+
+#[tauri::command]
+async fn auth_login(email: String, password: String, client: State<'_, BackendClient>) -> Result<AuthResponse, String> {
+  let resp = client.0.post(format!("{}/api/login", AUTH_SERVER_URL))
+    .json(&serde_json::json!({ "email": email, "password": password }))
+    .send().await
+    .map_err(|e| format!("网络错误: {}", e))?;
+  let body: serde_json::Value = resp.json().await
+    .map_err(|e| format!("解析失败: {}", e))?;
+  Ok(AuthResponse {
+    success: body.get("success").and_then(|v| v.as_bool()).unwrap_or(false),
+    token: body.get("token").and_then(|v| v.as_str()).map(|s| s.to_string()),
+    email: body.get("email").and_then(|v| v.as_str()).map(|s| s.to_string()),
+    error: body.get("detail").and_then(|v| v.as_str()).map(|s| s.to_string()),
+  })
+}
+
+/// 认证：注册
+#[tauri::command]
+async fn auth_register(email: String, password: String, client: State<'_, BackendClient>) -> Result<AuthResponse, String> {
+  let resp = client.0.post(format!("{}/api/register", AUTH_SERVER_URL))
+    .json(&serde_json::json!({ "email": email, "password": password }))
+    .send().await
+    .map_err(|e| format!("网络错误: {}", e))?;
+  let body: serde_json::Value = resp.json().await
+    .map_err(|e| format!("解析失败: {}", e))?;
+  Ok(AuthResponse {
+    success: body.get("success").and_then(|v| v.as_bool()).unwrap_or(false),
+    token: None,
+    email: None,
+    error: body.get("detail").and_then(|v| v.as_str()).map(|s| s.to_string()),
+  })
 }
 
 /// 认证：重置密码
@@ -454,7 +472,6 @@ pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_fs::init())
     .plugin(tauri_plugin_shell::init())
-    .plugin(tauri_plugin_dialog::init())
     .manage(BackendClient(Client::new()))
     .manage(BackendPid(Mutex::new(None)))
     .manage(CaffeinateProcess(Mutex::new(start_caffeinate())))
@@ -508,31 +525,23 @@ pub fn run() {
         if !backend_exe.exists() {
           eprintln!("警告: 后端可执行文件不存在: {:?}", backend_exe);
         } else {
-          eprintln!("🚀 启动后端: {:?}", backend_exe);
+          eprintln!("[START] 启动后端: {:?}", backend_exe);
 
-          // 使用 std::process::Command 启动后端
-          // 设置数据目录环境变量，确保后端使用正确的路径
-          let home = app.path().home_dir()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|_| std::env::var("HOME")
-              .or_else(|_| std::env::var("USERPROFILE"))
-              .unwrap_or_default());
-          #[cfg(target_os = "macos")]
-          let data_dir = format!("{}/Documents/.criminal-llm-data", home);
-          #[cfg(not(target_os = "macos"))]
-          let data_dir = format!("{}/AppData/Roaming/criminal-llm-data", home);
+          // 数据目录：Python 后端会根据平台自动判断
+          // Windows: resources/backend/data/
+          // macOS:   ~/Documents/.criminal-llm-data/
+          let mut cmd = std::process::Command::new(&backend_exe);
 
-          let child = std::process::Command::new(&backend_exe)
-            .env("CRIMINAL_LLM_DATA_DIR", &data_dir)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
+          // 重定向后端输出到日志文件，便于诊断启动失败问题
+          // 日志路径由后端自行决定
+          cmd.stdout(std::process::Stdio::null());
+          cmd.stderr(std::process::Stdio::null());
+
+          let child = cmd.spawn()
             .map_err(|e| format!("启动后端失败: {}", e))?;
 
-          eprintln!("📁 数据目录: {}", data_dir);
-
           let pid = child.id();
-          eprintln!("✅ 后端 PID: {}", pid);
+          eprintln!("[OK] 后端 PID: {}", pid);
 
           // 存储 PID 供后续清理
           let backend_pid = app.state::<BackendPid>();
@@ -546,12 +555,12 @@ pub fn run() {
 
           for i in 1..=30 {
             if client.get("http://localhost:8080/api/health").send().is_ok() {
-              eprintln!("✅ 后端已就绪（{}秒）", i);
+              eprintln!("[OK] 后端已就绪（{}秒）", i);
               break;
             }
             std::thread::sleep(std::time::Duration::from_millis(500));
             if i == 30 {
-              eprintln!("⚠️  后端启动超时（30秒）");
+              eprintln!("[WARN] 后端启动超时（30秒）");
             }
           }
         }
@@ -583,8 +592,17 @@ pub fn run() {
             return true;
           }
           // 外部链接用系统浏览器打开
-          if let Err(e) = std::process::Command::new("open").arg(url.as_str()).output() {
-            eprintln!("打开外部链接失败: {}", e);
+          #[cfg(target_os = "macos")]
+          {
+            if let Err(e) = std::process::Command::new("open").arg(url.as_str()).output() {
+              eprintln!("打开外部链接失败: {}", e);
+            }
+          }
+          #[cfg(target_os = "windows")]
+          {
+            if let Err(e) = std::process::Command::new("explorer").arg(url.as_str()).output() {
+              eprintln!("打开外部链接失败: {}", e);
+            }
           }
           false // 阻止在 webview 内导航
         })
@@ -613,7 +631,7 @@ fn kill_backend_process(window: &tauri::Window) {
   let pid_state = window.state::<BackendPid>();
   let maybe_pid = pid_state.0.lock().unwrap().take();
   if let Some(pid) = maybe_pid {
-    eprintln!("🛑 关闭后端 PID: {}", pid);
+    eprintln!("[STOP] 关闭后端 PID: {}", pid);
     #[cfg(unix)]
     unsafe {
       // 先杀整个进程组（包括子进程），再杀主进程
@@ -628,7 +646,7 @@ fn kill_backend_process(window: &tauri::Window) {
         .args(["/F", "/T", "/PID", &pid.to_string()])
         .output();
     }
-    eprintln!("✅ 后端已退出");
+    eprintln!("[OK] 后端已退出");
   }
 }
 
@@ -645,11 +663,11 @@ fn start_caffeinate() -> Option<u32> {
       .spawn();
     match child {
       Ok(c) => {
-        eprintln!("🔋 已阻止系统休眠（应用运行期间）");
+        eprintln!("[POWER] 已阻止系统休眠（应用运行期间）");
         Some(c.id())
       }
       Err(e) => {
-        eprintln!("⚠️ caffeinate 启动失败: {}", e);
+        eprintln!("[WARN] caffeinate 启动失败: {}", e);
         None
       }
     }
@@ -672,5 +690,5 @@ fn stop_caffeinate(pid: u32) {
       .args(["/F", "/PID", &pid.to_string()])
       .output();
   }
-  eprintln!("🔋 已恢复系统休眠");
+  eprintln!("[POWER] 已恢复系统休眠");
 }
