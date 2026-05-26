@@ -9,10 +9,17 @@
 
 import json
 import os
+import sys
 import httpx
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from datetime import datetime
+
+# 打包后 certifi 证书路径可能失效，macOS 用系统证书
+if sys.platform == "darwin" and getattr(sys, "frozen", False):
+    _SSL_VERIFY = "/etc/ssl/cert.pem"
+else:
+    _SSL_VERIFY = True
 
 # 用户自定义法律知识库目录
 from config import DATA_DIR
@@ -111,7 +118,7 @@ def search_laws_by_llm(crime_type: str, timeout: int = 120) -> str:
 
     try:
         print(f"[法律搜索] 正在搜索: {keyword}")
-        with httpx.Client(timeout=timeout) as client:
+        with httpx.Client(timeout=timeout, verify=_SSL_VERIFY) as client:
             resp = client.post(url, json=payload, headers=headers)
             resp.raise_for_status()
             data = resp.json()

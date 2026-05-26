@@ -7,8 +7,14 @@ import sys
 from pathlib import Path
 
 if sys.platform == "darwin":
-    # macOS: 文稿目录（隐藏）
-    DATA_DIR = Path.home() / "Documents" / ".criminal-llm-data"
+    # macOS
+    if getattr(sys, "frozen", False):
+        # 打包后：sys.executable → {app}.app/Contents/MacOS/{name}
+        # 上溯 2 级 → {app}.app/Contents
+        DATA_DIR = Path(sys.executable).resolve().parent.parent.parent / "data"
+    else:
+        # 开发模式：文稿目录（隐藏）
+        DATA_DIR = Path.home() / "Documents" / ".criminal-llm-data"
 elif sys.platform == "win32":
     if getattr(sys, "frozen", False):
         # 打包后：data/ 在安装目录下

@@ -149,10 +149,14 @@ async def test_config(body: Dict[str, Any]):
         if not token:
             return {"success": False, "error": "Token 不能为空"}
         try:
-            # 不使用 certifi，让 httpx 用系统默认证书（macOS 用钥匙串）
-            # 打包后的应用 certifi 证书包可能缺失，导致 SSL 验证失败
+            # 打包后 certifi 证书路径可能失效，macOS 用系统证书，Windows 用 certifi 内置
+            import sys
+            if sys.platform == "darwin" and getattr(sys, "frozen", False):
+                ssl_verify = "/etc/ssl/cert.pem"
+            else:
+                ssl_verify = True
             print(f"[MinerU验证] token长度={len(token)}, token前20字符={token[:20]}...")
-            async with httpx.AsyncClient(timeout=15) as client:
+            async with httpx.AsyncClient(timeout=15, verify=ssl_verify) as client:
                 resp = await client.post(
                     "https://mineru.net/api/v4/file-urls/batch",
                     headers={"Authorization": f"Bearer {token}"},
@@ -182,8 +186,13 @@ async def test_config(body: Dict[str, Any]):
         if not model:
             return {"success": False, "error": "模型名称不能为空"}
         try:
-            # 同上：不使用 certifi，用系统默认证书
-            async with httpx.AsyncClient(timeout=30) as client:
+            # 同上：打包后 macOS 用系统证书
+            import sys
+            if sys.platform == "darwin" and getattr(sys, "frozen", False):
+                ssl_verify = "/etc/ssl/cert.pem"
+            else:
+                ssl_verify = True
+            async with httpx.AsyncClient(timeout=30, verify=ssl_verify) as client:
                 resp = await client.post(
                     f"{base_url}/chat/completions",
                     headers={"Authorization": f"Bearer {api_key}"},
