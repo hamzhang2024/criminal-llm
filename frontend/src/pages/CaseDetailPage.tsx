@@ -126,6 +126,9 @@ export function CaseDetailPage() {
         if (data?.total_evidence > 0) {
           setEvidenceExtracted(true)
           setEvidenceList(data.evidence || [])
+        } else if (data?.error_hint) {
+          // 之前提取失败，显示错误提示
+          setError(data.error_hint)
         }
       })
       .catch(() => { /* 无证据 */ })
@@ -1063,7 +1066,9 @@ export function CaseDetailPage() {
               const totalEvidence = data.total_evidence || 0
               if (totalEvidence === 0) {
                 setEvidenceList([])
-                setError('证据提取未成功，请检查 LLM 配置或稍后重试')
+                // 优先使用后端返回的错误提示，否则显示通用错误
+                const errorHint = data.error_hint || '证据提取未成功，请检查 LLM 配置或稍后重试'
+                setError(errorHint)
                 setProgress('')
               } else {
                 setEvidenceList(data.evidence || [])

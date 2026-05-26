@@ -26,6 +26,7 @@ router = APIRouter(prefix="/api/cases", tags=["案件管理"])
 
 # 证据提取状态追踪（并发数从 config_manager 读取）
 # 结构: { case_id: { "status": "running", "total_files": N, "processed_files": N, "current_file": "xxx.md", "started_at": time.time() } }
+# 当提取失败时，额外记录 "error_detail" 字段，方便前端展示具体原因
 EXTRACT_TASKS: dict = {}
 
 from config import MAX_FILE_SIZE, DATA_DIR, UPLOAD_DIR as CONFIG_UPLOAD_DIR
@@ -967,10 +968,8 @@ async def _extract_single_file(
 
     result = await asyncio.wait_for(
         client.chat([
-            # system 消息：短角色定义（固定前缀的一部分）
-            {"role": "system", "content": _EVIDENCE_SYSTEM_PROMPT},
-            # assistant 消息：完整提取规则（固定前缀，每次请求完全相同）
-            {"role": "assistant", "content": _EVIDENCE_EXTRACTION_RULES},
+            # system 消息：角色定义 + 完整提取规则（合并为一条，避免 assistant role 兼容性问题）
+            {"role": "system", "content": _EVIDENCE_SYSTEM_PROMPT + "\n\n" + _EVIDENCE_EXTRACTION_RULES},
             # user 消息：文件名 + 文件内容（变化的部分，放在最后）
             {"role": "user", "content": f"## 案卷文件：{md_file.name}\n\n{md_text}"},
         ]),
@@ -978,6 +977,13 @@ async def _extract_single_file(
     )
 
     evidence_blocks = _parse_evidence_blocks(result, md_file.name)
+    # 调试：将 LLM 原始响应保存到 debug 文件，方便排查解析失败
+    debug_file = temp_dir / f"_debug_{md_file.stem}.txt"
+    try:
+        debug_file.write_text(f"=== LLM 返回 ({len(result)} 字符) ===\n\n{result}\n\n=== 解析结果 ({len(evidence_blocks)} 份证据) ===\n", encoding="utf-8")
+    except Exception:
+        pass
+    print(f"[证据提取] {md_file.name}: LLM 返回 {len(result)} 字符，解析为 {len(evidence_blocks)} 份证据")
 
     # 保存到临时目录，用临时编号（最终编号由合并阶段分配）
     evidence_list = []
@@ -1141,8 +1147,12 @@ async def _run_extract_background(case_id: str, case_path, md_dir, evidence_dir)
         print(f"[证据提取] 后台任务失败: {e}")
         import traceback
         traceback.print_exc()
+        # 记录错误详情到 EXTRACT_TASKS，让前端轮询能拿到
+        task = EXTRACT_TASKS.get(case_id)
+        if isinstance(task, dict):
+            task["status"] = "error"
+            task["error_detail"] = str(e)
         EXTRACT_TASKS.pop(case_id, None)
-        raise
 
 
 async def _do_extract_evidence(
@@ -1152,6 +1162,17 @@ async def _do_extract_evidence(
     evidence_dir: Path,
 ):
     """证据提取核心逻辑（从 extract_evidence 拆分，便于异常清理）"""
+    # 诊断：打印 LLM 配置和 MD 文件信息
+    from config_manager import load_config
+    cfg = load_config()
+    print(f"[证据提取] LLM 配置: baseUrl={cfg.get('llm_base_url', '')}, model={cfg.get('llm_model', '')}, apiKey={'已配置' if cfg.get('llm_api_key') else '未配置'}")
+    print(f"[证据提取] MD 目录: {md_dir}")
+    if md_dir.exists():
+        md_files = list(md_dir.glob("*.md"))
+        print(f"[证据提取] 找到 {len(md_files)} 个 MD 文件: {[f.name for f in md_files]}")
+    else:
+        print(f"[证据提取] MD 目录不存在！")
+
     # 读取已提取的证据索引（断点续传：跳过已提取的 MD 文件）
     index_file = evidence_dir / "index.json"
     processed_sources = set()
@@ -1364,10 +1385,28 @@ async def _do_extract_evidence(
             # 合并结果：已完成的文件 + 新提取的文件
             # 按 pending_files 原始顺序，保证证据编号跟随卷号顺序
             extracted = {}
+            success_count = 0
+            fail_count = 0
+            zero_count = 0
             for i, result in enumerate(gather_results):
                 if i < len(files_to_extract):
                     f = files_to_extract[i]
                     extracted[f.name] = result
+                    if isinstance(result, Exception):
+                        fail_count += 1
+                        print(f"[证据提取] {f.name}: 提取失败 — {result}")
+                    elif result is None:
+                        fail_count += 1
+                        print(f"[证据提取] {f.name}: 提取返回 None")
+                    else:
+                        source_name, ev_list = result
+                        if ev_list:
+                            success_count += 1
+                        else:
+                            zero_count += 1
+                            print(f"[证据提取] {f.name}: LLM 调用成功但返回 0 份证据（LLM 响应可能未按要求格式输出）")
+
+            print(f"[证据提取] 提取汇总：成功 {success_count} 个文件，失败 {fail_count} 个文件，0 份证据 {zero_count} 个文件")
 
             # ── 按原始文件顺序分配编号（保持卷号顺序）──
             for md_file in pending_files:
@@ -1529,12 +1568,16 @@ async def _do_extract_evidence(
                 task["processed_files"] = task.get("processed_files", 0) + 1
 
         # ── 最终保存 ──
-        index_file.write_text(json.dumps({
+        index_data = {
             "case_id": case_id,
             "total_evidence": len(all_evidence),
             "evidence": all_evidence,
             "generated_at": datetime.now().isoformat(),
-        }, ensure_ascii=False, indent=2), encoding="utf-8")
+        }
+        # 如果提取结果为 0，记录可能的原因供前端展示
+        if len(all_evidence) == 0:
+            index_data["error_hint"] = "LLM 提取全部失败（详见后端日志），可能原因：API Key 无效、Base URL 不可达、模型名称错误、或所有 MD 文件解析失败"
+        index_file.write_text(json.dumps(index_data, ensure_ascii=False, indent=2), encoding="utf-8")
 
         # 清理临时文件（无论走哪个分支都清理）
         old_temp = evidence_dir / "_temp_extract"
@@ -1609,9 +1652,9 @@ async def get_extract_status(case_id: str):
         return {"case_id": case_id, "status": "cancelled"}
     if task and isinstance(task, dict):
         elapsed = time.time() - task.get("started_at", time.time())
-        return {
+        result = {
             "case_id": case_id,
-            "status": "running",
+            "status": task.get("status", "running"),
             "total_files": task.get("total_files", 0),
             "processed_files": task.get("processed_files", 0),
             "current_file": task.get("current_file", ""),
@@ -1619,6 +1662,10 @@ async def get_extract_status(case_id: str):
             "llm_waiting": task.get("llm_waiting", False),
             "llm_latency_ms": task.get("llm_latency", 0),
         }
+        # 传递错误详情给前端
+        if task.get("error_detail"):
+            result["error_detail"] = task["error_detail"]
+        return result
     return {"case_id": case_id, "status": "idle"}
 
 
