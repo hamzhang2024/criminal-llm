@@ -9,10 +9,13 @@
 """
 from pathlib import Path
 import re
+import logging
 from datetime import datetime
 import shutil
 from typing import List, Dict, Optional
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 from fastapi import APIRouter, UploadFile, File, HTTPException, Request
 from fastapi.responses import JSONResponse
 import json
@@ -839,7 +842,7 @@ async def _process_indictment_single(md_file: Path, md_text: str, evidence_dir: 
 {result}
 """
     ev_md_file.write_text(content, encoding="utf-8")
-    print(f"[证据提取] 已保存{doc_type}完整记录: {ev_md_file.name}")
+    logger.info(f"[证据提取] 已保存{doc_type}完整记录: {ev_md_file.name}")
     return ev_md_file
 
 
@@ -963,7 +966,7 @@ async def _extract_single_file(
     # 截断超长文本（LLM 上下文限制）
     max_chars = 100000
     if len(md_text) > max_chars:
-        print(f"[证据提取] {md_file.name}: 文件过长（{len(md_text)} 字符），截断至 {max_chars} 字符，后续内容将被忽略")
+        logger.info(f"[证据提取] {md_file.name}: 文件过长（{len(md_text)} 字符），截断至 {max_chars} 字符，后续内容将被忽略")
         md_text = md_text[:max_chars]
 
     result = await asyncio.wait_for(
@@ -983,7 +986,7 @@ async def _extract_single_file(
         debug_file.write_text(f"=== LLM 返回 ({len(result)} 字符) ===\n\n{result}\n\n=== 解析结果 ({len(evidence_blocks)} 份证据) ===\n", encoding="utf-8")
     except Exception:
         pass
-    print(f"[证据提取] {md_file.name}: LLM 返回 {len(result)} 字符，解析为 {len(evidence_blocks)} 份证据")
+    logger.info(f"[证据提取] {md_file.name}: LLM 返回 {len(result)} 字符，解析为 {len(evidence_blocks)} 份证据")
 
     # 保存到临时目录，用临时编号（最终编号由合并阶段分配）
     evidence_list = []
@@ -1042,7 +1045,7 @@ async def _extract_single_file(
             "_temp_dir": str(temp_dir),
         })
 
-    print(f"[证据提取] {md_file.name} → {len(evidence_list)} 份证据")
+    logger.info(f"[证据提取] {md_file.name} → {len(evidence_list)} 份证据")
     return (md_file.name, evidence_list)
 
 
@@ -1067,12 +1070,12 @@ async def _extract_single_file_with_tracking(
                 return result
             except asyncio.TimeoutError:
                 last_error = f"LLM 调用超时（600s）"
-                print(f"[证据提取] {md_file.name}: 第 {attempt} 次尝试超时")
+                logger.info(f"[证据提取] {md_file.name}: 第 {attempt} 次尝试超时")
             except Exception as e:
                 last_error = str(e)
                 error_msg = str(e).lower()
                 if any(kw in error_msg for kw in ['429', 'rate limit', 'too many', 'quota']):
-                    print(f"[证据提取] {md_file.name}: 触发限流，退避后重试")
+                    logger.info(f"[证据提取] {md_file.name}: 触发限流，退避后重试")
                     if attempt < max_retries:
                         # 信号量已释放（with 块退出），其他文件可继续
                         await asyncio.sleep(30 * attempt)
@@ -1081,7 +1084,7 @@ async def _extract_single_file_with_tracking(
 
         # 重试等待在信号量之外（其他文件可在此期间获得并发机会）
         if attempt < max_retries:
-            print(f"[证据提取] {md_file.name}: {attempt * 10}s 退避等待中...")
+            logger.info(f"[证据提取] {md_file.name}: {attempt * 10}s 退避等待中...")
             await asyncio.sleep(10 * attempt)
 
     raise RuntimeError(f"[证据提取] {md_file.name}: 重试 {max_retries} 次均失败，最后错误: {last_error}")
@@ -1140,11 +1143,11 @@ async def extract_evidence(case_id: str):
 async def _run_extract_background(case_id: str, case_path, md_dir, evidence_dir):
     """后台运行证据提取，不阻塞 HTTP 响应"""
     try:
-        print(f"[证据提取] 后台任务启动: {case_id}")
+        logger.info("[证据提取] 后台任务启动: %s", case_id)
         await _do_extract_evidence(case_id, case_path, md_dir, evidence_dir)
-        print(f"[证据提取] 后台任务完成: {case_id}")
+        logger.info("[证据提取] 后台任务完成: %s", case_id)
     except Exception as e:
-        print(f"[证据提取] 后台任务失败: {e}")
+        logger.exception("[证据提取] 后台任务失败: %s", e)
         import traceback
         traceback.print_exc()
         # 记录错误详情到 EXTRACT_TASKS，让前端轮询能拿到
@@ -1165,13 +1168,13 @@ async def _do_extract_evidence(
     # 诊断：打印 LLM 配置和 MD 文件信息
     from config_manager import load_config
     cfg = load_config()
-    print(f"[证据提取] LLM 配置: baseUrl={cfg.get('llm_base_url', '')}, model={cfg.get('llm_model', '')}, apiKey={'已配置' if cfg.get('llm_api_key') else '未配置'}")
-    print(f"[证据提取] MD 目录: {md_dir}")
+    logger.info(f"[证据提取] LLM 配置: baseUrl={cfg.get('llm_base_url', '')}, model={cfg.get('llm_model', '')}, apiKey={'已配置' if cfg.get('llm_api_key') else '未配置'}")
+    logger.info(f"[证据提取] MD 目录: {md_dir}")
     if md_dir.exists():
         md_files = list(md_dir.glob("*.md"))
-        print(f"[证据提取] 找到 {len(md_files)} 个 MD 文件: {[f.name for f in md_files]}")
+        logger.info(f"[证据提取] 找到 {len(md_files)} 个 MD 文件: {[f.name for f in md_files]}")
     else:
-        print(f"[证据提取] MD 目录不存在！")
+        logger.info(f"[证据提取] MD 目录不存在！")
 
     # 读取已提取的证据索引（断点续传：跳过已提取的 MD 文件）
     index_file = evidence_dir / "index.json"
@@ -1183,7 +1186,7 @@ async def _do_extract_evidence(
             old_index = json.loads(index_file.read_text(encoding="utf-8"))
             existing_evidence = old_index.get("evidence", [])
             processed_sources = {ev["source"] for ev in existing_evidence}
-            print(f"[证据提取] 断点续传：已有 {len(existing_evidence)} 份证据，跳过已处理的 MD 文件")
+            logger.info(f"[证据提取] 断点续传：已有 {len(existing_evidence)} 份证据，跳过已处理的 MD 文件")
         except Exception:
             pass
 
@@ -1193,7 +1196,7 @@ async def _do_extract_evidence(
     old_temp = evidence_dir / "_temp_extract"
     if old_temp.exists():
         shutil.rmtree(old_temp)
-        print(f"[证据提取] 清理上次中断的临时目录")
+        logger.info(f"[证据提取] 清理上次中断的临时目录")
 
     # 使用电源管理器防止休眠
     from power_manager import PowerInhibitor
@@ -1201,7 +1204,7 @@ async def _do_extract_evidence(
     with PowerInhibitor(f"证据提取: {case_id}"):
         # 检查是否被取消
         if EXTRACT_TASKS.get(case_id) == "cancelled":
-            print(f"[证据提取] 任务已被取消")
+            logger.info(f"[证据提取] 任务已被取消")
             EXTRACT_TASKS.pop(case_id, None)
             return {"success": False, "error": "用户已停止提取", "case_id": case_id}
 
@@ -1247,7 +1250,7 @@ async def _do_extract_evidence(
             # 自动修正：并发数不超过待处理文件数
             initial_concurrency = min(initial_concurrency, len(pending_files))
             semaphore = asyncio.Semaphore(initial_concurrency)
-            print(f"[证据提取] 并发提取 {len(pending_files)} 个文件，并发={initial_concurrency}")
+            logger.info(f"[证据提取] 并发提取 {len(pending_files)} 个文件，并发={initial_concurrency}")
 
             temp_dir = evidence_dir / "_temp_extract"
             temp_dir.mkdir(exist_ok=True)
@@ -1261,7 +1264,7 @@ async def _do_extract_evidence(
                 if f.stem not in completed_markers
             ]
             if completed_markers:
-                print(f"[证据提取] 断点续传：跳过已完成的 {len(completed_markers)} 个文件")
+                logger.info(f"[证据提取] 断点续传：跳过已完成的 {len(completed_markers)} 个文件")
 
             async def extract_and_save_temp(md_file: Path) -> tuple:
                 """并发提取单个文件，证据保存到独立子目录，完成后写 .done 标记"""
@@ -1306,7 +1309,7 @@ async def _do_extract_evidence(
 
                     heartbeat_task = asyncio.create_task(heartbeat())
 
-                    print(f"[证据提取] 处理: {md_file.name}")
+                    logger.info(f"[证据提取] 处理: {md_file.name}")
                     source_name, evidence_list = await _extract_single_file_with_tracking(
                         md_file, md_text, file_temp_dir, semaphore
                     )
@@ -1335,10 +1338,10 @@ async def _do_extract_evidence(
                     # 更新进度时间，让卡死检测器知道有进展
                     last_progress_time = time.time()
 
-                    print(f"[证据提取] {md_file.name}: 提取 {len(evidence_list)} 条证据，耗时 {(time.time() - req_start):.1f}s")
+                    logger.info(f"[证据提取] {md_file.name}: 提取 {len(evidence_list)} 条证据，耗时 {(time.time() - req_start):.1f}s")
                     return (source_name, evidence_list)
                 except asyncio.CancelledError:
-                    print(f"[证据提取] {md_file.name}: 提取被取消")
+                    logger.info(f"[证据提取] {md_file.name}: 提取被取消")
                     raise
 
             # 取消监视器：定期检查 EXTRACT_TASKS，检测到取消时取消所有任务
@@ -1351,7 +1354,7 @@ async def _do_extract_evidence(
                     if gather_task and gather_task.done():
                         return  # gather 已完成，自动退出
                     if EXTRACT_TASKS.get(case_id) == "cancelled":
-                        print(f"[证据提取] 检测到取消信号，停止并发提取")
+                        logger.info(f"[证据提取] 检测到取消信号，停止并发提取")
                         if gather_task and not gather_task.done():
                             gather_task.cancel()
                         return
@@ -1372,7 +1375,7 @@ async def _do_extract_evidence(
                         return  # gather 已完成，自动退出
                     elapsed = time.time() - last_progress_time
                     if elapsed > stall_threshold:
-                        print(f"[证据提取] 检测到卡死：{elapsed:.0f}s 无进展（阈值 {stall_threshold}s），自动取消提取")
+                        logger.info(f"[证据提取] 检测到卡死：{elapsed:.0f}s 无进展（阈值 {stall_threshold}s），自动取消提取")
                         if gather_task and not gather_task.done():
                             gather_task.cancel()
                         return
@@ -1391,7 +1394,7 @@ async def _do_extract_evidence(
                 gather_results = await gather_task
 
             except asyncio.CancelledError:
-                print(f"[证据提取] 并发提取被取消")
+                logger.info(f"[证据提取] 并发提取被取消")
                 EXTRACT_TASKS.pop(case_id, None)
                 return {"success": False, "error": "用户已停止提取", "case_id": case_id}
             finally:
@@ -1419,19 +1422,19 @@ async def _do_extract_evidence(
                     extracted[f.name] = result
                     if isinstance(result, Exception):
                         fail_count += 1
-                        print(f"[证据提取] {f.name}: 提取失败 — {result}")
+                        logger.info(f"[证据提取] {f.name}: 提取失败 — {result}")
                     elif result is None:
                         fail_count += 1
-                        print(f"[证据提取] {f.name}: 提取返回 None")
+                        logger.info(f"[证据提取] {f.name}: 提取返回 None")
                     else:
                         source_name, ev_list = result
                         if ev_list:
                             success_count += 1
                         else:
                             zero_count += 1
-                            print(f"[证据提取] {f.name}: LLM 调用成功但返回 0 份证据（LLM 响应可能未按要求格式输出）")
+                            logger.info(f"[证据提取] {f.name}: LLM 调用成功但返回 0 份证据（LLM 响应可能未按要求格式输出）")
 
-            print(f"[证据提取] 提取汇总：成功 {success_count} 个文件，失败 {fail_count} 个文件，0 份证据 {zero_count} 个文件")
+            logger.info(f"[证据提取] 提取汇总：成功 {success_count} 个文件，失败 {fail_count} 个文件，0 份证据 {zero_count} 个文件")
 
             # ── 按原始文件顺序分配编号（保持卷号顺序）──
             for md_file in pending_files:
@@ -1461,7 +1464,7 @@ async def _do_extract_evidence(
                     # 新提取的文件：从 extracted 结果读取
                     result = extracted.get(md_file.name)
                     if isinstance(result, Exception):
-                        print(f"[证据提取] {md_file.name}: 提取异常: {result}")
+                        logger.info(f"[证据提取] {md_file.name}: 提取异常: {result}")
                         continue
                     if result is None:
                         continue
@@ -1491,7 +1494,7 @@ async def _do_extract_evidence(
                     })
                     next_id += 1
         else:
-            print("[证据提取] 所有文件已提取，跳过并发处理")
+            logger.info("[证据提取] 所有文件已提取，跳过并发处理")
 
         # ── 第2步：起诉书/起诉意见书处理（内容优先判断：单独 / 混合 / 公安文书）──
         indictment_files.sort(key=lambda f: (0 if "起诉意见书" not in f.name else 1))
@@ -1535,12 +1538,12 @@ async def _do_extract_evidence(
 
         for md_file in indictment_files:
             if EXTRACT_TASKS.get(case_id) == "cancelled":
-                print(f"[证据提取] 任务已被取消（处理 {md_file.name} 前）")
+                logger.info(f"[证据提取] 任务已被取消（处理 {md_file.name} 前）")
                 EXTRACT_TASKS.pop(case_id, None)
                 return {"success": False, "error": "用户已停止提取", "case_id": case_id}
 
             if md_file.name in processed_sources:
-                print(f"[证据提取] 跳过已处理: {md_file.name}")
+                logger.info(f"[证据提取] 跳过已处理: {md_file.name}")
                 continue
 
             # 读内容判断类型
@@ -1552,7 +1555,7 @@ async def _do_extract_evidence(
                 dest_name = f"{next_id:03d}_{md_file.name}"
                 dest_path = evidence_dir / dest_name
                 shutil.copy2(str(md_file), str(dest_path))
-                print(f"[证据提取] {md_file.name} → {dest_name}（{classification['doc_name']}，直接复制）")
+                logger.info(f"[证据提取] {md_file.name} → {dest_name}（{classification['doc_name']}，直接复制）")
 
                 all_evidence.append({
                     "name": md_file.stem,
@@ -1569,7 +1572,7 @@ async def _do_extract_evidence(
             else:
                 # 起诉意见书 / 混合文件 → LLM 提取
                 md_text = md_file.read_text(encoding="utf-8")
-                print(f"[证据提取] {md_file.name} → LLM 提取（{classification['doc_name']}）")
+                logger.info(f"[证据提取] {md_file.name} → LLM 提取（{classification['doc_name']}）")
                 ev_path = await _process_indictment_single(md_file, md_text, evidence_dir, next_id)
 
                 ev_text = ev_path.read_text(encoding="utf-8")
@@ -1608,9 +1611,9 @@ async def _do_extract_evidence(
         old_temp = evidence_dir / "_temp_extract"
         if old_temp.exists():
             shutil.rmtree(old_temp)
-            print(f"[证据提取] 临时目录已清理")
+            logger.info(f"[证据提取] 临时目录已清理")
 
-        print(f"[证据提取] 完成，共 {len(all_evidence)} 份证据")
+        logger.info(f"[证据提取] 完成，共 {len(all_evidence)} 份证据")
 
     EXTRACT_TASKS.pop(case_id, None)
 
@@ -1721,7 +1724,7 @@ async def stop_extract(case_id: str):
     """停止正在运行的提取任务，保留已提取的证据"""
     # 标记为取消状态，让正在运行的提取任务退出
     EXTRACT_TASKS[case_id] = "cancelled"
-    print(f"[停止提取] 已取消 {case_id} 的提取任务，保留已提取的证据")
+    logger.info(f"[停止提取] 已取消 {case_id} 的提取任务，保留已提取的证据")
     return {"success": True, "message": "提取任务已取消"}
 
 
@@ -1734,7 +1737,7 @@ async def clear_evidence(case_id: str):
 
     # 标记为取消状态，让正在运行的提取任务退出
     EXTRACT_TASKS[case_id] = "cancelled"
-    print(f"[清除证据] 已取消 {case_id} 的提取任务")
+    logger.info(f"[清除证据] 已取消 {case_id} 的提取任务")
 
     evidence_dir = case_path / "evidence"
     if not evidence_dir.exists():
@@ -1878,10 +1881,10 @@ def _parse_evidence_blocks(llm_output: str, source_file: str) -> list:
                             "raw_text": json.dumps(item, ensure_ascii=False, indent=2),
                         })
                 if blocks:
-                    print(f"[证据解析] {source_file}: JSON 模式解析成功，{len(blocks)} 份证据")
+                    logger.info(f"[证据解析] {source_file}: JSON 模式解析成功，{len(blocks)} 份证据")
                     return blocks
         except (json.JSONDecodeError, Exception) as e:
-            print(f"[证据解析] {source_file}: JSON 解析失败，回退到文本模式: {e}")
+            logger.info(f"[证据解析] {source_file}: JSON 解析失败，回退到文本模式: {e}")
             blocks = []
 
     # ── 第2优先：文本格式解析（兼容原有格式）──
@@ -1912,7 +1915,7 @@ def _parse_evidence_blocks(llm_output: str, source_file: str) -> list:
 
     if sections is None or len(sections) < 3:
         # 没找到证据块标记，整个输出作为一份证据
-        print(f"[证据解析] {source_file}: 未找到证据标记，整个输出作为一份证据（LLM 可能未按格式输出）")
+        logger.info(f"[证据解析] {source_file}: 未找到证据标记，整个输出作为一份证据（LLM 可能未按格式输出）")
         blocks.append({
             "name": source_file.replace(".md", ""),
             "type": "其他证据",
