@@ -2,11 +2,14 @@ name: Release Build
 
 on:
   push:
-    branches:
-      - main
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag (e.g. v1.0.10)"
+        required: true
+        type: string
 
 permissions:
   contents: write
