@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
-use tauri::{Manager, State, WebviewWindowBuilder, WebviewUrl};
+use tauri::{Manager, State, WebviewWindowBuilder, WebviewUrl, Emitter};
 use reqwest::Client;
 use serde_json;
 use serde::Serialize;
@@ -611,15 +611,11 @@ pub fn run() {
       Ok(())
     })
     .on_window_event(|window, event| {
-      if let tauri::WindowEvent::CloseRequested { .. } = event {
-        // 关闭窗口时强制终止后端进程及其子进程
-        kill_backend_process(window);
-        // 停止 caffeinate，恢复系统休眠
-        let caffeinate = window.state::<CaffeinateProcess>();
-        let maybe_pid = caffeinate.0.lock().unwrap().take();
-        if let Some(pid) = maybe_pid {
-          stop_caffeinate(pid);
-        }
+      if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+        // 阻止默认关闭行为
+        api.prevent_default();
+        // 通知前端弹出确认对话框
+        let _ = window.emit("close-requested", ());
       }
     })
     .run(tauri::generate_context!())

@@ -14,6 +14,8 @@ import { ResetPasswordPage } from './pages/ResetPasswordPage'
 import { useDialogProvider } from './components/MacOSDialog'
 import { verifyToken, getToken, clearToken, clearAuthEmail, claimCases, checkUpdate } from './api'
 import { showAlert, showConfirm } from './components/MacOSDialog'
+import { listen } from '@tauri-apps/api/event'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 
 function DialogWrapper() {
   const DialogComponent = useDialogProvider()
@@ -117,6 +119,23 @@ function AuthGate({ children }: { children: React.ReactNode }) {
 }
 
 function App() {
+  useEffect(() => {
+    // 监听窗口关闭事件，弹出确认对话框
+    const unlisten = listen('close-requested', async () => {
+      const confirmed = await showConfirm({
+        title: '确认退出',
+        message: '确定要退出应用吗？',
+        confirmText: '退出',
+        cancelText: '取消',
+        variant: 'warning',
+      })
+      if (confirmed) {
+        getCurrentWindow().close()
+      }
+    })
+    return () => { unlisten.then(fn => fn()) }
+  }, [])
+
   return (
     <BrowserRouter>
       {/* 登录/注册页面不需要认证 */}
