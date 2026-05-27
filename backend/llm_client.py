@@ -180,9 +180,8 @@ class LLMClient:
                 return str(data)
             except (httpx.ReadTimeout, httpx.ConnectTimeout) as e:
                 last_error = e
-                import asyncio
-                wait = 5 * (attempt + 1)  # 5s, 10s, 15s, 20s, 25s
-                logger.info("[LLM 超时] 第 %d/3 次重试，等待 %ds...", attempt+1, wait)
+                wait = 5 * (attempt + 1)  # 5s, 10s, 15s
+                print(f"[LLM 超时] 第 {attempt+1}/3 次重试，等待 {wait}s...")
                 await asyncio.sleep(wait)
             except httpx.HTTPStatusError as e:
                 error_body = e.response.text[:500] if e.response else "无响应内容"
