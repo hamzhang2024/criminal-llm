@@ -249,14 +249,17 @@ class AnalysisEngine:
                             text = md_file.read_text(encoding="utf-8")
                             if text.strip():
                                 ev_id = ev.get("id", 0)
+                                ev_type = ev.get("type", "其他证据")
+                                is_indictment = ev_type in ("起诉书", "起诉意见书")
                                 texts.append({
                                     "filename": ev["name"],
-                                    "type": ev.get("type", "其他证据"),
+                                    "type": ev_type,
                                     "text": text,
                                     "source": ev.get("source", ""),
                                     "page_range": ev.get("page_range", ""),
-                                    "evidence_ref": f"证据{ev_id:03d}",
+                                    "evidence_ref": f"证据{ev_id:03d}" if not is_indictment else "",
                                     "md_file": ev["md_file"],
+                                    "is_indictment": is_indictment,
                                 })
                 except Exception:
                     pass
@@ -267,11 +270,13 @@ class AnalysisEngine:
                     try:
                         text = md_file.read_text(encoding="utf-8")
                         if text.strip():
+                            is_indictment = "起诉书" in md_file.stem or "起诉意见书" in md_file.stem
                             texts.append({
                                 "filename": md_file.stem,
-                                "type": "其他证据",
+                                "type": "起诉意见书" if "起诉意见书" in md_file.stem else "起诉书" if "起诉书" in md_file.stem else "其他证据",
                                 "text": text,
-                                "evidence_ref": f"证据{idx:03d}",
+                                "evidence_ref": f"证据{idx:03d}" if not is_indictment else "",
+                                "is_indictment": is_indictment,
                             })
                     except Exception:
                         pass
@@ -504,21 +509,16 @@ class AnalysisEngine:
         from llm_client import get_llm_client
         client = get_llm_client()
 
-        # 构建证据目录
-        evidence_catalog = []
-        for ev in texts:
-            ref = ev.get("evidence_ref", "")
-            ev_name = ev["filename"]
-            ev_type = ev.get("type", "")
-            evidence_catalog.append(f"{ref}：{ev_name}（{ev_type}）")
-        evidence_catalog_text = "\n".join(evidence_catalog)
+        indictment_catalog, indictment_text, evidence_catalog_text, evidence_only = _split_indictment_and_evidence(texts)
 
         all_text = _truncate_all(texts, max_total=150000)
 
         system_prompt = """你是一位资深刑事辩护律师，正在梳理案中人物关系。
 请从全部案卷材料中识别涉案人员及其相互关系。
 
-**引用规则**：在分析中引用证据时，请使用编号格式，如"见证据009"、"见证据013"。
+**重要区分**：
+- 起诉书/起诉意见书是指控文书，不是证据。引用时写"据起诉书"或"据起诉意见书"，不要用"见证据XXX"格式
+- 只有正式证据（笔录、证言、鉴定意见、书证等）才用"见证据XXX"格式引用
 
 输出要求：
 1. 用 Markdown 格式
@@ -528,6 +528,10 @@ class AnalysisEngine:
 
         user_prompt = f"""## 辩护对象
 被告人：**{defendant}**
+
+## 指控文书（非证据，引用时写"据起诉书"/"据起诉意见书"）
+
+{indictment_catalog}
 
 ## 证据目录（按编号引用）
 
@@ -548,7 +552,7 @@ class AnalysisEngine:
 
 角色可选：被告人/嫌疑人、同案犯、被害人、证人、鉴定人、办案人员、其他。
 涉案程度：核心、重要、次要、边缘。
-证据来源：标注来自哪份证据（用编号格式，如"见证据009"）。
+证据来源：证据用编号格式（如"见证据009"），指控文书写"据起诉书"/"据起诉意见书"。
 
 ### 二、人物关系图
 
@@ -586,7 +590,7 @@ class AnalysisEngine:
 
 对每组关系，说明：
 - 关系性质（亲属、朋友、同事、交易方等）
-- 关系来源（哪份证据证明的，用编号格式）
+- 关系来源（证据用编号格式，指控文书写"据起诉书"/"据起诉意见书"）
 - 对辩护的影响（有利/不利/中性）
 """
 
@@ -634,21 +638,16 @@ class AnalysisEngine:
         from llm_client import get_llm_client
         client = get_llm_client()
 
-        # 构建证据目录
-        evidence_catalog = []
-        for ev in texts:
-            ref = ev.get("evidence_ref", "")
-            ev_name = ev["filename"]
-            ev_type = ev.get("type", "")
-            evidence_catalog.append(f"{ref}：{ev_name}（{ev_type}）")
-        evidence_catalog_text = "\n".join(evidence_catalog)
+        indictment_catalog, indictment_text, evidence_catalog_text, evidence_only = _split_indictment_and_evidence(texts)
 
         all_text = _truncate_all(texts, max_total=200000)
 
         system_prompt = """你是一位资深刑事辩护律师，正在梳理案卷中的事件脉络。
 请按时间顺序识别案件中的所有关键事件，并将相关证据归组到对应事件下。
 
-**引用规则**：在分析中引用证据时，请使用编号格式，如"见证据009"、"见证据013"。
+**重要区分**：
+- 起诉书/起诉意见书是指控文书，不是证据。引用时写"据起诉书"或"据起诉意见书"
+- 只有正式证据（笔录、证言、鉴定意见、书证等）才用"见证据XXX"格式引用
 
 重要原则：
 1. 以"事件"为单位，不是以"文件"为单位
@@ -658,6 +657,10 @@ class AnalysisEngine:
 
         user_prompt = f"""## 辩护对象
 被告人：**{defendant}**
+
+## 指控文书（非证据，引用时写"据起诉书"/"据起诉意见书"）
+
+{indictment_catalog}
 
 ## 证据目录（按编号引用）
 
@@ -688,7 +691,7 @@ class AnalysisEngine:
 规则：
 - `date`: 日期或时间范围，保留原始时间格式（如 `19:40-23:00`）
 - `title`: 事件简述（不超过 30 字）
-- `evidence`: 相关证据编号列表
+- `evidence`: 相关证据编号列表（仅正式证据，不包括起诉书/起诉意见书）
 
 ### 二、事件拆解与证据归组
 
@@ -715,7 +718,7 @@ class AnalysisEngine:
 - 不遗漏重要事件
 - 每个事件都挂接全部相关证据
 - 观察要客观，不要做深入辩护分析（那是阶段 5 的工作）
-- 引用证据时使用编号格式
+- 证据用"见证据XXX"格式，指控文书写"据起诉书"/"据起诉意见书"
 """
 
         messages = [
@@ -886,18 +889,17 @@ class AnalysisEngine:
         if progress_cb:
             progress_cb("正在构建证据目录...")
 
-        evidence_catalog = []
-        for ev in texts:
+        indictment_catalog, indictment_text, evidence_catalog_text, evidence_only = _split_indictment_and_evidence(texts)
+
+        # 5A 输出为证据目录清单（排除指控文书）
+        evidence_list_md = "# 证据目录\n\n| 编号 | 证据名称 | 类型 |\n|------|---------|------|\n"
+        for ev in evidence_only:
             ref = ev.get("evidence_ref", "")
             ev_name = ev["filename"]
             ev_type = ev.get("type", "")
-            evidence_catalog.append(f"{ref}：{ev_name}（{ev_type}）")
-
-        evidence_catalog_text = "\n".join(evidence_catalog)
-
-        # 5A 输出为证据目录清单
-        evidence_list_md = "# 证据目录\n\n| 编号 | 证据名称 | 类型 |\n|------|---------|------|\n"
-        for line in evidence_catalog:
+            evidence_list_md += f"| {ref} | {ev_name} | （{ev_type}） |\n"
+        if indictment_text:
+            evidence_list_md += f"\n---\n\n# 指控文书（非证据）\n\n{indictment_catalog}\n"
             parts = line.split("：", 1)
             ref_part = parts[0] if len(parts) > 1 else ""
             rest = parts[1] if len(parts) > 1 else line
@@ -906,7 +908,7 @@ class AnalysisEngine:
             ev_type = rest[ev_name_end:] if ev_name_end > 0 else ""
             evidence_list_md += f"| {ref_part} | {name} | {ev_type} |\n"
 
-        self._save_stage(51, {"name": "证据目录", "evidence_count": len(texts)}, evidence_list_md)
+        self._save_stage(51, {"name": "证据目录", "evidence_count": len(evidence_only)}, evidence_list_md)
 
         # ----- 5B：矛盾分析 + 口供对比 -----
         if progress_cb:
@@ -920,6 +922,10 @@ class AnalysisEngine:
         contradiction_prompt = f"""## 辩护对象
 被告人：**{defendant}**
 
+## 指控文书（非证据，引用时写"据起诉书"/"据起诉意见书"）
+
+{indictment_catalog}
+
 ## 证据目录（按编号引用）
 
 {evidence_catalog_text}
@@ -932,7 +938,9 @@ class AnalysisEngine:
 
 ## 请完成以下分析
 
-**引用规则**：在分析中引用证据时，请使用编号格式，如"见证据009"、"见证据013"。
+**引用规则**：
+- 证据用编号格式，如"见证据009"、"见证据013"
+- 起诉书/起诉意见书是指控文书不是证据，引用时写"据起诉书"/"据起诉意见书"，不要用"见证据XXX"格式
 
 ### 一、口供稳定性分析（同一人多次笔录对比）
 
@@ -966,7 +974,7 @@ class AnalysisEngine:
 """
 
         contradiction_md = await client.chat([
-            {"role": "system", "content": "你是刑事辩护律师，正在识别证据间的矛盾和证据链薄弱环节。引用证据时使用编号格式，如'见证据009'、'见证据013'。"},
+            {"role": "system", "content": "你是刑事辩护律师，正在识别证据间的矛盾和证据链薄弱环节。\n\n重要：起诉书/起诉意见书是指控文书不是证据，引用时写'据起诉书'/'据起诉意见书'，不要用'见证据XXX'格式。只有正式证据（笔录、证言、鉴定等）才用'见证据XXX'格式。"},
             {"role": "user", "content": contradiction_prompt},
         ])
 
@@ -980,6 +988,10 @@ class AnalysisEngine:
 被告人：**{defendant}**
 
 {f"涉嫌罪名：{crime_type}" if crime_type else ""}
+
+## 指控文书（非证据，引用时写"据起诉书"/"据起诉意见书"）
+
+{indictment_catalog}
 
 ## 证据目录（按编号引用）
 
@@ -1029,14 +1041,17 @@ class AnalysisEngine:
 
 ## 请完成三阶层综合辩护分析
 
-**引用规则**：引用具体证据时使用编号格式，如"见证据009（起诉意见书）"、"见证据013（江涛询问笔录）"，不要只说"案卷显示"或"据供述"这种模糊表述。
+**引用规则**：
+- 证据用编号格式，如"见证据009（江涛询问笔录）"、"见证据013（现场勘验笔录）"
+- 起诉书/起诉意见书是指控文书不是证据，引用时写"据起诉书"/"据起诉意见书"，**绝不能用"见证据XXX（起诉意见书）"这种格式**
+- 不要只说"案卷显示"或"据供述"这种模糊表述
 
 ### 一、辩护概要
 简要概括本案的辩护方向和核心论点（200 字以内）
 
 ### 二、事实与证据支撑分析
 
-1. **本案事实是否有证据支撑**：逐项审查指控事实是否有对应的客观证据
+1. **本案事实是否有证据支撑**：逐项审查指控事实是否有对应的客观证据（注意：起诉书/起诉意见书中的指控内容本身不是证据，需要独立证据来支撑）
 2. **程序合法性**：本案是否存在程序违法（如超期羁押、未告知权利、非法搜查等）
 3. **证据收集合法性**：证据收集是否符合法定程序（如电子数据提取程序、扣押程序、辨认程序等）
 4. **证据链条完整性**：是否存在断裂，哪些环节仅靠言词证据
@@ -1076,8 +1091,11 @@ class AnalysisEngine:
 3. 善于发现指控的薄弱环节
 4. 输出完整的 Markdown 格式报告
 5. 严格遵循三阶层递进逻辑：先审查事实与证据支撑 → 再判断构成要件符合性 → 再分析违法性 → 最后审查有责性
-6. 引用具体证据时使用编号格式，如"见证据009（起诉意见书）"、"见证据013（江涛询问笔录）"，不要只说"案卷显示"或"据供述"这种模糊表述
-7. 对指控的每一项事实，都要指出是否有证据支撑、证据是否充分"""},
+6. 引用规则：
+   - 证据用编号格式，如"见证据009（江涛询问笔录）"
+   - 起诉书/起诉意见书是指控文书不是证据，引用时写"据起诉书"/"据起诉意见书"，绝不能用"见证据XXX（起诉意见书）"格式
+   - 不要只说"案卷显示"或"据供述"这种模糊表述
+7. 对指控的每一项事实，都要指出是否有独立证据支撑、证据是否充分（起诉书的指控不等于有证据支撑）"""},
             {"role": "user", "content": defense_prompt},
         ])
 
@@ -1155,6 +1173,30 @@ def _infer_evidence_type(filename: str) -> str:
         return "程序性文书"
     else:
         return "其他证据"
+
+
+def _split_indictment_and_evidence(texts: List[Dict[str, str]]):
+    """将证据列表分为指控文书和证据两部分，分别构建目录文本"""
+    indictments = [t for t in texts if t.get("is_indictment")]
+    evidences = [t for t in texts if not t.get("is_indictment")]
+
+    # 指控文书目录（不带证据编号）
+    indictment_catalog = "\n".join(
+        f"- {t['filename']}（{t['type']}，指控文书，非证据）"
+        for t in indictments
+    )
+    indictment_text = "\n\n".join(
+        f"### {t['filename']}（{t['type']}，指控文书）\n{t['text']}"
+        for t in indictments
+    )
+
+    # 证据目录（带编号）
+    evidence_catalog = "\n".join(
+        f"{t.get('evidence_ref', '')}：{t['filename']}（{t['type']}）"
+        for t in evidences
+    )
+
+    return indictment_catalog, indictment_text, evidence_catalog, evidences
 
 
 def _truncate_all(texts: List[Dict[str, str]], max_total: int) -> str:

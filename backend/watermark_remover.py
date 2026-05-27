@@ -14,6 +14,14 @@ import shutil
 from typing import Optional, Dict, Any
 
 
+def _safe_xref_stream(doc, xref):
+    """安全读取 xref 流，跳过损坏的压缩对象"""
+    try:
+        return doc.xref_stream(xref)
+    except Exception:
+        return None
+
+
 def find_watermark_xobj(doc):
     """查找全局水印 XObject"""
     watermark_patterns = ['watermark', 'wm', 'KSPE', 'KSPX', 'BG', 'BACKGROUND']
@@ -27,7 +35,10 @@ def find_watermark_xobj(doc):
             if "Form" not in str(subtype):
                 continue
 
-            obj_def = doc.xref_object(i, compressed=False)
+            try:
+                obj_def = doc.xref_object(i, compressed=False)
+            except Exception:
+                continue
             obj_def_upper = obj_def.upper()
 
             is_watermark = False
@@ -67,7 +78,9 @@ def detect_rotation_watermark(doc):
             contents = page.get_contents()
             for cxref in contents:
                 try:
-                    stream = doc.xref_stream(cxref)
+                    stream = _safe_xref_stream(doc, cxref)
+                    if stream is None:
+                        continue
                     content = stream.decode('latin-1', errors='ignore')
 
                     has_rotation = "0.70711" in content or "0.86603" in content
@@ -95,7 +108,9 @@ def check_fm1_is_image(doc, page_xref):
     fm1_xref = int(fm1_match.group(1))
 
     try:
-        fm1_stream = doc.xref_stream(fm1_xref)
+        fm1_stream = _safe_xref_stream(doc, fm1_xref)
+        if fm1_stream is None:
+            return False, fm1_xref, "Corrupted stream"
         fm1_content = fm1_stream.decode('latin-1', errors='ignore')
 
         if '/Im' in fm1_content and 'Do' in fm1_content:
@@ -183,7 +198,10 @@ def remove_rotation_watermark(doc):
 
         for cxref in contents:
             try:
-                stream = doc.xref_stream(cxref)
+                stream = _safe_xref_stream(doc, cxref)
+                if stream is None:
+                    good_refs.append(cxref)
+                    continue
                 content = stream.decode('latin-1', errors='ignore')
 
                 has_rotation = "0.70711" in content or "0.86603" in content
@@ -291,7 +309,9 @@ def remove_direct_text_watermark(doc, watermark_text):
 
         for cxref in contents:
             try:
-                stream = doc.xref_stream(cxref)
+                stream = _safe_xref_stream(doc, cxref)
+                if stream is None:
+                    continue
                 content = stream.decode('latin-1', errors='ignore')
 
                 has_watermark = False

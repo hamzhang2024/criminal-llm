@@ -310,13 +310,21 @@ export function ReportRenderer({ markdown, evidenceItems, onEvidenceClick }: Rep
   )
 }
 
-// 处理证据链接：支持名称匹配（如"张某某讯问笔录"）和编号匹配（如"证据1"）
+// 处理证据链接：支持名称匹配、单编号、连续编号（证据014、031、032）、范围（证据01-24）
 function processEvidenceLinks(html: string, evidenceItems: Array<{ id: string; mdFile: string }>): string {
   if (!html || evidenceItems.length === 0) return html
 
+  // 构建编号 → 证据项映射（mdFile 格式如 "014_张某某讯问笔录.md"）
+  const numMap: Record<number, { id: string; mdFile: string }> = {}
+  for (const item of evidenceItems) {
+    const m = item.mdFile.match(/^(\d+)_/)
+    if (m) {
+      numMap[parseInt(m[1])] = item
+    }
+  }
+
   // 先按名称匹配：证据名按长度降序，先匹配长的避免子串误匹配
   const sortedByName = [...evidenceItems].sort((a, b) => b.mdFile.length - a.mdFile.length)
-
   for (const item of sortedByName) {
     const name = item.mdFile.replace(/\.md$/, '')
     const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -324,26 +332,32 @@ function processEvidenceLinks(html: string, evidenceItems: Array<{ id: string; m
     html = html.replace(regex, `<a class="evidence-link" data-mdfile="${item.mdFile}">${name}</a>`)
   }
 
-  // 再按编号匹配：仅匹配尚未被名称匹配包裹的 "证据N"
-  // 跳过已有名称匹配的项（避免重复包裹）
-  const numMap: Record<number, { id: string; mdFile: string }> = {}
-  const matchedMdFiles = new Set(sortedByName.map(i => i.mdFile))
-  for (const item of evidenceItems) {
-    const m = item.mdFile.match(/^(\d+)_/)
-    if (m && !matchedMdFiles.has(item.mdFile)) {
-      numMap[parseInt(m[1])] = item
-    }
-  }
-
+  // 再按编号匹配：支持 连续编号(证据014、031) 和 范围(证据01-24)
+  // 分隔符：、，-—
   if (Object.keys(numMap).length > 0) {
-    // 只匹配 HTML 标签之间的纯文本中的 "证据N"
-    // 分段处理：以 < 为分隔，只在 > 和 < 之间的文本中替换
+    const sep = '[、，\\-—]'
     html = html.replace(/(?<=>)([^<]*?)(?=<)/g, (textMatch) => {
-      return textMatch.replace(/证据(\d{1,4})/g, (m, num) => {
-        const n = parseInt(num)
-        const ev = numMap[n]
-        if (!ev) return m
-        return `<a class="evidence-link" data-mdfile="${ev.mdFile}">${m}</a>`
+      return textMatch.replace(new RegExp(`证据(\\d{1,4})(${sep}\\d{1,4})*`, 'g'), (fullMatch: string, firstNum: string) => {
+        // 提取所有 (分隔符, 编号) 对
+        const parts: Array<{ sep: string; num: string }> = [{ sep: '', num: firstNum }]
+        const restMatch = fullMatch.slice(2 + firstNum.length)
+        for (const seg of restMatch.matchAll(new RegExp(`(${sep})(\\d{1,4})`, 'g'))) {
+          parts.push({ sep: seg[1], num: seg[2] })
+        }
+
+        // 逐个编号生成链接
+        let result = ''
+        for (const part of parts) {
+          const n = parseInt(part.num)
+          const ev = numMap[n]
+          const prefix = part.sep === '' ? '证据' : part.sep
+          if (ev) {
+            result += `<a class="evidence-link" data-mdfile="${ev.mdFile}">${prefix}${part.num}</a>`
+          } else {
+            result += `${prefix}${part.num}`
+          }
+        }
+        return result
       })
     })
   }
