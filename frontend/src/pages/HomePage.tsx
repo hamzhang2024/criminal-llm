@@ -514,7 +514,7 @@ export function HomePage() {
                 type="text"
                 value={newCaseName}
                 onChange={(e) => setNewCaseName(e.target.value)}
-                placeholder="如：彭帮生案"
+                placeholder="xx涉嫌开设赌场罪"
                 style={{
                   width: '100%',
                   padding: '10px 12px',
@@ -533,7 +533,7 @@ export function HomePage() {
                 type="text"
                 value={defendant}
                 onChange={(e) => setDefendant(e.target.value)}
-                placeholder="被告人姓名"
+                placeholder="请准确填写被告人（服务对象）姓名"
                 style={{
                   width: '100%',
                   padding: '10px 12px',
@@ -608,7 +608,7 @@ export function HomePage() {
                 type="text"
                 value={newCaseName}
                 onChange={(e) => setNewCaseName(e.target.value)}
-                placeholder="如：彭帮生案"
+                placeholder="xx涉嫌开设赌场罪"
                 style={{
                   width: '100%',
                   padding: '10px 12px',
@@ -627,7 +627,7 @@ export function HomePage() {
                 type="text"
                 value={defendant}
                 onChange={(e) => setDefendant(e.target.value)}
-                placeholder="被告人姓名"
+                placeholder="请准确填写被告人（服务对象）姓名"
                 style={{
                   width: '100%',
                   padding: '10px 12px',
