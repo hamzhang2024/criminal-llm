@@ -7,8 +7,34 @@
 - Windows: 生成 ico
 - 通用: 生成所有尺寸的 PNG
 """
-import os, sys, platform
+import os, sys, platform, struct, io
 from PIL import Image
+
+
+def _build_ico(frames: list, path: str):
+    """手动构建多尺寸 ICO 文件（绕过 Pillow ICO 保存的 bug）"""
+    png_data = []
+    for img in frames:
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        png_data.append(buf.getvalue())
+
+    header = struct.pack("<HHH", 0, 1, len(frames))
+    offset = 6 + len(frames) * 16
+    entries = []
+    for data, img in zip(png_data, frames):
+        w = img.width if img.width < 256 else 0
+        h = img.height if img.height < 256 else 0
+        entry = struct.pack("<BBBBHHII", w, h, 0, 0, 1, 32, len(data), offset)
+        entries.append(entry)
+        offset += len(data)
+
+    with open(path, "wb") as f:
+        f.write(header)
+        for e in entries:
+            f.write(e)
+        for d in png_data:
+            f.write(d)
 
 # 默认源图标
 DEFAULT_SRC = "src-tauri/icons/icon.png"
@@ -60,15 +86,10 @@ def main():
         shutil.rmtree(iconset_dir)
         print("  icon.icns")
 
-    # 生成 Windows .ico
-    ico_sizes = [16, 32, 48, 64, 128, 256]
+    # 生成 Windows .ico（手动构建，Pillow 的 ICO 保存有 bug 只写第一帧）
+    ico_sizes = [256, 128, 64, 48, 32, 16]
     ico_frames = [base.resize((s, s), Image.LANCZOS) for s in ico_sizes]
-    ico_frames[0].save(
-        f"{icons_dir}/icon.ico",
-        format="ICO",
-        sizes=[(f.size[0], f.size[1]) for f in ico_frames],
-        append_images=ico_frames[1:],
-    )
+    _build_ico(ico_frames, f"{icons_dir}/icon.ico")
     print("  icon.ico")
 
     print("完成！")
