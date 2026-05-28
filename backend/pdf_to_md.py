@@ -774,7 +774,13 @@ def _do_mineru_convert(
         result = resp.json()
         if result.get("code") != 0:
             err_msg = result.get("msg", "未知错误")
-            print(f"[MinerU] 获取上传链接失败: {pdf_path.name}, code={result.get('code')}, msg={err_msg}")
+            err_code = result.get("code")
+            # 频率限制/配额限制：等待后重试
+            if err_code in (429, 10020, 10021) or "limit" in err_msg.lower() or "频率" in err_msg:
+                print(f"[MinerU] API 频率限制，60s 后重试: {pdf_path.name}")
+                import time; time.sleep(60)
+                return None, None  # 返回让上层重试
+            print(f"[MinerU] 获取上传链接失败: {pdf_path.name}, code={err_code}, msg={err_msg}")
             return None, None
 
         batch_id = result["data"]["batch_id"]
