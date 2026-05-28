@@ -860,9 +860,10 @@ class AnalysisPipeline:
                         result["articles"] += line.strip() + "\n"
                         # 提取后续若干行作为条文内容
                         for j in range(i+1, min(i+10, len(lines))):
-                            if lines[j].strip().startswith("#") or lines[j].strip().startswith("第") and "条" in lines[j] and line not in result["articles"]:
+                            next_line = lines[j].strip()
+                            if next_line.startswith("#") or (next_line.startswith("第") and "条" in next_line):
                                 break
-                            result["articles"] += lines[j].strip() + "\n"
+                            result["articles"] += next_line + "\n"
             except Exception as e:
                 print(f"[法律知识库] 加载内置刑法失败: {e}")
 
