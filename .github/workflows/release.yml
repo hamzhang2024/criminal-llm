@@ -73,6 +73,7 @@ jobs:
       - name: Build backend
         run: |
           cd backend
+          rm -rf build dist
           python -m PyInstaller --noconfirm criminal-llm.spec
 
       # ---- Copy backend build to Tauri resources ----
