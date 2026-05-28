@@ -173,10 +173,6 @@ def start_convert_task(case_id: str):
                         results=results,
                     )
 
-                    # 文件间隔 3 秒，避免 MinerU API 频率限制导致最后一个文件被拒
-                    if idx > 0:
-                        time.sleep(3)
-
                     try:
                         # 子步骤进度回调
                         def _sub_progress(stage: str, detail: str,
