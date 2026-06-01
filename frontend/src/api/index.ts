@@ -21,6 +21,31 @@ async function tauriOpen(url: string): Promise<void> {
 /** API 基础地址：开发模式走 Vite 代理，生产模式直连后端 */
 export const API_BASE = import.meta.env.PROD ? 'http://localhost:8080/api' : '/api'
 
+/** 后端就绪检测：轮询 /api/health 直到后端启动完成
+ * @param timeout 最大等待时间（毫秒），默认 30 秒
+ * @param interval 轮询间隔（毫秒），默认 500ms
+ * @returns Promise<boolean> 后端是否就绪
+ */
+export async function waitForBackend(timeout = 30000, interval = 500): Promise<boolean> {
+  const startTime = Date.now()
+
+  while (Date.now() - startTime < timeout) {
+    try {
+      const res = await fetch(`${API_BASE}/../health`, {
+        signal: AbortSignal.timeout(2000) // 单次请求 2 秒超时
+      })
+      if (res.ok) {
+        return true
+      }
+    } catch {
+      // 后端未就绪，继续等待
+    }
+    await new Promise(resolve => setTimeout(resolve, interval))
+  }
+
+  return false // 超时
+}
+
 /** 安全的 fetch 包装：将网络错误转为友好的中文提示 */
 async function safeFetch(url: string, init?: RequestInit): Promise<Response> {
   try {
