@@ -45,6 +45,10 @@ DEFAULT_TIMEOUT = 3600  # 1 小时
 POLL_INTERVAL = 10  # 轮询间隔 10 秒
 DEFAULT_MAX_CONCURRENT = 10  # 默认并发数
 
+# 分段限制（大文件自动拆分）
+PADDLEOCR_MAX_PAGES = 200  # 单次提交最大页数
+PADDLEOCR_MAX_FILE_SIZE = 80 * 1024 * 1024  # 单次提交最大文件大小 (80MB)
+
 # 刑事案卷专用参数
 PADDLEOCR_OPTIONAL_PAYLOAD = {
     "useDocOrientationClassify": True,
@@ -162,6 +166,52 @@ def _get_paddleocr_token() -> str:
     return ""
 
 
+def _split_pdf_pages(pdf_path: Path, chunk_size: int = PADDLEOCR_MAX_PAGES) -> List[Tuple[Path, int, int]]:
+    """将大 PDF 按页数/文件大小分段
+
+    Args:
+        pdf_path: PDF 文件路径
+        chunk_size: 每段最大页数
+
+    Returns:
+        List of (chunk_path, start_page, end_page) tuples
+        Empty list if no splitting needed
+    """
+    try:
+        import fitz
+    except ImportError:
+        return []  # 无法分段
+
+    doc = fitz.open(str(pdf_path))
+    total = len(doc)
+    file_size = pdf_path.stat().st_size
+    doc.close()
+
+    if total <= chunk_size and file_size <= PADDLEOCR_MAX_FILE_SIZE:
+        return []  # 不需要拆分
+
+    # 计算满足文件大小限制的每段最大页数
+    if total > 0:
+        avg_page_size = file_size / total
+        if avg_page_size > 0:
+            max_pages_by_size = int(PADDLEOCR_MAX_FILE_SIZE * 0.80 / avg_page_size)
+            chunk_size = min(chunk_size, max_pages_by_size)
+            chunk_size = max(chunk_size, 10)
+
+    chunks = []
+    for start in range(0, total, chunk_size):
+        end = min(start + chunk_size, total)
+        new_doc = fitz.open()
+        new_doc.insert_pdf(fitz.open(str(pdf_path)), from_page=start, to_page=end - 1)
+        tmp_path = Path(pdf_path.parent) / f"_chunk_{start+1}-{end}_{pdf_path.name}"
+        new_doc.save(str(tmp_path))
+        new_doc.close()
+        chunks.append((tmp_path, start + 1, end))  # 页码从1开始
+
+    print(f"[PaddleOCR] 大文件分段: {pdf_path.name} → {len(chunks)} 个 chunk")
+    return chunks
+
+
 # ═══════════════════════════════════════════════════════════
 # 后处理函数（复用自 paddleocr_remote.py）
 # ═══════════════════════════════════════════════════════════
@@ -277,7 +327,25 @@ class AsyncPaddleOCRConverter:
         timeout: int = DEFAULT_TIMEOUT,
         progress_cb: Optional[Callable[[str, str], None]] = None,
     ) -> ConvertResult:
-        """转换单个 PDF 文件"""
+        """转换单个 PDF 文件
+
+        支持大文件自动分段处理
+        """
+        # 检查是否需要分段
+        chunks = _split_pdf_pages(pdf_path)
+        if chunks:
+            return await self._convert_chunks(chunks, pdf_path, output_dir, timeout, progress_cb)
+
+        return await self._convert_single_file(pdf_path, output_dir, timeout, progress_cb)
+
+    async def _convert_single_file(
+        self,
+        pdf_path: Path,
+        output_dir: Path,
+        timeout: int,
+        progress_cb: Optional[Callable[[str, str], None]] = None,
+    ) -> ConvertResult:
+        """转换单个文件（内部方法，不分段）"""
         stem = pdf_path.stem
 
         # 获取页数
@@ -349,6 +417,108 @@ class AsyncPaddleOCRConverter:
         except Exception as e:
             print(f"[PaddleOCR] 异常: {pdf_path.name}, {e}")
             return ConvertResult(file_name=pdf_path.name, success=False, error=str(e)[:200])
+
+    async def _convert_chunks(
+        self,
+        chunks: List[Tuple[Path, int, int]],
+        original_pdf: Path,
+        output_dir: Path,
+        timeout: int,
+        progress_cb: Optional[Callable[[str, str], None]] = None,
+    ) -> ConvertResult:
+        """分段处理超大 PDF
+
+        Args:
+            chunks: List of (chunk_path, start_page, end_page) tuples
+        """
+        print(f"[PaddleOCR] 分段转换 {original_pdf.name}: 共 {len(chunks)} 个 chunk")
+
+        chunk_results = []
+        all_images_dirs = []
+        temp_prefix = f"_temp_{original_pdf.stem}"
+
+        for i, (chunk_path, start_page, end_page) in enumerate(chunks):
+            chunk_output = output_dir / f"{temp_prefix}_{i}"
+            chunk_output.mkdir(parents=True, exist_ok=True)
+
+            if progress_cb:
+                progress_cb("processing", f"正在处理分段 {i+1}/{len(chunks)} (第{start_page}-{end_page}页)...")
+
+            result = await self._convert_single_file(
+                chunk_path, chunk_output, timeout, None
+            )
+
+            chunk_path.unlink(missing_ok=True)
+
+            if result.success and result.text:
+                # 保存结果和页码范围
+                chunk_results.append((result.text, start_page, end_page))
+                if result.images_dir:
+                    all_images_dirs.append(result.images_dir)
+                print(f"[PaddleOCR] 分段转换 chunk {i} 成功 (第{start_page}-{end_page}页)")
+            else:
+                print(f"[PaddleOCR] 分段转换 chunk {i} 失败: {result.error}")
+
+            # 清理临时目录
+            shutil.rmtree(chunk_output, ignore_errors=True)
+
+        if not chunk_results:
+            return ConvertResult(
+                file_name=original_pdf.name,
+                success=False,
+                error="所有分段转换失败"
+            )
+
+        # 按页码排序后合并结果（确保顺序正确）
+        chunk_results.sort(key=lambda x: x[1])
+
+        # 合并结果，添加页码分隔标记
+        merged_parts = []
+        for text, start_page, end_page in chunk_results:
+            # 添加页码分隔标记
+            page_header = f"---\n\n<!-- 原PDF第{start_page}-{end_page}页 -->\n\n"
+            merged_parts.append(page_header + text)
+
+        merged_text = "\n\n".join(merged_parts)
+
+        # 修复图片路径（使用正则表达式，与 MinerU 一致）
+        merged_text = re.sub(
+            r'\./(_chunk_[^/]+?)_([^/]+_images)/',
+            r'\2/',
+            merged_text
+        )
+
+        # 后处理
+        merged_text = _apply_postprocessing(merged_text)
+
+        # 合并图片目录
+        merged_images_dir = output_dir / f"{original_pdf.stem}_images"
+        merged_images_dir.mkdir(parents=True, exist_ok=True)
+        for src_dir in all_images_dirs:
+            if src_dir.exists():
+                for img in src_dir.iterdir():
+                    if img.is_file():
+                        shutil.copy2(str(img), str(merged_images_dir / img.name))
+
+        # 保存合并后的 MD
+        target_md = output_dir / f"{original_pdf.stem}.md"
+        target_md.write_text(merged_text, encoding="utf-8")
+
+        # 统计总页数
+        import fitz
+        doc = fitz.open(str(original_pdf))
+        total_pages = len(doc)
+        doc.close()
+
+        print(f"[PaddleOCR] 分段转换完成 {original_pdf.name}: {len(merged_text)} 字符, {total_pages} 页")
+
+        return ConvertResult(
+            file_name=original_pdf.name,
+            success=True,
+            text=merged_text,
+            images_dir=merged_images_dir,
+            pages=total_pages
+        )
 
     async def convert_batch(
         self,
@@ -423,6 +593,10 @@ class AsyncPaddleOCRConverter:
 
         try:
             # 读取文件内容
+            file_size = pdf_path.stat().st_size
+            # 大文件增加超时时间（每 10MB 增加 60 秒）
+            submit_timeout = max(120, int(file_size / (10 * 1024 * 1024) * 60))
+
             with open(pdf_path, "rb") as f:
                 file_content = f.read()
 
@@ -436,7 +610,7 @@ class AsyncPaddleOCRConverter:
                 PADDLEOCR_API_URL,
                 headers=headers,
                 data=data,
-                timeout=aiohttp.ClientTimeout(total=120),
+                timeout=aiohttp.ClientTimeout(total=submit_timeout),
                 ssl=_SSL_VERIFY if isinstance(_SSL_VERIFY, bool) else _SSL_VERIFY,
             ) as resp:
                 if resp.status == 429:
@@ -454,8 +628,13 @@ class AsyncPaddleOCRConverter:
                 result = await resp.json()
                 return result["data"]["jobId"]
 
+        except asyncio.TimeoutError:
+            print(f"[PaddleOCR] 提交任务超时: {pdf_path.name} ({file_size / (1024*1024):.1f}MB)")
+            return None
         except Exception as e:
-            print(f"[PaddleOCR] 提交任务异常: {e}")
+            import traceback
+            print(f"[PaddleOCR] 提交任务异常: {pdf_path.name}, {type(e).__name__}: {e}")
+            traceback.print_exc()
             return None
 
     async def _poll_job(
@@ -527,12 +706,16 @@ class AsyncPaddleOCRConverter:
         output_dir: Path,
         stem: str,
     ) -> Tuple[Optional[str], Optional[Path]]:
-        """下载 JSONL 结果，合并为 Markdown"""
+        """下载 JSONL 结果，合并为 Markdown
+
+        注意：jsonl_url 和 img_url 可能是 OSS 签名 URL，需要禁止自动添加请求头
+        """
         try:
             async with session.get(
                 jsonl_url,
                 timeout=aiohttp.ClientTimeout(total=60),
                 ssl=_SSL_VERIFY if isinstance(_SSL_VERIFY, bool) else _SSL_VERIFY,
+                skip_auto_headers=["User-Agent", "Accept", "Accept-Encoding"],
             ) as resp:
                 raw_jsonl = await resp.text()
         except Exception as e:
@@ -586,6 +769,7 @@ class AsyncPaddleOCRConverter:
                                         img_url,
                                         timeout=aiohttp.ClientTimeout(total=30),
                                         ssl=_SSL_VERIFY if isinstance(_SSL_VERIFY, bool) else _SSL_VERIFY,
+                                        skip_auto_headers=["User-Agent", "Accept", "Accept-Encoding"],
                                     ) as img_resp:
                                         if img_resp.status == 200:
                                             content = await img_resp.read()
