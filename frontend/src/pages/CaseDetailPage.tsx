@@ -986,7 +986,9 @@ export function CaseDetailPage() {
         } catch (pollErr) {
           clearInterval(pollInterval)
           setProcessing(false)
-          setError('转换过程出错，请刷新页面后重试')
+          const errMsg = pollErr instanceof Error ? pollErr.message : String(pollErr)
+          setError(`转换过程出错: ${errMsg}，请刷新页面后重试`)
+          console.error('转换轮询错误:', pollErr)
           return
         }
       }, 2000)
