@@ -86,10 +86,22 @@ def main():
         shutil.rmtree(iconset_dir)
         print("  icon.icns")
 
-    # 生成 Windows .ico（手动构建，Pillow 的 ICO 保存有 bug 只写第一帧）
+    # 生成 Windows .ico（使用 Pillow 的 ICO 保存，确保包含所有尺寸）
     ico_sizes = [256, 128, 64, 48, 32, 16]
-    ico_frames = [base.resize((s, s), Image.LANCZOS) for s in ico_sizes]
-    _build_ico(ico_frames, f"{icons_dir}/icon.ico")
+    ico_frames = []
+    for s in ico_sizes:
+        resized = base.resize((s, s), Image.LANCZOS)
+        ico_frames.append(resized)
+
+    # 保存多帧 ICO
+    ico_path = f"{icons_dir}/icon.ico"
+    # 第一帧作为主图，其余作为附加尺寸
+    ico_frames[0].save(
+        ico_path,
+        format='ICO',
+        sizes=[(f.width, f.height) for f in ico_frames],
+        append_images=ico_frames[1:]
+    )
     print("  icon.ico")
 
     print("完成！")

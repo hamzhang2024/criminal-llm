@@ -3,22 +3,28 @@
 
 PDF 转 MD 等长时间运行的操作在后台线程中执行，不阻塞 FastAPI 主事件循环。
 任务状态持久化到文件，重启后端后可恢复进度。
+
+优化版本：
+- 使用 asyncio 异步并发处理
+- 支持批量提交多个 PDF 到 MinerU
+- 并发轮询任务状态，减少等待时间
 """
 import json
 import shutil
 import threading
 import time
+import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 from config import DATA_DIR
 
 TASKS_FILE = DATA_DIR / "criminal-llm-tasks.json"
 
-# 线程池：单线程串行执行转换任务（MinerU 有并发限制）
-_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="convert")
+# 线程池：支持并发转换（异步模式可并行处理多个文件）
+_executor = ThreadPoolExecutor(max_workers=10, thread_name_prefix="convert")
 
 # 内存中的任务状态
 _task_states: Dict[str, Dict[str, Any]] = {}
@@ -98,8 +104,13 @@ def _update_task(case_id: str, **kwargs):
     _save_tasks()
 
 
-def start_convert_task(case_id: str):
-    """启动后台转换任务"""
+def start_convert_task(case_id: str, max_concurrent: int = 10):
+    """启动后台转换任务（异步并发版本）
+
+    Args:
+        case_id: 案件 ID
+        max_concurrent: 最大并发数（默认 10）
+    """
     _update_task(
         case_id,
         status="pending",
@@ -112,15 +123,14 @@ def start_convert_task(case_id: str):
 
         with PowerInhibitor(f"PDF 转换: {case_id}"):
             try:
-                # 导入需要的模块（延迟导入，避免循环依赖）
+                # 导入需要的模块
                 import sys
                 backend_dir = Path(__file__).parent
                 if str(backend_dir) not in sys.path:
                     sys.path.insert(0, str(backend_dir))
 
                 from case_manager import find_case_path
-                from pdf_to_md import get_evidence_text
-                import fitz
+                from mineru_async import AsyncMinerUConverter, BatchProgress, ConvertResult
 
                 case_path = find_case_path(case_id)
                 if not case_path:
@@ -140,128 +150,55 @@ def start_convert_task(case_id: str):
                     _update_task(case_id, status="failed", message="processed/ 目录中无 PDF 文件")
                     return
 
-                _update_task(case_id, status="running", total=len(pdf_files), message=f"共 {len(pdf_files)} 个文件")
+                _update_task(case_id, status="running", total=len(pdf_files), message=f"共 {len(pdf_files)} 个文件，并发处理中")
 
                 results = []
-                converted = 0
 
-                for idx, pdf_file in enumerate(pdf_files):
-                    md_file = md_dir / f"{pdf_file.stem}.md"
-                    if md_file.exists() and md_file.stat().st_size > 200:
-                        _update_task(
-                            case_id,
-                            current=idx + 1,
-                            current_file=pdf_file.name,
-                            message=f"跳过已有: {pdf_file.name}",
-                            results=results,
-                        )
-                        results.append({
-                            "file": pdf_file.name,
-                            "success": True,
-                            "md_name": md_file.name,
-                            "md_size": md_file.stat().st_size,
-                            "skipped": True,
-                        })
-                        converted += 1
-                        continue
+                # 创建异步转换器
+                try:
+                    converter = AsyncMinerUConverter()
+                except ValueError as e:
+                    _update_task(case_id, status="failed", message=str(e))
+                    return
 
+                # 进度回调
+                def batch_progress_cb(progress: BatchProgress):
                     _update_task(
                         case_id,
-                        current=idx + 1,
-                        current_file=pdf_file.name,
-                        message=f"转换中: {pdf_file.name} ({idx + 1}/{len(pdf_files)})",
+                        current=progress.completed,
+                        current_file=", ".join(progress.current_files[-3:]) if progress.current_files else "",
+                        message=f"已完成 {progress.completed}/{progress.total}（失败 {progress.failed}）",
                         results=results,
                     )
 
-                    try:
-                        # 子步骤进度回调
-                        def _sub_progress(stage: str, detail: str,
-                                          _case=case_id, _idx=idx, _total=len(pdf_files), _name=pdf_file.name):
-                            msg_map = {
-                                "submitting": "正在提交转换",
-                                "uploading": "正在发送文件",
-                                "processing": detail,
-                                "downloading": "正在生成文本",
-                                "parsing": "正在整理输出",
-                            }
-                            msg = msg_map.get(stage, detail)
-                            _update_task(_case, current=_idx + 1, current_file=_name,
-                                         message=f"{msg}（{_idx + 1}/{_total}）")
-
-                        text, images_dir = get_evidence_text(
-                            str(pdf_file), True, str(md_dir),
-                            progress_cb=_sub_progress,
+                # 执行异步批量转换
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    convert_results: List[ConvertResult] = loop.run_until_complete(
+                        converter.convert_batch(
+                            pdf_files,
+                            md_dir,
+                            max_concurrent=max_concurrent,
+                            timeout=3600,
+                            progress_cb=batch_progress_cb,
                         )
-                        if text is None:
-                            results.append({
-                                "file": pdf_file.name,
-                                "success": False,
-                                "error": "MinerU 转换失败（可能超时或配额不足）",
-                            })
-                            continue
+                    )
+                finally:
+                    loop.close()
 
-                        if not md_file.exists():
-                            md_file.write_text(text, encoding="utf-8")
-
-                        md_size = md_file.stat().st_size if md_file.exists() else 0
-                        is_blank = md_size < 50 or not text.strip()
-
-                        results.append({
-                            "file": pdf_file.name,
-                            "success": not is_blank,
-                            "md_name": md_file.name if md_file.exists() else None,
-                            "md_size": md_size,
-                            "error": "PDF 内容为空" if is_blank else None,
-                        })
-                        if not is_blank:
-                            converted += 1
-
-                    except Exception as e:
-                        results.append({
-                            "file": pdf_file.name,
-                            "success": False,
-                            "error": str(e)[:200],
-                        })
-
-                # 失败文件自动重试一轮（MinerU 偶发失败）
-                failed_files = [r for r in results if not r.get("success") and not r.get("skipped")]
-                if failed_files:
-                    _update_task(case_id, message=f"对 {len(failed_files)} 个失败文件重试中...")
-                    print(f"[后台任务] {case_id}: {len(failed_files)} 个文件失败，等待 20s 后重试...")
-                    time.sleep(20)
-                    for fail_result in failed_files:
-                        fail_name = fail_result.get("file", "")
-                        fail_pdf = processed_dir / fail_name
-                        if not fail_pdf.exists():
-                            continue
-                        _update_task(case_id, message=f"重试: {fail_name}")
-                        try:
-                            text, images_dir = get_evidence_text(
-                                str(fail_pdf), True, str(md_dir),
-                                progress_cb=lambda stage, detail: _update_task(
-                                    case_id, message=f"重试中: {fail_name} - {detail}"
-                                ),
-                            )
-                            if text:
-                                md_file = md_dir / f"{fail_pdf.stem}.md"
-                                if not md_file.exists():
-                                    md_file.write_text(text, encoding="utf-8")
-                                md_size = md_file.stat().st_size if md_file.exists() else 0
-                                # 更新 results 中对应的记录
-                                for r in results:
-                                    if r.get("file") == fail_name:
-                                        r["success"] = True
-                                        r["md_name"] = md_file.name
-                                        r["md_size"] = md_size
-                                        r.pop("error", None)
-                                        r["retried"] = True
-                                        break
-                                converted += 1
-                                print(f"[后台任务] 重试成功: {fail_name}")
-                            else:
-                                print(f"[后台任务] 重试仍失败: {fail_name}")
-                        except Exception as e:
-                            print(f"[后台任务] 重试异常: {fail_name}, {e}")
+                # 收集结果
+                converted = 0
+                for i, result in enumerate(convert_results):
+                    results.append({
+                        "file": result.file_name,
+                        "success": result.success,
+                        "md_name": f"{Path(result.file_name).stem}.md" if result.success else None,
+                        "md_size": len(result.text) if result.text else 0,
+                        "error": result.error,
+                    })
+                    if result.success:
+                        converted += 1
 
                 # 安全清理
                 pdf_stems = {f.stem for f in pdf_files}
@@ -287,7 +224,7 @@ def start_convert_task(case_id: str):
                 print(f"[后台任务] {case_id}: 任务异常 {e}")
 
     _executor.submit(_run)
-    return {"success": True, "task_id": _make_task_id(case_id), "status": "started", "message": "转换任务已启动"}
+    return {"success": True, "task_id": _make_task_id(case_id), "status": "started", "message": "转换任务已启动（异步并发模式）"}
 
 
 def cancel_task(case_id: str) -> bool:
@@ -326,13 +263,13 @@ async def get_convert_status(case_id: str):
 
 @router.post("/{case_id}/convert-all-to-md")
 async def trigger_convert(case_id: str):
-    """触发后台转换任务"""
+    """触发后台转换任务（异步并发模式，固定 10 并发）"""
     # 检查是否已有运行中的任务
     status = get_task_status(case_id)
     if status and status.get("status") == "running":
         return {"status": "running", "message": "转换任务正在运行中"}
 
-    result = start_convert_task(case_id)
+    result = start_convert_task(case_id, max_concurrent=10)
     return result
 
 

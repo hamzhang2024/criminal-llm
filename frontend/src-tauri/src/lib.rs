@@ -106,9 +106,21 @@ pub fn run() {
                 } else {
                     eprintln!("[START] 启动后端: {:?}", backend_exe);
 
+                    // 设置工作目录为后端所在目录（确保能找到 legal_db 等资源）
+                    let backend_dir = backend_exe.parent().unwrap().to_path_buf();
+
                     let mut cmd = std::process::Command::new(&backend_exe);
+                    cmd.current_dir(&backend_dir);
                     cmd.stdout(std::process::Stdio::null());
                     cmd.stderr(std::process::Stdio::null());
+
+                    // Windows 上隐藏窗口
+                    #[cfg(target_os = "windows")]
+                    {
+                        use std::os::windows::process::CommandExt;
+                        const CREATE_NO_WINDOW: u32 = 0x08000000;
+                        cmd.creation_flags(CREATE_NO_WINDOW);
+                    }
 
                     let child = cmd.spawn().map_err(|e| format!("启动后端失败: {}", e))?;
 
@@ -120,23 +132,34 @@ pub fn run() {
 
                     // 等待后端就绪
                     let client = reqwest::blocking::Client::builder()
-                        .timeout(std::time::Duration::from_secs(30))
+                        .timeout(std::time::Duration::from_secs(5))
                         .build()
                         .unwrap();
 
-                    for i in 1..=30 {
-                        if client
-                            .get("http://localhost:8080/api/health")
-                            .send()
-                            .is_ok()
-                        {
-                            eprintln!("[OK] 后端已就绪（{}秒）", i);
-                            break;
+                    let max_attempts = 60; // 60 次 * 500ms = 30 秒
+                    let mut backend_ready = false;
+
+                    for i in 1..=max_attempts {
+                        match client.get("http://localhost:8080/api/health").send() {
+                            Ok(res) if res.status().is_success() => {
+                                eprintln!("[OK] 后端已就绪（{}秒）", i / 2);
+                                backend_ready = true;
+                                break;
+                            }
+                            Ok(res) => {
+                                eprintln!("[WARN] 后端响应非 200: {} (尝试 {}/{})", res.status(), i, max_attempts);
+                            }
+                            Err(e) => {
+                                if i % 10 == 0 {
+                                    eprintln!("[WAIT] 后端未就绪，继续等待... ({}/{}) 错误: {}", i, max_attempts, e);
+                                }
+                            }
                         }
                         std::thread::sleep(std::time::Duration::from_millis(500));
-                        if i == 30 {
-                            eprintln!("[WARN] 后端启动超时（30秒）");
-                        }
+                    }
+
+                    if !backend_ready {
+                        eprintln!("[ERROR] 后端启动超时（30秒），请检查后端日志");
                     }
                 }
             }

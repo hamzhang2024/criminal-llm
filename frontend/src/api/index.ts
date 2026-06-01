@@ -31,7 +31,8 @@ export async function waitForBackend(timeout = 30000, interval = 500): Promise<b
 
   while (Date.now() - startTime < timeout) {
     try {
-      const res = await fetch(`${API_BASE}/../health`, {
+      // 后端 health 端点是 /api/health
+      const res = await fetch(`${API_BASE}/health`, {
         signal: AbortSignal.timeout(2000) // 单次请求 2 秒超时
       })
       if (res.ok) {
