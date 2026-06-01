@@ -1,8 +1,8 @@
 import { useState, useCallback, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { PlusCircle, FolderOpen, Trash2, Calendar, FileText, ArrowRight, Settings, AlertCircle, ChevronRight } from 'lucide-react'
+import { PlusCircle, FolderOpen, Trash2, Calendar, FileText, ArrowRight, Settings, AlertCircle, ChevronRight, Loader2 } from 'lucide-react'
 import { MacOSTitlebar, MacOSToolbar, MacOSButton, MacOSCard, MacOSEmptyState, MacOSInput } from '../components/MacOSLayout'
-import { api, getAuthEmail } from '../api'
+import { api, getAuthEmail, waitForBackend } from '../api'
 import type { Case } from '../api/types'
 import { showConfirm, showAlert } from '../components/MacOSDialog'
 
@@ -18,9 +18,30 @@ export function HomePage() {
   const [newCaseName, setNewCaseName] = useState('')
   const [defendant, setDefendant] = useState('')
   const [configMissing, setConfigMissing] = useState<string[]>([])
+  const [backendReady, setBackendReady] = useState(false)
+  const [loading, setLoading] = useState(true)
 
-  // 检查配置状态
+  // 等待后端就绪
   useEffect(() => {
+    const waitBackend = async () => {
+      setLoading(true)
+      const ready = await waitForBackend(30000, 500)
+      setBackendReady(ready)
+      if (!ready) {
+        showAlert({
+          title: '后端启动超时',
+          message: '后端服务启动超时，请尝试重新启动应用',
+          variant: 'danger',
+        })
+      }
+      setLoading(false)
+    }
+    waitBackend()
+  }, [])
+
+  // 检查配置状态（后端就绪后）
+  useEffect(() => {
+    if (!backendReady) return
     const checkConfig = async () => {
       try {
         const res = await fetch('http://localhost:8080/api/config')
@@ -36,8 +57,9 @@ export function HomePage() {
     checkConfig()
   }, [])
 
-  // 加载案件列表和待导入文件夹
+  // 加载案件列表和待导入文件夹（后端就绪后）
   const loadData = useCallback(async () => {
+    if (!backendReady) return
     try {
       const owner = getAuthEmail() || undefined
       const [casesData, pendingData, trashData] = await Promise.all([
@@ -61,7 +83,7 @@ export function HomePage() {
     } catch (err) {
       console.error('加载案件失败:', err)
     }
-  }, [])
+  }, [backendReady])
 
   useEffect(() => {
     loadData()
@@ -172,16 +194,18 @@ export function HomePage() {
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: 'var(--macos-bg-primary)', overflow: 'hidden' }}>
       <MacOSTitlebar />
       <MacOSToolbar title="刑事案卷分析系统">
-        <MacOSButton variant="primary" icon={PlusCircle} onClick={() => setShowNewCase(true)}>
+        <MacOSButton variant="primary" icon={PlusCircle} onClick={() => setShowNewCase(true)} disabled={loading}>
           新建案件
         </MacOSButton>
         <button
           onClick={() => navigate('/settings')}
+          disabled={loading}
           style={{
             display: 'flex', alignItems: 'center', gap: '6px',
             padding: '8px 14px', background: configMissing.length > 0 ? 'rgba(255, 149, 0, 0.1)' : 'transparent',
             border: '1px solid var(--macos-border)', borderRadius: '8px',
-            cursor: 'pointer', fontSize: '13px', color: configMissing.length > 0 ? '#ff9500' : '#86868b',
+            cursor: loading ? 'wait' : 'pointer', fontSize: '13px', color: configMissing.length > 0 ? '#ff9500' : '#86868b',
+            opacity: loading ? 0.5 : 1,
           }}
         >
           <Settings className="w-4 h-4" />
@@ -221,6 +245,21 @@ export function HomePage() {
       </MacOSToolbar>
 
       <div style={{ flex: 1, overflow: 'auto', padding: '30px' }}>
+        {/* 加载中状态 */}
+        {loading && (
+          <div style={{
+            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+            height: '200px', gap: '16px',
+          }}>
+            <Loader2 className="w-8 h-8 animate-spin" color="var(--macos-accent)" />
+            <div style={{ fontSize: '14px', color: 'var(--macos-text-secondary)' }}>
+              正在连接后端服务...
+            </div>
+          </div>
+        )}
+        {/* 后端就绪后显示内容 */}
+        {!loading && (
+          <>
         {/* 配置引导横幅 */}
         {configMissing.length > 0 && (
           <div style={{
@@ -465,6 +504,8 @@ export function HomePage() {
               ))}
             </div>
           </div>
+        )}
+          </>
         )}
       </div>
 
