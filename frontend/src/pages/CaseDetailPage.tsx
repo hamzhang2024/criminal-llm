@@ -986,7 +986,24 @@ export function CaseDetailPage() {
         } catch (pollErr) {
           clearInterval(pollInterval)
           setProcessing(false)
-          const errMsg = pollErr instanceof Error ? pollErr.message : String(pollErr)
+          let errMsg = '未知错误'
+          if (pollErr instanceof Error) {
+            errMsg = pollErr.message || '请求失败'
+          } else if (typeof pollErr === 'string') {
+            errMsg = pollErr
+          }
+          // 如果错误信息太短或无意义，尝试从状态获取更多信息
+          if (errMsg.length < 5 || errMsg === '请求失败') {
+            try {
+              const statusResp = await fetch(`${API_BASE}/tasks/${caseId}/convert-status`)
+              const statusData = await statusResp.json()
+              if (statusData.message) {
+                errMsg = statusData.message
+              }
+            } catch {
+              // 忽略
+            }
+          }
           setError(`转换过程出错: ${errMsg}，请刷新页面后重试`)
           console.error('转换轮询错误:', pollErr)
           return
