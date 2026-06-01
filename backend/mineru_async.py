@@ -103,8 +103,13 @@ def _get_mineru_token() -> str:
     return token
 
 
-def _split_pdf_pages(pdf_path: Path, chunk_size: int = MINERU_MAX_PAGES) -> List[Path]:
-    """将大 PDF 按页数/文件大小分段"""
+def _split_pdf_pages(pdf_path: Path, chunk_size: int = MINERU_MAX_PAGES) -> List[Tuple[Path, int, int]]:
+    """将大 PDF 按页数/文件大小分段
+
+    Returns:
+        List of (chunk_path, start_page, end_page) tuples
+        Empty list if no splitting needed
+    """
     doc = fitz.open(str(pdf_path))
     total = len(doc)
     file_size = pdf_path.stat().st_size
@@ -143,9 +148,9 @@ def _split_pdf_pages(pdf_path: Path, chunk_size: int = MINERU_MAX_PAGES) -> List
                 sub_path = Path(pdf_path.parent) / f"_chunk_{sub_start+1}-{sub_end}_{pdf_path.name}"
                 sub_doc.save(str(sub_path))
                 sub_doc.close()
-                chunks.append(sub_path)
+                chunks.append((sub_path, sub_start + 1, sub_end))  # 页码从1开始
         else:
-            chunks.append(tmp_path)
+            chunks.append((tmp_path, start + 1, end))  # 页码从1开始
 
     return chunks
 
@@ -479,25 +484,29 @@ class AsyncMinerUConverter:
 
     async def _convert_chunks(
         self,
-        chunks: List[Path],
+        chunks: List[Tuple[Path, int, int]],
         original_pdf: Path,
         output_dir: Path,
         timeout: int,
         progress_cb: Optional[Callable[[str, str], None]] = None,
     ) -> ConvertResult:
-        """分段处理超大 PDF"""
+        """分段处理超大 PDF
+
+        Args:
+            chunks: List of (chunk_path, start_page, end_page) tuples
+        """
         print(f"[分段转换] {original_pdf.name}: 共 {len(chunks)} 个 chunk")
 
         chunk_results = []
         all_images_dirs = []
         temp_prefix = f"_temp_{original_pdf.stem}"
 
-        for i, chunk_path in enumerate(chunks):
+        for i, (chunk_path, start_page, end_page) in enumerate(chunks):
             chunk_output = output_dir / f"{temp_prefix}_{i}"
             chunk_output.mkdir(parents=True, exist_ok=True)
 
             if progress_cb:
-                progress_cb("processing", f"正在处理分段 {i+1}/{len(chunks)}...")
+                progress_cb("processing", f"正在处理分段 {i+1}/{len(chunks)} (第{start_page}-{end_page}页)...")
 
             result = await self._convert_single_file(
                 chunk_path, chunk_output, timeout, None
@@ -506,10 +515,12 @@ class AsyncMinerUConverter:
             chunk_path.unlink(missing_ok=True)
 
             if result.success and result.text:
-                chunk_results.append(result.text)
+                # 添加页码范围标记，保持与原 PDF 结构对应
+                page_marker = f"\n\n<!-- 原PDF第{start_page}-{end_page}页 -->\n\n"
+                chunk_results.append((result.text, start_page, end_page))
                 if result.images_dir:
                     all_images_dirs.append(result.images_dir)
-                print(f"[分段转换] chunk {i} 成功")
+                print(f"[分段转换] chunk {i} 成功 (第{start_page}-{end_page}页)")
             else:
                 print(f"[分段转换] chunk {i} 失败: {result.error}")
 
@@ -523,11 +534,20 @@ class AsyncMinerUConverter:
                 error="所有分段转换失败"
             )
 
-        # 合并结果
-        merged_text = "\\n\\n---\\n\\n".join(chunk_results)
+        # 按页码排序后合并结果（确保顺序正确）
+        chunk_results.sort(key=lambda x: x[1])
+
+        # 合并结果，添加页码分隔标记
+        merged_parts = []
+        for text, start_page, end_page in chunk_results:
+            # 添加页码分隔标记
+            page_header = f"---\n\n<!-- 原PDF第{start_page}-{end_page}页 -->\n\n"
+            merged_parts.append(page_header + text)
+
+        merged_text = "\n\n".join(merged_parts)
         merged_text = re.sub(
-            r'\\./(_chunk_[^/]+?)_([^/]+_images)/',
-            r'\\2/',
+            r'\./(_chunk_[^/]+?)_([^/]+_images)/',
+            r'\2/',
             merged_text
         )
         merged_text = _protect_signatures_as_images(merged_text)
@@ -546,6 +566,8 @@ class AsyncMinerUConverter:
         # 保存合并后的 MD
         target_md = output_dir / f"{original_pdf.stem}.md"
         target_md.write_text(merged_text, encoding="utf-8")
+
+        print(f"[MinerU] 分段转换完成 {original_pdf.name}: {len(merged_text)} 字符")
 
         return ConvertResult(
             file_name=original_pdf.name,
@@ -605,19 +627,33 @@ class AsyncMinerUConverter:
         upload_url: str,
         pdf_path: Path,
     ) -> bool:
-        """上传文件到 OSS"""
+        """上传文件到 OSS
+
+        注意：OSS 签名 URL 对请求头极其敏感！
+        签名时可能没有包含 Content-Type 头，所以不能发送该头。
+        必须使用 skip_auto_headers 禁止 aiohttp 自动添加任何头。
+        """
         try:
             file_size = pdf_path.stat().st_size
             upload_timeout = max(300, file_size // (1024 * 1024) * 20)
 
             with open(pdf_path, "rb") as f:
-                async with session.put(
-                    upload_url,
-                    data=f,
-                    timeout=aiohttp.ClientTimeout(total=upload_timeout),
-                    ssl=_SSL_VERIFY if isinstance(_SSL_VERIFY, bool) else _SSL_VERIFY,
-                ) as resp:
-                    return resp.status in (200, 201, 203, 204)
+                file_content = f.read()
+
+            # OSS 签名 URL 签名时可能没有包含 Content-Type
+            # 不能发送任何额外头，否则签名不匹配
+            async with session.put(
+                upload_url,
+                data=file_content,
+                headers={},  # 不发送任何额外头
+                timeout=aiohttp.ClientTimeout(total=upload_timeout),
+                ssl=_SSL_VERIFY if isinstance(_SSL_VERIFY, bool) else _SSL_VERIFY,
+                skip_auto_headers=["User-Agent", "Accept", "Accept-Encoding", "Content-Type"],
+            ) as resp:
+                if resp.status not in (200, 201, 203, 204):
+                    text = await resp.text()
+                    print(f"[MinerU] 上传失败: HTTP {resp.status}, {text[:200]}")
+                return resp.status in (200, 201, 203, 204)
 
         except Exception as e:
             print(f"[MinerU] 上传异常: {e}")
@@ -695,12 +731,13 @@ class AsyncMinerUConverter:
         zip_path = temp_dir / f"{stem}.zip"
 
         try:
-            # 下载 ZIP
+            # 下载 ZIP（OSS 签名 URL，需要禁止自动添加请求头）
             async with aiohttp.ClientSession() as session:
                 async with session.get(
                     zip_url,
                     timeout=aiohttp.ClientTimeout(total=120),
                     ssl=_SSL_VERIFY if isinstance(_SSL_VERIFY, bool) else _SSL_VERIFY,
+                    skip_auto_headers=["User-Agent", "Accept", "Accept-Encoding"],
                 ) as resp:
                     zip_data = await resp.read()
                     zip_path.write_bytes(zip_data)
