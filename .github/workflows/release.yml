@@ -71,6 +71,7 @@ jobs:
 
       # ---- Build backend ----
       - name: Build backend
+        shell: bash
         run: |
           cd backend
           rm -rf build dist
