@@ -15,9 +15,15 @@ elif sys.platform == "darwin":
     # 无论开发模式还是打包模式，数据目录一致，避免升级后数据"丢失"
     DATA_DIR = Path.home() / "Documents" / ".criminal-llm-data"
 elif sys.platform == "win32":
-    # Windows：统一使用 %USERPROFILE%\Documents\.criminal-llm-data\
-    # 无论开发模式还是打包模式，数据目录一致，避免升级后数据"丢失"
-    DATA_DIR = Path.home() / "Documents" / ".criminal-llm-data"
+    # Windows：根据用户反馈，数据存储在安装目录下的 data 文件夹
+    if getattr(sys, "frozen", False):
+        # PyInstaller 打包后：data/ 在安装目录下
+        # sys.executable 是 .../Criminal-Case-Analyzer/Criminal-Case-Analyzer.exe
+        # 需要往上两级到达安装目录
+        DATA_DIR = Path(sys.executable).resolve().parent.parent / "data"
+    else:
+        # 开发模式：data/ 在项目根目录
+        DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 else:
     # Linux 等其他平台
     DATA_DIR = Path.home() / ".criminal-llm-data"
