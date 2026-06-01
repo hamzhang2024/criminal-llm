@@ -11,6 +11,7 @@ PyMuPDF  # PDF 文本提取
 # HTTP 客户端
 httpx
 requests
+aiohttp  # 异步 HTTP 客户端（PaddleOCR/MinerU 异步转换依赖）
 
 # 工具
 python-dotenv
