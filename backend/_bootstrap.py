@@ -15,14 +15,9 @@ elif sys.platform == "darwin":
     # 无论开发模式还是打包模式，数据目录一致，避免升级后数据"丢失"
     DATA_DIR = Path.home() / "Documents" / ".criminal-llm-data"
 elif sys.platform == "win32":
-    if getattr(sys, "frozen", False):
-        # Windows 打包后：data/ 在安装目录下
-        # sys.executable → {安装目录}/resources/backend/criminal-llm.exe
-        # 上溯 3 级 → {安装目录}
-        DATA_DIR = Path(sys.executable).resolve().parent.parent.parent / "data"
-    else:
-        # 开发模式：data/ 在项目根目录下
-        DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+    # Windows：统一使用 %USERPROFILE%\Documents\.criminal-llm-data\
+    # 无论开发模式还是打包模式，数据目录一致，避免升级后数据"丢失"
+    DATA_DIR = Path.home() / "Documents" / ".criminal-llm-data"
 else:
     # Linux 等其他平台
     DATA_DIR = Path.home() / ".criminal-llm-data"
