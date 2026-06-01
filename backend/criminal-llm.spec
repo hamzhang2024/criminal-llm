@@ -1,7 +1,11 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('legal_db', 'legal_db')]
+datas = [
+    ('legal_db', 'legal_db'),
+    ('pdf_to_md.py', '.'),
+    ('paddleocr_remote.py', '.'),
+]
 binaries = []
 
 # 收集所有主要依赖
@@ -72,6 +76,10 @@ hiddenimports = [
     'pydantic_core',
     'pydantic_core.core_schema',
     'typing_inspection',
+    # paddleocr 远程
+    'paddleocr_remote',
+    # pdf 转换
+    'pdf_to_md',
 ]
 
 

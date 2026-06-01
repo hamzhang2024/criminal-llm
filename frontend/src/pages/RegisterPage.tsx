@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { UserPlus, ArrowLeft } from 'lucide-react'
-import { MacOSTitlebar } from '../components/MacOSLayout'
+import { MacOSTitlebar, MacOSInput } from '../components/MacOSLayout'
 import { register } from '../api'
 import { showAlert } from '../components/MacOSDialog'
 
@@ -57,19 +57,16 @@ export function RegisterPage() {
       <MacOSTitlebar />
 
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <div style={{
+        <div className="macOS-animate-page-in" style={{
           width: '100%', maxWidth: 380, padding: '40px 36px',
           background: 'var(--macos-bg-primary)', borderRadius: 16,
-          boxShadow: '0 4px 24px rgba(0,0,0,0.08)',
+          boxShadow: 'var(--macos-shadow-lg)',
         }}>
           {/* 返回按钮 */}
           <button
             onClick={() => navigate('/login')}
-            style={{
-              display: 'flex', alignItems: 'center', gap: '4px',
-              padding: '4px 8px', background: 'transparent', border: 'none',
-              cursor: 'pointer', fontSize: '13px', color: 'var(--macos-accent)', marginBottom: 16,
-            }}
+            className="macOS-back-button"
+            style={{ position: 'static', marginBottom: 16, gap: 4, fontSize: 13 }}
           >
             <ArrowLeft className="w-4 h-4" />
             返回登录
@@ -98,20 +95,11 @@ export function RegisterPage() {
               <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: 'var(--macos-text-primary)', marginBottom: 6 }}>
                 邮箱
               </label>
-              <input
+              <MacOSInput
                 type="email"
                 value={email}
                 onChange={e => setEmail(e.target.value)}
                 placeholder="your@email.com"
-                required
-                style={{
-                  width: '100%', padding: '10px 12px',
-                  border: '1.5px solid #d2d2d7', borderRadius: 8,
-                  fontSize: 14, boxSizing: 'border-box', outline: 'none',
-                  transition: 'all 0.15s ease',
-                }}
-                onFocus={e => { e.currentTarget.style.borderColor = 'var(--macos-accent)'; e.currentTarget.style.boxShadow = '0 0 0 3px rgba(30,58,95,0.12)'; }}
-                onBlur={e => { e.currentTarget.style.borderColor = '#d2d2d7'; e.currentTarget.style.boxShadow = 'none'; }}
               />
             </div>
 
@@ -119,66 +107,36 @@ export function RegisterPage() {
               <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: 'var(--macos-text-primary)', marginBottom: 6 }}>
                 密码
               </label>
-              <div style={{ position: 'relative' }}>
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  value={password}
-                  onChange={e => setPassword(e.target.value)}
-                  placeholder="至少 6 位"
-                  required
-                  style={{
-                    width: '100%', padding: '10px 40px 10px 12px',
-                    border: '1.5px solid #d2d2d7', borderRadius: 8,
-                    fontSize: 14, boxSizing: 'border-box', outline: 'none',
-                    transition: 'all 0.15s ease',
-                  }}
-                  onFocus={e => { e.currentTarget.style.borderColor = 'var(--macos-accent)'; e.currentTarget.style.boxShadow = '0 0 0 3px rgba(30,58,95,0.12)'; }}
-                  onBlur={e => { e.currentTarget.style.borderColor = '#d2d2d7'; e.currentTarget.style.boxShadow = 'none'; }}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  style={{
-                    position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)',
-                    background: 'transparent', border: 'none', cursor: 'pointer', padding: 4,
-                    fontSize: 12, color: 'var(--macos-text-tertiary)',
-                  }}
-                >
-                  {showPassword ? '隐藏' : '显示'}
-                </button>
-              </div>
+              <MacOSInput
+                type={showPassword ? 'text' : 'password'}
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                placeholder="至少 6 位"
+                showToggle
+                onToggleShow={() => setShowPassword(!showPassword)}
+              />
             </div>
 
             <div style={{ marginBottom: 24 }}>
               <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: 'var(--macos-text-primary)', marginBottom: 6 }}>
                 确认密码
               </label>
-              <input
+              <MacOSInput
                 type={showPassword ? 'text' : 'password'}
                 value={confirmPassword}
                 onChange={e => setConfirmPassword(e.target.value)}
                 placeholder="再次输入密码"
-                required
-                style={{
-                  width: '100%', padding: '10px 12px',
-                  border: '1.5px solid #d2d2d7', borderRadius: 8,
-                  fontSize: 14, boxSizing: 'border-box', outline: 'none',
-                  transition: 'all 0.15s ease',
-                }}
-                onFocus={e => { e.currentTarget.style.borderColor = 'var(--macos-accent)'; e.currentTarget.style.boxShadow = '0 0 0 3px rgba(30,58,95,0.12)'; }}
-                onBlur={e => { e.currentTarget.style.borderColor = '#d2d2d7'; e.currentTarget.style.boxShadow = 'none'; }}
               />
             </div>
 
             <button
               type="submit"
               disabled={loading}
+              className="macOS-button macOS-button-primary"
               style={{
                 width: '100%', padding: '12px',
-                background: loading ? 'var(--macos-text-tertiary)' : 'var(--macos-success)', color: '#fff',
-                border: 'none', borderRadius: 8, cursor: loading ? 'not-allowed' : 'pointer',
                 fontSize: 15, fontWeight: 600,
-                transition: 'background 0.15s ease',
+                background: loading ? 'var(--macos-text-tertiary)' : 'var(--macos-success)',
               }}
             >
               {loading ? '注册中...' : '注册'}

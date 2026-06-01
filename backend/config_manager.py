@@ -17,6 +17,9 @@ DEFAULTS = {
     "llm_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
     "llm_model": "qwen3.5-plus",
     "evidence_concurrency": 3,
+    # PDF 转 MD 引擎配置
+    "pdf_engine": "paddleocr",          # "paddleocr" | "mineru"
+    "paddleocr_token": "",            # PaddleOCR Token
 }
 
 
@@ -55,6 +58,10 @@ def get_config_status() -> Dict[str, Any]:
         "llm_base_url": config.get("llm_base_url", ""),
         "llm_model": config.get("llm_model", ""),
         "evidence_concurrency": config.get("evidence_concurrency", 3),
+        # PDF 转 MD 引擎配置
+        "pdf_engine": config.get("pdf_engine", "paddleocr"),
+        "paddleocr_token": bool(config.get("paddleocr_token")),
+        "paddleocr_token_value": config.get("paddleocr_token", ""),
     }
 
 

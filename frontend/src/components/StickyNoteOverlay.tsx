@@ -273,7 +273,7 @@ export function StickyNoteOverlay({ annotations, onAdd, onUpdate, onUpdatePositi
                 disabled={!draft.trim()}
                 style={{
                   padding: '3px 10px', fontSize: '11px', borderRadius: '4px',
-                  background: draft.trim() ? '#1e3a5f' : '#eee',
+                  background: draft.trim() ? 'var(--macos-accent)' : '#eee',
                   color: draft.trim() ? '#fff' : '#999',
                   border: 'none', cursor: draft.trim() ? 'pointer' : 'default',
                 }}

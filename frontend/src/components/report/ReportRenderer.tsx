@@ -191,7 +191,7 @@ export function ReportRenderer({ markdown, evidenceItems, onEvidenceClick }: Rep
         .report-content th:nth-child(6),
         .report-content td:nth-child(6) { width: auto; }
         .report-content thead th {
-          background: #1e3a5f;
+          background: var(--macos-accent);
           color: #fff;
           font-weight: 600;
           font-size: 12px;
@@ -223,7 +223,7 @@ export function ReportRenderer({ markdown, evidenceItems, onEvidenceClick }: Rep
           line-height: 1.7;
         }
         .report-content blockquote {
-          border-left: 3px solid #1e3a5f;
+          border-left: 3px solid var(--macos-accent);
           margin: 12px 0;
           padding: 8px 16px;
           background: rgba(30,58,95,0.03);

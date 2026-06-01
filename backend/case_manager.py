@@ -1765,13 +1765,19 @@ async def delete_md_file(case_id: str, md_file_name: str):
 
     md_file.unlink()
 
-    # 同时删除关联的图片目录（如果有）
-    images_dir = md_dir / f"{md_file.stem}_images"
-    if images_dir.exists():
-        shutil.rmtree(images_dir)
+    # 同时删除关联的图片目录、JSON 目录、结构化 JSON 文件
+    stem = md_file.stem
+    for suffix in ("_images", "_json"):
+        assoc_dir = md_dir / f"{stem}{suffix}"
+        if assoc_dir.exists():
+            shutil.rmtree(assoc_dir)
+    for json_name in (f"{stem}_layout.json", f"{stem}_content_list.json", f"{stem}_middle.json"):
+        assoc_json = md_dir / json_name
+        if assoc_json.exists():
+            assoc_json.unlink()
 
     # 返回对应的 PDF 文件名（用于重新转换）
-    pdf_name = md_file.stem + ".pdf"
+    pdf_name = stem + ".pdf"
     return {
         "success": True,
         "message": f"已删除 {md_file_name}，可从 PDF 重新转换",
@@ -1799,14 +1805,19 @@ async def delete_pdf_file(case_id: str, pdf_file_name: str):
 
     pdf_path.unlink()
 
-    # 同时删除对应的 MD 文件（如果有）
-    md_file = case_path / "md" / f"{pdf_path.stem}.md"
+    # 同时删除对应的 MD 文件及关联产物
+    stem = pdf_path.stem
+    md_file = case_path / "md" / f"{stem}.md"
     if md_file.exists():
         md_file.unlink()
-        # 删除关联的图片目录
-        images_dir = case_path / "md" / f"{pdf_path.stem}_images"
-        if images_dir.exists():
-            shutil.rmtree(images_dir)
+    for suffix in ("_images", "_json"):
+        assoc_dir = case_path / "md" / f"{stem}{suffix}"
+        if assoc_dir.exists():
+            shutil.rmtree(assoc_dir)
+    for json_name in (f"{stem}_layout.json", f"{stem}_content_list.json", f"{stem}_middle.json"):
+        assoc_json = case_path / "md" / json_name
+        if assoc_json.exists():
+            assoc_json.unlink()
 
     return {"success": True, "message": f"已删除 {pdf_file_name}"}
 
@@ -2094,7 +2105,20 @@ async def serve_file(case_id: str, file_path: str, dir: Optional[str] = None):
     if not fp.exists():
         raise HTTPException(status_code=404, detail=f"文件不存在：{actual_path}")
 
-    media_type = "application/pdf" if fp.suffix == ".pdf" else "text/markdown"
+    # 根据后缀推断 media_type，避免图片等二进制文件被当作 markdown 返回
+    suffix = fp.suffix.lower()
+    media_type_map = {
+        ".pdf": "application/pdf",
+        ".md": "text/markdown",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".gif": "image/gif",
+        ".webp": "image/webp",
+        ".svg": "image/svg+xml",
+        ".json": "application/json",
+    }
+    media_type = media_type_map.get(suffix, "application/octet-stream")
     return FileResponse(str(fp), media_type=media_type, filename=fp.name, headers={"Content-Disposition": "inline"})
 
 

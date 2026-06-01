@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, Check, Eye, EyeOff, Settings as SettingsIcon, RotateCw, Download } from 'lucide-react'
-import { MacOSTitlebar, MacOSCard } from '../components/MacOSLayout'
+import { MacOSTitlebar, MacOSCard, MacOSInput, MacOSButton } from '../components/MacOSLayout'
 import { API_BASE, getAuthEmail, clearToken, clearAuthEmail, getAppVersion, checkUpdate, openUrl } from '../api'
 import { showAlert, showConfirm } from '../components/MacOSDialog'
 
@@ -13,6 +13,15 @@ interface ConfigStatus {
   llm_base_url: boolean
   llm_model: boolean
   evidence_concurrency: number
+  pdf_engine: 'mineru' | 'paddleocr'
+  paddleocr_token: boolean
+  paddleocr_quota: {
+    date: string
+    used_pages: number
+    total_limit: number
+    remaining_pages: number
+    exceeded: boolean
+  } | null
 }
 
 interface ConfigForm {
@@ -21,6 +30,8 @@ interface ConfigForm {
   llm_base_url: string
   llm_model: string
   evidence_concurrency: number
+  pdf_engine: 'mineru' | 'paddleocr'
+  paddleocr_token: string
 }
 
 // 默认 LLM 配置（阿里云百炼 Token Plan）
@@ -36,6 +47,8 @@ export function SettingsPage() {
     llm_base_url: DEFAULT_LLM_BASE_URL,
     llm_model: DEFAULT_LLM_MODEL,
     evidence_concurrency: 3,
+    pdf_engine: 'paddleocr',
+    paddleocr_token: '',
   })
   const [status, setStatus] = useState<ConfigStatus | null>(null)
   const [saving, setSaving] = useState(false)
@@ -43,9 +56,11 @@ export function SettingsPage() {
   const [testResult, setTestResult] = useState<Record<string, 'ok' | 'fail' | null>>({
     mineru_token: null,
     llm_api_key: null,
+    paddleocr_token: null,
   })
   const [showToken, setShowToken] = useState(false)
   const [showApiKey, setShowApiKey] = useState(false)
+  const [showPaddleocrToken, setShowPaddleocrToken] = useState(false)
   const [appVersion, setAppVersion] = useState('')
   const [checkingUpdate, setCheckingUpdate] = useState(false)
 
@@ -53,7 +68,9 @@ export function SettingsPage() {
   const hasUnsavedChanges = useCallback((): boolean => {
     if (!initialConfig) return false
     return (
+      config.pdf_engine !== initialConfig.pdf_engine ||
       config.mineru_token !== initialConfig.mineru_token ||
+      config.paddleocr_token !== initialConfig.paddleocr_token ||
       config.llm_api_key !== initialConfig.llm_api_key ||
       config.llm_base_url !== initialConfig.llm_base_url ||
       config.llm_model !== initialConfig.llm_model ||
@@ -89,7 +106,9 @@ export function SettingsPage() {
       const data = await res.json()
       setStatus(data)
       const updates: Partial<ConfigForm> = {}
+      if (data.pdf_engine) updates.pdf_engine = data.pdf_engine
       if (data.mineru_token_value) updates.mineru_token = data.mineru_token_value
+      if (data.paddleocr_token_value) updates.paddleocr_token = data.paddleocr_token_value
       if (data.llm_api_key_value) updates.llm_api_key = data.llm_api_key_value
       if (data.llm_base_url) updates.llm_base_url = data.llm_base_url
       if (data.llm_model) updates.llm_model = data.llm_model
@@ -103,12 +122,18 @@ export function SettingsPage() {
   }
 
   const handleSave = async () => {
-    if (!config.mineru_token.trim()) {
-      showAlert({ title: '保存失败', message: 'MinerU Token 不能为空', variant: 'danger' })
-      return
-    }
     if (!config.llm_api_key.trim()) {
       showAlert({ title: '保存失败', message: 'API Key 不能为空', variant: 'danger' })
+      return
+    }
+
+    // 根据引擎选择验证对应 token
+    if (config.pdf_engine === 'mineru' && !config.mineru_token.trim()) {
+      showAlert({ title: '保存失败', message: 'MinerU Token 不能为空（当前选择 MinerU 引擎）', variant: 'danger' })
+      return
+    }
+    if (config.pdf_engine === 'paddleocr' && !config.paddleocr_token.trim()) {
+      showAlert({ title: '保存失败', message: 'PaddleOCR Token 不能为空（当前选择 PaddleOCR 引擎）', variant: 'danger' })
       return
     }
 
@@ -119,7 +144,9 @@ export function SettingsPage() {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          pdf_engine: config.pdf_engine,
           mineru_token: config.mineru_token.trim(),
+          paddleocr_token: config.paddleocr_token.trim(),
           llm_api_key: config.llm_api_key.trim(),
           llm_base_url: config.llm_base_url.trim(),
           llm_model: config.llm_model.trim(),
@@ -317,6 +344,62 @@ export function SettingsPage() {
     }
   }
 
+  const testPaddleocrToken = async () => {
+    if (!config.paddleocr_token.trim()) {
+      showAlert({ title: '验证失败', message: '请先输入 Token', variant: 'danger' })
+      return
+    }
+    setTesting('paddleocr')
+    setTestResult(prev => ({ ...prev, paddleocr_token: null }))
+    try {
+      try {
+        const healthRes = await fetch(`${API_BASE}/health`)
+        if (!healthRes.ok) {
+          setTestResult(prev => ({ ...prev, paddleocr_token: 'fail' }))
+          showAlert({ title: '验证失败', message: '后端服务未就绪，请完全退出应用后重新打开', variant: 'danger' })
+          return
+        }
+      } catch {
+        setTestResult(prev => ({ ...prev, paddleocr_token: 'fail' }))
+        showAlert({ title: '验证失败', message: '无法连接后端服务，请完全退出应用后重新打开', variant: 'danger' })
+        return
+      }
+
+      const res = await fetch(`${API_BASE}/config/test`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'paddleocr',
+          token: config.paddleocr_token.trim(),
+        }),
+      })
+
+      const responseText = await res.text()
+      if (!res.ok) {
+        let errorMsg = `服务器错误 (${res.status})`
+        try { errorMsg = JSON.parse(responseText).detail || responseText } catch { /* ignore */ }
+        setTestResult(prev => ({ ...prev, paddleocr_token: 'fail' }))
+        showAlert({ title: '验证失败', message: errorMsg, variant: 'danger' })
+        return
+      }
+
+      const data: { success?: boolean; message?: string; error?: string } = JSON.parse(responseText)
+      if (data.success) {
+        setTestResult(prev => ({ ...prev, paddleocr_token: 'ok' }))
+        showAlert({ title: '验证成功', message: data.message || '连接成功', variant: 'success' })
+      } else {
+        setTestResult(prev => ({ ...prev, paddleocr_token: 'fail' }))
+        showAlert({ title: '验证失败', message: data.error || '连接失败', variant: 'danger' })
+      }
+    } catch (err) {
+      setTestResult(prev => ({ ...prev, paddleocr_token: 'fail' }))
+      const msg = err instanceof Error ? err.message : String(err)
+      showAlert({ title: '验证失败', message: msg, variant: 'danger' })
+    } finally {
+      setTesting(null)
+    }
+  }
+
   const statusIcon = (configured: boolean, testState: 'ok' | 'fail' | null) => {
     if (testState === 'ok') return <Check className="w-4 h-4" color="#2d8f3d" />
     if (testState === 'fail') return <span style={{ fontSize: '11px', color: '#ff3b30' }}>失败</span>
@@ -368,7 +451,7 @@ export function SettingsPage() {
             padding: '6px 12px', background: 'transparent', border: 'none',
             cursor: 'pointer', fontSize: '13px', color: 'var(--macos-accent)', borderRadius: '6px',
           }}
-          onMouseEnter={e => e.currentTarget.style.background = 'rgba(0,122,255,0.08)'}
+          onMouseEnter={e => e.currentTarget.style.background = 'var(--macos-accent-light)'}
           onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
         >
           <ArrowLeft className="w-4 h-4" />
@@ -423,63 +506,204 @@ export function SettingsPage() {
 
           <MacOSCard style={{ marginTop: '16px' }}>
             <h2 style={{ fontSize: '15px', fontWeight: '600', marginBottom: '20px', color: '#1d1d1f' }}>
-              MinerU 配置
+              PDF 转 MD 引擎
             </h2>
 
-            <div style={{ marginBottom: '16px' }}>
-              <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px', fontWeight: '500', marginBottom: '8px' }}>
-                MinerU Token
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  <a
-                    href="https://mineru.net"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    style={{ fontSize: '11px', color: 'var(--macos-accent)', textDecoration: 'none', cursor: 'pointer' }}
-                    onMouseEnter={e => e.currentTarget.style.textDecoration = 'underline'}
-                    onMouseLeave={e => e.currentTarget.style.textDecoration = 'none'}
-                  >
-                    前往申请 →
-                  </a>
-                  {statusIcon(status?.mineru_token ?? false, testResult.mineru_token)}
-                  <button
-                    onClick={testMineruToken}
-                    disabled={testing === 'mineru'}
+            {/* 引擎选择器 */}
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: '500', marginBottom: '8px' }}>
+                选择引擎
+              </label>
+              <div style={{ display: 'flex', gap: '12px' }}>
+                {(['mineru', 'paddleocr'] as const).map(engine => (
+                  <label
+                    key={engine}
                     style={{
-                      padding: '4px 10px', fontSize: '11px', borderRadius: '4px',
-                      border: '1px solid var(--macos-border)', background: 'transparent',
-                      cursor: testing === 'mineru' ? 'not-allowed' : 'pointer',
-                      color: testing === 'mineru' ? '#86868b' : 'var(--macos-accent)',
-                      opacity: testing === 'mineru' ? 0.6 : 1,
+                      display: 'flex', alignItems: 'center', gap: '8px',
+                      padding: '10px 16px', borderRadius: '8px',
+                      border: `1.5px solid ${config.pdf_engine === engine ? 'var(--macos-accent)' : 'var(--macos-border)'}`,
+                      background: config.pdf_engine === engine ? 'var(--macos-accent-surface)' : 'transparent',
+                      cursor: 'pointer', flex: 1,
                     }}
                   >
-                    {testing === 'mineru' ? '验证中...' : '验证'}
-                  </button>
-                </div>
-              </label>
-              <div style={{ position: 'relative' }}>
-                <input
-                  type={showToken ? 'text' : 'password'}
-                  value={config.mineru_token}
-                  onChange={e => setConfig(prev => ({ ...prev, mineru_token: e.target.value }))}
-                  placeholder="输入 MinerU API Token"
-                  style={{
-                    width: '100%', padding: '10px 40px 10px 12px',
-                    border: '1px solid var(--macos-border)', borderRadius: '8px',
-                    fontSize: '14px', boxSizing: 'border-box',
-                  }}
-                />
-                <button
-                  onClick={() => setShowToken(!showToken)}
-                  style={{
-                    position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)',
-                    background: 'transparent', border: 'none', cursor: 'pointer', padding: '4px',
-                    display: 'flex', alignItems: 'center',
-                  }}
-                >
-                  {showToken ? <EyeOff className="w-4 h-4" color="#86868b" /> : <Eye className="w-4 h-4" color="#86868b" />}
-                </button>
+                    <input
+                      type="radio"
+                      name="pdf_engine"
+                      checked={config.pdf_engine === engine}
+                      onChange={() => setConfig(prev => ({ ...prev, pdf_engine: engine }))}
+                      style={{ accentColor: 'var(--macos-accent)' }}
+                    />
+                    <div>
+                      <div style={{ fontSize: '14px', fontWeight: 500, color: '#1d1d1f' }}>
+                        {engine === 'mineru' ? 'MinerU' : 'PaddleOCR-VL'}
+                      </div>
+                      <div style={{ fontSize: '11px', color: '#86868b' }}>
+                        {engine === 'mineru' ? '高质量异步，200MB 限制' : '整文件提交，每日限额 20000 页'}
+                      </div>
+                    </div>
+                  </label>
+                ))}
               </div>
             </div>
+
+            {/* MinerU 配置（仅在选择 MinerU 时显示） */}
+            {config.pdf_engine === 'mineru' && (
+              <div>
+                <div style={{ marginBottom: '16px' }}>
+                  <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px', fontWeight: '500', marginBottom: '8px' }}>
+                    MinerU Token
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <a
+                        href="https://mineru.net"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ fontSize: '11px', color: 'var(--macos-accent)', textDecoration: 'none', cursor: 'pointer' }}
+                        onMouseEnter={e => e.currentTarget.style.textDecoration = 'underline'}
+                        onMouseLeave={e => e.currentTarget.style.textDecoration = 'none'}
+                      >
+                        前往申请 →
+                      </a>
+                      {statusIcon(status?.mineru_token ?? false, testResult.mineru_token)}
+                      <button
+                        onClick={testMineruToken}
+                        disabled={testing === 'mineru'}
+                        style={{
+                          padding: '4px 10px', fontSize: '11px', borderRadius: '4px',
+                          border: '1px solid var(--macos-border)', background: 'transparent',
+                          cursor: testing === 'mineru' ? 'not-allowed' : 'pointer',
+                          color: testing === 'mineru' ? '#86868b' : 'var(--macos-accent)',
+                          opacity: testing === 'mineru' ? 0.6 : 1,
+                        }}
+                      >
+                        {testing === 'mineru' ? '验证中...' : '验证'}
+                      </button>
+                    </div>
+                  </label>
+                  <div style={{ position: 'relative' }}>
+                    <input
+                      type={showToken ? 'text' : 'password'}
+                      value={config.mineru_token}
+                      onChange={e => setConfig(prev => ({ ...prev, mineru_token: e.target.value }))}
+                      placeholder="输入 MinerU API Token"
+                      style={{
+                        width: '100%', padding: '10px 40px 10px 12px',
+                        border: '1px solid var(--macos-border)', borderRadius: '8px',
+                        fontSize: '14px', boxSizing: 'border-box',
+                      }}
+                    />
+                    <button
+                      onClick={() => setShowToken(!showToken)}
+                      style={{
+                        position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)',
+                        background: 'transparent', border: 'none', cursor: 'pointer', padding: '4px',
+                        display: 'flex', alignItems: 'center',
+                      }}
+                    >
+                      {showToken ? <EyeOff className="w-4 h-4" color="#86868b" /> : <Eye className="w-4 h-4" color="#86868b" />}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* PaddleOCR 配置（仅在选择 PaddleOCR 时显示） */}
+            {config.pdf_engine === 'paddleocr' && (
+              <div>
+                <div style={{ marginBottom: '16px' }}>
+                  <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px', fontWeight: '500', marginBottom: '8px' }}>
+                    Token
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <a
+                        href="https://aistudio.baidu.com/paddleocr"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ fontSize: '11px', color: 'var(--macos-accent)', textDecoration: 'none', cursor: 'pointer' }}
+                        onMouseEnter={e => e.currentTarget.style.textDecoration = 'underline'}
+                        onMouseLeave={e => e.currentTarget.style.textDecoration = 'none'}
+                      >
+                        获取 Token →
+                      </a>
+                      {statusIcon(status?.paddleocr_token ?? false, testResult.paddleocr_token)}
+                      <button
+                        onClick={testPaddleocrToken}
+                        disabled={testing === 'paddleocr'}
+                        style={{
+                          padding: '4px 10px', fontSize: '11px', borderRadius: '4px',
+                          border: '1px solid var(--macos-border)', background: 'transparent',
+                          cursor: testing === 'paddleocr' ? 'not-allowed' : 'pointer',
+                          color: testing === 'paddleocr' ? '#86868b' : 'var(--macos-accent)',
+                          opacity: testing === 'paddleocr' ? 0.6 : 1,
+                        }}
+                      >
+                        {testing === 'paddleocr' ? '验证中...' : '验证'}
+                      </button>
+                    </div>
+                  </label>
+                  <div style={{ position: 'relative' }}>
+                    <input
+                      type={showPaddleocrToken ? 'text' : 'password'}
+                      value={config.paddleocr_token}
+                      onChange={e => setConfig(prev => ({ ...prev, paddleocr_token: e.target.value }))}
+                      placeholder="输入 PaddleOCR API Token"
+                      style={{
+                        width: '100%', padding: '10px 40px 10px 12px',
+                        border: '1px solid var(--macos-border)', borderRadius: '8px',
+                        fontSize: '14px', boxSizing: 'border-box',
+                      }}
+                    />
+                    <button
+                      onClick={() => setShowPaddleocrToken(!showPaddleocrToken)}
+                      style={{
+                        position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)',
+                        background: 'transparent', border: 'none', cursor: 'pointer', padding: '4px',
+                        display: 'flex', alignItems: 'center',
+                      }}
+                    >
+                      {showPaddleocrToken ? <EyeOff className="w-4 h-4" color="#86868b" /> : <Eye className="w-4 h-4" color="#86868b" />}
+                    </button>
+                  </div>
+                </div>
+
+                {/* 每日配额状态条 */}
+                {status?.paddleocr_quota && (
+                  <div style={{
+                    padding: '10px 12px', borderRadius: '8px',
+                    background: status.paddleocr_quota.exceeded ? 'rgba(255,59,48,0.08)' : 'var(--macos-accent-surface)',
+                    border: `1px solid ${status.paddleocr_quota.exceeded ? 'rgba(255,59,48,0.2)' : 'var(--macos-accent-border)'}`,
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                      <span style={{ fontSize: '12px', fontWeight: 500, color: '#1d1d1f' }}>
+                        今日配额
+                      </span>
+                      <span style={{
+                        fontSize: '12px', fontWeight: 600,
+                        color: status.paddleocr_quota.exceeded ? '#ff3b30' : '#1d1d1f',
+                      }}>
+                        {status.paddleocr_quota.exceeded
+                          ? '已用完'
+                          : `剩余 ${status.paddleocr_quota.remaining_pages} 页`}
+                      </span>
+                    </div>
+                    <div style={{
+                      height: '4px', borderRadius: '2px', overflow: 'hidden',
+                      background: 'rgba(0,0,0,0.06)',
+                    }}>
+                      <div style={{
+                        height: '100%',
+                        width: `${(status.paddleocr_quota.used_pages / status.paddleocr_quota.total_limit) * 100}%`,
+                        background: status.paddleocr_quota.exceeded ? '#ff3b30' : 'var(--macos-accent)',
+                        borderRadius: '2px',
+                        transition: 'width 0.3s ease',
+                      }} />
+                    </div>
+                    <div style={{ fontSize: '11px', color: '#86868b', marginTop: '4px' }}>
+                      今日已转换 {status.paddleocr_quota.used_pages} / {status.paddleocr_quota.total_limit} 页
+                      {status.paddleocr_quota.exceeded && ' — 超额部分将自动回退到 MinerU'}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </MacOSCard>
 
           <MacOSCard style={{ marginTop: '16px' }}>
@@ -622,10 +846,13 @@ export function SettingsPage() {
 
           <div style={{
             marginTop: '24px', padding: '12px 16px',
-            background: 'rgba(0, 122, 255, 0.05)', borderRadius: '8px',
+            background: 'var(--macos-accent-surface)', borderRadius: '8px',
             fontSize: '12px', color: '#6e6e73', lineHeight: '1.6',
           }}>
-            <strong>MinerU Token：</strong>在 <a href="https://mineru.net" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--macos-accent)', textDecoration: 'none' }} onMouseEnter={e => e.currentTarget.style.textDecoration = 'underline'} onMouseLeave={e => e.currentTarget.style.textDecoration = 'none'}>mineru.net</a> 注册后获取
+            <strong>PDF 转 MD 引擎：</strong>
+            {config.pdf_engine === 'mineru'
+              ? 'MinerU — 在 ' + 'mineru.net' + ' 注册后获取 Token，高质量异步转换'
+              : 'PaddleOCR-VL — 在 ' + 'aistudio.baidu.com/paddleocr' + ' 获取 Token，同步逐页转换'}
             <br />
             <strong>API Key：</strong>在阿里云百炼平台开通，推荐 <code style={{ fontSize: '11px' }}>qwen-plus</code>。Base URL 和模型名称可在上方输入框中自定义
           </div>

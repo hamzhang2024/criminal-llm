@@ -783,7 +783,7 @@ async def analyze_case(
         try:
             # 使用 PDF → MD 转换模块
             # 优先级：1. 已有 MD 缓存 → 2. MinerU API → 3. pdfplumber → 4. PyMuPDF
-            text = get_evidence_text(evidence["filepath"], prefer_md=True)
+            text, _ = get_evidence_text(evidence["filepath"], prefer_md=True)
             evidence_texts.append({
                 "id": evidence["id"],
                 "filename": evidence["filename"],
@@ -1044,7 +1044,7 @@ async def chat(
             # 提取证据文本（PDF → MD）
             evidence_texts = []
             for e in selected_evidence:
-                text = get_evidence_text(e["filepath"], prefer_md=True)
+                text, _ = get_evidence_text(e["filepath"], prefer_md=True)
                 evidence_texts.append({
                     "filename": e["filename"],
                     "type": e["type"],
@@ -1082,7 +1082,7 @@ async def chat(
         ]
         evidence_texts = []
         for e in selected_evidence:
-            text = get_evidence_text(e["filepath"], prefer_md=True)
+            text, _ = get_evidence_text(e["filepath"], prefer_md=True)
             evidence_texts.append({
                 "filename": e["filename"],
                 "type": e["type"],
@@ -1154,7 +1154,7 @@ async def update_report(
             # 提取证据文本（PDF → MD，限制字符数节省 token）
             evidence_texts = []
             for e in selected_evidence:
-                text = get_evidence_text(e["filepath"], prefer_md=True)
+                text, _ = get_evidence_text(e["filepath"], prefer_md=True)
                 evidence_texts.append({
                     "filename": e["filename"],
                     "type": e["type"],

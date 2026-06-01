@@ -82,7 +82,7 @@ function DialogRenderer({ dialog, onClose }: { dialog: DialogState; onClose: () 
   const variantConfig: Record<DialogVariant, { icon: typeof Info; color: string; bg: string }> = {
     danger: { icon: XCircle, color: '#ff3b30', bg: 'rgba(255, 59, 48, 0.1)' },
     warning: { icon: AlertTriangle, color: '#ff9500', bg: 'rgba(255, 149, 0, 0.1)' },
-    info: { icon: Info, color: 'var(--macos-accent)', bg: 'rgba(30, 58, 95, 0.1)' },
+    info: { icon: Info, color: 'var(--macos-accent)', bg: 'rgba(0, 122, 255, 0.1)' },
     success: { icon: CheckCircle, color: '#34c759', bg: 'rgba(52, 199, 89, 0.1)' },
   }
 

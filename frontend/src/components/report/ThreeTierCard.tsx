@@ -5,7 +5,7 @@ interface ThreeTierCardProps {
 }
 
 const TIER_COLORS = {
-  constitutive: { bg: 'rgba(30,58,95,0.06)', border: 'rgba(30,58,95,0.2)', accent: '#1e3a5f', label: '构成要件符合性' },
+  constitutive: { bg: 'var(--macos-accent-surface)', border: 'var(--macos-accent-border)', accent: 'var(--macos-accent)', label: '构成要件符合性' },
   illegality: { bg: 'rgba(52,199,89,0.06)', border: 'rgba(52,199,89,0.2)', accent: '#34c759', label: '违法性' },
   responsibility: { bg: 'rgba(255,149,0,0.06)', border: 'rgba(255,149,0,0.2)', accent: '#ff9500', label: '有责性' },
 }

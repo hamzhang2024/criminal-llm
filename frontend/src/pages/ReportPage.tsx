@@ -28,20 +28,20 @@ const colors = {
   textPrimary: '#1d1d1f',
   textSecondary: '#6e6e73',
   textTertiary: '#86868b',
-  accent: '#1e3a5f',      // deep navy
-  accentLight: 'rgba(30,58,95,0.08)',
-  accentBorder: 'rgba(30,58,95,0.15)',
-  gold: '#b8860b',        // dark gold for highlights
+  accent: '#007AFF',
+  accentLight: 'rgba(0,122,255,0.08)',
+  accentBorder: 'rgba(0,122,255,0.2)',
+  gold: '#b8860b',
   goldBg: 'rgba(184,134,11,0.08)',
   goldBorder: 'rgba(184,134,11,0.25)',
-  userBubble: '#1e3a5f',
+  userBubble: '#007AFF',
   assistantBubble: '#f5f5f7',
   systemBubble: 'rgba(184,134,11,0.08)',
 }
 
 // 8 个文件卡标签 — 重新配色为沉稳的律师风格
 const TABS = [
-  { key: 'stage_1', label: '指控要素', icon: FileBarChart, color: '#1e3a5f', bgColor: 'rgba(30,58,95,0.08)' },
+  { key: 'stage_1', label: '指控要素', icon: FileBarChart, color: '#007AFF', bgColor: 'rgba(0,122,255,0.08)' },
   { key: 'stage_2', label: '人物关系', icon: Users, color: '#2d6a4f', bgColor: 'rgba(45,106,79,0.08)' },
   { key: 'stage_3', label: '事件拆解', icon: Clock, color: '#9c661b', bgColor: 'rgba(156,102,27,0.08)' },
   { key: 'stage_4', label: '法律法规', icon: BookOpen, color: '#6b2765', bgColor: 'rgba(107,39,101,0.08)' },
@@ -49,7 +49,7 @@ const TABS = [
   { key: 'stage_52', label: '矛盾分析', icon: GitCompareArrows, color: '#991b1b', bgColor: 'rgba(153,27,27,0.08)' },
   { key: 'stage_6', label: '控辩对抗', icon: Swords, color: '#7c3aed', bgColor: 'rgba(124,58,237,0.08)' },
   { key: 'stage_53', label: '三阶层分析', icon: Scale, color: '#831843', bgColor: 'rgba(131,24,67,0.08)' },
-  { key: 'full', label: '完整报告', icon: FileText, color: '#1e3a5f', bgColor: 'rgba(30,58,95,0.08)' },
+  { key: 'full', label: '完整报告', icon: FileText, color: '#007AFF', bgColor: 'rgba(0,122,255,0.08)' },
 ]
 
 // 左侧证据项
@@ -1048,7 +1048,7 @@ export function ReportPage() {
               />
             </div>
           ) : (
-            <div style={{ padding: '24px 28px', maxWidth: '900px', margin: '0 auto' }}>
+            <div key={activeTab} className="macOS-animate-page-in" style={{ padding: '24px 28px', maxWidth: '900px', margin: '0 auto' }}>
               {activeTabDef ? (
                 <>
                   {/* 标题 */}

@@ -21,7 +21,7 @@ function SidebarItem({ path, label, icon: Icon, active }: SidebarItemProps) {
 
 export function MacOSSidebar() {
   const location = useLocation()
-  
+
   const mainItems = [
     { path: '/process', label: '① PDF处理', icon: Wand2 },
     { path: '/convert', label: '② PDF转MD', icon: FileDown },
@@ -29,12 +29,12 @@ export function MacOSSidebar() {
   ]
 
   const currentIndex = mainItems.findIndex(item => location.pathname === item.path)
-  
+
   return (
     <aside className="macOS-sidebar">
       <div className="macOS-sidebar-section">
         <div className="macOS-sidebar-title">工作流进度</div>
-        
+
         {/* 进度条 */}
         <div style={{ padding: '0 12px 12px' }}>
           <div style={{ height: '4px', background: 'rgba(0,0,0,0.08)', borderRadius: '2px', overflow: 'hidden' }}>
@@ -50,7 +50,7 @@ export function MacOSSidebar() {
             {currentIndex >= 0 ? `步骤 ${currentIndex + 1}/${mainItems.length}` : '未开始'}
           </div>
         </div>
-        
+
         <div className="group">
           {mainItems.map(({ path, label, icon: Icon }) => (
             <SidebarItem
@@ -63,7 +63,7 @@ export function MacOSSidebar() {
           ))}
         </div>
       </div>
-      
+
       <div className="macOS-sidebar-section">
         <div className="macOS-sidebar-title">工具</div>
         <div className="group">
@@ -84,20 +84,7 @@ export function MacOSTitlebar({ showBack = false, onBack }: { showBack?: boolean
     <div className="macOS-titlebar">
       <div style={{ display: 'flex', alignItems: 'center', flex: 1, justifyContent: 'center' }}>
         {showBack && (
-          <button 
-            onClick={onBack}
-            style={{
-              position: 'absolute',
-              left: '16px',
-              background: 'none',
-              border: 'none',
-              cursor: 'pointer',
-              padding: '4px',
-              borderRadius: '6px',
-              display: 'flex',
-              alignItems: 'center'
-            }}
-          >
+          <button className="macOS-back-button" onClick={onBack}>
             <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
               <path d="M12.5 15L7.5 10L12.5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
@@ -123,33 +110,35 @@ export function MacOSToolbar({ title, titleSlot, children }: { title: string, ti
   )
 }
 
-export function MacOSButton({ 
-  variant = 'secondary', 
-  children, 
+export function MacOSButton({
+  variant = 'secondary',
+  children,
   onClick,
   icon: Icon,
-  disabled = false
-}: { 
+  disabled = false,
+  style
+}: {
   variant?: 'primary' | 'secondary' | 'icon'
   children?: React.ReactNode
   onClick?: () => void
   icon?: React.ComponentType<{ className?: string }>
   disabled?: boolean
+  style?: React.CSSProperties
 }) {
   if (variant === 'icon' && Icon) {
     return (
-      <button className="macOS-button macOS-button-icon" onClick={onClick}>
+      <button className="macOS-button macOS-button-icon" onClick={onClick} disabled={disabled} style={style}>
         <Icon className="w-4 h-4" />
       </button>
     )
   }
-  
+
   return (
-    <button 
+    <button
       className={`macOS-button ${variant === 'primary' ? 'macOS-button-primary' : 'macOS-button-secondary'}`}
       onClick={onClick}
       disabled={disabled}
-      style={disabled ? { opacity: 0.5, cursor: 'not-allowed' } : {}}
+      style={{ ...style, ...(disabled ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}
     >
       {Icon && <Icon className="w-4 h-4" />}
       {children}
@@ -157,27 +146,75 @@ export function MacOSButton({
   )
 }
 
-export function MacOSCard({ children, className = '', style, onClick }: { children: React.ReactNode, className?: string, style?: React.CSSProperties, onClick?: (e: React.MouseEvent) => void }) {
+export function MacOSCard({ children, className = '', style, onClick, clickable }: {
+  children: React.ReactNode
+  className?: string
+  style?: React.CSSProperties
+  onClick?: (e: React.MouseEvent) => void
+  clickable?: boolean
+}) {
   return (
-    <div className={`macOS-card ${className}`} style={style} onClick={onClick}>
+    <div
+      className={`macOS-card ${clickable ? 'macOS-card-clickable' : ''} ${className}`}
+      style={style}
+      onClick={onClick}
+    >
       {children}
     </div>
   )
 }
 
-export function MacOSEmptyState({ 
-  icon: Icon, 
-  title, 
+export function MacOSInput({
+  type = 'text', value, onChange, placeholder, style,
+  showToggle, onToggleShow, disabled, wrapperStyle
+}: {
+  type?: string
+  value: string
+  onChange: (e: React.ChangeEvent<HTMLInputElement>) => void
+  placeholder?: string
+  style?: React.CSSProperties
+  showToggle?: boolean
+  onToggleShow?: () => void
+  disabled?: boolean
+  wrapperStyle?: React.CSSProperties
+}) {
+  return (
+    <div style={{ position: 'relative', ...wrapperStyle }}>
+      <input
+        type={type}
+        value={value}
+        onChange={onChange}
+        placeholder={placeholder}
+        disabled={disabled}
+        className="macOS-input"
+        style={showToggle ? { ...style, paddingRight: 50 } : style}
+      />
+      {showToggle && (
+        <button
+          type="button"
+          onClick={onToggleShow}
+          className="macOS-input-toggle"
+        >
+          {type === 'password' ? '显示' : '隐藏'}
+        </button>
+      )}
+    </div>
+  )
+}
+
+export function MacOSEmptyState({
+  icon: Icon,
+  title,
   description,
-  action 
-}: { 
+  action
+}: {
   icon: React.ComponentType<{ className?: string }>
   title: string
   description: string
   action?: React.ReactNode
 }) {
   return (
-    <div className="macOS-empty-state">
+    <div className="macOS-empty-state macOS-animate-in">
       <Icon className="macOS-empty-state-icon" />
       <div className="macOS-empty-state-title">{title}</div>
       <div className="macOS-empty-state-description">{description}</div>
