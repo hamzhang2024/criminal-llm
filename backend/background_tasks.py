@@ -130,7 +130,10 @@ def start_convert_task(case_id: str, max_concurrent: int = 10):
                     sys.path.insert(0, str(backend_dir))
 
                 from case_manager import find_case_path
-                from mineru_async import AsyncMinerUConverter, BatchProgress, ConvertResult
+                from config_manager import get_config_value
+
+                # 获取配置的 PDF 引擎
+                pdf_engine = get_config_value("pdf_engine") or "mineru"
 
                 case_path = find_case_path(case_id)
                 if not case_path:
@@ -150,16 +153,25 @@ def start_convert_task(case_id: str, max_concurrent: int = 10):
                     _update_task(case_id, status="failed", message="processed/ 目录中无 PDF 文件")
                     return
 
-                _update_task(case_id, status="running", total=len(pdf_files), message=f"共 {len(pdf_files)} 个文件，并发处理中")
+                _update_task(case_id, status="running", total=len(pdf_files), message=f"共 {len(pdf_files)} 个文件，使用 {pdf_engine} 引擎并发处理中")
 
                 results = []
 
-                # 创建异步转换器
-                try:
-                    converter = AsyncMinerUConverter()
-                except ValueError as e:
-                    _update_task(case_id, status="failed", message=str(e))
-                    return
+                # 根据配置选择转换引擎
+                if pdf_engine == "paddleocr":
+                    from paddleocr_async import AsyncPaddleOCRConverter, BatchProgress, ConvertResult
+                    try:
+                        converter = AsyncPaddleOCRConverter()
+                    except ValueError as e:
+                        _update_task(case_id, status="failed", message=str(e))
+                        return
+                else:
+                    from mineru_async import AsyncMinerUConverter, BatchProgress, ConvertResult
+                    try:
+                        converter = AsyncMinerUConverter()
+                    except ValueError as e:
+                        _update_task(case_id, status="failed", message=str(e))
+                        return
 
                 # 进度回调
                 def batch_progress_cb(progress: BatchProgress):
