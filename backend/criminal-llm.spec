@@ -5,6 +5,7 @@ datas = [
     ('legal_db', 'legal_db'),
     ('pdf_to_md.py', '.'),
     ('mineru_async.py', '.'),
+    ('paddleocr_async.py', '.'),
     ('paddleocr_remote.py', '.'),
 ]
 binaries = []
@@ -103,6 +104,8 @@ hiddenimports = [
     'pdf_to_md',
     # MinerU 异步转换
     'mineru_async',
+    # PaddleOCR 异步转换
+    'paddleocr_async',
 ]
 
 
