@@ -920,6 +920,7 @@ export function CaseDetailPage() {
   }, [caseId])
 
   // 步骤 2：仅将 PDF 转 MD（后台异步任务 + 轮询进度）
+  // 固定 10 并发
   const handleConvertAllToMd = useCallback(async () => {
     setProcessing(true)
     setError(null)

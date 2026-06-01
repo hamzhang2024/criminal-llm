@@ -4,6 +4,7 @@ from PyInstaller.utils.hooks import collect_all
 datas = [
     ('legal_db', 'legal_db'),
     ('pdf_to_md.py', '.'),
+    ('mineru_async.py', '.'),
     ('paddleocr_remote.py', '.'),
 ]
 binaries = []
@@ -17,6 +18,10 @@ datas += tmp_pil[0]; binaries += tmp_pil[1]
 
 tmp_pdf2image = collect_all('pdf2image')
 datas += tmp_pdf2image[0]; binaries += tmp_pdf2image[1]
+
+# aiohttp (异步 HTTP 客户端，mineru_async 依赖)
+tmp_aiohttp = collect_all('aiohttp')
+datas += tmp_aiohttp[0]; binaries += tmp_aiohttp[1]
 
 hiddenimports = [
     # 主要依赖
@@ -55,6 +60,22 @@ hiddenimports = [
     'PIL',
     'pypdf',
     'PIL.Image',
+    # aiohttp (异步 HTTP)
+    'aiohttp',
+    'aiohttp.client',
+    'aiohttp.connector',
+    'aiohttp.http_writer',
+    'aiohttp.http_parser',
+    'aiohttp.streams',
+    'aiohttp.signals',
+    'aiohttp.tracing',
+    'aiohttp.payload',
+    'aiohttp.multipart',
+    # aiohttp 依赖
+    'yarl',
+    'multidict',
+    'attrs',
+    'async_timeout',
     # requests 子模块
     'requests.adapters',
     'requests.auth',
@@ -80,6 +101,8 @@ hiddenimports = [
     'paddleocr_remote',
     # pdf 转换
     'pdf_to_md',
+    # MinerU 异步转换
+    'mineru_async',
 ]
 
 

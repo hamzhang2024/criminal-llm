@@ -25,12 +25,13 @@ export function HomePage() {
   useEffect(() => {
     const waitBackend = async () => {
       setLoading(true)
-      const ready = await waitForBackend(30000, 500)
+      // 增加超时时间到 60 秒，因为 Windows 上后端启动较慢
+      const ready = await waitForBackend(60000, 1000)
       setBackendReady(ready)
       if (!ready) {
         showAlert({
           title: '后端启动超时',
-          message: '后端服务启动超时，请尝试重新启动应用',
+          message: '后端服务启动超时，请尝试重新启动应用。如果问题持续，请检查防火墙设置或联系技术支持。',
           variant: 'danger',
         })
       }
