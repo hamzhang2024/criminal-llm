@@ -1,0 +1,102 @@
+name: Build Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:  # 手动触发
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      - name: Build with PyInstaller
+        run: |
+          cd backend
+          pyinstaller criminal-llm.spec --noconfirm
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: criminal-llm-windows
+          path: backend/dist/criminal-llm.exe
+
+  build-macos-intel:
+    runs-on: macos-13  # Intel runner
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      - name: Build with PyInstaller
+        run: |
+          cd backend
+          pyinstaller criminal-llm.spec --noconfirm
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: criminal-llm-macos-intel
+          path: backend/dist/criminal-llm
+
+  build-macos-arm:
+    runs-on: macos-latest  # M1/M2 runner
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      - name: Build with PyInstaller
+        run: |
+          cd backend
+          pyinstaller criminal-llm.spec --noconfirm
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: criminal-llm-macos-arm64
+          path: backend/dist/criminal-llm
+
+  release:
+    needs: [build-windows, build-macos-intel, build-macos-arm]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            criminal-llm-windows/criminal-llm.exe
+            criminal-llm-macos-intel/criminal-llm
+            criminal-llm-macos-arm64/criminal-llm
