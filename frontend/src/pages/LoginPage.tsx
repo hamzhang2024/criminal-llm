@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Lock } from 'lucide-react'
-import { MacOSTitlebar } from '../components/MacOSLayout'
+import { MacOSTitlebar, MacOSInput } from '../components/MacOSLayout'
 import { login, setToken, setAuthEmail } from '../api'
 import { showAlert } from '../components/MacOSDialog'
 
@@ -44,10 +44,10 @@ export function LoginPage() {
       <MacOSTitlebar />
 
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <div style={{
+        <div className="macOS-animate-page-in" style={{
           width: '100%', maxWidth: 380, padding: '40px 36px',
           background: 'var(--macos-bg-primary)', borderRadius: 16,
-          boxShadow: '0 4px 24px rgba(0,0,0,0.08)',
+          boxShadow: 'var(--macos-shadow-lg)',
         }}>
           {/* Logo */}
           <div style={{ textAlign: 'center', marginBottom: 28 }}>
@@ -72,20 +72,11 @@ export function LoginPage() {
               <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: 'var(--macos-text-primary)', marginBottom: 6 }}>
                 邮箱
               </label>
-              <input
+              <MacOSInput
                 type="email"
                 value={email}
                 onChange={e => setEmail(e.target.value)}
                 placeholder="your@email.com"
-                required
-                style={{
-                  width: '100%', padding: '10px 12px',
-                  border: '1.5px solid #d2d2d7', borderRadius: 8,
-                  fontSize: 14, boxSizing: 'border-box', outline: 'none',
-                  transition: 'all 0.15s ease',
-                }}
-                onFocus={e => { e.currentTarget.style.borderColor = 'var(--macos-accent)'; e.currentTarget.style.boxShadow = '0 0 0 3px rgba(30,58,95,0.12)'; }}
-                onBlur={e => { e.currentTarget.style.borderColor = '#d2d2d7'; e.currentTarget.style.boxShadow = 'none'; }}
               />
             </div>
 
@@ -93,45 +84,23 @@ export function LoginPage() {
               <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: 'var(--macos-text-primary)', marginBottom: 6 }}>
                 密码
               </label>
-              <div style={{ position: 'relative' }}>
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  value={password}
-                  onChange={e => setPassword(e.target.value)}
-                  placeholder="请输入密码"
-                  required
-                  style={{
-                    width: '100%', padding: '10px 40px 10px 12px',
-                    border: '1.5px solid #d2d2d7', borderRadius: 8,
-                    fontSize: 14, boxSizing: 'border-box', outline: 'none',
-                    transition: 'all 0.15s ease',
-                  }}
-                  onFocus={e => { e.currentTarget.style.borderColor = 'var(--macos-accent)'; e.currentTarget.style.boxShadow = '0 0 0 3px rgba(30,58,95,0.12)'; }}
-                  onBlur={e => { e.currentTarget.style.borderColor = '#d2d2d7'; e.currentTarget.style.boxShadow = 'none'; }}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  style={{
-                    position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)',
-                    background: 'transparent', border: 'none', cursor: 'pointer', padding: 4,
-                    fontSize: 12, color: 'var(--macos-text-tertiary)',
-                  }}
-                >
-                  {showPassword ? '隐藏' : '显示'}
-                </button>
-              </div>
+              <MacOSInput
+                type={showPassword ? 'text' : 'password'}
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                placeholder="请输入密码"
+                showToggle
+                onToggleShow={() => setShowPassword(!showPassword)}
+              />
             </div>
 
             <button
               type="submit"
               disabled={loading}
+              className="macOS-button macOS-button-primary"
               style={{
                 width: '100%', padding: '12px',
-                background: loading ? 'var(--macos-text-tertiary)' : 'var(--macos-accent)', color: '#fff',
-                border: 'none', borderRadius: 8, cursor: loading ? 'not-allowed' : 'pointer',
                 fontSize: 15, fontWeight: 600,
-                transition: 'background 0.15s ease',
               }}
             >
               {loading ? '登录中...' : '登录'}
@@ -148,7 +117,7 @@ export function LoginPage() {
             >
               忘记密码？
             </span>
-            <span style={{ margin: '0 8px', color: '#d2d2d7' }}>|</span>
+            <span style={{ margin: '0 8px', color: 'var(--macos-border)' }}>|</span>
             还没有账号？{' '}
             <span
               onClick={() => navigate('/register')}

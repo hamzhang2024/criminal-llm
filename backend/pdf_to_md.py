@@ -2,13 +2,15 @@
 """
 PDF → Markdown 转换模块
 
-使用 MinerU API 进行高质量 PDF 转 MD 转换。
+支持两种引擎：
+1. MinerU API（默认）- 高质量异步转换
+2. PaddleOCR-VL API - 同步逐页转换
 
 用法:
     from pdf_to_md import get_evidence_text
 
-    # 使用 MinerU API 转换
-    text = get_evidence_text("/path/to/evidence.pdf")
+    # 根据配置自动选择引擎
+    text, images_dir = get_evidence_text("/path/to/evidence.pdf")
 """
 
 import os
@@ -202,6 +204,18 @@ def _save_to_dir(pdf_path: Path, text: str, output_dir: Path) -> Optional[str]:
 # OCR 纠错规则（MinerU API 免费版模型常见错误）
 # ═══════════════════════════════════════════════════════════
 _OCR_FIXES = [
+    # ── 日语假名误识别（pipeline 模型最常见） ──
+    # 表格指标名："日平均额"→"日本語の語"，"增值税"→"国語の語"
+    ("日本語の語", "日平均额"),
+    ("国語の語", "增值税"),
+    # 微信备注中的 の 替代中文字符
+    ("の口", "的口"),
+    ("の诗", "的诗"),
+    ("の菠萝", "的菠萝"),
+    ("倘若の", "倘若的"),
+    ("的の", "的的"),
+    # 孤立的 の 在中文语境中几乎一定是 OCR 错误
+    # 只替换前后都是汉字的情况，避免误伤
     # 询问/讯问 相关（含空格变体）
     ("讯间笔录", "讯问笔录"),
     ("讯 间 笔 录", "讯问笔录"),
@@ -299,9 +313,56 @@ _OCR_FIXES = [
 
 def _fix_ocr_errors(text: str) -> str:
     """修复 MinerU API 常见 OCR 错误"""
+    import re
     for wrong, correct in _OCR_FIXES:
         text = text.replace(wrong, correct)
+    # 清理中文语境中的孤立日语假名の
+    # 规则：汉字+の+汉字 → 汉字的汉字（の 在中文案卷中几乎一定是 OCR 误识）
+    text = re.sub(r'([一-鿿])の([一-鿿])', r'\1的\2', text)
+    # 行内孤立 の（前后不是日文假名）
+    text = re.sub(r'(?<![ぁ-んァ-ン])の(?![ぁ-んァ-ン])', '的', text)
     return text
+
+
+# ═══════════════════════════════════════════════════════════
+# VLM 幻觉检测：表格中同一单元格内容重复超阈值视为幻觉
+# ═══════════════════════════════════════════════════════════
+def _strip_hallucinated_tables(text: str) -> str:
+    """检测并移除 VLM 模型产生的整页幻觉表格
+
+    判据：HTML 表格中，若同一个 <td> 内容在同一列重复出现 ≥5 次，
+    且该内容不是纯数字/常见标签（如年份、合计），则视为幻觉，
+    将整个 <table>...</table> 块替换为注释标记。
+    """
+    import re
+
+    def _check_table(match: re.Match) -> str:
+        table_html = match.group(0)
+        # 提取所有 <td> 内容
+        cells = re.findall(r'<td>(.*?)</td>', table_html, re.DOTALL)
+        if len(cells) < 10:
+            return table_html  # 小表格不检测
+
+        # 统计每个单元格文本出现次数
+        cell_counts: dict[str, int] = {}
+        for c in cells:
+            c_stripped = c.strip()
+            if not c_stripped:
+                continue
+            # 跳过纯数字、常见年份、百分比等
+            if re.match(r'^[\d,.\s%年]+$', c_stripped):
+                continue
+            cell_counts[c_stripped] = cell_counts.get(c_stripped, 0) + 1
+
+        # 如果某个非数字单元格重复 ≥5 次，判定为幻觉
+        for content, count in cell_counts.items():
+            if count >= 5 and len(content) < 20:
+                print(f"[幻觉检测] 表格中「{content}」重复 {count} 次，移除幻觉表格")
+                return f'\n<!-- 幻觉表格已移除：行名「{content}」重复 {count} 次 -->\n'
+
+        return table_html
+
+    return re.sub(r'<table>.*?</table>', _check_table, text, flags=re.DOTALL)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -651,7 +712,7 @@ def _mineru_convert(
                 result = _mineru_convert_single(chunk_path, chunk_output, timeout, progress_cb)
                 if not result or not result[0]:
                     print(f"[分段转换] chunk {chunk_index} 首次失败，15s 后重试...")
-                    import time; time.sleep(15)
+                    time.sleep(15)
                     result = _mineru_convert_single(chunk_path, chunk_output, timeout, progress_cb)
 
                 chunk_path.unlink(missing_ok=True)  # 清理临时分段文件
@@ -756,17 +817,20 @@ def _do_mineru_convert(
         # 1. 提交转换任务
         if progress_cb:
             progress_cb("submitting", "正在提交转换任务...")
+        # 文档参数放 query string（与 MinerU API 文档一致），文件信息放 body
+        query_params = {
+            "is_ocr": "true",
+            "enable_formula": "false",
+            "enable_table": "true",
+            "language": "ch_server",
+        }
         resp = requests.post(
             f"{MINERU_API}/file-urls/batch",
             headers={"Authorization": f"Bearer {token}"},
+            params=query_params,
             json={
                 "files": [{"name": pdf_path.name, "data_id": stem}],
-                "model_version": "auto",
-                "method": "auto",
-                "enable_formula": False,
-                "enable_table": True,
-                "language": "ch",
-                "parse_method": "auto",
+                "model_version": "vlm",           # VLM 视觉语言模型，扫描件/手写识别精度远超 pipeline
             },
             timeout=30,
             verify=_SSL_VERIFY,
@@ -778,7 +842,7 @@ def _do_mineru_convert(
             # 频率限制/配额限制：等待后重试
             if err_code in (429, 10020, 10021) or "limit" in err_msg.lower() or "频率" in err_msg:
                 print(f"[MinerU] API 频率限制，60s 后重试: {pdf_path.name}")
-                import time; time.sleep(60)
+                time.sleep(60)
                 return None, None  # 返回让上层重试
             print(f"[MinerU] 获取上传链接失败: {pdf_path.name}, code={err_code}, msg={err_msg}")
             return None, None
@@ -787,98 +851,139 @@ def _do_mineru_convert(
         upload_url = result["data"]["file_urls"][0]
         print(f"[MinerU] 开始上传 {pdf_path.name} (batch_id={batch_id})")
 
-        # 2. 发送文件
+        # 2. 发送文件到 OSS 预签名 URL
+        # 注意：OSS 签名只覆盖 PUT/Host/Date 这类基础头，requests 自动加的
+        # User-Agent/Accept-Encoding/Content-Length 等不在签名范围内，不会触发 SignatureDoesNotMatch。
+        # 之前用 urllib 手动 set 空 User-Agent 反而导致 OSS 计入签名校验失败。
         if progress_cb:
             progress_cb("uploading", "正在发送文件...")
-        with open(pdf_path, "rb") as f:
-            r = requests.put(upload_url, data=f.read(), timeout=120, verify=_SSL_VERIFY)
-        if r.status_code not in (200, 203):
-            print(f"[MinerU] 上传失败: {pdf_path.name}, HTTP {r.status_code}")
+        file_size = pdf_path.stat().st_size
+        print(f"[MinerU] 上传文件大小: {file_size // 1024 // 1024}MB")
+        try:
+            with open(pdf_path, "rb") as f:
+                upload_timeout = max(300, file_size // (1024 * 1024) * 20)
+                r = requests.put(upload_url, data=f, timeout=upload_timeout, verify=_SSL_VERIFY)
+        except Exception as upload_err:
+            print(f"[MinerU] 上传异常: {pdf_path.name}, {type(upload_err).__name__}: {upload_err}")
             return None, None
+        if r.status_code not in (200, 201, 203, 204):
+            body = r.text[:300] if r.text else ""
+            print(f"[MinerU] 上传失败: {pdf_path.name}, HTTP {r.status_code}, 响应: {body}")
+            return None, None
+        print(f"[MinerU] 上传成功: {pdf_path.name}")
 
         # 3. 等待云端处理
         if progress_cb:
             progress_cb("processing", "正在识别文本内容...")
         waited = 0
+        poll_interval = 5
         while waited < timeout:
-            r = requests.get(
-                f"{MINERU_API}/extract-results/batch/{batch_id}",
-                headers={"Authorization": f"Bearer {token}"},
-                timeout=30,
-                verify=_SSL_VERIFY,
-            )
-            data = r.json().get("data", {})
-            results = data.get("extract_result", [])
-            if not results:
-                time.sleep(5); waited += 5
-                if progress_cb:
-                    progress_cb("processing", f"正在识别文本内容...（已等待 {waited} 秒）")
+            try:
+                r = requests.get(
+                    f"{MINERU_API}/extract-results/batch/{batch_id}",
+                    headers={"Authorization": f"Bearer {token}"},
+                    timeout=30,
+                    verify=_SSL_VERIFY,
+                )
+                resp_json = r.json()
+                # 调试日志：打印完整响应（仅首次）
+                if waited == 0:
+                    print(f"[MinerU] 轮询响应: {json.dumps(resp_json, ensure_ascii=False)[:500]}")
+                data = resp_json.get("data", {})
+                results = data.get("extract_result", [])
+                if not results:
+                    time.sleep(poll_interval); waited += poll_interval
+                    if progress_cb:
+                        progress_cb("processing", f"正在识别文本内容...（已等待 {waited} 秒）")
+                    continue
+
+                state = results[0].get("state")
+                if state == "done":
+                    print(f"[MinerU] 转换完成 {pdf_path.name}，下载结果中...")
+                    if progress_cb:
+                        progress_cb("processing", "正在识别文本内容...")
+
+                    # 4. 获取结果
+                    if progress_cb:
+                        progress_cb("downloading", "正在生成结构化文本...")
+                    temp_dir = output_dir / f"_tmp_mineru_{stem}"
+                    temp_dir.mkdir(parents=True, exist_ok=True)
+                    zip_path = temp_dir / f"{stem}.zip"
+                    zip_url = results[0].get("full_zip_url", "")
+                    if not zip_url:
+                        print(f"[MinerU] 未找到 full_zip_url，响应: {json.dumps(results[0], ensure_ascii=False)[:300]}")
+                        shutil.rmtree(temp_dir, ignore_errors=True)
+                        return None, None
+                    zip_resp = requests.get(zip_url, timeout=120, verify=_SSL_VERIFY)
+                    zip_path.write_bytes(zip_resp.content)
+                    with zipfile.ZipFile(zip_path) as zf:
+                        zf.extractall(temp_dir)
+                    zip_path.unlink()
+
+                    # 5. 解析输出
+                    if progress_cb:
+                        progress_cb("parsing", "正在解析输出...")
+                    full_md = temp_dir / "full.md"
+                    if full_md.exists():
+                        text = full_md.read_text(encoding="utf-8")
+                    else:
+                        text = ""
+
+                    # 图片目录
+                    src_images_dir = temp_dir / "images"
+                    target_images_dir = None
+                    if src_images_dir.exists() and src_images_dir.is_dir():
+                        target_images_dir = output_dir / f"{stem}_images"
+                        if target_images_dir.exists():
+                            shutil.rmtree(target_images_dir)
+                        src_images_dir.rename(target_images_dir)
+
+                    # 保留 MinerU 结构化 JSON（layout/content_list/middle）
+                    # 命名规则：<stem>_<原名>.json，与 md 同前缀便于配对
+                    for json_name in ("layout.json", "content_list.json", "middle.json"):
+                        src_json = temp_dir / json_name
+                        if src_json.exists():
+                            target_json = output_dir / f"{stem}_{json_name}"
+                            if target_json.exists():
+                                target_json.unlink()
+                            shutil.copy2(src_json, target_json)
+
+                    # 清理临时目录
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+
+                    if text and len(text) > 100:
+                        # 重写图片路径为相对路径
+                        if target_images_dir:
+                            text = text.replace("images/", f"./{stem}_images/")
+                            text = text.replace('src="images/', f'src="./{stem}_images/')
+                        # 保护签名区：替换为图片占位符，避免 OCR 乱识别手写体
+                        text = _protect_signatures_as_images(text)
+                        # 应用 OCR 纠错
+                        text = _fix_ocr_errors(text)
+                        # VLM 幻觉检测：移除重复行名的伪造表格
+                        text = _strip_hallucinated_tables(text)
+                        # 压缩大图
+                        if target_images_dir and target_images_dir.exists():
+                            _compress_images(target_images_dir)
+                        # 折叠连续图片块
+                        text, _ = _fold_consecutive_images(text)
+                        # 写入目标文件
+                        target_md = output_dir / f"{stem}.md"
+                        target_md.write_text(text, encoding="utf-8")
+                        return text, target_images_dir
+                    print(f"[MinerU] 结果文件过小或缺失: {pdf_path.name}")
+                    return None, None
+                elif state == "failed":
+                    err_info = results[0].get("err_msg") or results[0].get("task_status_msg") or "未知错误"
+                    print(f"[MinerU] 云端转换失败: {pdf_path.name}, {err_info}")
+                    return None, None
+
+                time.sleep(poll_interval); waited += poll_interval
+
+            except Exception as inner_e:
+                print(f"[MinerU] 轮询异常: {inner_e}")
+                time.sleep(poll_interval); waited += poll_interval
                 continue
-
-            state = results[0].get("state")
-            if state == "done":
-                print(f"[MinerU] 转换完成 {pdf_path.name}，下载结果中...")
-                if progress_cb:
-                    progress_cb("processing", "正在识别文本内容...")
-
-                # 4. 获取结果
-                if progress_cb:
-                    progress_cb("downloading", "正在生成结构化文本...")
-                temp_dir = output_dir / f"_tmp_mineru_{stem}"
-                temp_dir.mkdir(parents=True, exist_ok=True)
-                zip_path = temp_dir / f"{stem}.zip"
-                zip_path.write_bytes(requests.get(results[0]["full_zip_url"], timeout=120, verify=_SSL_VERIFY).content)
-                with zipfile.ZipFile(zip_path) as zf:
-                    zf.extractall(temp_dir)
-                zip_path.unlink()
-
-                # 5. 解析输出
-                if progress_cb:
-                    progress_cb("parsing", "正在解析输出...")
-                full_md = temp_dir / "full.md"
-                if full_md.exists():
-                    text = full_md.read_text(encoding="utf-8")
-                else:
-                    text = ""
-
-                # 图片目录
-                src_images_dir = temp_dir / "images"
-                target_images_dir = None
-                if src_images_dir.exists() and src_images_dir.is_dir():
-                    target_images_dir = output_dir / f"{stem}_images"
-                    if target_images_dir.exists():
-                        shutil.rmtree(target_images_dir)
-                    src_images_dir.rename(target_images_dir)
-
-                # 清理临时目录
-                shutil.rmtree(temp_dir, ignore_errors=True)
-
-                if text and len(text) > 100:
-                    # 重写图片路径为相对路径
-                    if target_images_dir:
-                        text = text.replace("images/", f"./{stem}_images/")
-                        text = text.replace('src="images/', f'src="./{stem}_images/')
-                    # 保护签名区：替换为图片占位符，避免 OCR 乱识别手写体
-                    text = _protect_signatures_as_images(text)
-                    # 应用 OCR 纠错
-                    text = _fix_ocr_errors(text)
-                    # 压缩大图
-                    if target_images_dir and target_images_dir.exists():
-                        _compress_images(target_images_dir)
-                    # 折叠连续图片块
-                    text, _ = _fold_consecutive_images(text)
-                    # 写入目标文件
-                    target_md = output_dir / f"{stem}.md"
-                    target_md.write_text(text, encoding="utf-8")
-                    return text, target_images_dir
-                print(f"[MinerU] 结果文件过小或缺失: {pdf_path.name}")
-                return None, None
-            elif state == "failed":
-                err_info = results[0].get("task_status_msg", "未知错误")
-                print(f"[MinerU] 云端转换失败: {pdf_path.name}, {err_info}")
-                return None, None
-
-            time.sleep(5); waited += 5
 
         print(f"[MinerU] 转换超时: {pdf_path.name}")
         return None, None
@@ -902,7 +1007,7 @@ def get_evidence_text(
 
     优先级：
     1. 已有 .md 缓存文件 → 秒读，零延迟
-    2. 调用 MinerU API 转换
+    2. 根据配置选择转换引擎（MinerU 或 PaddleOCR）
 
     Args:
         pdf_path: PDF 文件路径
@@ -940,8 +1045,20 @@ def get_evidence_text(
                 return cached, str(images_dir)
             return cached, None
 
-    # 2. 调用 MinerU 转换
-    text, images_dir = _mineru_convert(pdf, out, progress_cb=progress_cb)
+    # 2. 根据配置选择引擎
+    pdf_engine = "paddleocr"  # 默认
+    try:
+        from config_manager import get_config_value
+        engine_val = get_config_value("pdf_engine")
+        if engine_val in ("mineru", "paddleocr"):
+            pdf_engine = engine_val
+    except ImportError:
+        pass
+
+    if pdf_engine == "paddleocr":
+        text, images_dir = _convert_with_paddleocr(pdf, out, progress_cb=progress_cb)
+    else:
+        text, images_dir = _mineru_convert(pdf, out, progress_cb=progress_cb)
 
     if text is not None:
         _save_to_dir(pdf, text, out)
@@ -954,9 +1071,48 @@ def get_evidence_text(
             return text, str(target_images)
         return text, None
 
-    # 3. MinerU 转换失败
+    # 3. 转换失败
     print(f"[转换失败] 所有引擎均失败: {pdf.name}")
     return None, None
+
+
+def _convert_with_paddleocr(
+    pdf: Path,
+    out: Path,
+    progress_cb: Optional[callable] = None,
+) -> Tuple[Optional[str], Optional[Path]]:
+    """使用 PaddleOCR 引擎转换 PDF
+
+    配额用尽时自动回退到 MinerU。
+    """
+    # 先检查配额状态
+    try:
+        from paddleocr_remote import paddleocr_convert, get_daily_quota_status
+        quota = get_daily_quota_status()
+        if quota["exceeded"]:
+            print(f"[PaddleOCR] 每日配额已用完（{quota['used_pages']}/{quota['total_limit']} 页），回退到 MinerU")
+            return _mineru_convert(pdf, out, progress_cb=progress_cb)
+    except ImportError:
+        pass
+
+    try:
+        from paddleocr_remote import paddleocr_convert
+        result = paddleocr_convert(pdf, out, progress_cb=progress_cb)
+        # 如果 PaddleOCR 转换成功，返回结果
+        if result and result[0]:
+            return result
+        # 转换失败（非配额原因），回退到 MinerU
+        print(f"[PaddleOCR] 转换返回空结果，回退到 MinerU")
+        return _mineru_convert(pdf, out, progress_cb=progress_cb)
+    except ImportError:
+        print(f"[PaddleOCR] 模块未找到，回退到 MinerU")
+        return _mineru_convert(pdf, out, progress_cb=progress_cb)
+    except Exception as e:
+        print(f"[PaddleOCR] 转换异常: {e}，回退到 MinerU")
+        try:
+            return _mineru_convert(pdf, out, progress_cb=progress_cb)
+        except Exception:
+            return None, None
 
 
 def convert_directory(

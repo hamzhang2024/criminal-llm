@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { PlusCircle, FolderOpen, Trash2, Calendar, FileText, ArrowRight, Settings, AlertCircle, ChevronRight } from 'lucide-react'
-import { MacOSTitlebar, MacOSToolbar, MacOSButton, MacOSCard, MacOSEmptyState } from '../components/MacOSLayout'
+import { MacOSTitlebar, MacOSToolbar, MacOSButton, MacOSCard, MacOSEmptyState, MacOSInput } from '../components/MacOSLayout'
 import { api, getAuthEmail } from '../api'
 import type { Case } from '../api/types'
 import { showConfirm, showAlert } from '../components/MacOSDialog'
@@ -196,6 +196,7 @@ export function HomePage() {
         {/* 用户头像 + 邮箱 */}
         <div
           onClick={() => navigate('/settings')}
+          className="macOS-avatar-button"
           style={{
             display: 'flex', alignItems: 'center', gap: '10px',
             padding: '4px 12px 4px 4px',
@@ -204,8 +205,6 @@ export function HomePage() {
             cursor: 'pointer',
             transition: 'background 0.15s',
           }}
-          onMouseEnter={e => e.currentTarget.style.background = 'rgba(0,0,0,0.04)'}
-          onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
         >
           <div style={{
             width: 28, height: 28, borderRadius: '50%',
@@ -272,87 +271,64 @@ export function HomePage() {
             </h2>
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '20px' }}>
-              {cases.map(caseItem => (
-                <MacOSCard key={caseItem.id}>
-                  <div style={{ cursor: 'pointer' }} onClick={() => navigate(`/case/${caseItem.id}`)}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                        <div style={{
-                          width: '48px',
-                          height: '48px',
-                          borderRadius: '12px',
-                          background: 'rgba(0, 122, 255, 0.1)',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center'
-                        }}>
-                          <FileText className="w-6 h-6" color="var(--macos-accent)" />
-                        </div>
-                        <div>
-                          <h3 style={{ fontSize: '16px', fontWeight: '600', marginBottom: '4px' }}>{caseItem.name}</h3>
-                          <p style={{ fontSize: '13px', color: '#6e6e73' }}>被告人：{caseItem.defendant}</p>
-                        </div>
+              {cases.map((caseItem, index) => (
+                <MacOSCard
+                  key={caseItem.id}
+                  clickable
+                  onClick={() => navigate(`/case/${caseItem.id}`)}
+                  className={`macOS-animate-slide-up macOS-stagger-${Math.min(index + 1, 8)}`}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <div style={{
+                        width: '48px',
+                        height: '48px',
+                        borderRadius: '12px',
+                        background: 'var(--macos-accent-light)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center'
+                      }}>
+                        <FileText className="w-6 h-6" color="var(--macos-accent)" />
+                      </div>
+                      <div>
+                        <h3 style={{ fontSize: '16px', fontWeight: '600', marginBottom: '4px' }}>{caseItem.name}</h3>
+                        <p style={{ fontSize: '13px', color: 'var(--macos-text-secondary)' }}>被告人：{caseItem.defendant}</p>
                       </div>
                     </div>
+                  </div>
 
-                    <div style={{ display: 'flex', gap: '12px', fontSize: '12px', color: '#86868b', marginBottom: '12px' }}>
-                      <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                        <Calendar className="w-3 h-3" />
-                        {caseItem.created_at}
-                      </span>
-                      <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                        <FileText className="w-3 h-3" />
-                        {caseItem.file_count} 个文件
-                      </span>
-                    </div>
+                  <div style={{ display: 'flex', gap: '12px', fontSize: '12px', color: 'var(--macos-text-tertiary)', marginBottom: '12px' }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <Calendar className="w-3 h-3" />
+                      {caseItem.created_at}
+                    </span>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <FileText className="w-3 h-3" />
+                      {caseItem.file_count} 个文件
+                    </span>
+                  </div>
 
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{
-                        fontSize: '11px',
-                        padding: '3px 10px',
-                        borderRadius: '10px',
-                        background: caseItem.status === 'done' ? 'rgba(52, 199, 89, 0.1)' :
-                                   caseItem.status === 'processing' ? 'rgba(255, 149, 0, 0.1)' : 'rgba(30, 58, 95, 0.1)',
-                        color: caseItem.status === 'done' ? '#2d8f3d' :
-                               caseItem.status === 'processing' ? '#ff9500' : 'var(--macos-accent)'
-                      }}>
-                        {caseItem.status === 'done' ? '已完成' :
-                         caseItem.status === 'processing' ? '处理中' : '新建'}
-                      </span>
-                      <ArrowRight className="w-4 h-4" color="#86868b" />
-                    </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span className={`macOS-badge ${caseItem.status === 'done' ? 'macOS-badge-success' : caseItem.status === 'processing' ? 'macOS-badge-warning' : 'macOS-badge-accent'}`}>
+                      {caseItem.status === 'done' ? '已完成' :
+                       caseItem.status === 'processing' ? '处理中' : '新建'}
+                    </span>
+                    <ArrowRight className="w-4 h-4" color="var(--macos-text-tertiary)" />
                   </div>
 
                   <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid var(--macos-border)', display: 'flex', gap: '8px' }}>
                     <button
-                      onClick={() => navigate(`/case/${caseItem.id}`)}
-                      style={{
-                        flex: 1,
-                        padding: '6px',
-                        background: 'var(--macos-accent)',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '6px',
-                        cursor: 'pointer',
-                        fontSize: '12px',
-                        transition: 'background 0.15s ease',
-                      }}
-                      onMouseEnter={e => e.currentTarget.style.background = 'var(--macos-accent-hover)'}
-                      onMouseLeave={e => e.currentTarget.style.background = 'var(--macos-accent)'}
+                      onClick={(e) => { e.stopPropagation(); navigate(`/case/${caseItem.id}`) }}
+                      className="macOS-button macOS-button-primary"
+                      style={{ flex: 1, fontSize: '12px', padding: '6px' }}
                     >
                       打开
                     </button>
                     <button
-                      onClick={() => handleDeleteCase(caseItem.id)}
-                      style={{
-                        padding: '6px 12px',
-                        background: 'var(--macos-bg-secondary)',
-                        color: '#ff3b30',
-                        border: 'none',
-                        borderRadius: '6px',
-                        cursor: 'pointer',
-                        fontSize: '12px'
-                      }}
+                      onClick={(e) => { e.stopPropagation(); handleDeleteCase(caseItem.id) }}
+                      className="macOS-button macOS-button-secondary"
+                      style={{ color: 'var(--macos-danger)', fontSize: '12px', padding: '6px 12px' }}
                     >
                       <Trash2 className="w-3 h-3" />
                     </button>
@@ -510,18 +486,11 @@ export function HomePage() {
               <label style={{ display: 'block', fontSize: '13px', fontWeight: '500', marginBottom: '8px' }}>
                 案件名称
               </label>
-              <input
+              <MacOSInput
                 type="text"
                 value={newCaseName}
                 onChange={(e) => setNewCaseName(e.target.value)}
                 placeholder="xx涉嫌开设赌场罪"
-                style={{
-                  width: '100%',
-                  padding: '10px 12px',
-                  border: '1px solid var(--macos-border)',
-                  borderRadius: '8px',
-                  fontSize: '14px'
-                }}
               />
             </div>
 
@@ -529,53 +498,29 @@ export function HomePage() {
               <label style={{ display: 'block', fontSize: '13px', fontWeight: '500', marginBottom: '8px' }}>
                 被告人姓名
               </label>
-              <input
+              <MacOSInput
                 type="text"
                 value={defendant}
                 onChange={(e) => setDefendant(e.target.value)}
                 placeholder="请准确填写被告人（服务对象）姓名"
-                style={{
-                  width: '100%',
-                  padding: '10px 12px',
-                  border: '1px solid var(--macos-border)',
-                  borderRadius: '8px',
-                  fontSize: '14px'
-                }}
               />
             </div>
 
             <div style={{ display: 'flex', gap: '12px' }}>
-              <button
+              <MacOSButton
+                variant="primary"
                 onClick={handleCreateCase}
                 disabled={!newCaseName.trim() || !defendant.trim()}
-                style={{
-                  flex: 1,
-                  padding: '10px',
-                  background: 'var(--macos-accent)',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '8px',
-                  cursor: newCaseName.trim() && defendant.trim() ? 'pointer' : 'not-allowed',
-                  opacity: newCaseName.trim() && defendant.trim() ? 1 : 0.5,
-                  fontSize: '14px',
-                  fontWeight: '500'
-                }}
+                style={{ flex: 1 }}
               >
                 创建案件
-              </button>
-              <button
+              </MacOSButton>
+              <MacOSButton
+                variant="secondary"
                 onClick={() => setShowNewCase(false)}
-                style={{
-                  padding: '10px 20px',
-                  background: 'var(--macos-bg-secondary)',
-                  border: 'none',
-                  borderRadius: '8px',
-                  cursor: 'pointer',
-                  fontSize: '14px'
-                }}
               >
                 取消
-              </button>
+              </MacOSButton>
             </div>
           </MacOSCard>
         </div>
@@ -604,18 +549,11 @@ export function HomePage() {
               <label style={{ display: 'block', fontSize: '13px', fontWeight: '500', marginBottom: '8px' }}>
                 案件名称
               </label>
-              <input
+              <MacOSInput
                 type="text"
                 value={newCaseName}
                 onChange={(e) => setNewCaseName(e.target.value)}
                 placeholder="xx涉嫌开设赌场罪"
-                style={{
-                  width: '100%',
-                  padding: '10px 12px',
-                  border: '1px solid var(--macos-border)',
-                  borderRadius: '8px',
-                  fontSize: '14px'
-                }}
               />
             </div>
 
@@ -623,53 +561,29 @@ export function HomePage() {
               <label style={{ display: 'block', fontSize: '13px', fontWeight: '500', marginBottom: '8px' }}>
                 被告人姓名
               </label>
-              <input
+              <MacOSInput
                 type="text"
                 value={defendant}
                 onChange={(e) => setDefendant(e.target.value)}
                 placeholder="请准确填写被告人（服务对象）姓名"
-                style={{
-                  width: '100%',
-                  padding: '10px 12px',
-                  border: '1px solid var(--macos-border)',
-                  borderRadius: '8px',
-                  fontSize: '14px'
-                }}
               />
             </div>
 
             <div style={{ display: 'flex', gap: '12px' }}>
-              <button
+              <MacOSButton
+                variant="primary"
                 onClick={handleImportFolder}
                 disabled={!newCaseName.trim() || !defendant.trim()}
-                style={{
-                  flex: 1,
-                  padding: '10px',
-                  background: '#ff9500',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '8px',
-                  cursor: newCaseName.trim() && defendant.trim() ? 'pointer' : 'not-allowed',
-                  opacity: newCaseName.trim() && defendant.trim() ? 1 : 0.5,
-                  fontSize: '14px',
-                  fontWeight: '500'
-                }}
+                style={{ flex: 1 }}
               >
                 导入案件
-              </button>
-              <button
+              </MacOSButton>
+              <MacOSButton
+                variant="secondary"
                 onClick={() => setShowImportDialog(false)}
-                style={{
-                  padding: '10px 20px',
-                  background: 'var(--macos-bg-secondary)',
-                  border: 'none',
-                  borderRadius: '8px',
-                  cursor: 'pointer',
-                  fontSize: '14px'
-                }}
               >
                 取消
-              </button>
+              </MacOSButton>
             </div>
           </MacOSCard>
         </div>

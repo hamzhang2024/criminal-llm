@@ -250,7 +250,7 @@ function PageAnnotationOverlay({ annotations, annotationMode, onUpdateNote, onDe
                 disabled={!draft.trim()}
                 style={{
                   padding: '3px 10px', fontSize: '11px', borderRadius: '4px',
-                  background: draft.trim() ? '#1e3a5f' : '#eee',
+                  background: draft.trim() ? 'var(--macos-accent)' : '#eee',
                   color: draft.trim() ? '#fff' : '#999',
                   border: 'none', cursor: draft.trim() ? 'pointer' : 'default',
                 }}
@@ -466,7 +466,7 @@ function PdfPage({ pdfDoc, pageNum, scale, annotations, annotationMode, onCreate
                 disabled={!draft.trim()}
                 style={{
                   padding: '3px 10px', fontSize: '11px', borderRadius: '4px',
-                  background: draft.trim() ? '#1e3a5f' : '#eee',
+                  background: draft.trim() ? 'var(--macos-accent)' : '#eee',
                   color: draft.trim() ? '#fff' : '#999',
                   border: 'none', cursor: draft.trim() ? 'pointer' : 'default',
                 }}
@@ -644,9 +644,9 @@ export function PdfViewer({ caseId, pdfFilename, annotations, onAddAnnotation, o
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
           <button onClick={toggleFit} style={{
             padding: '3px 8px', fontSize: '11px', borderRadius: '4px',
-            background: fitMode === 'fit' ? '#1e3a5f' : '#fff',
+            background: fitMode === 'fit' ? 'var(--macos-accent)' : '#fff',
             color: fitMode === 'fit' ? '#fff' : '#666',
-            border: `1px solid ${fitMode === 'fit' ? '#1e3a5f' : '#ddd'}`,
+            border: `1px solid ${fitMode === 'fit' ? 'var(--macos-accent)' : '#ddd'}`,
             cursor: 'pointer', whiteSpace: 'nowrap',
           }}>
             {fitMode === 'fit' ? '适配页面' : '原始大小'}

@@ -30,7 +30,7 @@ function WorkingDots() {
             width: '5px',
             height: '5px',
             borderRadius: '50%',
-            background: '#1e3a5f',
+            background: 'var(--macos-accent)',
             animation: `bounceDot 1.2s ease-in-out ${i * 0.15}s infinite`,
           }}
         />
@@ -1786,7 +1786,7 @@ export function CaseDetailPage() {
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: 'var(--macos-bg-primary)', overflow: 'hidden' }}>
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         {/* 左侧：案件步骤导航 */}
-        <div style={{ width: '200px', background: 'var(--macos-bg-secondary)', borderRight: '1px solid var(--macos-border)', padding: '16px' }}>
+        <div className="frosted-subtle" style={{ width: '200px', borderRight: '1px solid var(--macos-border)', padding: '16px' }}>
           {/* 返回案件管理 */}
           <button
             onClick={() => navigate('/')}
@@ -1798,12 +1798,12 @@ export function CaseDetailPage() {
               gap: '6px',
               padding: '8px 12px',
               marginBottom: '12px',
-              background: 'rgba(0, 122, 255, 0.1)',
+              background: 'var(--macos-accent-light)',
               border: 'none',
               borderRadius: '6px',
               cursor: 'pointer',
               fontSize: '12px',
-              color: '#1e3a5f',
+              color: 'var(--macos-accent)',
               fontWeight: '500'
             }}
           >
@@ -1831,19 +1831,19 @@ export function CaseDetailPage() {
                     alignItems: 'center',
                     gap: '8px',
                     padding: '8px 12px',
-                    background: isActive ? 'rgba(0,122,255,0.1)' : 'transparent',
+                    background: isActive ? 'var(--macos-accent-light)' : 'transparent',
                     border: 'none',
                     borderRadius: '6px',
                     cursor: 'pointer',
                     textAlign: 'left',
                     fontSize: '13px',
-                    color: isActive ? '#1e3a5f' : 'var(--macos-text-primary)'
+                    color: isActive ? 'var(--macos-accent)' : 'var(--macos-text-primary)'
                   }}
                 >
                   {isDone ? (
                     <CheckCircle className="w-4 h-4" color="#2d8f3d" />
                   ) : (
-                    <Icon className="w-4 h-4" color={isActive ? '#1e3a5f' : '#86868b'} />
+                    <Icon className="w-4 h-4" color={isActive ? 'var(--macos-accent)' : '#86868b'} />
                   )}
                   <span>{step.name}</span>
                 </button>
@@ -1991,7 +1991,7 @@ export function CaseDetailPage() {
                           width: '40px',
                           height: '40px',
                           borderRadius: '50%',
-                          background: isDone ? 'rgba(52, 199, 89, 0.1)' : isActive ? 'rgba(0, 122, 255, 0.1)' : 'var(--macos-bg-secondary)',
+                          background: isDone ? 'rgba(52, 199, 89, 0.1)' : isActive ? 'var(--macos-accent-light)' : 'var(--macos-bg-secondary)',
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'center',
@@ -2000,10 +2000,10 @@ export function CaseDetailPage() {
                           {isDone ? (
                             <CheckCircle className="w-5 h-5" color="#2d8f3d" />
                           ) : (
-                            <Icon className="w-5 h-5" color={isActive ? '#1e3a5f' : '#86868b'} />
+                            <Icon className="w-5 h-5" color={isActive ? 'var(--macos-accent)' : '#86868b'} />
                           )}
                         </div>
-                        <div style={{ fontSize: '11px', fontWeight: isActive ? '600' : '400', color: isActive ? '#1e3a5f' : '#6e6e73', textAlign: 'center' }}>
+                        <div style={{ fontSize: '11px', fontWeight: isActive ? '600' : '400', color: isActive ? 'var(--macos-accent)' : '#6e6e73', textAlign: 'center' }}>
                           {step.name}
                         </div>
                       </div>
@@ -2041,8 +2041,8 @@ export function CaseDetailPage() {
                   <div style={{ fontSize: '13px', fontWeight: '500', marginBottom: '12px' }}>处理选项</div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                     {/* 去水印 */}
-                    <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', cursor: 'pointer', padding: '12px', background: optWatermark ? 'rgba(0,122,255,0.05)' : 'var(--macos-bg-secondary)', borderRadius: '8px', border: optWatermark ? '1px solid rgba(0,122,255,0.3)' : '1px solid transparent' }}>
-                      <input type="checkbox" checked={optWatermark} onChange={(e) => setOptWatermark(e.target.checked)} style={{ marginTop: '2px', accentColor: '#1e3a5f' }} />
+                    <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', cursor: 'pointer', padding: '12px', background: optWatermark ? 'rgba(0,122,255,0.05)' : 'var(--macos-bg-secondary)', borderRadius: '8px', border: optWatermark ? '1px solid var(--macos-accent-border)' : '1px solid transparent' }}>
+                      <input type="checkbox" checked={optWatermark} onChange={(e) => setOptWatermark(e.target.checked)} style={{ marginTop: '2px', accentColor: 'var(--macos-accent)' }} />
                       <div>
                         <div style={{ fontSize: '13px', fontWeight: '500' }}>去水印 / 密码</div>
                         <div style={{ fontSize: '12px', color: 'var(--macos-text-secondary)' }}>移除 PDF 水印和加密保护，输出干净文件</div>
@@ -2067,8 +2067,8 @@ export function CaseDetailPage() {
                       </div>
                     )}
                     {/* 精度提升 */}
-                    <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', cursor: 'pointer', padding: '12px', background: optEnhance ? 'rgba(0,122,255,0.05)' : 'var(--macos-bg-secondary)', borderRadius: '8px', border: optEnhance ? '1px solid rgba(0,122,255,0.3)' : '1px solid transparent' }}>
-                      <input type="checkbox" checked={optEnhance} onChange={(e) => setOptEnhance(e.target.checked)} style={{ marginTop: '2px', accentColor: '#1e3a5f' }} />
+                    <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', cursor: 'pointer', padding: '12px', background: optEnhance ? 'rgba(0,122,255,0.05)' : 'var(--macos-bg-secondary)', borderRadius: '8px', border: optEnhance ? '1px solid var(--macos-accent-border)' : '1px solid transparent' }}>
+                      <input type="checkbox" checked={optEnhance} onChange={(e) => setOptEnhance(e.target.checked)} style={{ marginTop: '2px', accentColor: 'var(--macos-accent)' }} />
                       <div style={{ flex: 1 }}>
                         <div style={{ fontSize: '13px', fontWeight: '500' }}>精度提升</div>
                         <div style={{ fontSize: '12px', color: 'var(--macos-text-secondary)', marginBottom: optEnhance ? '8px' : '0' }}>提高 PDF 图片分辨率，适用于低分辨率扫描件</div>
@@ -2080,7 +2080,7 @@ export function CaseDetailPage() {
                                 onClick={() => setEnhanceDpi(dpi)}
                                 style={{
                                   padding: '4px 12px',
-                                  background: enhanceDpi === dpi ? '#1e3a5f' : 'rgba(142,142,147,0.12)',
+                                  background: enhanceDpi === dpi ? 'var(--macos-accent)' : 'rgba(142,142,147,0.12)',
                                   color: enhanceDpi === dpi ? '#fff' : 'var(--macos-text-primary)',
                                   border: 'none',
                                   borderRadius: '6px',
@@ -2112,7 +2112,7 @@ export function CaseDetailPage() {
               <MacOSCard style={{ marginBottom: '16px', background: 'var(--macos-bg-secondary)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                   {processing ? (
-                    <Loader2 className="w-5 h-5 animate-spin" color="#1e3a5f" />
+                    <Loader2 className="w-5 h-5 animate-spin" color="var(--macos-accent)" />
                   ) : (
                     <CheckCircle className="w-5 h-5" color="#2d8f3d" />
                   )}
@@ -2148,7 +2148,7 @@ export function CaseDetailPage() {
                       const pct = pctMatch ? parseInt(pctMatch[1]) : (doneCount / Math.max(files.length, 1)) * 100
                       return (
                         <div style={{ marginTop: '8px', height: '4px', background: 'var(--macos-border)', borderRadius: '2px', overflow: 'hidden' }}>
-                          <div style={{ height: '100%', background: '#1e3a5f', width: `${Math.min(pct, 100)}%`, borderRadius: '2px', transition: 'width 0.3s ease' }} />
+                          <div style={{ height: '100%', background: 'var(--macos-accent)', width: `${Math.min(pct, 100)}%`, borderRadius: '2px', transition: 'width 0.3s ease' }} />
                         </div>
                       )
                     })()}
@@ -2182,7 +2182,7 @@ export function CaseDetailPage() {
                           onClick={handleExtractEvidence}
                           style={{
                             padding: '6px 12px', borderRadius: '6px',
-                            border: 'none', background: '#1e3a5f',
+                            border: 'none', background: 'var(--macos-accent)',
                             color: '#fff', fontSize: '12px', fontWeight: '500',
                             cursor: 'pointer'
                           }}
@@ -2202,7 +2202,7 @@ export function CaseDetailPage() {
                           onClick={handleExtractEvidence}
                           style={{
                             padding: '6px 12px', borderRadius: '6px',
-                            border: 'none', background: '#1e3a5f',
+                            border: 'none', background: 'var(--macos-accent)',
                             color: '#fff', fontSize: '12px', fontWeight: '500',
                             cursor: 'pointer'
                           }}
@@ -2244,9 +2244,9 @@ export function CaseDetailPage() {
                         }}>
                           <div style={{
                             width: '28px', height: '28px', borderRadius: '6px',
-                            background: 'rgba(0,122,255,0.1)',
+                            background: 'var(--macos-accent-light)',
                             display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            fontSize: '12px', fontWeight: '600', color: '#1e3a5f'
+                            fontSize: '12px', fontWeight: '600', color: 'var(--macos-accent)'
                           }}>{ev.id}</div>
                           <div style={{ flex: 1, overflow: 'hidden' }}>
                             <div style={{ fontSize: '13px', fontWeight: '500', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -2305,7 +2305,7 @@ export function CaseDetailPage() {
                         style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px', display: 'flex', alignItems: 'center' }}
                       >
                         {files.every(f => f.selected) ? (
-                          <CheckSquare className="w-4 h-4" color="#1e3a5f" />
+                          <CheckSquare className="w-4 h-4" color="var(--macos-accent)" />
                         ) : (
                           <Square className="w-4 h-4" color="#86868b" />
                         )}
@@ -2337,11 +2337,11 @@ export function CaseDetailPage() {
                         padding: '12px',
                         background: file.splitResults ? 'rgba(52, 199, 89, 0.08)' :
                                    file.status === 'done' ? 'rgba(52, 199, 89, 0.05)' :
-                                   file.status === 'processing' ? 'rgba(0, 122, 255, 0.05)' :
+                                   file.status === 'processing' ? 'var(--macos-accent-surface)' :
                                    file.status === 'error' ? 'rgba(255, 59, 48, 0.05)' : 'var(--macos-bg-secondary)',
                         borderRadius: '8px',
                         border: file.splitResults ? '1px solid rgba(52, 199, 89, 0.3)' :
-                                  file.selected ? '1px solid rgba(0, 122, 255, 0.3)' : '1px solid transparent'
+                                  file.selected ? '1px solid var(--macos-accent-border)' : '1px solid transparent'
                       }}>
                         {/* 步骤 2：状态指示（无复选框，转换是单文件操作） */}
                         {currentStep === 2 ? (
@@ -2356,10 +2356,10 @@ export function CaseDetailPage() {
                           ) : file.status === 'processing' ? (
                             <div style={{
                               width: '32px', height: '32px', borderRadius: '8px',
-                              background: 'rgba(0, 122, 255, 0.1)',
+                              background: 'var(--macos-accent-light)',
                               display: 'flex', alignItems: 'center', justifyContent: 'center'
                             }}>
-                              <Loader2 className="w-4 h-4 animate-spin" color="#1e3a5f" />
+                              <Loader2 className="w-4 h-4 animate-spin" color="var(--macos-accent)" />
                             </div>
                           ) : file.status === 'error' ? (
                             <div style={{
@@ -2372,7 +2372,7 @@ export function CaseDetailPage() {
                           ) : (
                             <div style={{
                               width: '32px', height: '32px', borderRadius: '8px',
-                              background: 'rgba(0, 122, 255, 0.1)',
+                              background: 'var(--macos-accent-light)',
                               display: 'flex', alignItems: 'center', justifyContent: 'center'
                             }}>
                               <FileText className="w-4 h-4" color="#86868b" />
@@ -2386,7 +2386,7 @@ export function CaseDetailPage() {
                             style={{ background: 'none', border: 'none', cursor: file.status === 'pending' ? 'pointer' : 'default', padding: '2px', display: 'flex', alignItems: 'center', opacity: file.status !== 'pending' ? 0.3 : 1 }}
                           >
                             {file.selected ? (
-                              <CheckSquare className="w-4 h-4" color="#1e3a5f" />
+                              <CheckSquare className="w-4 h-4" color="var(--macos-accent)" />
                             ) : (
                               <Square className="w-4 h-4" color="#86868b" />
                             )}
@@ -2398,7 +2398,7 @@ export function CaseDetailPage() {
                             width: '32px',
                             height: '32px',
                             borderRadius: '8px',
-                            background: file.status === 'done' ? 'rgba(52, 199, 89, 0.1)' : 'rgba(0, 122, 255, 0.1)',
+                            background: file.status === 'done' ? 'rgba(52, 199, 89, 0.1)' : 'var(--macos-accent-light)',
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent: 'center'
@@ -2406,7 +2406,7 @@ export function CaseDetailPage() {
                             {file.status === 'done' ? (
                               <CheckCircle className="w-4 h-4" color="#2d8f3d" />
                             ) : file.status === 'processing' ? (
-                              <Loader2 className="w-4 h-4 animate-spin" color="#1e3a5f" />
+                              <Loader2 className="w-4 h-4 animate-spin" color="var(--macos-accent)" />
                             ) : file.status === 'error' ? (
                               <AlertCircle className="w-4 h-4" color="#ff3b30" />
                             ) : (
@@ -2532,8 +2532,8 @@ export function CaseDetailPage() {
                             onClick={() => handleOpenFile(file)}
                             style={{
                               padding: '6px 12px',
-                              background: 'rgba(0, 122, 255, 0.1)',
-                              color: '#1e3a5f',
+                              background: 'var(--macos-accent-light)',
+                              color: 'var(--macos-accent)',
                               border: 'none',
                               borderRadius: '6px',
                               cursor: 'pointer',
@@ -2592,7 +2592,7 @@ export function CaseDetailPage() {
                       style={{
                         padding: '6px 14px', borderRadius: '6px',
                         border: 'none',
-                        background: (!evidenceExtracted || runningStage !== null) ? '#d1d1d6' : '#1e3a5f',
+                        background: (!evidenceExtracted || runningStage !== null) ? '#d1d1d6' : 'var(--macos-accent)',
                         color: '#fff', fontSize: '13px', fontWeight: '500',
                         cursor: (!evidenceExtracted || runningStage !== null) ? 'not-allowed' : 'pointer'
                       }}
@@ -2615,7 +2615,7 @@ export function CaseDetailPage() {
                     <div style={{
                       padding: '8px 12px', borderRadius: '8px', marginBottom: '12px',
                       background: 'rgba(0,122,255,0.08)', border: '1px solid rgba(0,122,255,0.2)',
-                      fontSize: '12px', color: '#1e3a5f',
+                      fontSize: '12px', color: 'var(--macos-accent)',
                       display: 'flex', alignItems: 'center', gap: '8px'
                     }}>
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
@@ -2657,10 +2657,10 @@ export function CaseDetailPage() {
                           {/* 状态图标 */}
                           <div style={{
                             width: '28px', height: '28px', borderRadius: '50%',
-                            background: status === 'completed' ? 'rgba(52,199,89,0.15)' : isRunning ? 'rgba(0,122,255,0.1)' : status === 'error' ? 'rgba(255,59,48,0.1)' : 'var(--macos-bg-tertiary)',
+                            background: status === 'completed' ? 'rgba(52,199,89,0.15)' : isRunning ? 'var(--macos-accent-light)' : status === 'error' ? 'rgba(255,59,48,0.1)' : 'var(--macos-bg-tertiary)',
                             display: 'flex', alignItems: 'center', justifyContent: 'center',
                             fontSize: '14px', fontWeight: '600', flexShrink: 0,
-                            color: status === 'completed' ? '#2d8f3d' : isRunning ? '#1e3a5f' : status === 'error' ? '#ff3b30' : '#86868b'
+                            color: status === 'completed' ? '#2d8f3d' : isRunning ? 'var(--macos-accent)' : status === 'error' ? '#ff3b30' : '#86868b'
                           }}>
                             {status === 'completed' ? '✓' : isRunning ? <Loader2 className="w-4 h-4 animate-spin" /> : stage.num}
                           </div>
@@ -2668,7 +2668,7 @@ export function CaseDetailPage() {
                           {/* 阶段信息 */}
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ fontSize: '13px', fontWeight: '500' }}>{stage.name}</div>
-                            {msg && <div style={{ fontSize: '11px', color: '#1e3a5f' }}>{msg}</div>}
+                            {msg && <div style={{ fontSize: '11px', color: 'var(--macos-accent)' }}>{msg}</div>}
                             {errMsg && <div style={{ fontSize: '11px', color: '#ff3b30' }}>{errMsg}</div>}
                             {!msg && !errMsg && seqDisabled && (
                               <div style={{ fontSize: '11px', color: '#86868b' }}>
@@ -2685,7 +2685,7 @@ export function CaseDetailPage() {
                                 <button onClick={() => handleViewStage(stage.num)} disabled={analysisDisabled} style={{
                                   padding: '4px 10px', borderRadius: '6px',
                                   border: '1px solid var(--macos-border)', background: 'transparent',
-                                  color: analysisDisabled ? '#d1d1d6' : '#1e3a5f',
+                                  color: analysisDisabled ? '#d1d1d6' : 'var(--macos-accent)',
                                   fontSize: '12px', cursor: analysisDisabled ? 'not-allowed' : 'pointer'
                                 }}>查看</button>
                                 <button onClick={() => handleClearStage(stage.num)} disabled={analysisDisabled} style={{
@@ -2715,7 +2715,7 @@ export function CaseDetailPage() {
                               <button onClick={() => handleRunStage(stage.num)} disabled={!defendant.trim() || analysisDisabled} style={{
                                 padding: '4px 10px', borderRadius: '6px',
                                 border: 'none',
-                                background: (!defendant.trim() || analysisDisabled) ? '#d1d1d6' : '#1e3a5f',
+                                background: (!defendant.trim() || analysisDisabled) ? '#d1d1d6' : 'var(--macos-accent)',
                                 color: '#fff', fontSize: '12px',
                                 cursor: (!defendant.trim() || analysisDisabled) ? 'not-allowed' : 'pointer'
                               }}>开始</button>
@@ -2789,12 +2789,12 @@ export function CaseDetailPage() {
                           flex: 1,
                           padding: '8px 8px',
                           borderRadius: '6px',
-                          background: isDone ? 'rgba(52,199,89,0.1)' : isRunning ? 'rgba(0,122,255,0.1)' : 'var(--macos-bg-secondary)',
+                          background: isDone ? 'rgba(52,199,89,0.1)' : isRunning ? 'var(--macos-accent-light)' : 'var(--macos-bg-secondary)',
                           fontSize: '11px',
                           textAlign: 'center',
-                          color: isDone ? '#2d8f3d' : isRunning ? '#1e3a5f' : 'var(--macos-text-tertiary)',
+                          color: isDone ? '#2d8f3d' : isRunning ? 'var(--macos-accent)' : 'var(--macos-text-tertiary)',
                           fontWeight: isDone || isRunning ? '600' : '400',
-                          border: isRunning ? '1px solid rgba(0,122,255,0.3)' : '1px solid transparent',
+                          border: isRunning ? '1px solid var(--macos-accent-border)' : '1px solid transparent',
                           cursor: canRun ? 'pointer' : 'default',
                           display: 'flex',
                           alignItems: 'center',
@@ -2895,9 +2895,9 @@ export function CaseDetailPage() {
                 {liveProgress && (
                   <MacOSCard style={{ marginBottom: '12px', background: 'rgba(0,122,255,0.04)', border: '1px solid rgba(0,122,255,0.15)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                      <Loader2 className="w-5 h-5 animate-spin" color="#1e3a5f" />
+                      <Loader2 className="w-5 h-5 animate-spin" color="var(--macos-accent)" />
                       <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: '13px', fontWeight: '500', color: '#1e3a5f', marginBottom: '4px' }}>
+                        <div style={{ fontSize: '13px', fontWeight: '500', color: 'var(--macos-accent)', marginBottom: '4px' }}>
                           {liveProgress!.message}
                         </div>
                         <div style={{ fontSize: '11px', color: 'var(--macos-text-tertiary)' }}>
@@ -2905,11 +2905,11 @@ export function CaseDetailPage() {
                           已运行 {Math.floor(liveProgress!.elapsed / 60)}分{liveProgress!.elapsed % 60}秒，请耐心等待
                         </div>
                         {liveProgress!.total > 0 && (
-                          <div style={{ marginTop: '8px', height: '4px', background: 'rgba(0,122,255,0.1)', borderRadius: '2px', overflow: 'hidden' }}>
+                          <div style={{ marginTop: '8px', height: '4px', background: 'var(--macos-accent-light)', borderRadius: '2px', overflow: 'hidden' }}>
                             <div style={{
                               width: `${(liveProgress!.current / liveProgress!.total) * 100}%`,
                               height: '100%',
-                              background: '#1e3a5f',
+                              background: 'var(--macos-accent)',
                               borderRadius: '2px',
                               transition: 'width 0.3s ease',
                             }} />
@@ -3091,8 +3091,8 @@ export function CaseDetailPage() {
                                   display: 'block', width: '100%', textAlign: 'left',
                                   padding: '6px 8px', marginBottom: '2px', borderRadius: '4px',
                                   fontSize: '11px',
-                                  background: isActive ? 'rgba(0,122,255,0.1)' : 'transparent',
-                                  color: isActive ? '#1e3a5f' : 'var(--macos-text-secondary)',
+                                  background: isActive ? 'var(--macos-accent-light)' : 'transparent',
+                                  color: isActive ? 'var(--macos-accent)' : 'var(--macos-text-secondary)',
                                   border: 'none', cursor: 'pointer',
                                   fontWeight: isActive ? '600' : '400',
                                 }}
@@ -3211,7 +3211,7 @@ export function CaseDetailPage() {
                 borderRadius: '6px',
                 cursor: 'pointer',
                 fontSize: '13px',
-                color: '#1e3a5f',
+                color: 'var(--macos-accent)',
                 fontWeight: '500'
               }}
             >
@@ -3268,7 +3268,20 @@ function MDPreview({ url }: { url: string }) {
         return res.text()
       })
       .then(text => {
-        setHtml(marked.parse(text) as string)
+        // 把 md 中的图片相对路径（如 ./xxx_images/yyy.jpg）改写成 serve-file URL
+        // url 形如 /api/cases/<caseId>/serve-file?file_path=<mdName>&dir=md
+        const m = url.match(/\/cases\/([^/]+)\/serve-file/)
+        const caseId = m ? m[1] : null
+        const rewritten = caseId
+          ? text.replace(
+              /(!\[[^\]]*\]\(|<img[^>]+src=["'])\.?\/?([^/"')\s]+_images)\/([^)"'\s]+)/g,
+              (_full, prefix, imagesDir, fileName) => {
+                const u = `${API_BASE}/cases/${caseId}/serve-file?file_path=${encodeURIComponent(fileName)}&dir=${encodeURIComponent(`md/${imagesDir}`)}`
+                return `${prefix}${u}`
+              }
+            )
+          : text
+        setHtml(marked.parse(rewritten) as string)
         setLoading(false)
       })
       .catch(err => {

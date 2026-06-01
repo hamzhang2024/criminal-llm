@@ -26,7 +26,7 @@ except ImportError:
 try:
     from pdf_to_md import get_evidence_text
 except ImportError:
-    def get_evidence_text(path, prefer_md=True): return ""
+    def get_evidence_text(path, prefer_md=True): return "", None
 
 try:
     ZHANG_CRIMINAL_DEFENSE_PATH = Path(__file__).parent.parent / "zhang-criminal-defense" / "criminal-defense.md"
@@ -305,7 +305,7 @@ class AnalysisEngine:
                     continue
                 for pdf_file in sorted(pdf_dir.glob("*.pdf")):
                     try:
-                        text = get_evidence_text(str(pdf_file), prefer_md=True)
+                        text, _ = get_evidence_text(str(pdf_file), prefer_md=True)
                         if text and not text.startswith("[无法提取"):
                             texts.append({
                                 "filename": pdf_file.name,

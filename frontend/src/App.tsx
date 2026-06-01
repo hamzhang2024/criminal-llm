@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom'
 import { HomePage } from './pages/HomePage'
 import { CaseDetailPage } from './pages/CaseDetailPage'
 import { AnalyzePage } from './pages/AnalyzePage'
@@ -103,8 +103,8 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   // 验证中，最多显示 500ms，超时后直接显示登录页
   if (authed === null) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: '#f5f5f7' }}>
-        <div style={{ fontSize: 14, color: '#86868b' }}>验证中...</div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: 'var(--macos-bg-secondary)' }}>
+        <div style={{ fontSize: 14, color: 'var(--macos-text-tertiary)' }}>验证中...</div>
       </div>
     )
   }
@@ -116,6 +116,16 @@ function AuthGate({ children }: { children: React.ReactNode }) {
 
   // 已认证，显示主应用
   return <>{children}</>
+}
+
+/** 页面过渡动画：路由切换时淡入 */
+function PageTransition({ children }: { children: React.ReactNode }) {
+  const location = useLocation()
+  return (
+    <div key={location.pathname} className="macOS-animate-page-in" style={{ height: '100%' }}>
+      {children}
+    </div>
+  )
 }
 
 function App() {
@@ -142,15 +152,18 @@ function App() {
     <BrowserRouter>
       {/* 登录/注册页面不需要认证 */}
       {/* 公开路由（不需要认证） */}
-      <Routes>
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/register" element={<RegisterPage />} />
-        <Route path="/reset-password" element={<ResetPasswordPage />} />
-        {/* Mermaid 渲染测试（调试用，无需认证） */}
-      </Routes>
+      <PageTransition>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/register" element={<RegisterPage />} />
+          <Route path="/reset-password" element={<ResetPasswordPage />} />
+          {/* Mermaid 渲染测试（调试用，无需认证） */}
+        </Routes>
+      </PageTransition>
 
       <AuthGate>
-        <Routes>
+        <PageTransition>
+          <Routes>
           {/* 首页 - 案件管理 */}
           <Route path="/" element={<HomePage />} />
 
@@ -171,6 +184,7 @@ function App() {
           {/* 使用说明书 */}
           <Route path="/manual" element={<ManualPage />} />
         </Routes>
+        </PageTransition>
       </AuthGate>
       <DialogWrapper />
     </BrowserRouter>

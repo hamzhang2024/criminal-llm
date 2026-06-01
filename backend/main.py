@@ -113,7 +113,14 @@ async def health_check():
 @app.get("/api/config")
 async def get_config():
     """获取配置状态（不返回实际值）"""
-    return get_config_status()
+    status = get_config_status()
+    # 附加 PaddleOCR 配额信息
+    try:
+        from paddleocr_remote import get_daily_quota_status
+        status["paddleocr_quota"] = get_daily_quota_status()
+    except Exception:
+        status["paddleocr_quota"] = None
+    return status
 
 
 @app.put("/api/config")
@@ -206,6 +213,17 @@ async def test_config(body: Dict[str, Any]):
                 return {"success": False, "error": msg}
         except Exception as e:
             return {"success": False, "error": f"网络错误: {e}"}
+
+    elif config_type == "paddleocr":
+        token = body.get("token", "")
+        if not token:
+            return {"success": False, "error": "Token 不能为空"}
+        try:
+            from paddleocr_remote import test_connection
+            ok, msg = test_connection(token)
+            return {"success": ok, "message": msg}
+        except Exception as e:
+            return {"success": False, "error": f"验证异常: {e}"}
 
     return {"success": False, "error": f"未知的测试类型: {config_type}"}
 

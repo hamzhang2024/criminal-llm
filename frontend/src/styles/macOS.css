@@ -3,7 +3,7 @@
 :root {
   /* macOS 系统字体 */
   --font-system: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Icons", "Helvetica Neue", Helvetica, Arial, sans-serif;
-  
+
   /* macOS 浅色主题 */
   --macos-bg-primary: #ffffff;
   --macos-bg-secondary: #f5f5f7;
@@ -15,33 +15,80 @@
   --macos-text-primary: #1d1d1f;
   --macos-text-secondary: #6e6e73;
   --macos-text-tertiary: #86868b;
-  --macos-accent: #1e3a5f;
-  --macos-accent-hover: #2c5282;
+  --macos-accent: #007AFF;
+  --macos-accent-hover: #0066D6;
+  --macos-accent-light: rgba(0, 122, 255, 0.08);
+  --macos-accent-border: rgba(0, 122, 255, 0.2);
+  --macos-accent-surface: rgba(0, 122, 255, 0.05);
+  --macos-accent-focus: rgba(0, 122, 255, 0.15);
   --macos-success: #34c759;
   --macos-warning: #ff9500;
   --macos-danger: #ff3b30;
-  
+
+  /* 排版缩放 */
+  --macos-text-xs: 11px;
+  --macos-text-sm: 12px;
+  --macos-text-base: 13px;
+  --macos-text-md: 14px;
+  --macos-text-lg: 15px;
+  --macos-text-xl: 17px;
+  --macos-text-2xl: 20px;
+  --macos-leading-tight: 1.2;
+  --macos-leading-normal: 1.5;
+  --macos-leading-relaxed: 1.8;
+
+  /* 间距缩放 */
+  --macos-space-1: 4px;
+  --macos-space-2: 8px;
+  --macos-space-3: 12px;
+  --macos-space-4: 16px;
+  --macos-space-5: 20px;
+  --macos-space-6: 24px;
+  --macos-space-8: 32px;
+  --macos-space-10: 40px;
+
+  /* 动画 */
+  --macos-duration-fast: 150ms;
+  --macos-duration-normal: 200ms;
+  --macos-duration-slow: 300ms;
+  --macos-duration-page: 400ms;
+  --macos-ease-default: cubic-bezier(0.25, 0.1, 0.25, 1);
+  --macos-ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --macos-ease-out: cubic-bezier(0, 0, 0.2, 1);
+
   /* macOS 阴影 */
   --macos-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
   --macos-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
   --macos-shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.12);
   --macos-shadow-xl: 0 16px 48px rgba(0, 0, 0, 0.15);
-  
+
   /* macOS 圆角 */
   --macos-radius-sm: 6px;
   --macos-radius: 10px;
   --macos-radius-lg: 14px;
   --macos-radius-xl: 18px;
-  
+
   /* macOS 毛玻璃效果 */
   --macos-blur: blur(20px) saturate(180%);
 }
 
 /* 毛玻璃通用类 */
 .frosted {
-  background: rgba(255, 255, 255, 0.6);
-  backdrop-filter: blur(16px) saturate(160%);
-  -webkit-backdrop-filter: blur(16px) saturate(160%);
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: var(--macos-blur);
+  -webkit-backdrop-filter: var(--macos-blur);
+}
+
+.frosted-subtle {
+  background: rgba(255, 255, 255, 0.5);
+  backdrop-filter: blur(12px) saturate(160%);
+  -webkit-backdrop-filter: blur(12px) saturate(160%);
+}
+
+.frosted-dark {
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: var(--macos-blur);
+  -webkit-backdrop-filter: var(--macos-blur);
 }
 
 /* 基础样式 */
@@ -93,6 +140,7 @@ body {
   height: 12px;
   border-radius: 50%;
   -webkit-app-region: no-drag;
+  position: relative;
 }
 
 .macOS-control.close {
@@ -125,6 +173,26 @@ body {
   color: var(--macos-text-primary);
   text-align: center;
   flex: 1;
+}
+
+/* 标题栏返回按钮 */
+.macOS-back-button {
+  position: absolute;
+  left: 16px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: var(--macos-radius-sm);
+  display: flex;
+  align-items: center;
+  color: var(--macos-accent);
+  transition: background var(--macos-duration-fast) var(--macos-ease-default);
+  -webkit-app-region: no-drag;
+}
+
+.macOS-back-button:hover {
+  background: var(--macos-accent-light);
 }
 
 /* macOS 侧边栏 */
@@ -161,7 +229,8 @@ body {
   margin: 2px 0;
   border-radius: var(--macos-radius-sm);
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: background var(--macos-duration-fast) var(--macos-ease-default),
+              font-weight var(--macos-duration-fast) var(--macos-ease-default);
   font-size: 13px;
   color: var(--macos-text-primary);
 }
@@ -233,7 +302,9 @@ body {
   border-radius: var(--macos-radius-sm);
   border: none;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: background var(--macos-duration-fast) var(--macos-ease-default),
+              transform var(--macos-duration-fast) var(--macos-ease-default),
+              box-shadow var(--macos-duration-fast) var(--macos-ease-default);
 }
 
 .macOS-button-primary {
@@ -245,6 +316,11 @@ body {
   background: var(--macos-accent-hover);
 }
 
+.macOS-button-primary:active:not(:disabled) {
+  transform: scale(0.97);
+  box-shadow: var(--macos-shadow-sm);
+}
+
 .macOS-button-secondary {
   background: var(--macos-bg-tertiary);
   color: var(--macos-text-primary);
@@ -252,6 +328,10 @@ body {
 
 .macOS-button-secondary:hover {
   background: var(--macos-border);
+}
+
+.macOS-button-secondary:active:not(:disabled) {
+  transform: scale(0.97);
 }
 
 .macOS-button-icon {
@@ -266,6 +346,10 @@ body {
 .macOS-button-icon:hover {
   background: var(--macos-bg-tertiary);
   color: var(--macos-text-primary);
+}
+
+.macOS-button-icon:active:not(:disabled) {
+  transform: scale(0.92);
 }
 
 /* macOS 卡片 */
@@ -285,6 +369,22 @@ body {
   transform: translateY(-1px);
 }
 
+.macOS-card-clickable {
+  cursor: pointer;
+  transition: transform var(--macos-duration-fast) var(--macos-ease-default),
+              box-shadow var(--macos-duration-fast) var(--macos-ease-default);
+}
+
+.macOS-card-clickable:hover {
+  box-shadow: var(--macos-shadow);
+  transform: translateY(-1px);
+}
+
+.macOS-card-clickable:active {
+  transform: scale(0.985) translateY(0);
+  box-shadow: var(--macos-shadow-sm);
+}
+
 /* macOS 输入框 */
 .macOS-input {
   width: 100%;
@@ -292,20 +392,43 @@ body {
   font-size: 14px;
   font-family: var(--font-system);
   background: var(--macos-bg-secondary);
-  border: 1px solid var(--macos-border);
+  border: 1.5px solid var(--macos-border);
   border-radius: var(--macos-radius-sm);
   color: var(--macos-text-primary);
-  transition: all 0.15s ease;
+  transition: border-color var(--macos-duration-fast) var(--macos-ease-default),
+              box-shadow var(--macos-duration-fast) var(--macos-ease-default);
 }
 
 .macOS-input:focus {
   outline: none;
   border-color: var(--macos-accent);
-  box-shadow: 0 0 0 3px rgba(30, 58, 95, 0.15);
+  box-shadow: 0 0 0 3px var(--macos-accent-focus);
 }
 
 .macOS-input::placeholder {
   color: var(--macos-text-tertiary);
+}
+
+.macOS-input-toggle {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 4px;
+  font-size: 11px;
+  color: var(--macos-text-tertiary);
+}
+
+.macOS-input-toggle:hover {
+  color: var(--macos-text-secondary);
+}
+
+/* 头像按钮 hover */
+div.macOS-avatar-button:hover {
+  background: rgba(0, 0, 0, 0.04);
 }
 
 /* macOS 滚动条 */
@@ -343,8 +466,73 @@ body {
   }
 }
 
+@keyframes macOS-page-in {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes macOS-slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes macOS-press {
+  0% { transform: scale(1); }
+  50% { transform: scale(0.97); }
+  100% { transform: scale(1); }
+}
+
+@keyframes macOS-skeleton-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.8; }
+}
+
 .macOS-animate-in {
   animation: macOS-fade-in 0.2s ease-out;
+}
+
+.macOS-animate-page-in {
+  animation: macOS-page-in var(--macos-duration-page) var(--macos-ease-out) both;
+}
+
+.macOS-animate-slide-up {
+  animation: macOS-slide-up var(--macos-duration-normal) var(--macos-ease-out) both;
+}
+
+.macOS-animate-press:active {
+  animation: macOS-press 120ms var(--macos-ease-default);
+}
+
+.macOS-stagger-1 { animation-delay: 40ms; }
+.macOS-stagger-2 { animation-delay: 80ms; }
+.macOS-stagger-3 { animation-delay: 120ms; }
+.macOS-stagger-4 { animation-delay: 160ms; }
+.macOS-stagger-5 { animation-delay: 200ms; }
+.macOS-stagger-6 { animation-delay: 240ms; }
+.macOS-stagger-7 { animation-delay: 280ms; }
+.macOS-stagger-8 { animation-delay: 320ms; }
+
+.macOS-skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--macos-bg-tertiary) 25%,
+    var(--macos-bg-secondary) 50%,
+    var(--macos-bg-tertiary) 75%
+  );
+  background-size: 200% 100%;
+  animation: macOS-skeleton-pulse 1.5s ease-in-out infinite;
 }
 
 /* macOS 分割线 */
@@ -367,7 +555,7 @@ body {
 }
 
 .macOS-badge-accent {
-  background: rgba(30, 58, 95, 0.1);
+  background: rgba(0, 122, 255, 0.1);
   color: var(--macos-accent);
 }
 
@@ -379,6 +567,11 @@ body {
 .macOS-badge-warning {
   background: rgba(255, 149, 0, 0.1);
   color: var(--macos-warning);
+}
+
+.macOS-badge-danger {
+  background: rgba(255, 59, 48, 0.1);
+  color: var(--macos-danger);
 }
 
 /* macOS 空状态 */

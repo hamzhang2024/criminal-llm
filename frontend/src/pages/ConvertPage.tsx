@@ -105,7 +105,7 @@ export function ConvertPage() {
                       </div>
                       <ArrowRight className="w-4 h-4" style={{ color: '#86868b' }} />
                       <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                        <span style={{ fontSize: '12px', color: '#1e3a5f', background: 'rgba(0,122,255,0.1)', padding: '2px 8px', borderRadius: '10px' }}>
+                        <span style={{ fontSize: '12px', color: 'var(--macos-accent)', background: 'rgba(0,122,255,0.1)', padding: '2px 8px', borderRadius: '10px' }}>
                           .md
                         </span>
                       </div>
@@ -136,13 +136,13 @@ export function ConvertPage() {
                             flex: 1,
                             padding: '10px',
                             background: options.method === mode.value ? 'rgba(0,122,255,0.1)' : 'var(--macos-bg-secondary)',
-                            border: options.method === mode.value ? '2px solid #1e3a5f' : '1px solid var(--macos-border)',
+                            border: options.method === mode.value ? '2px solid var(--macos-accent)' : '1px solid var(--macos-border)',
                             borderRadius: '8px',
                             cursor: 'pointer',
                             textAlign: 'left'
                           }}
                         >
-                          <div style={{ fontSize: '13px', fontWeight: options.method === mode.value ? '600' : '400', color: options.method === mode.value ? '#1e3a5f' : 'var(--macos-text-primary)' }}>
+                          <div style={{ fontSize: '13px', fontWeight: options.method === mode.value ? '600' : '400', color: options.method === mode.value ? 'var(--macos-accent)' : 'var(--macos-text-primary)' }}>
                             {mode.label}
                           </div>
                           <div style={{ fontSize: '11px', color: 'var(--macos-text-secondary)', marginTop: '2px' }}>
@@ -158,14 +158,14 @@ export function ConvertPage() {
                     <div style={{ marginBottom: '16px', padding: '16px', background: 'var(--macos-bg-secondary)', borderRadius: '10px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: '500' }}>
-                          <Key className="w-4 h-4" style={{ color: '#1e3a5f' }} />
+                          <Key className="w-4 h-4" style={{ color: 'var(--macos-accent)' }} />
                           MinerU API Token
                         </div>
                         <a
                           href="https://mineru.net"
                           target="_blank"
                           rel="noopener noreferrer"
-                          style={{ fontSize: '12px', color: '#1e3a5f', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+                          style={{ fontSize: '12px', color: 'var(--macos-accent)', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
                         >
                           申请 Token <ExternalLink className="w-3 h-3" />
                         </a>
@@ -173,10 +173,10 @@ export function ConvertPage() {
                       
                       {/* 提示信息 */}
                       <div style={{ display: 'flex', gap: '8px', padding: '10px', background: 'rgba(0,122,255,0.05)', borderRadius: '8px', marginBottom: '12px' }}>
-                        <AlertCircle className="w-4 h-4" style={{ color: '#1e3a5f', flexShrink: 0, marginTop: '2px' }} />
+                        <AlertCircle className="w-4 h-4" style={{ color: 'var(--macos-accent)', flexShrink: 0, marginTop: '2px' }} />
                         <div style={{ fontSize: '12px', color: 'var(--macos-text-secondary)', lineHeight: '1.5' }}>
                           <div>• MinerU API 需要自行申请 Token</div>
-                          <div>• 访问 <a href="https://mineru.net" target="_blank" rel="noopener noreferrer" style={{ color: '#1e3a5f' }}>mineru.net</a> 注册账号</div>
+                          <div>• 访问 <a href="https://mineru.net" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--macos-accent)' }}>mineru.net</a> 注册账号</div>
                           <div>• 免费额度：每日有一定量的免费转换次数</div>
                         </div>
                       </div>
@@ -220,7 +220,7 @@ export function ConvertPage() {
                   {/* 转换说明 */}
                   <div style={{ marginBottom: '16px', padding: '16px', background: 'var(--macos-bg-secondary)', borderRadius: '10px' }}>
                     <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
-                      <AlertCircle className="w-4 h-4" style={{ color: '#1e3a5f', flexShrink: 0, marginTop: '2px' }} />
+                      <AlertCircle className="w-4 h-4" style={{ color: 'var(--macos-accent)', flexShrink: 0, marginTop: '2px' }} />
                       <div style={{ fontSize: '12px', color: 'var(--macos-text-secondary)', lineHeight: '1.5' }}>
                         <div style={{ fontWeight: '500', marginBottom: '4px', color: 'var(--macos-text-primary)' }}>MinerU 自动处理</div>
                         <div>• 有文字层的 PDF → 直接提取文字</div>
@@ -251,7 +251,7 @@ export function ConvertPage() {
                     </div>
                     {converting && (
                       <div style={{ marginTop: '10px', height: '4px', background: '#f5f5f7', borderRadius: '2px', overflow: 'hidden' }}>
-                        <div style={{ height: '100%', background: '#1e3a5f', width: '50%', borderRadius: '2px' }} />
+                        <div style={{ height: '100%', background: 'var(--macos-accent)', width: '50%', borderRadius: '2px' }} />
                       </div>
                     )}
                   </MacOSCard>
