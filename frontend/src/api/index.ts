@@ -693,11 +693,19 @@ export async function getStageResult(caseId: string, stageNum: number): Promise<
 
 export async function getStageMarkdown(caseId: string, stageNum: number): Promise<any> {
   const res = await fetch(`${API_BASE}/stage-analysis/${caseId}/stage/${stageNum}/markdown`)
+  if (!res.ok) {
+    // 返回空内容而不是抛出错误，让调用方决定如何处理
+    return { content: '' }
+  }
   return res.json()
 }
 
 export async function getFullReport(caseId: string): Promise<any> {
   const res = await fetch(`${API_BASE}/stage-analysis/${caseId}/full-report`)
+  if (!res.ok) {
+    // 返回空内容而不是抛出错误
+    return { content: '' }
+  }
   return res.json()
 }
 

@@ -586,7 +586,15 @@ export function ReportPage() {
   // Export report
   const handleExportReport = useCallback(() => {
     const report = stageContent.full || stageContent.stage_53
-    if (!report) return
+    if (!report) {
+      // 没有报告内容时提示用户
+      showAlert({
+        title: '无法导出',
+        message: '报告内容尚未生成，请先完成分析后再导出。',
+        variant: 'warning',
+      })
+      return
+    }
     const blob = new Blob([report], { type: 'text/markdown;charset=utf-8' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
