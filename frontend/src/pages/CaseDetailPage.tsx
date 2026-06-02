@@ -528,21 +528,19 @@ export function CaseDetailPage() {
       if (result.success) {
         setProgress(`✅ 已删除 ${mdFileName}`)
         setTimeout(() => setProgress(''), 2000)
-        // 重新加载文件列表
-        if (currentStep >= 3) {
-          const filesData = await api.getStepFiles(caseId!, 3)
-          if (Array.isArray(filesData)) {
-            setFiles(filesData.map((f: any) => ({
-              id: f.id, name: f.name, size: f.size, status: 'pending', source: f.source,
-            })))
-          }
+        // 始终刷新 MD 文件列表（步骤 3）
+        const filesData = await api.getStepFiles(caseId!, 3)
+        if (Array.isArray(filesData)) {
+          setFiles(filesData.map((f: any) => ({
+            id: f.id, name: f.name, size: f.size, status: 'pending', source: f.source,
+          })))
         }
       }
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : '删除失败'
       showAlert({ title: '删除失败', message: errMsg, variant: 'danger' })
     }
-  }, [caseId, currentStep])
+  }, [caseId])
 
   // 删除 PDF 文件（步骤 2）
   const handleDeletePdf = useCallback(async (pdfFileName: string) => {
@@ -2315,6 +2313,27 @@ export function CaseDetailPage() {
                         return doneCount > 0 ? `共 ${files.length} 个文件` : `共 ${files.length} 个文件`
                       })()}
                     </div>
+                    {/* 刷新按钮 */}
+                    <button
+                      onClick={async () => {
+                        try {
+                          const filesData = await api.getStepFiles(caseId!, currentStep)
+                          if (Array.isArray(filesData)) {
+                            setFiles(filesData.map((f: any) => ({
+                              id: f.id, name: f.name, size: f.size, status: f.status || 'pending', source: f.source,
+                            })))
+                            setProgress('✅ 文件列表已刷新')
+                            setTimeout(() => setProgress(''), 1500)
+                          }
+                        } catch (err) {
+                          console.error('刷新文件列表失败:', err)
+                        }
+                      }}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px', marginLeft: '8px' }}
+                      title="刷新文件列表"
+                    >
+                      <RefreshCw className="w-4 h-4" color="#86868b" />
+                    </button>
                   </div>
                 ) : (
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
@@ -2336,8 +2355,31 @@ export function CaseDetailPage() {
                          'MD 文件'}
                       </h4>
                     </div>
-                    <div style={{ fontSize: '12px', color: 'var(--macos-text-secondary)' }}>
-                      已选 {getSelectedFiles().length}/{files.length}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <div style={{ fontSize: '12px', color: 'var(--macos-text-secondary)' }}>
+                        已选 {getSelectedFiles().length}/{files.length}
+                      </div>
+                      {/* 刷新按钮 */}
+                      <button
+                        onClick={async () => {
+                          try {
+                            const filesData = await api.getStepFiles(caseId!, currentStep)
+                            if (Array.isArray(filesData)) {
+                              setFiles(filesData.map((f: any) => ({
+                                id: f.id, name: f.name, size: f.size, status: f.status || 'pending', source: f.source,
+                              })))
+                              setProgress('✅ 文件列表已刷新')
+                              setTimeout(() => setProgress(''), 1500)
+                            }
+                          } catch (err) {
+                            console.error('刷新文件列表失败:', err)
+                          }
+                        }}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}
+                        title="刷新文件列表"
+                      >
+                        <RefreshCw className="w-4 h-4" color="#86868b" />
+                      </button>
                     </div>
                   </div>
                 )}
