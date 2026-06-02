@@ -19,6 +19,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | **前端** | React 18 + TypeScript + Vite 5.4 |
 | **后端** | FastAPI (Python 3.13) |
 | **模型** | bailian/qwen3.6-plus（阿里云百炼） |
+| **PDF 引擎** | MinerU / PaddleOCR（可切换，默认 MinerU） |
 | **UI 风格** | macOS 原生风格设计系统 |
 | **认证服务** | FastAPI + SQLite + JWT（远程部署） |
 | **前端地址** | http://localhost:5173 |
@@ -45,6 +46,9 @@ criminal-llm/
 │   ├── case_manager.py         # 案件管理 API（CRUD、文件扫描、导入、证据提取）
 │   ├── process_api.py          # PDF 处理 API（去水印、OCR）
 │   ├── pdf_to_md.py            # PDF → Markdown 转换模块（MinerU 云端）
+│   ├── mineru_async.py         # MinerU 异步批量转换（asyncio + Semaphore 并发）
+│   ├── paddleocr_async.py      # PaddleOCR 异步批量转换（asyncio + Semaphore 并发）
+│   ├── paddleocr_remote.py     # PaddleOCR 远程服务客户端（配额查询 + 转换）
 │   ├── analyzer_api.py         # 案卷分析 API（拆分、证据识别）
 │   ├── llm_client.py           # LLM 客户端（百炼 API，超时 600s，3 次重试，并发限流，缓存命中率统计）
 │   ├── legal_knowledge.py      # 法律知识库（内置刑法/刑诉法 + 三阶层理论）
@@ -224,6 +228,7 @@ criminal-llm/
 10. **用中文注释**：代码注释用中文
 11. **版本号管理**：`cd frontend && python3 bump-version.py`（自动递增 package.json + tauri.conf.json 版本号）
 12. **图标生成**：`cd frontend && python3 generate-icon.py`（从桌面图片生成多尺寸图标 + icns）
+13. **发布流程**：`git tag v1.x.x && git push origin --tags`（触发 GitHub Actions 多平台构建）
 
 ### Vite 代理配置
 开发环境 `vite.config.ts` 将 `/api` 请求代理到 `http://localhost:8080`：
@@ -275,13 +280,18 @@ proxy: { '/api': { target: 'http://localhost:8080', changeOrigin: true } }
 | 字段 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
 | `mineru_token` | string | - | MinerU API Token |
+| `paddleocr_token` | string | - | PaddleOCR API Token |
+| `pdf_engine` | string | `mineru` | PDF 引擎：`mineru` 或 `paddleocr` |
 | `llm_api_key` | string | - | LLM API Key |
 | `llm_base_url` | string | 百炼 URL | LLM 服务地址 |
 | `llm_model` | string | `qwen3.6-plus` | 模型名称 |
 | `evidence_concurrency` | int | `3` | 证据提取并发数（1-50） |
 
 **config.py 全局常量**：
-- `DATA_DIR`：优先级 `CRIMINAL_LLM_DATA_DIR` 环境变量 → PyInstaller 模式 `~/Documents/.criminal-llm-data` → 开发模式同前 → 回退 `project/data`
+- `DATA_DIR`：优先级 `CRIMINAL_LLM_DATA_DIR` 环境变量 → 平台特定默认目录
+  - **macOS**：`~/Documents/.criminal-llm-data/`
+  - **Windows**：安装目录下 `data/` 文件夹（用户反馈要求）
+  - **Linux**：`~/.criminal-llm-data/`
 - `HOST` = `127.0.0.1`, `PORT` = `8080`
 - `MAX_FILE_SIZE` = 500MB
 - `THUMBNAIL_WIDTH` = 400px, `THUMBNAIL_DPI` = 150
@@ -367,8 +377,9 @@ python3 -m uvicorn main:app --host 0.0.0.0 --port 8000
 - **卡死检测**：3 分钟无进展自动取消，10 秒轮询，LLM 调用成功后立即更新心跳
 
 ### 后台任务
-- PDF 转 MD 使用 `background_tasks.py` 的 `ThreadPoolExecutor(max_workers=1)` 异步执行
+- PDF 转 MD 使用 `background_tasks.py` 的 `ThreadPoolExecutor(max_workers=10)` 异步并发执行
 - 任务状态持久化到 `DATA_DIR/criminal-llm-tasks.json`，重启可恢复
+- **双引擎支持**：根据 `pdf_engine` 配置选择 `MinerU` 或 `PaddleOCR`
 - MinerU 转换失败自动重试 3 次（15s→30s 退避），全部转换完成后对失败文件再统一重试一轮
 - 前端轮询 `/api/tasks/{case_id}/convert-status` 获取进度
 - 前端刷新页面后自动恢复当前步骤和转换进度（localStorage + 任务状态检查）
@@ -403,13 +414,17 @@ python3 -m uvicorn main:app --host 0.0.0.0 --port 8000
 1. **MinerU 配额** — 每日 1000 页免费，超额后需排队；转换超时设为 1 小时（3600 秒）
 2. **DMG 打包** — `bundle_dmg.sh` 对中文文件名有兼容问题，需用 `hdiutil create` 手动创建
 3. ~~**证据提取卡死**~~ — 已修复：600s 超时保护 + 2 次重试 + 3 分钟无进展自动取消
+4. **PaddleOCR 配额** — 每日 1000 页免费，通过 `/api/config` 返回 `paddleocr_quota` 状态
 
 ---
 
 ## 📌 重要提醒
 
 - **不要修改用户数据**：`data/cases/` 里的案件数据不要随意删除
-- **数据目录**：优先使用 `CRIMINAL_LLM_DATA_DIR` 环境变量，否则默认 `~/Documents/.criminal-llm-data/`（Windows 下为 `%USERPROFILE%\.criminal-llm-data`）
+- **数据目录**：
+  - macOS：`~/Documents/.criminal-llm-data/`
+  - Windows：安装目录下 `data/` 文件夹（用户反馈要求）
+  - 环境变量 `CRIMINAL_LLM_DATA_DIR` 可覆盖默认位置
 - **保持向后兼容**：已有的 API 端点不要破坏
 - **测试后提交**：修改后确认 `npm run build` 通过
 - **用中文注释**：代码注释用中文

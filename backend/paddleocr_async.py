@@ -43,7 +43,7 @@ PADDLEOCR_MODEL = "PaddleOCR-VL-1.6"
 PADDLEOCR_DAILY_PAGE_LIMIT = 20000  # 每日转换页数配额
 DEFAULT_TIMEOUT = 3600  # 1 小时
 POLL_INTERVAL = 10  # 轮询间隔 10 秒
-DEFAULT_MAX_CONCURRENT = 10  # 默认并发数
+DEFAULT_MAX_CONCURRENT = 3  # 默认并发数（与 MinerU 一致，避免 API 限流）
 
 # 分段限制（大文件自动拆分）
 PADDLEOCR_MAX_PAGES = 200  # 单次提交最大页数
@@ -533,7 +533,7 @@ class AsyncPaddleOCRConverter:
         Args:
             pdf_paths: PDF 文件路径列表
             output_dir: 输出目录
-            max_concurrent: 最大并发数（默认 10）
+            max_concurrent: 最大并发数（默认 3，建议 1-5，过高可能触发 API 限流）
             timeout: 单文件超时时间
             progress_cb: 进度回调
 

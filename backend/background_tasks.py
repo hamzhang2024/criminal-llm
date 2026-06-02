@@ -104,12 +104,12 @@ def _update_task(case_id: str, **kwargs):
     _save_tasks()
 
 
-def start_convert_task(case_id: str, max_concurrent: int = 10):
+def start_convert_task(case_id: str, max_concurrent: int = 3):
     """启动后台转换任务（异步并发版本）
 
     Args:
         case_id: 案件 ID
-        max_concurrent: 最大并发数（默认 10）
+        max_concurrent: 最大并发数（默认 3，过高可能触发 API 限流）
     """
     _update_task(
         case_id,
@@ -281,7 +281,7 @@ async def trigger_convert(case_id: str):
     if status and status.get("status") == "running":
         return {"status": "running", "message": "转换任务正在运行中"}
 
-    result = start_convert_task(case_id, max_concurrent=10)
+    result = start_convert_task(case_id, max_concurrent=3)
     return result
 
 
