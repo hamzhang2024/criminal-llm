@@ -40,33 +40,41 @@ else:
 # ═══════════════════════════════════════════════════════════
 PADDLEOCR_API_URL = "https://paddleocr.aistudio-app.com/api/v2/ocr/jobs"
 PADDLEOCR_MODEL = "PaddleOCR-VL-1.6"
-PADDLEOCR_DAILY_PAGE_LIMIT = 20000  # 每日转换页数配额
+PADDLEOCR_DAILY_PAGE_LIMIT = 20000  # 每日转换页数配额（PaddleOCR-VL-1.6 限制）
 DEFAULT_TIMEOUT = 3600  # 1 小时
-POLL_INTERVAL = 10  # 轮询间隔 10 秒
+POLL_INTERVAL = 3  # 轮询间隔 3 秒（加快响应）
 DEFAULT_MAX_CONCURRENT = 3  # 默认并发数（与 MinerU 一致，避免 API 限流）
 
 # 分段限制（大文件自动拆分）
-PADDLEOCR_MAX_PAGES = 200  # 单次提交最大页数
+# PaddleOCR-VL-1.6 建议 100 页以内，超过会处理但可能影响质量
+PADDLEOCR_MAX_PAGES = 100  # 单次提交建议页数（超过会自动拆分以保证质量）
 PADDLEOCR_MAX_FILE_SIZE = 80 * 1024 * 1024  # 单次提交最大文件大小 (80MB)
 
-# 刑事案卷专用参数
+# 刑事案卷专用参数（优化讯问时间等关键信息识别）
 PADDLEOCR_OPTIONAL_PAYLOAD = {
-    "useDocOrientationClassify": True,
-    "useDocUnwarping": True,
-    "useLayoutDetection": True,
-    "useChartRecognition": False,
-    "layoutThreshold": 0.5,
-    "repetitionPenalty": 1.5,
-    "temperature": 0.01,
-    "topP": 0.5,
-    "minPixels": 512 * 512,
-    "maxPixels": 1280 * 1280,
-    "restructurePages": False,
-    "mergeTables": True,
-    "relevelTitles": True,
-    "prettifyMarkdown": True,
-    "showFormulaNumber": False,
-    "visualize": False,
+    # 预处理：扫描件可能有旋转/弯曲
+    "useDocOrientationClassify": True,   # 自动纠正文档旋转
+    "useDocUnwarping": True,             # 修复几何弯曲
+
+    # 版面分析
+    "useLayoutDetection": True,          # 开启版面分析，识别表格/标题/段落
+    "useChartRecognition": False,        # 案卷基本无图表，关闭节省资源
+    "layoutThreshold": 0.5,              # 版面检测置信度阈值
+
+    # 生成参数（优化准确性，降低幻觉）
+    "repetitionPenalty": 1.2,            # 抑制重复输出（降低以减少对数字的影响）
+    "temperature": 0.1,                  # 稍提高温度，改善日期/时间识别
+    "topP": 0.7,                         # 提高采样范围，改善多样性
+    "minPixels": 640 * 640,              # 提高最小分辨率，改善小字识别
+    "maxPixels": 1600 * 1600,            # 提高最大分辨率，改善细节识别
+
+    # 输出格式
+    "restructurePages": False,           # 不跨页重构（案卷按原始页序）
+    "mergeTables": True,                 # 跨页表格合并
+    "relevelTitles": True,               # 自动识别标题层级
+    "prettifyMarkdown": True,            # 美化 Markdown 排版
+    "showFormulaNumber": False,          # 案卷无公式，关闭编号
+    "visualize": False,                  # 不需要可视化结果
 }
 
 
@@ -665,7 +673,7 @@ class AsyncPaddleOCRConverter:
                     state = job_data.get("state")
 
                     if state == "pending":
-                        if waited % 30 == 0:  # 每 30 秒打印一次
+                        if waited % 15 == 0:  # 每 15 秒打印一次
                             print(f"[PaddleOCR] 任务排队中...（已等待 {waited}s）")
 
                     elif state == "running":
@@ -673,7 +681,7 @@ class AsyncPaddleOCRConverter:
                             prog = job_data.get("extractProgress", {})
                             total = prog.get("totalPages", "?")
                             done = prog.get("extractedPages", 0)
-                            if waited % 30 == 0:
+                            if waited % 15 == 0:
                                 print(f"[PaddleOCR] 正在识别 {done}/{total} 页...（已等待 {waited}s）")
                         except (KeyError, TypeError):
                             pass

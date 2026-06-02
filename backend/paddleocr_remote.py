@@ -36,23 +36,23 @@ PADDLEOCR_DAILY_PAGE_LIMIT = 20000  # 每日转换页数配额
 
 # 刑事案卷专用 optionalPayload 参数
 # 案卷特点：文字密集、扫描件、有手写签名/印章、需准确标题层级、防止循环重复输出
+# 优化讯问时间等关键信息识别
 PADDLEOCR_OPTIONAL_PAYLOAD = {
     # 预处理：扫描件可能有旋转/弯曲
     "useDocOrientationClassify": True,   # 自动纠正文档旋转
     "useDocUnwarping": True,             # 修复几何弯曲
 
-    # 版面分析（保留，表格依赖此功能；公式噪声由后处理 _clean_latex_markup 兜底）
+    # 版面分析
     "useLayoutDetection": True,          # 开启版面分析，识别表格/标题/段落
     "useChartRecognition": False,        # 案卷基本无图表，关闭节省资源
     "layoutThreshold": 0.5,              # 版面检测置信度阈值
 
-    # 生成参数（防循环重复、降幻觉、抑制 LaTeX 公式误识别）
-    # 注意：API 文档未提供"关闭公式识别"开关，只能通过低 temperature / 低 topP 抑制
-    "repetitionPenalty": 1.5,            # 抑制重复输出（防止循环）
-    "temperature": 0.01,                 # 极低温度，最大化抑制幻觉（如把日期识别为 $..$ 公式）
-    "topP": 0.5,                         # 更保守的采样，减少 LaTeX/HTML 噪声标签
-    "minPixels": 512 * 512,              # 最小分辨率
-    "maxPixels": 1280 * 1280,            # 最大分辨率限制
+    # 生成参数（优化准确性，改善日期/时间识别）
+    "repetitionPenalty": 1.2,            # 抑制重复输出（降低以减少对数字的影响）
+    "temperature": 0.1,                  # 稍提高温度，改善日期/时间识别
+    "topP": 0.7,                         # 提高采样范围，改善多样性
+    "minPixels": 640 * 640,              # 提高最小分辨率，改善小字识别
+    "maxPixels": 1600 * 1600,            # 提高最大分辨率，改善细节识别
 
     # 输出格式
     "restructurePages": False,           # 不跨页重构（案卷按原始页序）
