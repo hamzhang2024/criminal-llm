@@ -553,8 +553,9 @@ class AsyncPaddleOCRConverter:
         # 创建信号量控制并发
         semaphore = asyncio.Semaphore(max_concurrent)
 
-        # 进度跟踪
+        # 进度跟踪 + 锁保护（避免并发更新导致计数不一致）
         progress = BatchProgress(total=len(pdf_paths))
+        progress_lock = asyncio.Lock()
 
         async def _convert_with_semaphore(pdf_path: Path) -> ConvertResult:
             async with semaphore:
@@ -563,13 +564,15 @@ class AsyncPaddleOCRConverter:
                     progress_cb=lambda stage, detail: None
                 )
 
-                progress.completed += 1
-                if not result.success:
-                    progress.failed += 1
-                progress.current_files.append(pdf_path.name)
+                # 更新进度（加锁保护）
+                async with progress_lock:
+                    progress.completed += 1
+                    if not result.success:
+                        progress.failed += 1
+                    progress.current_files.append(pdf_path.name)
 
-                if progress_cb:
-                    progress_cb(progress)
+                    if progress_cb:
+                        progress_cb(progress)
 
                 return result
 
