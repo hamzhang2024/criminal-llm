@@ -626,11 +626,19 @@ export async function stopExtractEvidence(caseId: string) {
 export async function getEvidenceIndex(caseId: string): Promise<any> {
   // 统一使用 fetch，不区分环境（Tauri 的 CORS 已配置允许 localhost）
   const res = await safeFetch(`${API_BASE}/cases/${caseId}/evidence-index`)
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`获取证据列表失败: ${res.status} ${text.slice(0, 100)}`)
+  }
   return res.json()
 }
 
 export async function getExtractStatus(caseId: string): Promise<any> {
   const res = await safeFetch(`${API_BASE}/cases/${caseId}/extract-status`)
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`获取提取状态失败: ${res.status} ${text.slice(0, 100)}`)
+  }
   return res.json()
 }
 

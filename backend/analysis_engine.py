@@ -898,15 +898,9 @@ class AnalysisEngine:
             ev_name = ev["filename"]
             ev_type = ev.get("type", "")
             evidence_list_md += f"| {ref} | {ev_name} | （{ev_type}） |\n"
+        # 指控文书单独列出（非证据，仅作参考）
         if indictment_text:
             evidence_list_md += f"\n---\n\n# 指控文书（非证据）\n\n{indictment_catalog}\n"
-            parts = line.split("：", 1)
-            ref_part = parts[0] if len(parts) > 1 else ""
-            rest = parts[1] if len(parts) > 1 else line
-            ev_name_end = rest.rfind("（")
-            name = rest[:ev_name_end] if ev_name_end > 0 else rest
-            ev_type = rest[ev_name_end:] if ev_name_end > 0 else ""
-            evidence_list_md += f"| {ref_part} | {name} | {ev_type} |\n"
 
         self._save_stage(51, {"name": "证据目录", "evidence_count": len(evidence_only)}, evidence_list_md)
 
