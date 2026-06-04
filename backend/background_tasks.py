@@ -159,7 +159,36 @@ def start_convert_task(case_id: str, max_concurrent: int = 3):
                     _update_task(case_id, status="failed", message="processed/ 目录中无 PDF 文件")
                     return
 
-                _update_task(case_id, status="running", total=len(pdf_files), message=f"共 {len(pdf_files)} 个文件，使用 {pdf_engine} 引擎并发处理中")
+                # 过滤掉已有 MD 文件的 PDF（跳过已转换的）
+                pending_files = []
+                skipped_files = []
+                for pdf in pdf_files:
+                    md_path = md_dir / f"{pdf.stem}.md"
+                    if md_path.exists() and md_path.stat().st_size > 100:  # 至少 100 字节才算有效
+                        skipped_files.append(pdf.name)
+                    else:
+                        pending_files.append(pdf)
+
+                # 全部已转换完成
+                if not pending_files:
+                    _update_task(
+                        case_id,
+                        status="completed",
+                        message=f"全部 {len(pdf_files)} 个文件已转换完成，无需重复处理",
+                        results=[{"file": f, "success": True, "skipped": True} for f in skipped_files],
+                    )
+                    return
+
+                # 部分已转换，仅处理待转换文件
+                if skipped_files:
+                    print(f"[后台任务] {case_id}: 跳过 {len(skipped_files)} 个已转换文件")
+
+                _update_task(
+                    case_id,
+                    status="running",
+                    total=len(pending_files),
+                    message=f"共 {len(pdf_files)} 个文件，跳过 {len(skipped_files)} 个已转换，处理 {len(pending_files)} 个待转换文件",
+                )
 
                 results = []
 
@@ -189,13 +218,13 @@ def start_convert_task(case_id: str, max_concurrent: int = 3):
                         results=results,
                     )
 
-                # 执行异步批量转换
+                # 执行异步批量转换（仅处理待转换文件）
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
                 try:
                     convert_results: List[ConvertResult] = loop.run_until_complete(
                         converter.convert_batch(
-                            pdf_files,
+                            pending_files,
                             md_dir,
                             max_concurrent=max_concurrent,
                             timeout=3600,
@@ -205,7 +234,10 @@ def start_convert_task(case_id: str, max_concurrent: int = 3):
                 finally:
                     loop.close()
 
-                # 收集结果
+                # 收集结果（先添加跳过的文件）
+                for f in skipped_files:
+                    results.append({"file": f, "success": True, "skipped": True})
+
                 converted = 0
                 for i, result in enumerate(convert_results):
                     results.append({
@@ -218,7 +250,7 @@ def start_convert_task(case_id: str, max_concurrent: int = 3):
                     if result.success:
                         converted += 1
 
-                # 安全清理
+                # 安全清理（使用全部 PDF 文件列表）
                 pdf_stems = {f.stem for f in pdf_files}
                 for item in list(md_dir.iterdir()):
                     if item.is_file() and item.suffix == ".md":
@@ -229,13 +261,19 @@ def start_convert_task(case_id: str, max_concurrent: int = 3):
                         if stem_without_images not in pdf_stems:
                             shutil.rmtree(item, ignore_errors=True)
 
+                # 构建完成消息
+                if skipped_files:
+                    msg = f"完成: 新转换 {converted}/{len(pending_files)}，跳过 {len(skipped_files)} 个已转换文件"
+                else:
+                    msg = f"完成: {converted}/{len(pdf_files)} 个文件转换成功"
+
                 _update_task(
                     case_id,
                     status="completed",
-                    message=f"完成: {converted}/{len(pdf_files)} 个文件转换成功",
+                    message=msg,
                     results=results,
                 )
-                print(f"[后台任务] {case_id}: 转换完成 {converted}/{len(pdf_files)}")
+                print(f"[后台任务] {case_id}: {msg}")
 
             except Exception as e:
                 import traceback
@@ -289,7 +327,10 @@ async def get_convert_status(case_id: str):
 
 @router.post("/{case_id}/convert-all-to-md")
 async def trigger_convert(case_id: str):
-    """触发后台转换任务（异步并发模式，固定 10 并发）"""
+    """触发后台转换任务（异步并发模式，固定 3 并发）
+
+    已转换的文件会被自动跳过，仅处理缺失 MD 的 PDF。
+    """
     # 检查是否已有运行中的任务
     status = get_task_status(case_id)
     if status and status.get("status") == "running":
