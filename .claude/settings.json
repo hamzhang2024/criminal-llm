@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "command": "cd frontend && npx tsc --noEmit --pretty false 2>&1 | head -20",
+        "description": "TypeScript 类型检查"
+      }
+    ],
+    "Stop": [
+      {
+        "command": "cd frontend && npm run build 2>&1 | tail -5",
+        "description": "会话结束前验证前端构建"
+      }
+    ]
+  }
+}
