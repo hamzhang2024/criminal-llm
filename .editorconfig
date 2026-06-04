@@ -1,0 +1,52 @@
+# EditorConfig - 跨编辑器统一配置
+# https://editorconfig.org
+
+root = true
+
+# 通用配置
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+# Python 文件
+[*.py]
+indent_style = space
+indent_size = 4
+max_line_length = 120
+
+# TypeScript/JavaScript 文件
+[*.{ts,tsx,js,jsx,json}]
+indent_style = space
+indent_size = 2
+
+# CSS/SCSS 文件
+[*.{css,scss,sass}]
+indent_style = space
+indent_size = 2
+
+# HTML 文件
+[*.html]
+indent_style = space
+indent_size = 2
+
+# Markdown 文件
+[*.md]
+trim_trailing_whitespace = false
+indent_style = space
+indent_size = 2
+
+# YAML 文件
+[*.{yaml,yml}]
+indent_style = space
+indent_size = 2
+
+# TOML 文件
+[*.toml]
+indent_style = space
+indent_size = 2
+
+# Makefile
+[Makefile]
+indent_style = tab

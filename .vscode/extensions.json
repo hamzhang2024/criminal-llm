@@ -1,0 +1,27 @@
+{
+  "recommendations": [
+    // Python 相关
+    "ms-python.python",
+    "charliermarsh.ruff",
+    "ms-python.mypy-type-checker",
+
+    // TypeScript/JavaScript 相关
+    "esbenp.prettier-vscode",
+    "dbaeumer.vscode-eslint",
+
+    // React 相关
+    "dsznajder.es7-react-js-snippets",
+
+    // Tauri 相关
+    "tauri-apps.tauri-vscode",
+
+    // 通用工具
+    "editorconfig.editorconfig",
+    "streetsidesoftware.code-spell-checker",
+    "yzhang.markdown-all-in-one",
+
+    // Git 工具
+    "eamodio.gitlens",
+    "github.vscode-pull-request-github"
+  ]
+}

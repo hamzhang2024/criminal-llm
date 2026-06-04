@@ -1,0 +1,59 @@
+# Criminal LLM 项目配置
+
+[project]
+name = "criminal-llm"
+version = "1.3.4"
+description = "刑事案卷智能分析桌面应用"
+requires-python = ">=3.10"
+
+# Ruff 配置 - 快速 Python linter 和 formatter
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+
+# 排除目录
+exclude = [
+    ".git",
+    "__pycache__",
+    "node_modules",
+    "dist",
+    "build",
+    "*.egg-info",
+]
+
+# 检查规则
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "W",   # pycodestyle warnings
+    "I",   # isort
+    "UP",  # pyupgrade
+]
+ignore = [
+    "E501",  # line too long (交给 formatter 处理)
+    "W293",  # blank line contains whitespace
+]
+
+# isort 配置
+[tool.ruff.lint.isort]
+known-first-party = ["backend"]
+
+# Black 兼容的格式化配置
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+# mypy 类型检查配置
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+exclude = [
+    "node_modules",
+    "dist",
+    "build",
+]
