@@ -58,6 +58,7 @@ from stage_api import router as stage_router
 from pipeline_api import router as pipeline_router
 from legal_kb_api import router as legal_kb_router
 from background_tasks import router as bg_task_router
+from data_dir_api import router as data_dir_router
 
 # 创建 FastAPI 应用
 app = FastAPI(
@@ -85,6 +86,7 @@ app.include_router(pipeline_router)
 app.include_router(stage_router)
 app.include_router(legal_kb_router)
 app.include_router(bg_task_router)
+app.include_router(data_dir_router)
 
 # 静态文件服务（前端构建产物，生产环境使用）
 frontend_dist = Path(__file__).parent.parent / "frontend" / "dist"

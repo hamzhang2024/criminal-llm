@@ -2,10 +2,150 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, Check, Eye, EyeOff, Settings as SettingsIcon, RotateCw, Download } from 'lucide-react'
+import { ArrowLeft, Check, Eye, EyeOff, Settings as SettingsIcon, RotateCw, Download, FolderOpen } from 'lucide-react'
 import { MacOSTitlebar, MacOSCard, MacOSInput, MacOSButton } from '../components/MacOSLayout'
 import { API_BASE, getAuthEmail, clearToken, clearAuthEmail, getAppVersion, checkUpdate, openUrl } from '../api'
 import { showAlert, showConfirm } from '../components/MacOSDialog'
+
+// ═══════════════════════════════════════════════════════════
+// 数据目录管理组件
+// ═══════════════════════════════════════════════════════════
+
+interface DataDirInfo {
+  current_dir: string
+  config_file: string
+  exists: boolean
+  is_default: boolean
+}
+
+function DataDirCard() {
+  const [dataDir, setDataDir] = useState<DataDirInfo | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [migrating, setMigrating] = useState(false)
+
+  useEffect(() => {
+    fetch(`${API_BASE}/data-dir`)
+      .then(res => res.json())
+      .then(setDataDir)
+      .catch(err => showAlert({ title: '获取数据目录失败', message: err.message, variant: 'danger' }))
+      .finally(() => setLoading(false))
+  }, [])
+
+  const handleMigrate = async () => {
+    const confirmed = await showConfirm({
+      title: '迁移数据',
+      message: '将旧版本数据迁移到新目录？\n\n此操作会复制旧数据到新位置，不会删除原文件。',
+      confirmText: '迁移',
+      variant: 'info',
+    })
+    if (!confirmed) return
+
+    setMigrating(true)
+    try {
+      const res = await fetch(`${API_BASE}/data-dir/migrate`, { method: 'POST' })
+      const data = await res.json()
+      if (data.success) {
+        showAlert({ title: '迁移成功', message: data.message, variant: 'success' })
+        // 刷新数据目录信息
+        const newInfo = await fetch(`${API_BASE}/data-dir`).then(r => r.json())
+        setDataDir(newInfo)
+      } else {
+        showAlert({ title: '迁移失败', message: data.error, variant: 'danger' })
+      }
+    } catch (err) {
+      showAlert({ title: '迁移失败', message: err instanceof Error ? err.message : '未知错误', variant: 'danger' })
+    } finally {
+      setMigrating(false)
+    }
+  }
+
+  const handleBrowse = async () => {
+    // 调用后端打开目录选择对话框
+    const res = await fetch(`${API_BASE}/process/browse-directory`)
+    const data = await res.json()
+    if (data.path) {
+      const confirmed = await showConfirm({
+        title: '更改数据目录',
+        message: `新目录：${data.path}\n\n更改后需要重启应用生效。\n现有数据需要手动迁移或重新导入。`,
+        confirmText: '确认更改',
+        variant: 'warning',
+      })
+      if (!confirmed) return
+
+      try {
+        const setRes = await fetch(`${API_BASE}/data-dir`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ new_dir: data.path }),
+        })
+        const setData = await setRes.json()
+        if (setData.success) {
+          showAlert({ title: '已更改', message: setData.message, variant: 'success' })
+        } else {
+          showAlert({ title: '更改失败', message: setData.error, variant: 'danger' })
+        }
+      } catch (err) {
+        showAlert({ title: '更改失败', message: err instanceof Error ? err.message : '未知错误', variant: 'danger' })
+      }
+    }
+  }
+
+  if (loading) {
+    return (
+      <MacOSCard style={{ marginTop: '16px' }}>
+        <div style={{ color: '#86868b', fontSize: '14px' }}>加载中...</div>
+      </MacOSCard>
+    )
+  }
+
+  return (
+    <MacOSCard style={{ marginTop: '16px' }}>
+      <h2 style={{ fontSize: '15px', fontWeight: '600', marginBottom: '16px', color: '#1d1d1f' }}>
+        数据存储位置
+      </h2>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+        <div>
+          <div style={{ fontSize: 13, color: '#1d1d1f', fontWeight: 500 }}>
+            {dataDir?.current_dir || '未设置'}
+          </div>
+          <div style={{ fontSize: 12, color: '#86868b', marginTop: 4 }}>
+            {dataDir?.is_default ? '默认位置（用户文档目录）' : '自定义位置'}
+          </div>
+        </div>
+        <button
+          onClick={handleBrowse}
+          style={{
+            display: 'flex', alignItems: 'center', gap: '6px',
+            padding: '8px 12px', fontSize: 13, fontWeight: 500,
+            background: 'var(--macos-accent-light)', border: 'none',
+            borderRadius: '8px', cursor: 'pointer', color: 'var(--macos-accent)',
+          }}
+        >
+          <FolderOpen className="w-4 h-4" />
+          更改位置
+        </button>
+      </div>
+
+      {/* Windows 打包版显示迁移按钮 */}
+      {dataDir && !dataDir.is_default && (
+        <button
+          onClick={handleMigrate}
+          disabled={migrating}
+          style={{
+            display: 'flex', alignItems: 'center', gap: '6px',
+            padding: '8px 12px', fontSize: 13,
+            background: 'transparent', border: '1.5px solid var(--macos-border)',
+            borderRadius: '8px', cursor: migrating ? 'wait' : 'pointer', color: '#86868b',
+          }}
+        >
+          {migrating ? '迁移中...' : '从旧版本迁移数据'}
+        </button>
+      )}
+    </MacOSCard>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════
 
 interface ConfigStatus {
   mineru_token: boolean
@@ -503,6 +643,9 @@ export function SettingsPage() {
               </button>
             </div>
           </MacOSCard>
+
+          {/* 数据目录 */}
+          <DataDirCard />
 
           <MacOSCard style={{ marginTop: '16px' }}>
             <h2 style={{ fontSize: '15px', fontWeight: '600', marginBottom: '20px', color: '#1d1d1f' }}>

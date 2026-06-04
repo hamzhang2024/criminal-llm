@@ -1125,6 +1125,9 @@ async def extract_evidence(case_id: str):
         "processed_files": 0,
         "current_file": "",
         "started_at": time.time(),
+        "error_details": [],       # 结构化错误列表
+        "stopped_by_user": False,  # 是否用户主动停止
+        "recoverable": True,       # 是否可恢复
     }
 
     # 在后台启动提取任务，不阻塞 HTTP 响应
@@ -1150,11 +1153,16 @@ async def _run_extract_background(case_id: str, case_path, md_dir, evidence_dir)
         logger.exception("[证据提取] 后台任务失败: %s", e)
         import traceback
         traceback.print_exc()
-        # 记录错误详情到 EXTRACT_TASKS，让前端轮询能拿到
+        # 记录结构化错误详情到 EXTRACT_TASKS，让前端轮询能拿到
         task = EXTRACT_TASKS.get(case_id)
         if isinstance(task, dict):
             task["status"] = "error"
-            task["error_detail"] = str(e)
+            task["error_details"] = [{
+                "reason": "extract_failed",
+                "message": str(e)[:500],
+                "recoverable": True,
+            }]
+            task["recoverable"] = True
         EXTRACT_TASKS.pop(case_id, None)
 
 
@@ -1689,9 +1697,13 @@ async def get_extract_status(case_id: str):
             "elapsed_seconds": round(elapsed),
             "llm_waiting": task.get("llm_waiting", False),
             "llm_latency_ms": task.get("llm_latency", 0),
+            "stopped_by_user": task.get("stopped_by_user", False),
+            "recoverable": task.get("recoverable", True),
         }
         # 传递错误详情给前端
-        if task.get("error_detail"):
+        if task.get("error_details"):
+            result["error_details"] = task["error_details"]
+        elif task.get("error_detail"):
             result["error_detail"] = task["error_detail"]
         return result
     return {"case_id": case_id, "status": "idle"}
@@ -1723,6 +1735,10 @@ async def get_evidence_summary(case_id: str, filename: str):
 async def stop_extract(case_id: str):
     """停止正在运行的提取任务，保留已提取的证据"""
     # 标记为取消状态，让正在运行的提取任务退出
+    task = EXTRACT_TASKS.get(case_id)
+    if isinstance(task, dict):
+        task["stopped_by_user"] = True
+        task["recoverable"] = True
     EXTRACT_TASKS[case_id] = "cancelled"
     logger.info(f"[停止提取] 已取消 {case_id} 的提取任务，保留已提取的证据")
     return {"success": True, "message": "提取任务已取消"}
@@ -1736,6 +1752,9 @@ async def clear_evidence(case_id: str):
         raise HTTPException(status_code=404, detail="案件不存在")
 
     # 标记为取消状态，让正在运行的提取任务退出
+    task = EXTRACT_TASKS.get(case_id)
+    if isinstance(task, dict):
+        task["stopped_by_user"] = True
     EXTRACT_TASKS[case_id] = "cancelled"
     logger.info(f"[清除证据] 已取消 {case_id} 的提取任务")
 

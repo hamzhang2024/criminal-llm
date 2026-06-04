@@ -14,26 +14,24 @@ import shutil
 import subprocess
 import tempfile
 from typing import Optional, Dict, Any
+from pipeline_errors import PDFProcessingError
 
 
 def _try_fix_with_qpdf(input_path: str) -> Optional[str]:
     """尝试使用 qpdf 修复损坏的 PDF"""
     try:
-        # 检查 qpdf 是否可用
         result = subprocess.run(["which", "qpdf"], capture_output=True)
         if result.returncode != 0:
             print("[水印移除] qpdf 未安装，无法修复")
             return None
 
-        # 创建临时输出文件
         fd, output_path = tempfile.mkstemp(suffix='.pdf')
         os.close(fd)
 
-        # 使用 qpdf 修复
         cmd = [
             "qpdf",
-            "--ignore-xref-streams",  # 忽略损坏的交叉引用流
-            "--qdf",                   # 重新生成 PDF
+            "--ignore-xref-streams",
+            "--qdf",
             input_path,
             output_path
         ]
@@ -51,13 +49,31 @@ def _try_fix_with_qpdf(input_path: str) -> Optional[str]:
         return None
 
 
+def _open_pdf_with_repair(input_path: str, password: Optional[str] = None) -> Optional[fitz.Document]:
+    """打开 PDF，必要时自动修复损坏的文件"""
+    try:
+        doc = fitz.open(input_path)
+        return doc
+    except Exception as e:
+        error_msg = str(e).lower()
+        if "decompress" in error_msg or "header check" in error_msg or "incorrect header" in error_msg:
+            print(f"[水印移除] PDF 流损坏，尝试修复: {os.path.basename(input_path)}")
+            fixed_path = _try_fix_with_qpdf(input_path)
+            if fixed_path and os.path.exists(fixed_path):
+                try:
+                    doc = fitz.open(fixed_path)
+                    print(f"[水印移除] 修复成功")
+                    return doc
+                except Exception:
+                    return None
+        return None
+
+
 def _safe_xref_stream(doc, xref):
     """安全读取 xref 流，跳过损坏的压缩对象"""
     try:
         return doc.xref_stream(xref)
-    except Exception as e:
-        # 记录损坏的流，但不中断处理
-        print(f"[水印移除] 跳过损坏的流对象 xref={xref}: {e}")
+    except Exception:
         return None
 
 
@@ -93,20 +109,15 @@ def find_watermark_xobj(doc):
                         if bbox_match:
                             parts = bbox_match.group(1).split()
                             if len(parts) >= 4:
-                                try:
-                                    width = float(parts[2]) - float(parts[0])
-                                    height = float(parts[3]) - float(parts[1])
-                                    if width > 400 and height > 400:
-                                        is_watermark = True
-                                        break
-                                except (ValueError, IndexError):
-                                    continue
+                                width = float(parts[2]) - float(parts[0])
+                                height = float(parts[3]) - float(parts[1])
+                                if width > 400 and height > 400:
+                                    is_watermark = True
+                                    break
 
             if is_watermark:
                 return i, method
-        except Exception as e:
-            # 跳过任何错误，继续检查下一个对象
-            print(f"[水印检测] 跳过对象 {i}: {e}")
+        except Exception:
             continue
 
     return None, None
@@ -118,28 +129,23 @@ def detect_rotation_watermark(doc):
 
     for p in sample_pages:
         if p < len(doc):
-            try:
-                page = doc[p]
-                contents = page.get_contents()
-                for cxref in contents:
-                    try:
-                        stream = _safe_xref_stream(doc, cxref)
-                        if stream is None:
-                            continue
-                        content = stream.decode('latin-1', errors='ignore')
-
-                        has_rotation = "0.70711" in content or "0.86603" in content
-                        has_hex = bool(re.search(r'<[0-9a-fA-F]{40,}>', content))
-                        has_tj = "Tj" in content and len(content) > 200
-
-                        if has_rotation and (has_hex or has_tj):
-                            return True
-                    except Exception as e:
-                        print(f"[旋转水印检测] 跳过内容流 {cxref}: {e}")
+            page = doc[p]
+            contents = page.get_contents()
+            for cxref in contents:
+                try:
+                    stream = _safe_xref_stream(doc, cxref)
+                    if stream is None:
                         continue
-            except Exception as e:
-                print(f"[旋转水印检测] 跳过页面 {p}: {e}")
-                continue
+                    content = stream.decode('latin-1', errors='ignore')
+
+                    has_rotation = "0.70711" in content or "0.86603" in content
+                    has_hex = bool(re.search(r'<[0-9a-fA-F]{40,}>', content))
+                    has_tj = "Tj" in content and len(content) > 200
+
+                    if has_rotation and (has_hex or has_tj):
+                        return True
+                except Exception:
+                    continue
 
     return False
 
@@ -286,25 +292,9 @@ def remove_rotation_watermark(doc):
 
 def save_with_qpdf(doc, output_path):
     """使用 PyMuPDF 直接保存（跳过 qpdf 线性化）"""
-    try:
-        # garbage=4 等价于 garbage collection + 对象去重 + 压缩
-        doc.save(output_path, garbage=4, deflate=True)
-        return True
-    except Exception as e:
-        # 如果保存失败，尝试更宽松的选项
-        print(f"[水印移除] 标准保存失败，尝试宽松模式: {e}")
-        try:
-            doc.save(output_path, garbage=1, deflate=False)
-            return True
-        except Exception as e2:
-            print(f"[水印移除] 宽松模式也失败: {e2}")
-            # 最后尝试：不压缩，不垃圾回收
-            try:
-                doc.save(output_path)
-                return True
-            except Exception as e3:
-                print(f"[水印移除] 所有保存方式都失败: {e3}")
-                raise
+    # garbage=4 等价于 garbage collection + 对象去重 + 压缩
+    doc.save(output_path, garbage=4, deflate=True)
+    return True
 
 
 def auto_detect_repeating_text(doc, sample_count=5):
@@ -313,16 +303,12 @@ def auto_detect_repeating_text(doc, sample_count=5):
     line_counts = Counter()
 
     for i in range(min(sample_count, len(doc))):
-        try:
-            page = doc[i]
-            text = page.get_text()
-            # 降低长度阈值到 2，避免漏掉短水印（如"江阴市院"只有4字）
-            lines = [l.strip() for l in text.split('\n') if l.strip() and len(l.strip()) >= 2]
-            for line in lines:
-                line_counts[line] += 1
-        except Exception as e:
-            print(f"[文本检测] 跳过页面 {i}: {e}")
-            continue
+        page = doc[i]
+        text = page.get_text()
+        # 降低长度阈值到 2，避免漏掉短水印（如"江阴市院"只有4字）
+        lines = [l.strip() for l in text.split('\n') if l.strip() and len(l.strip()) >= 2]
+        for line in lines:
+            line_counts[line] += 1
 
     total_pages = min(sample_count, len(doc))
     for line, count in line_counts.most_common(10):
@@ -434,37 +420,22 @@ def remove_watermark(
         {"success": bool, "output": str, "watermark_type": str, "error": str}
     """
     if not os.path.exists(input_path):
-        return {"success": False, "error": f"文件不存在: {input_path}"}
+        raise PDFProcessingError(os.path.basename(input_path), "file_not_found")
 
     doc = None
+    fixed_path = None
     try:
-        # 打开文档
-        try:
-            doc = fitz.open(input_path)
-        except Exception as e:
-            error_msg = str(e)
-            # 检测是否是解压错误
-            if "decompress" in error_msg.lower() or "header check" in error_msg.lower():
-                # 尝试使用 qpdf 修复后重新打开
-                print(f"[水印移除] PDF 流损坏，尝试修复: {os.path.basename(input_path)}")
-                fixed_path = _try_fix_with_qpdf(input_path)
-                if fixed_path and os.path.exists(fixed_path):
-                    try:
-                        doc = fitz.open(fixed_path)
-                        print(f"[水印移除] 修复成功")
-                    except Exception as e2:
-                        return {"success": False, "error": f"PDF 文件损坏，无法修复: {error_msg}"}
-                else:
-                    return {"success": False, "error": f"PDF 文件损坏（压缩流错误），请联系开发者: {error_msg}"}
-            else:
-                return {"success": False, "error": f"无法打开 PDF: {error_msg}"}
+        # 打开文档（自动修复损坏）
+        doc = _open_pdf_with_repair(input_path, password)
+        if doc is None:
+            raise PDFProcessingError(os.path.basename(input_path), "corrupt_stream")
 
         if doc.needs_pass:
             if password and password.strip():
                 if not doc.authenticate(password.strip()):
-                    return {"success": False, "error": "密码错误，无法解密 PDF"}
+                    raise PDFProcessingError(os.path.basename(input_path), "wrong_password")
             else:
-                return {"success": False, "error": f"PDF 已加密，需要先输入密码（{os.path.basename(input_path)}）"}
+                raise PDFProcessingError(os.path.basename(input_path), "needs_password")
 
         total_pages = len(doc)
         watermark_type = None
@@ -501,7 +472,7 @@ def remove_watermark(
         save_with_qpdf(doc, output_path)
 
         if not os.path.exists(output_path):
-            return {"success": False, "error": "输出文件未生成"}
+            raise PDFProcessingError(os.path.basename(input_path), "io_error", "输出文件未生成")
 
         return {
             "success": True,
@@ -510,8 +481,17 @@ def remove_watermark(
             "pages": total_pages,
         }
 
+    except PDFProcessingError:
+        raise
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        raise PDFProcessingError(
+            os.path.basename(input_path), "generic", str(e)
+        )
     finally:
         if doc is not None:
             doc.close()
+        if fixed_path and os.path.exists(fixed_path):
+            try:
+                os.remove(fixed_path)
+            except Exception:
+                pass

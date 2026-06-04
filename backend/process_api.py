@@ -281,8 +281,12 @@ def process_single_file(
 
     # ── 快速检测：是否需要处理 ──
     import fitz
+    from watermark_remover import _open_pdf_with_repair, find_watermark_xobj, detect_rotation_watermark, auto_detect_repeating_text
     try:
-        doc = fitz.open(str(input_file))
+        doc = _open_pdf_with_repair(str(input_file), password)
+        if doc is None:
+            # 无法打开，走常规流程
+            raise RuntimeError("无法打开 PDF，走常规去水印流程")
         needs_password = doc.needs_pass
         doc.close()
 
@@ -291,8 +295,9 @@ def process_single_file(
             pass
         elif not needs_password and not watermark_text:
             # 不需要密码、没有指定水印文字 → 进一步检测是否有水印
-            from watermark_remover import find_watermark_xobj, detect_rotation_watermark, auto_detect_repeating_text
-            doc = fitz.open(str(input_file))
+            doc = _open_pdf_with_repair(str(input_file), password)
+            if doc is None:
+                raise RuntimeError("无法打开 PDF，走常规去水印流程")
             xref, _ = find_watermark_xobj(doc)
             has_rotation = detect_rotation_watermark(doc)
             detected_text = auto_detect_repeating_text(doc)
@@ -352,6 +357,16 @@ def process_single_file(
             }
 
     except Exception as e:
+        from pipeline_errors import PDFProcessingError
+        if isinstance(e, PDFProcessingError):
+            return {
+                "success": False,
+                "error": str(e),
+                "file": input_path,
+                "error_type": e.__class__.__name__,
+                "reason": e.reason,
+                "recoverable": e.recoverable,
+            }
         return {
             "success": False,
             "error": str(e),

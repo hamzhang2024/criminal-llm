@@ -4,26 +4,26 @@
   /* macOS 系统字体 */
   --font-system: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Icons", "Helvetica Neue", Helvetica, Arial, sans-serif;
 
-  /* macOS 浅色主题 */
-  --macos-bg-primary: #ffffff;
-  --macos-bg-secondary: #f5f5f7;
-  --macos-bg-tertiary: #efeff4;
-  --macos-sidebar: rgba(245, 245, 247, 0.8);
+  /* macOS 浅色主题 — 暖金深色系 */
+  --macos-bg-primary: #faf9f7;
+  --macos-bg-secondary: #f2f0ed;
+  --macos-bg-tertiary: #eae8e4;
+  --macos-sidebar: rgba(242, 240, 237, 0.85);
   --macos-sidebar-active: rgba(255, 255, 255, 0.8);
-  --macos-border: rgba(0, 0, 0, 0.1);
-  --macos-border-light: rgba(0, 0, 0, 0.05);
+  --macos-border: rgba(60, 60, 67, 0.12);
+  --macos-border-light: rgba(60, 60, 67, 0.06);
   --macos-text-primary: #1d1d1f;
   --macos-text-secondary: #6e6e73;
   --macos-text-tertiary: #86868b;
-  --macos-accent: #007AFF;
-  --macos-accent-hover: #0066D6;
-  --macos-accent-light: rgba(0, 122, 255, 0.08);
-  --macos-accent-border: rgba(0, 122, 255, 0.2);
-  --macos-accent-surface: rgba(0, 122, 255, 0.05);
-  --macos-accent-focus: rgba(0, 122, 255, 0.15);
-  --macos-success: #34c759;
-  --macos-warning: #ff9500;
-  --macos-danger: #ff3b30;
+  --macos-accent: #2c4a6e;
+  --macos-accent-hover: #1e3654;
+  --macos-accent-light: rgba(44, 74, 110, 0.08);
+  --macos-accent-border: rgba(44, 74, 110, 0.25);
+  --macos-accent-surface: rgba(44, 74, 110, 0.05);
+  --macos-accent-focus: rgba(44, 74, 110, 0.15);
+  --macos-success: #2d8f3d;
+  --macos-warning: #c9a227;
+  --macos-danger: #c0392b;
 
   /* 排版缩放 */
   --macos-text-xs: 11px;
@@ -198,7 +198,7 @@ body {
 /* macOS 侧边栏 */
 .macOS-sidebar {
   width: 240px;
-  background: rgba(245, 245, 247, 0.85);
+  background: rgba(242, 240, 237, 0.9);
   backdrop-filter: var(--macos-blur);
   -webkit-backdrop-filter: var(--macos-blur);
   border-right: 1px solid var(--macos-border);

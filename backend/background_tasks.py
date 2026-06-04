@@ -57,6 +57,9 @@ def _save_tasks():
                 "started_at": state.get("started_at", ""),
                 "updated_at": state.get("updated_at", ""),
                 "results": state.get("results", []),
+                "error_details": state.get("error_details", []),
+                "stopped_by_user": state.get("stopped_by_user", False),
+                "recoverable": state.get("recoverable", True),
             }
     TASKS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -98,6 +101,9 @@ def _update_task(case_id: str, **kwargs):
                 "message": "",
                 "started_at": datetime.now().isoformat(),
                 "results": [],
+                "error_details": [],       # 结构化错误列表
+                "stopped_by_user": False,  # 是否用户主动停止
+                "recoverable": True,       # 是否可恢复
             }
         _task_states[task_id].update(kwargs)
         _task_states[task_id]["updated_at"] = datetime.now().isoformat()
@@ -232,8 +238,14 @@ def start_convert_task(case_id: str, max_concurrent: int = 3):
                 print(f"[后台任务] {case_id}: 转换完成 {converted}/{len(pdf_files)}")
 
             except Exception as e:
-                _update_task(case_id, status="failed", message=str(e)[:500])
+                import traceback
+                error_traceback = traceback.format_exc()
                 print(f"[后台任务] {case_id}: 任务异常 {e}")
+                _update_task(case_id, status="failed", message=str(e)[:500], error_details=[{
+                    "reason": "generic",
+                    "message": str(e)[:500],
+                    "recoverable": True,
+                }], recoverable=True)
 
     _executor.submit(_run)
     return {"success": True, "task_id": _make_task_id(case_id), "status": "started", "message": "转换任务已启动（异步并发模式）"}
@@ -245,6 +257,8 @@ def cancel_task(case_id: str) -> bool:
     with _lock:
         if task_id in _task_states and _task_states[task_id]["status"] == "running":
             _task_states[task_id]["status"] = "cancelled"
+            _task_states[task_id]["stopped_by_user"] = True
+            _task_states[task_id]["recoverable"] = True
             _save_tasks()
             return True
     return False
