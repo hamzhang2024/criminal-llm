@@ -120,6 +120,8 @@ def start_convert_task(case_id: str, max_concurrent: int = 3):
     _update_task(
         case_id,
         status="pending",
+        total=0,
+        current=0,
         message="排队中...",
         results=[],
     )
@@ -174,6 +176,7 @@ def start_convert_task(case_id: str, max_concurrent: int = 3):
                     _update_task(
                         case_id,
                         status="completed",
+                        total=len(pdf_files),
                         message=f"全部 {len(pdf_files)} 个文件已转换完成，无需重复处理",
                         results=[{"file": f, "success": True, "skipped": True} for f in skipped_files],
                     )
@@ -270,6 +273,7 @@ def start_convert_task(case_id: str, max_concurrent: int = 3):
                 _update_task(
                     case_id,
                     status="completed",
+                    total=len(pdf_files),
                     message=msg,
                     results=results,
                 )
