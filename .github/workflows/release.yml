@@ -101,6 +101,19 @@ jobs:
           projectPath: frontend/src-tauri
           args: ${{ matrix.platform.tauri-args }}
 
+      # ---- Generate checksums ----
+      - name: Generate checksums
+        shell: bash
+        run: |
+          echo "=== 生成 SHA256 校验文件 ==="
+          cd frontend/src-tauri/target
+          find . -path "*/release/bundle/*" -type f \( -name "*.dmg" -o -name "*.app.tar.gz" -o -name "*.msi" -o -name "*.exe" \) | while read f; do
+            echo "$(sha256sum "$f" | head -c 64)  ${f#*/release/bundle/}"
+          done | tee checksums.txt
+          echo ""
+          echo "=== 校验文件内容 ==="
+          cat checksums.txt
+
       # ---- Upload artifacts ----
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
@@ -111,6 +124,7 @@ jobs:
             frontend/src-tauri/target/**/release/bundle/**/*.msi
             frontend/src-tauri/target/**/release/bundle/**/*.dmg
             frontend/src-tauri/target/**/release/bundle/**/*.app.tar.gz
+            frontend/src-tauri/target/checksums.txt
           draft: false
           prerelease: false
           generateReleaseNotes: true
