@@ -92,6 +92,58 @@ jobs:
             cp -r backend/dist/* "$RES_DIR/" 2>/dev/null || true
           fi
 
+      # ---- 验证构建完整性 ----
+      - name: Verify build integrity
+        shell: bash
+        run: |
+          echo "=== 验证后端构建产物 ==="
+          RES_DIR="frontend/src-tauri/resources/backend"
+          if [ "${{ matrix.platform.os }}" = "windows-latest" ]; then
+            EXEC="$RES_DIR/criminal-llm.exe"
+          else
+            EXEC="$RES_DIR/criminal-llm"
+          fi
+          if [ -f "$EXEC" ]; then
+            SIZE=$(stat -f%z "$EXEC" 2>/dev/null || stat -c%s "$EXEC" 2>/dev/null)
+            echo "后端可执行文件: $EXEC ($SIZE bytes)"
+            if [ "$SIZE" -lt 10485760 ]; then
+              echo "❌ 后端可执行文件小于 10MB，可能打包不完整"
+              exit 1
+            fi
+            echo "✅ 后端可执行文件大小正常"
+          else
+            echo "❌ 后端可执行文件缺失: $EXEC"
+            exit 1
+          fi
+
+          echo ""
+          echo "=== 验证 legal_db ==="
+          if [ -d "$RES_DIR/legal_db" ]; then
+            echo "✅ legal_db 目录存在"
+            ls "$RES_DIR/legal_db/"
+          else
+            echo "❌ legal_db 目录缺失!"
+            exit 1
+          fi
+
+          echo ""
+          echo "=== 验证前端构建产物 ==="
+          if [ -f "frontend/dist/index.html" ]; then
+            echo "✅ dist/index.html 存在"
+          else
+            echo "❌ frontend/dist/index.html 缺失!"
+            exit 1
+          fi
+          ASSETS_COUNT=$(ls frontend/dist/assets/*.js 2>/dev/null | wc -l)
+          echo "✅ JS 资源文件数: $ASSETS_COUNT"
+          if [ "$ASSETS_COUNT" -eq 0 ]; then
+            echo "❌ JS 资源文件缺失!"
+            exit 1
+          fi
+
+          echo ""
+          echo "=== 全部完整性检查通过 ==="
+
       # ---- Tauri build ----
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
