@@ -226,7 +226,7 @@ class AnalysisPipeline:
     # ========== 工具方法 ==========
 
     def _load_md_files(self) -> list[dict]:
-        """读取 md/ 目录下所有 Markdown 文件（旧方法，保留兼容）"""
+        """读取 md/ 目录下所有 Markdown 文件"""
         md_dir = self.case_dir / "md"
         if not md_dir.exists():
             raise ValueError("md/ 目录不存在，请先完成案卷拆分和转MD")
@@ -240,91 +240,6 @@ class AnalysisPipeline:
                     "type": infer_evidence_type(f.name),
                 })
         return files
-
-    def _load_evidence_files(self) -> list[dict]:
-        """读取 evidence/ 目录下所有结构化证据文件。
-
-        优先使用 evidence/ 目录（证据提取后的结构化文件），
-        如果不存在则回退到 md/ 目录（原始文件）。
-
-        Returns:
-            list[dict]: 每个元素包含 filename, filepath, text, type, evidence_id, evidence_name
-        """
-        evidence_dir = self.case_dir / "evidence"
-        index_file = evidence_dir / "index.json"
-
-        # 如果 evidence 目录不存在，回退到 md 目录
-        if not evidence_dir.exists() or not index_file.exists():
-            print("[分析流水线] evidence/ 目录不存在，回退到 md/ 目录")
-            return self._load_md_files()
-
-        files = []
-        with open(index_file, encoding="utf-8") as f:
-            index_data = json.load(f)
-
-        evidence_list = index_data.get("evidence", [])
-        if not evidence_list:
-            print("[分析流水线] evidence/index.json 为空，回退到 md/ 目录")
-            return self._load_md_files()
-
-        for e in evidence_list:
-            md_file = e.get("md_file", "")
-            if not md_file:
-                continue
-
-            filepath = evidence_dir / md_file
-            if not filepath.exists():
-                print(f"[分析流水线] 警告: 证据文件不存在: {md_file}")
-                continue
-
-            # 映射证据类型到笔录类型
-            evidence_type = e.get("type", "其他证据")
-            file_type = self._map_evidence_type_to_file_type(evidence_type, md_file)
-
-            files.append({
-                "filename": md_file,
-                "filepath": str(filepath),
-                "text": filepath.read_text(encoding="utf-8"),
-                "type": file_type,
-                "evidence_id": e.get("id"),
-                "evidence_name": e.get("name", ""),
-                "evidence_type": evidence_type,
-                "persons": e.get("persons", ""),
-            })
-
-        print(f"[分析流水线] 从 evidence/ 目录加载 {len(files)} 个结构化证据文件")
-        return files
-
-    def _map_evidence_type_to_file_type(self, evidence_type: str, filename: str) -> str:
-        """将证据类型映射到文件类型（用于步骤 1 合并笔录的分类）。
-
-        Args:
-            evidence_type: 证据类型（如"犯罪嫌疑人供述和辩解"）
-            filename: 文件名（用于辅助判断）
-
-        Returns:
-            文件类型（如"讯问笔录"、"询问笔录"、"其他证据"等）
-        """
-        # 证据类型 → 文件类型映射
-        type_mapping = {
-            "犯罪嫌疑人供述和辩解": "讯问笔录",
-            "被害人陈述": "询问笔录",
-            "证人证言": "询问笔录",
-            "讯问笔录": "讯问笔录",
-            "询问笔录": "询问笔录",
-        }
-
-        # 直接映射
-        if evidence_type in type_mapping:
-            return type_mapping[evidence_type]
-
-        # 从文件名推断
-        if "讯问" in filename or "讯问" in evidence_type:
-            return "讯问笔录"
-        if "询问" in filename or "询问" in evidence_type:
-            return "询问笔录"
-
-        return "其他证据"
 
     async def _find_indictment_in_md_files(self) -> tuple[str, str]:
         """在所有 MD 文件中找到起诉书或起诉意见书。
@@ -449,9 +364,14 @@ class AnalysisPipeline:
 
         return state
 
-    def _save_analysis_state(self):
-        """保存分析状态到 analysis_state.json"""
-        state = self._load_analysis_state()
+    def _save_analysis_state(self, state: Optional[dict] = None):
+        """保存分析状态到 analysis_state.json
+
+        Args:
+            state: 要保存的状态，如果为 None 则从磁盘重新加载
+        """
+        if state is None:
+            state = self._load_analysis_state()
         state["updated_at"] = datetime.now().isoformat()
         path = self._state_path()
         with open(path, "w", encoding="utf-8") as f:
@@ -464,7 +384,7 @@ class AnalysisPipeline:
         if step_key in state["steps"]:
             state["steps"][step_key]["status"] = "completed"
             state["steps"][step_key]["completed_at"] = datetime.now().isoformat()
-        self._save_analysis_state()
+        self._save_analysis_state(state)  # 传递修改后的 state
 
     def _mark_step_running(self, step: int):
         """标记步骤开始运行"""
@@ -472,7 +392,7 @@ class AnalysisPipeline:
         step_key = str(step)
         if step_key in state["steps"]:
             state["steps"][step_key]["status"] = "running"
-        self._save_analysis_state()
+        self._save_analysis_state(state)  # 传递修改后的 state
 
     def _mark_substep_done(self, step: str, substep_key: str, status: str = "done"):
         """标记子步骤完成并持久化"""
@@ -493,7 +413,7 @@ class AnalysisPipeline:
             step_data["details"] = {substep_key: status}
 
         state["steps"][step] = step_data
-        self._save_analysis_state()
+        self._save_analysis_state(state)  # 传递修改后的 state
 
     def _get_next_unfinished_step(self) -> Optional[float]:
         """找到下一个未完成的步骤编号，全部完成返回 None。
@@ -611,47 +531,42 @@ class AnalysisPipeline:
     # ========== 步骤 1: 合并笔录 ==========
 
     async def step1_merge_statements(self, defendant: str, crime_type: Optional[str] = None) -> dict:
-        """合并笔录：扫描 evidence/ 目录（优先）或 md/ 目录，按人名+类型合并笔录文件
+        """合并笔录：扫描 md/ 目录，按人名+类型合并笔录文件（纯代码，无 LLM）
 
-        人名提取策略：
-        1. 优先从 evidence/index.json 的 persons 字段提取（结构化数据）
-        2. 从文件名提取（_序号_人名{讯问/询问}笔录）
-        3. 从文件内容提取（被讯问人/被询问人/姓名: XXX）
+        人名提取策略（三源交叉验证）：
+        1. 从文件名提取（_序号_人名{讯问/询问}笔录）
+        2. 从文件内容提取（被讯问人/被询问人/姓名: XXX）
+        3. 两者一致 → 确认；仅一个有效 → 采用；都无 → 归为"未知"
         """
         existing = self._load_step_result(1)
         if existing and existing.get("merged_files"):
             return existing
 
-        # 优先使用 evidence/ 目录的结构化证据
-        files = self._load_evidence_files()
+        md_files = self._load_md_files()
 
         person_groups: dict[tuple[str, str], list[dict]] = {}
         other_evidence = []
 
-        for f in files:
+        for f in md_files:
             if f["type"] in ("讯问笔录", "询问笔录"):
-                # 策略 1：从 evidence 结构化数据提取人名（优先）
+                # 策略 1：文件名提取
+                name_from_file = _extract_person_from_filename(f["filename"])
+                # 策略 2：正文提取
+                name_from_content = _extract_name_from_content(f["text"])
+
                 person = None
-                if "persons" in f and f["persons"]:
-                    # persons 字段格式: "钱江（犯罪嫌疑人，男，1981年1月23日出生...）"
-                    persons_text = f["persons"]
-                    # 提取第一个人名（括号前的名字）
-                    match = re.match(r"^([^（（]+)", persons_text)
-                    if match:
-                        person = match.group(1).strip()
-                        print(f"[步骤 1] 从 evidence.persons 提取人名: {person} <- {persons_text[:30]}")
-
-                # 策略 2：文件名提取（备用）
-                if not person:
-                    name_from_file = _extract_person_from_filename(f["filename"])
-                    if name_from_file:
+                if name_from_file and name_from_content:
+                    # 两者一致，确认
+                    if name_from_file == name_from_content:
                         person = name_from_file
-
-                # 策略 3：正文提取（备用）
-                if not person:
-                    name_from_content = _extract_name_from_content(f["text"])
-                    if name_from_content:
-                        person = name_from_content
+                    else:
+                        # 不一致：优先用文件名的（更可靠），但记录正文提取结果
+                        person = name_from_file
+                        print(f"[步骤 1] 人名不一致: {f['filename']} -> 文件名={name_from_file}, 正文={name_from_content}，采用文件名结果")
+                elif name_from_file:
+                    person = name_from_file
+                elif name_from_content:
+                    person = name_from_content
 
                 if person:
                     key = (person, f["type"])
