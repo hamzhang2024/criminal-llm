@@ -449,12 +449,12 @@ async def get_defense_stages(case_id: str):
 
     if defense_dir.exists():
         for filename, status_key in stages.items():
-            if (defense_dir / filename).exists():
+            if (defense_dir / f"{filename}.md").exists():
                 stages[filename] = "done"
 
     # 检查完整报告
-    report_file = case_path / "analysis" / "辩护分析报告_*.md"
-    full_report_exists = any(case_path / "analysis").glob("辩护分析报告_*.md")
+    analysis_dir = case_path / "analysis"
+    full_report_exists = len(list(analysis_dir.glob("辩护分析报告_*.md"))) > 0
 
     return {
         "case_id": case_id,
