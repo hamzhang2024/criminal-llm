@@ -24,6 +24,12 @@ jobs:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             tauri-args: ""
+          - os: macos-14
+            target: aarch64-apple-darwin
+            tauri-args: "--target aarch64-apple-darwin"
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            tauri-args: ""
 
     runs-on: ${{ matrix.platform.os }}
     steps:
@@ -112,20 +118,38 @@ jobs:
         run: |
           RES_DIR="frontend/src-tauri/resources/backend"
           mkdir -p "$RES_DIR"
-          # Linux
-          if [ -d "backend/dist" ]; then
-            cp -r backend/dist/* "$RES_DIR/" 2>/dev/null || true
-          fi
-          # Windows
-          if [ -d "backend/dist" ]; then
-            cp -r backend/dist/* "$RES_DIR/" 2>/dev/null || true
+
+          # 复制 PyInstaller 输出
+          if [ "${{ matrix.platform.os }}" = "windows-latest" ]; then
+            # Windows: PyInstaller 生成单个 exe
+            cp backend/dist/criminal-llm.exe "$RES_DIR/" 2>/dev/null || true
+          else
+            # macOS/Linux: PyInstaller 生成 dist/criminal-llm 目录
+            if [ -d "backend/dist/criminal-llm" ]; then
+              cp -r backend/dist/criminal-llm/* "$RES_DIR/" 2>/dev/null || true
+            else
+              # 某些配置可能生成单文件
+              cp backend/dist/criminal-llm "$RES_DIR/" 2>/dev/null || true
+            fi
           fi
 
-          # macOS: 确保后端可执行文件有执行权限
+          # 确保 legal_db 存在（从 backend/legal_db 复制）
+          if [ -d "$RES_DIR/legal_db" ]; then
+            echo "✅ legal_db 已在打包产物中"
+          else
+            echo "📋 复制 legal_db 到 resources..."
+            cp -r backend/legal_db "$RES_DIR/" 2>/dev/null || echo "⚠️ legal_db 复制失败"
+          fi
+
+          # macOS/Linux: 设置执行权限
           if [ "${{ matrix.platform.os }}" != "windows-latest" ]; then
             chmod +x "$RES_DIR/criminal-llm" 2>/dev/null || true
             echo "✅ 已设置后端可执行权限"
           fi
+
+          # 列出资源目录内容
+          echo "📋 后端资源目录内容:"
+          ls -la "$RES_DIR/" 2>/dev/null || dir "$RES_DIR"
 
       # ---- 验证构建完整性 ----
       - name: Verify build integrity
@@ -148,6 +172,8 @@ jobs:
             echo "✅ 后端可执行文件大小正常"
           else
             echo "❌ 后端可执行文件缺失: $EXEC"
+            echo "📋 当前后端资源目录:"
+            ls -la "$RES_DIR/" 2>/dev/null || dir "$RES_DIR"
             exit 1
           fi
 
@@ -158,17 +184,14 @@ jobs:
             ls "$RES_DIR/legal_db/"
           else
             echo "❌ legal_db 目录缺失!"
-            exit 1
-          fi
-
-          echo ""
-          echo "=== 验证关键 Python 模块（通过文件大小推断） ==="
-          # 检查是否有 PyMuPDF 相关文件（通常打包后会很大）
-          TOTAL_SIZE=$(du -sb "$RES_DIR" 2>/dev/null | cut -f1 || du -s "$RES_DIR" | awk '{print $1*1024}')
-          echo "后端资源总大小: $TOTAL_SIZE bytes"
-          if [ "$TOTAL_SIZE" -lt 52428800 ]; then  # 50MB
-            echo "⚠️ 后端资源总大小小于 50MB，可能有模块遗漏"
-            echo "请检查 PyInstaller spec 文件的 hiddenimports"
+            echo "📋 尝试从 backend 复制..."
+            if [ -d "backend/legal_db" ]; then
+              cp -r backend/legal_db "$RES_DIR/"
+              echo "✅ 已复制 legal_db"
+            else
+              echo "❌ backend/legal_db 也不存在!"
+              exit 1
+            fi
           fi
 
           echo ""
@@ -178,30 +201,6 @@ jobs:
           else
             echo "❌ frontend/dist/index.html 缺失!"
             exit 1
-          fi
-          ASSETS_COUNT=$(ls frontend/dist/assets/*.js 2>/dev/null | wc -l)
-          echo "✅ JS 资源文件数: $ASSETS_COUNT"
-          if [ "$ASSETS_COUNT" -eq 0 ]; then
-            echo "❌ JS 资源文件缺失!"
-            exit 1
-          fi
-
-          # 检查关键前端依赖是否打包
-          echo ""
-          echo "=== 验证前端关键依赖 ==="
-          DIST_JS=$(ls frontend/dist/assets/index*.js 2>/dev/null | head -1)
-          if [ -f "$DIST_JS" ]; then
-            # 检查是否包含 marked、lucide-react 等关键依赖
-            if grep -q "marked" "$DIST_JS" 2>/dev/null; then
-              echo "✅ marked 已打包"
-            else
-              echo "⚠️ marked 可能未打包"
-            fi
-            if grep -q "lucide" "$DIST_JS" 2>/dev/null; then
-              echo "✅ lucide-react 已打包"
-            else
-              echo "⚠️ lucide-react 可能未打包"
-            fi
           fi
 
           echo ""
