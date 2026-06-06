@@ -25,8 +25,32 @@ tmp_aiohttp = collect_all('aiohttp')
 datas += tmp_aiohttp[0]; binaries += tmp_aiohttp[1]
 
 hiddenimports = [
-    # 主要依赖
+    # 本地模块（后端核心文件）
     '_bootstrap',
+    'config',
+    'config_manager',
+    'case_manager',
+    'process_api',
+    'pdf_processor',
+    'watermark_remover',
+    'pdf_to_md',
+    'mineru_async',
+    'paddleocr_async',
+    'paddleocr_remote',
+    'analyzer_api',
+    'analysis_engine',
+    'analysis_pipeline',
+    'pipeline_api',
+    'pipeline_errors',
+    'stage_api',
+    'background_tasks',
+    'legal_knowledge',
+    'legal_search',
+    'legal_kb_api',
+    'data_dir_api',
+    'llm_client',
+    'power_manager',
+    # 主要依赖
     'requests',
     'fastapi',
     'fastapi.routing',

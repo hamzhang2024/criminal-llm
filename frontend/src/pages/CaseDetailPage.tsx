@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { Upload, Wand2, FileDown, Scale, CheckCircle, AlertCircle, FileText, ArrowRight, Loader2, Trash2, CheckSquare, Square, XCircle, Play, RefreshCw } from 'lucide-react'
-import { MacOSTitlebar, MacOSSidebar, MacOSToolbar, MacOSButton, MacOSCard, MacOSEmptyState } from '../components/MacOSLayout'
+import { MacOSTitlebar, MacOSToolbar, MacOSButton, MacOSCard, MacOSEmptyState, PageLayout, InlineDialog, StatusBar } from '../components/MacOSLayout'
 import { api, serveFileUrl, API_BASE } from '../api'
 import { showConfirm, showAlert } from '../components/MacOSDialog'
 import { marked } from 'marked'
@@ -65,15 +65,25 @@ export function CaseDetailPage() {
   const navigate = useNavigate()
   const [caseName, setCaseName] = useState('加载中...')
   const [defendant, setDefendant] = useState('')
-  const [currentStep, setCurrentStep] = useState(() => {
-    const saved = localStorage.getItem(`case_${caseId}_step`)
-    return saved !== null ? parseInt(saved, 10) : 0
-  })
+  const [currentStep, setCurrentStep] = useState(0) // 初始值 0，在 useEffect 中从 localStorage 恢复
   const [files, setFiles] = useState<CaseFile[]>([])
   const [password, setPassword] = useState('')
   const [processing, setProcessing] = useState(false)
   const [progress, setProgress] = useState('')
   const [error, setError] = useState<string | null>(null)
+
+  // 从 localStorage 恢复步骤（确保 caseId 有效）
+  useEffect(() => {
+    if (caseId) {
+      const saved = localStorage.getItem(`case_${caseId}_step`)
+      if (saved !== null) {
+        const step = parseInt(saved, 10)
+        if (!isNaN(step) && step >= 0 && step <= 2) {
+          setCurrentStep(step)
+        }
+      }
+    }
+  }, [caseId])
 
   // 保存当前步骤到 localStorage（刷新后恢复）
   useEffect(() => {
@@ -148,6 +158,18 @@ export function CaseDetailPage() {
   useEffect(() => {
     if (!caseId) return
 
+    // 清理函数：停止所有轮询
+    const cleanup = () => {
+      if (extractPollRef.current) {
+        clearInterval(extractPollRef.current)
+        extractPollRef.current = null
+      }
+      if (convertPollRef.current) {
+        clearInterval(convertPollRef.current)
+        convertPollRef.current = null
+      }
+    }
+
     if (currentStep === 0) {
       // 步骤 0：加载原始文件
       api.getCaseFiles(caseId!)
@@ -163,8 +185,8 @@ export function CaseDetailPage() {
           }
         })
         .catch(err => console.error('加载文件失败:', err))
-    } else if (currentStep >= 1 && currentStep <= 3) {
-      // 步骤 1-3：加载上一步的输出
+    } else if (currentStep >= 1 && currentStep <= 2) {
+      // 步骤 1-2：加载上一步的输出
       api.getStepFiles(caseId!, currentStep)
         .then(data => {
           if (Array.isArray(data)) {
@@ -179,8 +201,8 @@ export function CaseDetailPage() {
         })
         .catch(err => console.error('加载步骤文件失败:', err))
 
-      // 步骤 2-3：检查是否已有证据
-      if (currentStep >= 2 && currentStep <= 3) {
+      // 步骤 1-2：检查是否已有证据
+      if (currentStep >= 1 && currentStep <= 2) {
         // 检查证据提取是否正在运行
         const checkExtractStatus = async () => {
           try {
@@ -219,7 +241,7 @@ export function CaseDetailPage() {
                     setEvidenceList(data2.evidence || [])
                     setEvidenceExtracted(true)
                     setProcessing(false)
-                    setProgress(`✅ 已提取 ${data2.total_evidence} 份证据`)
+                    setProgress(`已提取 ${data2.total_evidence} 份证据`)
                     setTimeout(() => setProgress(''), 3000)
                   } else {
                     // 刷新进度：使用后端返回的进度数据
@@ -262,8 +284,8 @@ export function CaseDetailPage() {
               const tot0 = data.total || 0
               const pct0 = tot0 > 0 ? Math.round((cur0 / tot0) * 100) : 0
               setProgress(`转换中：${cur0}/${tot0} (${pct0}%) — ${data.message || ''}`)
-              // 启动轮询
-              const pollInterval = setInterval(async () => {
+              // 启动轮询（使用 ref 存储）
+              convertPollRef.current = setInterval(async () => {
                 try {
                   const statusResp = await fetch(`${API_BASE}/tasks/${caseId}/convert-status`)
                   const statusData = await statusResp.json()
@@ -275,10 +297,10 @@ export function CaseDetailPage() {
                     const pct = tot > 0 ? Math.round((cur / tot) * 100) : 0
                     setProgress(`转换中：${cur}/${tot} (${pct}%) — ${statusData.message || ''}`)
                   } else if (st2 === 'completed') {
-                    clearInterval(pollInterval)
+                    if (convertPollRef.current) clearInterval(convertPollRef.current)
                     const results = statusData.results || []
                     const successCount = results.filter((r: any) => r.success).length
-                    setProgress(`✅ 已转换 ${successCount}/${statusData.total || 0} 个文件`)
+                    setProgress(`已转换 ${successCount}/${statusData.total || 0} 个文件`)
                     setProcessing(false)
                     // 重新加载文件
                     const filesData = await api.getStepFiles(caseId!, 2)
@@ -289,29 +311,29 @@ export function CaseDetailPage() {
                     }
                     // 转换完成，提示用户手动提取证据
                     if (successCount > 0) {
-                      setProgress(`✅ 已转换 ${successCount}/${data.total || 0} 个文件，请点击「提取证据」按钮继续`)
+                      setProgress(`已转换 ${successCount}/${data.total || 0} 个文件，请点击「提取证据」按钮继续`)
                     }
                   } else if (st2 === 'failed' || st2 === 'cancelled') {
-                    clearInterval(pollInterval)
+                    if (convertPollRef.current) clearInterval(convertPollRef.current)
                     setProgress('')
                     setError(statusData.message || '转换任务失败')
                     setProcessing(false)
                   }
                 } catch {
-                  clearInterval(pollInterval)
+                  if (convertPollRef.current) clearInterval(convertPollRef.current)
                 }
               }, 2000)
             } else if (st === 'completed') {
               // 已完成：显示完成信息
               const results = data.results || []
               const successCount = results.filter((r: any) => r.success).length
-              setProgress(`✅ 已转换 ${successCount}/${data.total || 0} 个文件`)
+              setProgress(`已转换 ${successCount}/${data.total || 0} 个文件`)
             }
           })
           .catch(() => { /* 无转换任务 */ })
       }
-    } else if (currentStep === 3) {
-      // 步骤 3：加载 MD 文件用于分析
+    } else if (currentStep === 2) {
+      // 步骤 2：加载 MD 文件用于分析
       api.getStepFiles(caseId!, 3)
         .then(data => {
           if (Array.isArray(data)) {
@@ -338,13 +360,14 @@ export function CaseDetailPage() {
         })
         .catch(() => { /* 忽略 */ })
     }
+
+    return cleanup
   }, [caseId, currentStep])
   const [showPassword, setShowPassword] = useState(false)
-  const [enhanceDpi, setEnhanceDpi] = useState(300)  // PDF 精度提升的 DPI
   // PDF 处理选项
-  const [optWatermark, setOptWatermark] = useState(true)   // 默认去水印
-  const [optEnhance, setOptEnhance] = useState(false)       // 默认不提升精度
-  const [optDeleteOriginal, setOptDeleteOriginal] = useState(false)  // 默认保留原始文件
+  const [optDecrypt, setOptDecrypt] = useState(false)    // 解密选项（默认关闭）
+  const [optWatermark, setOptWatermark] = useState(false) // 去水印选项（默认关闭）
+  const [optDeleteOriginal, setOptDeleteOriginal] = useState(true) // 删除原始文件（默认开启）
   const [crimeType, setCrimeType] = useState('')
 
   // 流水线状态
@@ -360,12 +383,11 @@ export function CaseDetailPage() {
   // 流水线实时进度（LLM 调用进度）
   const [liveProgress, setLiveProgress] = useState<{ message: string; current: number; total: number; elapsed: number } | null>(null)
 
-  // 步骤配置 — 简化版：上传 → PDF处理 → 转MD → 分析
+  // 步骤配置 — 整合版：上传文件 → 证据提取 → 案卷分析
   const steps = [
-    { id: 'upload', name: '上传文件', icon: Upload, description: '选择原始案卷文件' },
-    { id: 'process', name: '文件处理', icon: Wand2, description: '去水印、密码解除、精度提升（可多选）' },
-    { id: 'convert', name: '证据提取', icon: FileDown, description: '转换为结构化格式 → LLM 提取证据，准备分析' },
-    { id: 'analyze', name: '案卷分析', icon: Scale, description: '6 阶段智能分析（指控要素 → 人物关系 → 事件拆解 → 法律法规 → 控辩对抗 → 三阶层辩护）' }
+    { id: 'upload', name: '上传文件', icon: Upload, description: '上传 PDF 文件，可选解密/去水印处理' },
+    { id: 'convert', name: '证据提取', icon: FileDown, description: '转换为结构化格式 → LLM 提取证据' },
+    { id: 'analyze', name: '案卷分析', icon: Scale, description: '6 阶段智能分析（指控要素 → 人物关系 → 事件拆解 → 法律法规 → 控辩对抗 → 三阶层辩护）' },
   ]
 
   // 上传文件
@@ -395,9 +417,7 @@ export function CaseDetailPage() {
 
     setUploading(true)
     try {
-      console.log('[upload] caseId:', caseId, 'new:', newFiles.length, 'dup:', dupCount)
       const result = await api.uploadFiles(caseId, newFiles)
-      console.log('[upload] result:', result)
 
       if (!result.success) {
         const msg = result.error || result.detail || '上传失败'
@@ -444,7 +464,7 @@ export function CaseDetailPage() {
     } else if (currentStep === 1) {
       dirsToTry = ['processed', 'original']
     } else if (currentStep === 2) {
-      dirsToTry = ['processed', 'original']
+      dirsToTry = ['md', 'original']
     } else {
       dirsToTry = ['md', 'original']
     }
@@ -526,7 +546,7 @@ export function CaseDetailPage() {
     try {
       const result = await api.deleteMdFile(caseId!, mdFileName)
       if (result.success) {
-        setProgress(`✅ 已删除 ${mdFileName}`)
+        setProgress(`已删除 ${mdFileName}`)
         setTimeout(() => setProgress(''), 2000)
         // 始终刷新 MD 文件列表（步骤 3）
         const filesData = await api.getStepFiles(caseId!, 3)
@@ -554,7 +574,7 @@ export function CaseDetailPage() {
     try {
       const result = await api.deletePdfFile(caseId!, pdfFileName)
       if (result.success) {
-        setProgress(`✅ 已删除 ${pdfFileName}`)
+        setProgress(`已删除 ${pdfFileName}`)
         setTimeout(() => setProgress(''), 2000)
         // 重新加载文件列表
         const filesData = await api.getStepFiles(caseId!, 2)
@@ -582,7 +602,7 @@ export function CaseDetailPage() {
     try {
       const result = await api.deleteFile(caseId!, pdfFileName)
       if (result.success) {
-        setProgress(`✅ 已删除 ${pdfFileName}`)
+        setProgress(`已删除 ${pdfFileName}`)
         setTimeout(() => setProgress(''), 2000)
         // 重新加载步骤 1 文件列表
         const stepFiles = await api.getStepFiles(caseId!, 1)
@@ -605,7 +625,7 @@ export function CaseDetailPage() {
       setProgress(`正在转换 ${mdFileName}...`)
       const result = await api.convertToMd(caseId!, pdfName)
       if (result.success) {
-        setProgress(`✅ 已重新转换 ${mdFileName}`)
+        setProgress(`已重新转换 ${mdFileName}`)
         setTimeout(() => setProgress(''), 2000)
         // 刷新文件列表
         if (currentStep >= 3) {
@@ -658,7 +678,7 @@ export function CaseDetailPage() {
       // 再次过滤（只处理 pending 状态的文件）
       pendingFiles = pendingFiles.filter(f => f.status === 'pending')
       if (pendingFiles.length === 0) {
-        setProgress('✅ 所有文件已处理完成，无需重复处理')
+        setProgress('所有文件已处理完成，无需重复处理')
         return
       }
     }
@@ -676,10 +696,7 @@ export function CaseDetailPage() {
       // 调用真实后端 API
       const result = await api.batchProcess(caseId!, stepIndex, pendingFiles.map(f => f.name), {
         password: password || undefined,
-        dpi: stepIndex === 1 && optEnhance ? enhanceDpi : undefined,
         remove_watermark: stepIndex === 1 ? optWatermark : undefined,
-        enhance_resolution: stepIndex === 1 ? optEnhance : undefined,
-        delete_original: stepIndex === 1 ? optDeleteOriginal : undefined,
       })
 
       if (result.results) {
@@ -702,7 +719,7 @@ export function CaseDetailPage() {
         }
       }
 
-      setProgress(`✅ ${pendingFiles.length} 个文件处理完成！`)
+      setProgress(`${pendingFiles.length} 个文件处理完成！`)
       setCurrentStep(stepIndex + 1)
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') {
@@ -720,7 +737,7 @@ export function CaseDetailPage() {
         processAbortRef.current = null
       }
     }
-  }, [caseId, files, password, optWatermark, optEnhance, optDeleteOriginal, enhanceDpi])
+  }, [caseId, files, password, optWatermark])
 
   // 取消正在进行的 PDF 处理
   const handleCancelProcess = useCallback(() => {
@@ -772,6 +789,7 @@ export function CaseDetailPage() {
 
   // 证据提取轮询和停止状态
   const extractPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const convertPollRef = useRef<ReturnType<typeof setInterval> | null>(null)  // 转换轮询
   const extractUserStoppedRef = useRef(false)
   const extractPollFailuresRef = useRef(0)
 
@@ -806,7 +824,7 @@ export function CaseDetailPage() {
       const allDone = [1, 2, 3, 4, 5, 6].every(s => stages[`stage_${s}`]?.completed)
       if (allDone) {
         setAnalysisCompleted(true)
-        setProgress('✅ 6 阶段分析全部完成！')
+        setProgress('6 阶段分析全部完成！')
         setTimeout(() => navigate(`/case/${caseId}/report`), 2000)
       }
     } catch (err) {
@@ -883,7 +901,7 @@ export function CaseDetailPage() {
     }
 
     setProcessing(false)
-    setProgress('✅ 全部分析已完成！')
+    setProgress('全部分析已完成！')
     setTimeout(() => navigate(`/case/${caseId}/report`), 2000)
   }, [caseId, defendant, crimeType, navigate])
 
@@ -962,7 +980,7 @@ export function CaseDetailPage() {
               setError(`${blankFiles.length} 个文件转换失败（内容为空）：${names}。PDF 可能已加密，请先进行去水印处理并输入密码。`)
             }
 
-            setProgress(`✅ 已转换 ${successCount}/${totalCount} 个文件${blankFiles.length > 0 ? `，${blankFiles.length} 个失败` : ''}`)
+            setProgress(`已转换 ${successCount}/${totalCount} 个文件${blankFiles.length > 0 ? `，${blankFiles.length} 个失败` : ''}`)
             setCurrentStep(2)
 
             // 重新加载文件列表
@@ -974,7 +992,7 @@ export function CaseDetailPage() {
             }
 
             // 转换完成，提示用户手动点击提取证据
-            setProgress(`✅ 已转换 ${successCount}/${totalCount} 个文件${blankFiles.length > 0 ? `，${blankFiles.length} 个失败` : ''}`)
+            setProgress(`已转换 ${successCount}/${totalCount} 个文件${blankFiles.length > 0 ? `，${blankFiles.length} 个失败` : ''}`)
             setProcessing(false)
           } else if (st === 'failed' || st === 'cancelled') {
             clearInterval(pollInterval)
@@ -1022,6 +1040,166 @@ export function CaseDetailPage() {
       setProcessing(false)
     }
   }, [caseId, processing, defendant, crimeType])
+
+  // 串联转换 + 提取：先全部转 MD，完成后自动提取证据
+  const handleConvertAndExtract = useCallback(async () => {
+    setProcessing(true)
+    setError(null)
+    setProgress('正在转换并提取证据（第 1/2 步：PDF 转 MD）...')
+
+    try {
+      // ====================
+      // Stage 1: 全部转 MD
+      // ====================
+      const convertResult = await fetch(`${API_BASE}/tasks/${caseId}/convert-all-to-md`, { method: 'POST' })
+      const convertData = await convertResult.json()
+
+      if (!convertResult.ok) {
+        throw new Error(convertData.detail || convertData.error || '转换失败')
+      }
+
+      // 轮询等待转换完成
+      await new Promise<void>((resolve, reject) => {
+        const pollInterval = setInterval(async () => {
+          try {
+            const statusResp = await fetch(`${API_BASE}/tasks/${caseId}/convert-status`)
+            const statusData = await statusResp.json()
+            const st = statusData.status
+
+            if (st === 'running') {
+              const cur = statusData.current || 0
+              const tot = statusData.total || 0
+              const pct = tot > 0 ? Math.round((cur / tot) * 100) : 0
+              setProgress(`正在转换并提取证据（第 1/2 步：PDF 转 MD）${cur}/${tot} (${pct}%) — ${statusData.message || ''}`)
+            } else if (st === 'completed') {
+              clearInterval(pollInterval)
+              const results = statusData.results || []
+              const successCount = results.filter((r: any) => r.success).length
+              const totalCount = statusData.total || 0
+              const blankFiles = results.filter((r: any) => !r.success && r.error)
+
+              if (blankFiles.length > 0) {
+                const names = blankFiles.map((r: any) => r.file).join('、')
+                setError(`${blankFiles.length} 个文件转换失败（内容为空）：${names}。PDF 可能已加密，请先进行去水印处理并输入密码。`)
+              }
+
+              setProgress(`转换完成：${successCount}/${totalCount} 个文件。即将开始提取证据...`)
+
+              // 重新加载文件列表
+              api.getStepFiles(caseId!, 2).then(data => {
+                if (Array.isArray(data)) {
+                  setFiles(data.map((f: any) => ({
+                    id: f.id, name: f.name, size: f.size, status: f.status || 'done', source: f.source,
+                  })))
+                }
+              }).catch(() => {})
+
+              resolve()
+            } else if (st === 'failed' || st === 'cancelled') {
+              clearInterval(pollInterval)
+              reject(new Error(statusData.message || '转换任务失败'))
+            }
+          } catch (pollErr) {
+            clearInterval(pollInterval)
+            let errMsg = '未知错误'
+            if (pollErr instanceof Error) errMsg = pollErr.message
+            reject(new Error(`转换过程出错: ${errMsg}`))
+          }
+        }, 2000)
+
+        setTimeout(() => {
+          clearInterval(pollInterval)
+          reject(new Error('转换超时，任务可能仍在后台运行，请稍后刷新页面查看结果'))
+        }, 900000)
+      })
+
+      // ====================
+      // Stage 2: 提取证据
+      // ====================
+      setProgress('正在转换并提取证据（第 2/2 步：LLM 提取证据）...')
+
+      extractUserStoppedRef.current = false
+      extractPollFailuresRef.current = 0
+
+      // 启动提取
+      try {
+        await api.extractEvidence(caseId!)
+      } catch (extractErr) {
+        const msg = extractErr instanceof Error ? extractErr.message : '证据提取启动失败'
+        throw new Error(msg)
+      }
+
+      // 轮询等待提取完成
+      await new Promise<void>((resolve, reject) => {
+        const pollInterval = setInterval(async () => {
+          if (extractUserStoppedRef.current) {
+            clearInterval(pollInterval)
+            reject(new Error('用户已停止提取'))
+            return
+          }
+
+          try {
+            const st = await api.getExtractStatus(caseId!)
+            extractPollFailuresRef.current = 0
+
+            if (st.status !== 'running') {
+              clearInterval(pollInterval)
+              try {
+                const data = await api.getEvidenceIndex(caseId!)
+                const totalEvidence = data.total_evidence || 0
+                if (totalEvidence > 0) {
+                  setEvidenceList(data.evidence || [])
+                  setEvidenceExtracted(true)
+                  setProgress(`已完成全部操作！已提取 ${totalEvidence} 份证据`)
+                } else {
+                  const errorHint = data.error_hint || '证据提取未成功，请检查 LLM 配置或稍后重试'
+                  setError(errorHint)
+                  setProgress('')
+                }
+              } catch {
+                setProgress('提取已完成，但未能加载证据列表，请刷新页面后查看')
+              }
+              resolve()
+            } else {
+              const totalFiles = st.total_files || 0
+              const processedFiles = st.processed_files || 0
+              const currentFile = st.current_file || ''
+              const pct = totalFiles > 0 ? Math.round((processedFiles / totalFiles) * 100) : 0
+              if (processedFiles > 0 || totalFiles > 0) {
+                setProgress(`正在转换并提取证据（第 2/2 步：LLM 提取证据）${processedFiles}/${totalFiles} (${pct}%) ${currentFile ? '— ' + currentFile : ''}`)
+              }
+              try {
+                const data = await api.getEvidenceIndex(caseId!)
+                if (data.total_evidence > 0) setEvidenceList(data.evidence || [])
+              } catch { /* ignore */ }
+            }
+          } catch {
+            extractPollFailuresRef.current += 1
+            if (extractPollFailuresRef.current >= 3) {
+              clearInterval(pollInterval)
+              reject(new Error('提取过程出错，请检查后端服务是否正常'))
+            }
+          }
+        }, 3000)
+
+        setTimeout(() => {
+          clearInterval(pollInterval)
+          reject(new Error('提取超时，任务可能仍在后台运行，请稍后刷新页面查看结果'))
+        }, 900000)
+      })
+
+      // ====================
+      // 全部完成，跳转到步骤 2
+      // ====================
+      setCurrentStep(2)
+      setProcessing(false)
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : '操作失败'
+      setError(errorMsg)
+      setProgress('')
+      setProcessing(false)
+    }
+  }, [caseId])
 
   // 提取证据（独立按钮，转 MD 后手动触发）
   const handleExtractEvidence = useCallback(async () => {
@@ -1091,7 +1269,7 @@ export function CaseDetailPage() {
               } else {
                 setEvidenceList(data.evidence || [])
                 setEvidenceExtracted(true)
-                setProgress(`✅ 已提取 ${totalEvidence} 份证据`)
+                setProgress(`已提取 ${totalEvidence} 份证据`)
               }
             } catch {
               // 读取证据失败，但任务已结束
@@ -1179,7 +1357,7 @@ export function CaseDetailPage() {
       if (totalEvidence > 0) {
         setEvidenceList(data.evidence || [])
         setEvidenceExtracted(true)
-        setProgress(`✅ 已提取 ${totalEvidence} 份证据`)
+        setProgress(`已提取 ${totalEvidence} 份证据`)
       } else {
         setEvidenceList([])
         setProgress('尚未提取证据，请先点击「提取证据」')
@@ -1211,7 +1389,7 @@ export function CaseDetailPage() {
       if (data.success) {
         setEvidenceList([])
         setEvidenceExtracted(false)
-        setProgress('✅ 证据已清除')
+        setProgress('证据已清除')
         setTimeout(() => setProgress(''), 2000)
       } else {
         throw new Error(data.detail || data.error || '清除失败')
@@ -1242,7 +1420,7 @@ export function CaseDetailPage() {
       if (!result.success) {
         throw new Error(result.detail || result.error || '触发失败')
       }
-      setProgress('✅ 分析任务已启动，请稍候...')
+      setProgress('分析任务已启动，请稍候...')
       // 开始轮询进度
       pollAnalysisProgress()
     } catch (err) {
@@ -1282,7 +1460,7 @@ export function CaseDetailPage() {
         if (taskState === 'completed') {
           clearInterval(pollInterval)
           setAnalysisCompleted(true)
-          setProgress('✅ 6 阶段分析全部完成！')
+          setProgress('6 阶段分析全部完成！')
           setProcessing(false)
           setTimeout(() => navigate(`/case/${caseId}/report`), 1500)
         } else if (taskState === 'error') {
@@ -1296,7 +1474,7 @@ export function CaseDetailPage() {
           if (stageStatus.stage_53?.completed) {
             clearInterval(pollInterval)
             setAnalysisCompleted(true)
-            setProgress('✅ 6 阶段分析全部完成！')
+            setProgress('6 阶段分析全部完成！')
             setProcessing(false)
             setTimeout(() => navigate(`/case/${caseId}/report`), 1500)
           } else if (pollCount < 10) {
@@ -1523,9 +1701,9 @@ export function CaseDetailPage() {
     } catch { /* ignore */ }
   }, [caseId])
 
-  // 切换到步骤 4 时加载流水线状态
+  // 切换到步骤 2 时加载流水线状态
   useEffect(() => {
-    if (currentStep === 3 && caseId) {
+    if (currentStep === 2 && caseId) {
       loadPipelineState()
     }
   }, [currentStep, caseId, loadPipelineState])
@@ -1577,7 +1755,7 @@ export function CaseDetailPage() {
   }, [caseId])
 
   useEffect(() => {
-    if (currentStep === 3 && pipelineStatus[4]) {
+    if (currentStep === 2 && pipelineStatus[4]) {
       loadWikiPages()
     }
   }, [currentStep, pipelineStatus, loadWikiPages])
@@ -1706,22 +1884,24 @@ export function CaseDetailPage() {
 
   // 开始处理
   const handleStart = useCallback(async () => {
-    console.log('[handleStart] currentStep:', currentStep, 'files:', files.length, 'optWatermark:', optWatermark, 'optEnhance:', optEnhance, 'password:', password, 'processing:', processing)
     if (currentStep === 0) {
+      // 步骤 0：处理并继续 — 解密/去水印，完成后跳转到步骤 1
       if (files.length === 0) return
-      setCurrentStep(1)
-    } else if (currentStep === 1) {
-      // PDF 处理：检查是否至少选了一个选项
-      if (!optWatermark && !optEnhance) {
-        showAlert({ title: '提示', message: '请至少选择一个处理选项', variant: 'warning' })
+
+      const needProcess = optDecrypt || optWatermark
+
+      if (!needProcess) {
+        // 两个选项都未勾选，直接跳过步骤 1，进入转换步骤
+        setCurrentStep(1)
         return
       }
-      // 检查去水印选项是否开启但未输入密码
-      if (optWatermark && !password) {
+
+      // 检查解密选项是否开启但未输入密码
+      if (optDecrypt && !password) {
         const confirmed = await new Promise<boolean>((resolve) => {
           showConfirm({
             title: '未输入密码',
-            message: '已开启去水印选项但未输入密码。如果 PDF 文件已加密，处理将会失败。\n\n是否继续尝试处理？',
+            message: '已勾选"PDF 有密码"但未输入密码。处理将会失败。\n\n是否继续尝试处理？',
             confirmText: '继续处理',
             cancelText: '取消',
             variant: 'warning',
@@ -1731,150 +1911,150 @@ export function CaseDetailPage() {
         })
         if (!confirmed) return
       }
-      // 重新从后端加载文件列表，确保状态是最新的
+
+      setProcessing(true)
+      setProgress('正在处理文件，请稍候...')
       try {
-        const stepFiles = await api.getStepFiles(caseId!, 1)
-        console.log('[PDF处理] step-files from backend:', JSON.stringify(stepFiles))
-        if (Array.isArray(stepFiles) && stepFiles.length > 0) {
-          const processedFiles: CaseFile[] = stepFiles.map((f: any) => ({
-            id: f.id,
-            name: f.name,
-            size: f.size,
-            status: f.status === 'done' ? 'done' as const : 'pending' as const,
-            selected: f.status !== 'done',
-            source: f.source,
-          }))
-          setFiles(processedFiles)
-
-          // 只处理 pending 的文件
-          const filesToProcess = processedFiles.filter((f: any) => f.status === 'pending')
-          console.log('[PDF处理] filesToProcess:', filesToProcess.map((f: any) => f.name))
-          if (filesToProcess.length === 0) {
-            setProgress('✅ 所有文件已处理完成')
-            return
+        const filesToProcess = files.filter(f => f.status === 'pending')
+        if (filesToProcess.length === 0) {
+          setProgress('所有文件已处理完成')
+          setProcessing(false)
+          return
+        }
+        const result = await api.batchProcess(caseId!, 1, filesToProcess.map(f => f.name), {
+          password: password || undefined,
+          remove_watermark: optWatermark,
+          delete_original: optDeleteOriginal,
+        })
+        if (result.results) {
+          const allDone = result.results.every((r: any) => r.success)
+          if (allDone) {
+            setProgress(optDeleteOriginal
+              ? `${result.results.length} 个文件处理完成，已删除原始文件`
+              : `${result.results.length} 个文件处理完成！`)
+            setCurrentStep(1)
+          } else {
+            const failed = result.results.find((r: any) => !r.success)
+            if (failed) {
+              setError('处理失败：' + failed.error)
+            }
+            setProgress('')
           }
-
-          // 直接调用 API，不依赖 handleBatchProcess 的闭包
-          setProcessing(true)
-          setProgress(`正在处理 ${filesToProcess.length} 个文件，请稍候...`)
-
-          const result = await api.batchProcess(caseId!, 1, filesToProcess.map((f: any) => f.name), {
-            password: password || undefined,
-            remove_watermark: true,
-          })
-
-          if (result.results) {
-            setFiles(prev => prev.map(f => {
-              const r = result.results?.find((r: any) => r.file === f.name)
-              if (r?.success) {
-                return { ...f, status: 'done' as const, processedPath: r.output }
-              } else if (r?.error) {
-                return { ...f, status: 'error' as const, error: r.error.substring(0, 100) }
-              }
-              return f
-            }))
-          }
-          setProgress(`✅ ${filesToProcess.length} 个文件处理完成！`)
-          setCurrentStep(2)
-        } else {
-          setError('没有找到可处理的文件')
         }
       } catch (err) {
-        console.error('[PDF处理] error:', err)
-        const errorMsg = err instanceof Error ? err.message : '处理失败'
-        setError(errorMsg)
+        setError(err instanceof Error ? err.message : '处理失败')
         setProgress('')
       } finally {
         setProcessing(false)
       }
+    } else if (currentStep === 1) {
+      // 转换并提取
+      await handleConvertAndExtract()
     } else if (currentStep === 2) {
-      // 转MD：一键全部转换
-      handleConvertAllToMd()
-    } else if (currentStep === 3) {
       // 案卷分析：进入报告页面
-      navigate(`/case/${caseId}/report`)
+      navigate('/case/' + caseId + '/report')
     }
-  }, [currentStep, files, handleBatchProcess, handleConvertAllToMd, handleRunAnalysis, optWatermark, optEnhance, optDeleteOriginal, password])
+  }, [currentStep, files, password, optDecrypt, optWatermark, optDeleteOriginal, handleConvertAndExtract, caseId])
 
   const StepIcon = steps[currentStep]?.icon || FileText
   const pendingCount = files.filter(f => f.status === 'pending').length
   const doneCount = files.filter(f => f.status === 'done').length
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: 'var(--macos-bg-primary)', overflow: 'hidden' }}>
+    <PageLayout>
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         {/* 左侧：案件步骤导航 */}
-        <div className="frosted-subtle" style={{ width: '200px', borderRight: '1px solid var(--macos-border)', padding: '16px' }}>
-          {/* 返回案件管理 */}
+        <div className="frosted-subtle" style={{ width: 220, borderRight: '1px solid var(--macos-border)', padding: 16, display: 'flex', flexDirection: 'column' }}>
+          {/* 返回按钮 */}
           <button
             onClick={() => navigate('/')}
+            className="flex-center cursor-pointer"
             style={{
               width: '100%',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '6px',
-              padding: '8px 12px',
-              marginBottom: '12px',
+              gap: 6,
+              padding: '10px 12px',
+              marginBottom: 16,
               background: 'var(--macos-accent-light)',
               border: 'none',
-              borderRadius: '6px',
-              cursor: 'pointer',
-              fontSize: '12px',
+              borderRadius: 8,
+              fontSize: 13,
               color: 'var(--macos-accent)',
-              fontWeight: '500'
+              fontWeight: 500
             }}
           >
             ← 案件管理
           </button>
-          <div style={{ fontSize: '11px', fontWeight: '600', color: 'var(--macos-text-tertiary)', textTransform: 'uppercase', marginBottom: '12px', padding: '0 8px' }}>
-            案件：{caseName}
-          </div>
-          <div style={{ fontSize: '12px', color: 'var(--macos-text-secondary)', marginBottom: '16px', padding: '0 8px' }}>
-            被告人：{defendant}
-          </div>
-          
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-            {steps.map((step, index) => {
-              const Icon = step.icon
-              const isActive = index === currentStep
-              const isDone = index < currentStep
-              
-              return (
-                <button
-                  key={step.id}
-                  onClick={() => setCurrentStep(index)}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '8px',
-                    padding: '8px 12px',
-                    background: isActive ? 'var(--macos-accent-light)' : 'transparent',
-                    border: 'none',
-                    borderRadius: '6px',
-                    cursor: 'pointer',
-                    textAlign: 'left',
-                    fontSize: '13px',
-                    color: isActive ? 'var(--macos-accent)' : 'var(--macos-text-primary)'
-                  }}
-                >
-                  {isDone ? (
-                    <CheckCircle className="w-4 h-4" color="#2d8f3d" />
-                  ) : (
-                    <Icon className="w-4 h-4" color={isActive ? 'var(--macos-accent)' : '#86868b'} />
-                  )}
-                  <span>{step.name}</span>
-                </button>
-              )
-            })}
+
+          {/* 案件信息卡片 */}
+          <MacOSCard style={{ marginBottom: 16, padding: 14, background: 'linear-gradient(135deg, rgba(255,255,255,0.98) 0%, rgba(247,247,247,0.95) 100%)' }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--macos-text-tertiary)', textTransform: 'uppercase', marginBottom: 8, letterSpacing: '0.5px' }}>案件</div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--macos-text-primary)', marginBottom: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{caseName || '未命名案件'}</div>
+            <div style={{ fontSize: 12, color: 'var(--macos-text-secondary)', display: 'flex', alignItems: 'center', gap: 4 }}>
+              <span style={{ width: 6, height: 6, borderRadius: '50%', background: defendant ? '#3b5998' : '#f0a500' }}></span>
+              被告人：{defendant || '未指定'}
+            </div>
+            <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--macos-border)', display: 'flex', gap: 16, fontSize: 11, color: 'var(--macos-text-tertiary)' }}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <FileText className="w-3 h-3" />
+                {files.length} 文件
+              </span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <CheckCircle className="w-3 h-3" color={doneCount > 0 ? '#3b5998' : '#86868b'} />
+                {doneCount} 已处理
+              </span>
+            </div>
+          </MacOSCard>
+
+          {/* 步骤导航 */}
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--macos-text-tertiary)', textTransform: 'uppercase', marginBottom: 8, padding: '0 4px' }}>流程</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {steps.map((step, index) => {
+                const Icon = step.icon
+                const isActive = index === currentStep
+                const isDone = index < currentStep
+
+                return (
+                  <button
+                    key={step.id}
+                    onClick={() => setCurrentStep(index)}
+                    className="flex-row cursor-pointer"
+                    style={{
+                      gap: 10,
+                      padding: '10px 12px',
+                      background: isActive ? 'var(--macos-accent-light)' : 'transparent',
+                      border: isActive ? '1px solid var(--macos-accent-border)' : '1px solid transparent',
+                      borderRadius: 8,
+                      textAlign: 'left',
+                      fontSize: 13,
+                      color: isActive ? 'var(--macos-accent)' : 'var(--macos-text-primary)',
+                      transition: 'all 0.15s',
+                    }}
+                  >
+                    <div style={{
+                      width: 24, height: 24, borderRadius: 6,
+                      background: isDone ? 'rgba(59, 89, 152, 0.12)' : isActive ? 'var(--macos-accent)' : 'var(--macos-bg-tertiary)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}>
+                      {isDone ? (
+                        <CheckCircle className="w-4 h-4" color="#3b5998" />
+                      ) : (
+                        <Icon className="w-4 h-4" color={isActive ? '#fff' : '#86868b'} />
+                      )}
+                    </div>
+                    <span className="font-medium">{step.name}</span>
+                  </button>
+                )
+              })}
+            </div>
           </div>
         </div>
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           <MacOSToolbar title={caseName}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginRight: '16px' }}>
-              <span style={{ fontSize: '13px', color: 'var(--macos-text-secondary)' }}>被告人：{defendant}</span>
+            <div className="flex-row gap-md" style={{ marginRight: 16 }}>
+              <span className="text-sm text-secondary">被告人：{defendant}</span>
             </div>
-            <div style={{ display: 'flex', gap: '8px' }}>
+            <div className="flex-row gap-sm">
               {currentStep === 0 && (
                 <MacOSButton variant="primary" icon={uploading ? Loader2 : Upload} disabled={uploading} onClick={() => document.getElementById('case-upload')?.click()}>
                   {uploading ? '上传中...' : '添加文件'}
@@ -1883,73 +2063,28 @@ export function CaseDetailPage() {
               <MacOSButton
                 variant="primary"
                 icon={processing ? Loader2 : StepIcon}
-                disabled={processing || (currentStep === 0 && files.length === 0) || (currentStep === 3 && !pipelineStatus[4] && stageStatus[4] !== 'completed' && stageStatus[5] !== 'completed')}
-                onClick={async () => {
-                  if (currentStep === 0) {
-                    if (files.length === 0) return
-                    setCurrentStep(1)
-                  } else if (currentStep === 1) {
-                    if (!optWatermark && !optEnhance) {
-                      showAlert({ title: '提示', message: '请至少选择一个处理选项', variant: 'warning' })
-                      return
-                    }
-                    setProcessing(true)
-                    setProgress('正在处理文件，请稍候...')
-                    try {
-                      const filesToProcess = files.filter(f => f.status === 'pending')
-                      if (filesToProcess.length === 0) {
-                        setProgress('✅ 所有文件已处理完成')
-                        setProcessing(false)
-                        return
-                      }
-                      const result = await api.batchProcess(caseId!, 1, filesToProcess.map(f => f.name), {
-                        password: password || undefined,
-                        remove_watermark: optWatermark,
-                        enhance_resolution: optEnhance,
-                        delete_original: optDeleteOriginal,
-                      })
-                      if (result.results) {
-                        const allDone = result.results.every((r: any) => r.success)
-                        if (allDone) {
-                          setProgress(`✅ ${result.results.length} 个文件处理完成！`)
-                          setCurrentStep(2)
-                        } else {
-                          const failed = result.results.find((r: any) => !r.success)
-                          if (failed) {
-                            setError(`处理失败：${failed.error}`)
-                          }
-                          setProgress('')
-                        }
-                      }
-                    } catch (err) {
-                      setError(err instanceof Error ? err.message : '处理失败')
-                      setProgress('')
-                    } finally {
-                      setProcessing(false)
-                    }
-                  } else if (currentStep === 2) {
-                    handleConvertAllToMd()
-                  } else if (currentStep === 3) {
-                    navigate(`/case/${caseId}/report`)
-                  }
-                }}
+                disabled={processing || (currentStep === 0 && files.length === 0) || (currentStep === 2 && !pipelineStatus[4] && stageStatus[4] !== 'completed' && stageStatus[5] !== 'completed')}
+                onClick={handleStart}
               >
                 {processing ? '处理中...' :
-                 currentStep === 0 ? '开始处理' :
-                 currentStep === 2 ? '全部转换' :
-                 currentStep === 3 ? '查看报告' :
-                 `开始${steps[currentStep]?.name} (${getSelectedFiles().length} 个)`}
+                 currentStep === 0 ? (
+                   files.length === 0 ? '开始处理' :
+                   (optDecrypt || optWatermark) ? '处理并继续' : '跳过并继续'
+                 ) :
+                 currentStep === 1 ? '转换并提取' :
+                 currentStep === 2 ? '查看报告' :
+                 '开始' + (steps[currentStep]?.name || '')}
               </MacOSButton>
             </div>
           </MacOSToolbar>
 
-          {error && (
-            <div style={{ padding: '12px 20px', background: 'rgba(255, 59, 48, 0.1)', borderBottom: '1px solid var(--macos-border)', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <AlertCircle className="w-4 h-4" style={{ color: 'var(--macos-danger)' }} />
-              <span style={{ color: 'var(--macos-danger)', fontSize: '13px' }}>{error}</span>
-              <button onClick={() => setError(null)} style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', fontSize: '18px' }}>×</button>
-            </div>
-          )}
+          {/* 错误/进度状态栏 */}
+          <StatusBar
+            message={error || progress}
+            variant={error ? 'error' : processing ? 'processing' : 'success'}
+            onDismiss={error ? () => setError(null) : undefined}
+            processing={processing}
+          />
 
           {/* 取消处理后的确认对话框：选择是否删除已处理文件 */}
           {error === 'cancelled_process' && (
@@ -1985,7 +2120,7 @@ export function CaseDetailPage() {
                   }}>保留文件</button>
                   <button onClick={cleanupPartialProcess} style={{
                     padding: '8px 16px', borderRadius: '8px', border: 'none',
-                    background: '#ff3b30', color: '#fff', fontSize: '13px',
+                    background: '#666666', color: '#fff', fontSize: '13px',
                     cursor: 'pointer'
                   }}>删除已处理文件</button>
                 </div>
@@ -1993,311 +2128,52 @@ export function CaseDetailPage() {
             </div>
           )}
 
-          <div style={{ flex: 1, overflow: 'auto', padding: '24px' }}>
-            {/* 步骤进度 */}
-            <MacOSCard style={{ marginBottom: '20px' }}>
-              <div style={{ display: 'flex', alignItems: 'center' }}>
-                {steps.map((step, index) => {
-                  const Icon = step.icon
-                  const isActive = index === currentStep
-                  const isDone = index < currentStep
-                  
-                  return (
-                    <div key={step.id} style={{ display: 'flex', alignItems: 'center', flex: 1 }}>
-                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flex: 1 }}>
-                        <div style={{
-                          width: '40px',
-                          height: '40px',
-                          borderRadius: '50%',
-                          background: isDone ? 'rgba(52, 199, 89, 0.1)' : isActive ? 'var(--macos-accent-light)' : 'var(--macos-bg-secondary)',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          marginBottom: '6px'
-                        }}>
-                          {isDone ? (
-                            <CheckCircle className="w-5 h-5" color="#2d8f3d" />
-                          ) : (
-                            <Icon className="w-5 h-5" color={isActive ? 'var(--macos-accent)' : '#86868b'} />
-                          )}
-                        </div>
-                        <div style={{ fontSize: '11px', fontWeight: isActive ? '600' : '400', color: isActive ? 'var(--macos-accent)' : '#6e6e73', textAlign: 'center' }}>
-                          {step.name}
-                        </div>
-                      </div>
-                      
-                      {index < steps.length - 1 && (
-                        <div style={{
-                          flex: 1,
-                          height: '2px',
-                          background: index < currentStep ? '#2d8f3d' : 'var(--macos-border)',
-                          marginBottom: '20px'
-                        }} />
-                      )}
-                    </div>
-                  )
-                })}
+          <div style={{ flex: 1, overflow: 'auto', padding: '20px' }}>
+            {/* 当前步骤说明 — 简化为一行 */}
+            <div className="flex-between" style={{ marginBottom: 12 }}>
+              <div>
+                <h3 className="text-lg font-semibold">{steps[currentStep]?.name}</h3>
+                <p className="text-sm text-secondary">{steps[currentStep]?.description}</p>
               </div>
-            </MacOSCard>
+            </div>
 
-            {/* 当前步骤说明 */}
-            <MacOSCard style={{ marginBottom: '16px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
-                <div>
-                  <h3 style={{ fontSize: '16px', fontWeight: '600', marginBottom: '4px' }}>{steps[currentStep]?.name}</h3>
-                  <p style={{ fontSize: '13px', color: 'var(--macos-text-secondary)' }}>{steps[currentStep]?.description}</p>
-                </div>
-                <div style={{ textAlign: 'right' }}>
-                  <div style={{ fontSize: '12px', color: 'var(--macos-text-tertiary)' }}>案件</div>
-                  <div style={{ fontSize: '14px', fontWeight: '500' }}>{caseName}</div>
-                  <div style={{ fontSize: '12px', color: 'var(--macos-text-tertiary)' }}>被告人：{defendant}</div>
-                </div>
-              </div>
-
-              {currentStep === 1 && files.length > 0 && (
-                <div style={{ marginTop: '12px' }}>
-                  <div style={{ fontSize: '13px', fontWeight: '500', marginBottom: '12px' }}>处理选项</div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                    {/* 去水印 */}
-                    <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', cursor: 'pointer', padding: '12px', background: optWatermark ? 'rgba(0,122,255,0.05)' : 'var(--macos-bg-secondary)', borderRadius: '8px', border: optWatermark ? '1px solid var(--macos-accent-border)' : '1px solid transparent' }}>
-                      <input type="checkbox" checked={optWatermark} onChange={(e) => setOptWatermark(e.target.checked)} style={{ marginTop: '2px', accentColor: 'var(--macos-accent)' }} />
-                      <div>
-                        <div style={{ fontSize: '13px', fontWeight: '500' }}>去水印 / 密码</div>
-                        <div style={{ fontSize: '12px', color: 'var(--macos-text-secondary)' }}>移除 PDF 水印和加密保护，输出干净文件</div>
-                      </div>
-                    </label>
-                    {/* 密码输入框 */}
-                    {optWatermark && (
-                      <div style={{ marginLeft: '32px', marginTop: '-4px' }}>
-                        <input
-                          type="password"
-                          value={password}
-                          onChange={(e) => setPassword(e.target.value)}
-                          placeholder="PDF 密码（如有）"
-                          style={{
-                            width: '100%',
-                            padding: '8px 12px',
-                            border: '1px solid var(--macos-border)',
-                            borderRadius: '6px',
-                            fontSize: '13px'
-                          }}
-                        />
-                      </div>
-                    )}
-                    {/* 精度提升 */}
-                    <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', cursor: 'pointer', padding: '12px', background: optEnhance ? 'rgba(0,122,255,0.05)' : 'var(--macos-bg-secondary)', borderRadius: '8px', border: optEnhance ? '1px solid var(--macos-accent-border)' : '1px solid transparent' }}>
-                      <input type="checkbox" checked={optEnhance} onChange={(e) => setOptEnhance(e.target.checked)} style={{ marginTop: '2px', accentColor: 'var(--macos-accent)' }} />
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: '13px', fontWeight: '500' }}>精度提升</div>
-                        <div style={{ fontSize: '12px', color: 'var(--macos-text-secondary)', marginBottom: optEnhance ? '8px' : '0' }}>提高 PDF 图片分辨率，适用于低分辨率扫描件</div>
-                        {optEnhance && (
-                          <div style={{ display: 'flex', gap: '8px' }}>
-                            {[200, 300, 400, 600].map(dpi => (
-                              <button
-                                key={dpi}
-                                onClick={() => setEnhanceDpi(dpi)}
-                                style={{
-                                  padding: '4px 12px',
-                                  background: enhanceDpi === dpi ? 'var(--macos-accent)' : 'rgba(142,142,147,0.12)',
-                                  color: enhanceDpi === dpi ? '#fff' : 'var(--macos-text-primary)',
-                                  border: 'none',
-                                  borderRadius: '6px',
-                                  cursor: 'pointer',
-                                  fontSize: '12px',
-                                  fontWeight: '500'
-                                }}
-                              >{dpi} dpi</button>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </label>
-                    {/* 删除原始文件 */}
-                    <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', cursor: 'pointer', padding: '12px', background: optDeleteOriginal ? 'rgba(255,59,48,0.05)' : 'var(--macos-bg-secondary)', borderRadius: '8px', border: optDeleteOriginal ? '1px solid rgba(255,59,48,0.3)' : '1px solid transparent' }}>
-                      <input type="checkbox" checked={optDeleteOriginal} onChange={(e) => setOptDeleteOriginal(e.target.checked)} style={{ marginTop: '2px', accentColor: '#ff3b30' }} />
-                      <div>
-                        <div style={{ fontSize: '13px', fontWeight: '500', color: optDeleteOriginal ? '#ff3b30' : 'var(--macos-text-primary)' }}>删除原始文件</div>
-                        <div style={{ fontSize: '12px', color: 'var(--macos-text-secondary)' }}>处理完成后删除 original/ 中的原始 PDF（不可恢复）</div>
-                      </div>
-                    </label>
-                  </div>
-                </div>
-              )}
-            </MacOSCard>
-
-            {/* 进度条 */}
-            {progress && (
-              <MacOSCard style={{ marginBottom: '16px', background: 'var(--macos-bg-secondary)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                  {processing ? (
-                    <Loader2 className="w-5 h-5 animate-spin" color="var(--macos-accent)" />
-                  ) : (
-                    <CheckCircle className="w-5 h-5" color="#2d8f3d" />
+            {/* 步骤 0：处理选项 — 紧凑表单 */}
+            {currentStep === 0 && files.length > 0 && (
+              <MacOSCard style={{ marginBottom: 12, padding: 14 }}>
+                <div className="text-sm font-medium mb-sm">处理选项</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  <label className="flex-row gap-sm cursor-pointer">
+                    <input type="checkbox" checked={optDecrypt} onChange={(e) => setOptDecrypt(e.target.checked)} style={{ accentColor: 'var(--macos-accent)' }} />
+                    <span className="text-sm">PDF 有密码，需要解密</span>
+                  </label>
+                  {optDecrypt && (
+                    <input
+                      type="password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="请输入 PDF 密码"
+                      style={{ padding: '6px 10px', border: '1px solid var(--macos-border)', borderRadius: 6, fontSize: 13, width: 200, marginLeft: 20 }}
+                    />
                   )}
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: '14px', fontWeight: '500', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      {processing ? (
-                        <>处理中 <WorkingDots /></>
-                      ) : (
-                        '处理完成'
-                      )}
-                      {/* 步骤1处理中时显示停止按钮 */}
-                      {processing && currentStep === 1 && (
-                        <button
-                          onClick={handleCancelProcess}
-                          style={{
-                            padding: '2px 10px', borderRadius: '4px', border: 'none',
-                            background: '#ff3b30', color: '#fff',
-                            fontSize: '11px', fontWeight: '500', cursor: 'pointer',
-                            display: 'flex', alignItems: 'center', gap: '3px'
-                          }}
-                          title="停止处理"
-                        >
-                          <XCircle className="w-3 h-3" /> 停止
-                        </button>
-                      )}
-                    </div>
-                    <div style={{ fontSize: '13px', color: progress.startsWith('✅') ? '#2d8f3d' : 'var(--macos-text-primary)' }}>
-                      {progress}
-                    </div>
-                    {processing && (() => {
-                      // 尝试从进度文本中提取百分比（如 "已转换 3/10 个证据 (30%)"）
-                      const pctMatch = progress.match(/(\d+)%/)
-                      const pct = pctMatch ? parseInt(pctMatch[1]) : (doneCount / Math.max(files.length, 1)) * 100
-                      return (
-                        <div style={{ marginTop: '8px', height: '4px', background: 'var(--macos-border)', borderRadius: '2px', overflow: 'hidden' }}>
-                          <div style={{ height: '100%', background: 'var(--macos-accent)', width: `${Math.min(pct, 100)}%`, borderRadius: '2px', transition: 'width 0.3s ease' }} />
-                        </div>
-                      )
-                    })()}
-                  </div>
+                  <label className="flex-row gap-sm cursor-pointer">
+                    <input type="checkbox" checked={optWatermark} onChange={(e) => setOptWatermark(e.target.checked)} style={{ accentColor: 'var(--macos-accent)' }} />
+                    <span className="text-sm">PDF 有水印，需要去除</span>
+                  </label>
+                  {(optDecrypt || optWatermark) && (
+                    <label className="flex-row gap-sm cursor-pointer" style={{ marginTop: 4, paddingTop: 8, borderTop: '1px solid var(--macos-border)' }}>
+                      <input type="checkbox" checked={optDeleteOriginal} onChange={(e) => setOptDeleteOriginal(e.target.checked)} style={{ accentColor: 'var(--macos-accent)' }} />
+                      <span className="text-sm">处理成功后删除原始文件（节省空间）</span>
+                    </label>
+                  )}
                 </div>
               </MacOSCard>
             )}
 
-            {/* 证据清单（步骤 2 转换完成后显示操作区） */}
-            {currentStep === 2 && (() => {
-              // 判断是否所有 PDF 都已转换为 MD（新增文件也会反映在 files 列表中）
-              const mdConversionComplete = files.length > 0 && files.every(f => f.status === 'done')
-              return (
-              <MacOSCard style={{ marginBottom: '16px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                  <h4 style={{ fontSize: '14px', fontWeight: '600' }}>证据提取</h4>
-                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                    {processing ? (
-                      <button
-                        onClick={handleStopExtract}
-                        style={{
-                          padding: '6px 12px', borderRadius: '6px',
-                          border: 'none', background: '#ff9500',
-                          color: '#fff', fontSize: '12px', fontWeight: '500',
-                          cursor: 'pointer'
-                        }}
-                      >停止提取</button>
-                    ) : evidenceExtracted ? (
-                      <>
-                        <button
-                          onClick={handleExtractEvidence}
-                          style={{
-                            padding: '6px 12px', borderRadius: '6px',
-                            border: 'none', background: 'var(--macos-accent)',
-                            color: '#fff', fontSize: '12px', fontWeight: '500',
-                            cursor: 'pointer'
-                          }}
-                        >继续提取</button>
-                        <button
-                          onClick={handleClearEvidence}
-                          style={{
-                            padding: '6px 12px', borderRadius: '6px',
-                            border: '1px solid #ff3b30', background: 'transparent',
-                            color: '#ff3b30', fontSize: '12px', cursor: 'pointer', fontWeight: '500'
-                          }}
-                        >清除</button>
-                      </>
-                    ) : mdConversionComplete ? (
-                      <>
-                        <button
-                          onClick={handleExtractEvidence}
-                          style={{
-                            padding: '6px 12px', borderRadius: '6px',
-                            border: 'none', background: 'var(--macos-accent)',
-                            color: '#fff', fontSize: '12px', fontWeight: '500',
-                            cursor: 'pointer'
-                          }}
-                        >提取证据</button>
-                        <button
-                          onClick={handleRefreshEvidence}
-                          style={{
-                            padding: '6px 12px', borderRadius: '6px',
-                            border: '1px solid var(--macos-border)', background: 'transparent',
-                            color: 'var(--macos-text-primary)', fontSize: '12px', cursor: 'pointer', fontWeight: '500'
-                          }}
-                          title="检查后台是否已完成提取"
-                        >刷新证据</button>
-                      </>
-                    ) : (
-                      <button
-                        disabled
-                        style={{
-                          padding: '6px 12px', borderRadius: '6px',
-                          border: 'none', background: '#d1d1d6',
-                          color: '#86868b', fontSize: '12px', fontWeight: '500',
-                          cursor: 'not-allowed'
-                        }}
-                      >提取证据</button>
-                    )}
-                  </div>
-                </div>
-                {evidenceList.length > 0 && (
-                  <>
-                    <div style={{ fontSize: '12px', color: 'var(--macos-text-secondary)', marginBottom: '12px' }}>共 {evidenceList.length} 份证据</div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '300px', overflowY: 'auto' }}>
-                      {evidenceList.map(ev => (
-                        <div key={ev.id} style={{
-                          display: 'flex', alignItems: 'center', gap: '12px',
-                          padding: '10px 12px',
-                          background: 'var(--macos-bg-secondary)',
-                          borderRadius: '8px',
-                          border: '1px solid var(--macos-border)'
-                        }}>
-                          <div style={{
-                            width: '28px', height: '28px', borderRadius: '6px',
-                            background: 'var(--macos-accent-light)',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            fontSize: '12px', fontWeight: '600', color: 'var(--macos-accent)'
-                          }}>{ev.id}</div>
-                          <div style={{ flex: 1, overflow: 'hidden' }}>
-                            <div style={{ fontSize: '13px', fontWeight: '500', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                              {ev.name}
-                            </div>
-                            <div style={{ fontSize: '11px', color: 'var(--macos-text-secondary)' }}>
-                              {ev.type} · {ev.source}{ev.page_range ? ` · ${ev.page_range}` : ''}
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                )}
-                {!evidenceExtracted && !mdConversionComplete && (
-                  <div style={{ fontSize: '12px', color: 'var(--macos-text-tertiary)', padding: '12px 0' }}>
-                    请先完成全部文件的转换，然后再提取证据
-                  </div>
-                )}
-                {evidenceExtracted && (
-                  <div style={{ fontSize: '12px', color: '#2d8f3d', padding: '12px 0' }}>
-                    已完成证据提取
-                  </div>
-                )}
-              </MacOSCard>
-              )
-            })()}
-
-            {/* 文件列表 */}
-            {files.length > 0 && (
+            {/* 文件列表 - 步骤 1 时在证据提取之前显示 */}
+            {currentStep < 2 && files.length > 0 && (
               <MacOSCard>
-                {/* 步骤 2：转MD - 显示待转换的 PDF 列表或已转换的 MD 列表 */}
-                {currentStep === 2 ? (
+                {/* 步骤 1：转MD - 显示待转换的 PDF 列表或已转换的 MD 列表 */}
+                {currentStep === 1 ? (
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
                     <h4 style={{ fontSize: '14px', fontWeight: '600' }}>
                       {(() => {
@@ -2322,7 +2198,7 @@ export function CaseDetailPage() {
                             setFiles(filesData.map((f: any) => ({
                               id: f.id, name: f.name, size: f.size, status: f.status || 'pending', source: f.source,
                             })))
-                            setProgress('✅ 文件列表已刷新')
+                            setProgress('文件列表已刷新')
                             setTimeout(() => setProgress(''), 1500)
                           }
                         } catch (err) {
@@ -2351,7 +2227,6 @@ export function CaseDetailPage() {
                       </button>
                       <h4 style={{ fontSize: '14px', fontWeight: '600' }}>
                         {currentStep === 0 ? '原始文件' :
-                         currentStep === 1 ? '待处理 PDF' :
                          'MD 文件'}
                       </h4>
                     </div>
@@ -2368,7 +2243,7 @@ export function CaseDetailPage() {
                               setFiles(filesData.map((f: any) => ({
                                 id: f.id, name: f.name, size: f.size, status: f.status || 'pending', source: f.source,
                               })))
-                              setProgress('✅ 文件列表已刷新')
+                              setProgress('文件列表已刷新')
                               setTimeout(() => setProgress(''), 1500)
                             }
                           } catch (err) {
@@ -2387,8 +2262,8 @@ export function CaseDetailPage() {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   {files.map(file => {
                     // 显示当前步骤的输入文件
-                    const inputFile = currentStep === 1 ? file :
-                                      currentStep === 2 ? { ...file, name: file.processedPath || file.name } :
+                    const inputFile = currentStep === 0 ? file :
+                                      currentStep === 1 ? { ...file, name: file.processedPath || file.name } :
                                       file;
                     
                     return (
@@ -2397,23 +2272,23 @@ export function CaseDetailPage() {
                         alignItems: 'center',
                         gap: '12px',
                         padding: '12px',
-                        background: file.splitResults ? 'rgba(52, 199, 89, 0.08)' :
-                                   file.status === 'done' ? 'rgba(52, 199, 89, 0.05)' :
+                        background: file.splitResults ? 'rgba(59, 89, 152, 0.06)' :
+                                   file.status === 'done' ? 'rgba(59, 89, 152, 0.04)' :
                                    file.status === 'processing' ? 'var(--macos-accent-surface)' :
-                                   file.status === 'error' ? 'rgba(255, 59, 48, 0.05)' : 'var(--macos-bg-secondary)',
+                                   file.status === 'error' ? 'rgba(102, 102, 102, 0.04)' : 'var(--macos-bg-secondary)',
                         borderRadius: '8px',
-                        border: file.splitResults ? '1px solid rgba(52, 199, 89, 0.3)' :
+                        border: file.splitResults ? '1px solid rgba(59, 89, 152, 0.15)' :
                                   file.selected ? '1px solid var(--macos-accent-border)' : '1px solid transparent'
                       }}>
-                        {/* 步骤 2：状态指示（无复选框，转换是单文件操作） */}
-                        {currentStep === 2 ? (
+                        {/* 步骤 1：状态指示（无复选框，转换是单文件操作） */}
+                        {currentStep === 1 ? (
                           file.status === 'done' ? (
                             <div style={{
                               width: '32px', height: '32px', borderRadius: '8px',
-                              background: 'rgba(52, 199, 89, 0.1)',
+                              background: 'rgba(59, 89, 152, 0.1)',
                               display: 'flex', alignItems: 'center', justifyContent: 'center'
                             }}>
-                              <CheckCircle className="w-4 h-4" color="#2d8f3d" />
+                              <CheckCircle className="w-4 h-4" color="#3b5998" />
                             </div>
                           ) : file.status === 'processing' ? (
                             <div style={{
@@ -2426,10 +2301,10 @@ export function CaseDetailPage() {
                           ) : file.status === 'error' ? (
                             <div style={{
                               width: '32px', height: '32px', borderRadius: '8px',
-                              background: 'rgba(255, 59, 48, 0.1)',
+                              background: 'rgba(102, 102, 102, 0.1)',
                               display: 'flex', alignItems: 'center', justifyContent: 'center'
                             }}>
-                              <AlertCircle className="w-4 h-4" color="#ff3b30" />
+                              <XCircle className="w-4 h-4" color="#666666" />
                             </div>
                           ) : (
                             <div style={{
@@ -2454,23 +2329,23 @@ export function CaseDetailPage() {
                             )}
                           </button>
                         )}
-                        {/* 其他步骤：通用状态图标 */}
-                        {currentStep !== 2 && (
+                        {/* 步骤 0：通用状态图标 */}
+                        {currentStep === 0 && (
                           <div style={{
                             width: '32px',
                             height: '32px',
                             borderRadius: '8px',
-                            background: file.status === 'done' ? 'rgba(52, 199, 89, 0.1)' : 'var(--macos-accent-light)',
+                            background: file.status === 'done' ? 'rgba(59, 89, 152, 0.1)' : 'var(--macos-accent-light)',
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent: 'center'
                           }}>
                             {file.status === 'done' ? (
-                              <CheckCircle className="w-4 h-4" color="#2d8f3d" />
+                              <CheckCircle className="w-4 h-4" color="#3b5998" />
                             ) : file.status === 'processing' ? (
                               <Loader2 className="w-4 h-4 animate-spin" color="var(--macos-accent)" />
                             ) : file.status === 'error' ? (
-                              <AlertCircle className="w-4 h-4" color="#ff3b30" />
+                              <AlertCircle className="w-4 h-4" color="#666666" />
                             ) : (
                               <FileText className="w-4 h-4" color="#86868b" />
                             )}
@@ -2483,29 +2358,28 @@ export function CaseDetailPage() {
                           </div>
                           <div style={{ fontSize: '11px', color: 'var(--macos-text-secondary)' }}>
                             {currentStep === 0 ? `${(file.size / 1024).toFixed(1)} KB` :
-                             currentStep === 1 ? `去水印${optWatermark ? ' ✓' : ''}${optEnhance ? ` · ${enhanceDpi}dpi` : ''}` :
-                             currentStep === 2 ? (
+                             currentStep === 1 ? (
                                file.status === 'done' ? '已转换 MD' :
                                file.status === 'processing' ? '转换中...' :
                                '待转换'
                              ) :
-                             currentStep === 3 ? '已拆分 MD' :
+                             currentStep === 2 ? '已拆分 MD' :
                              'MD 格式'}
                             {file.error && ` - ${file.error}`}
                           </div>
                         </div>
 
-                        {/* 步骤 2：转换完成标记 */}
-                        {currentStep === 2 && file.status === 'done' && (
+                        {/* 步骤 1：转换完成标记 */}
+                        {currentStep === 1 && file.status === 'done' && (
                           <span style={{
                             padding: '4px 10px', borderRadius: '12px',
-                            background: 'rgba(52, 199, 89, 0.1)', color: '#2d8f3d',
+                            background: 'rgba(59, 89, 152, 0.1)', color: '#3b5998',
                             fontSize: '12px', fontWeight: '500', whiteSpace: 'nowrap'
                           }}>
-                            ✓ 已转换
+                            已转换
                           </span>
                         )}
-                        {currentStep === 2 && file.status === 'processing' && (
+                        {currentStep === 1 && file.status === 'processing' && (
                           <span style={{
                             padding: '8px 12px',
                             background: 'rgba(255, 149, 0, 0.1)',
@@ -2518,8 +2392,8 @@ export function CaseDetailPage() {
                           </span>
                         )}
 
-                        {/* 步骤 2：MD 文件操作按钮 */}
-                        {currentStep === 2 && file.status === 'done' && (
+                        {/* 步骤 1：MD 文件操作按钮 */}
+                        {currentStep === 1 && file.status === 'done' && (
                           <>
                             <button
                               onClick={() => handleDeleteMd(file.name)}
@@ -2537,8 +2411,8 @@ export function CaseDetailPage() {
                             </button>
                           </>
                         )}
-                        {/* 步骤 2：待转换文件显示删除按钮 */}
-                        {currentStep === 2 && file.status !== 'processing' && file.status !== 'done' && (
+                        {/* 步骤 1：待转换文件显示删除按钮 */}
+                        {currentStep === 1 && file.status !== 'processing' && file.status !== 'done' && (
                           <button
                             onClick={() => handleDeletePdf(file.name)}
                             style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}
@@ -2557,19 +2431,8 @@ export function CaseDetailPage() {
                           </button>
                         )}
 
-                        {/* 步骤 1：PDF 删除按钮 */}
-                        {file.status !== 'processing' && currentStep === 1 && (
-                          <button
-                            onClick={() => handleDeleteOriginal(file.name)}
-                            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}
-                            title="删除此 PDF，删除后可重新上传"
-                          >
-                            <Trash2 className="w-4 h-4" color="#86868b" />
-                          </button>
-                        )}
-
-                        {/* MD 文件删除和重新转换按钮（步骤 3+） */}
-                        {file.status !== 'processing' && currentStep >= 3 && file.name.endsWith('.md') && (
+                        {/* 步骤 2：MD 文件删除和重新转换按钮 */}
+                        {file.status !== 'processing' && currentStep >= 2 && file.name.endsWith('.md') && (
                           <>
                             <button
                               onClick={() => handleReconvertMd(file.name)}
@@ -2613,11 +2476,149 @@ export function CaseDetailPage() {
               </MacOSCard>
             )}
 
-            {/* 步骤 3：案卷分析 — 5 阶段独立控制 */}
-            {currentStep === 3 && (
+            {/* 证据提取卡片（步骤 1：在文件列表之后显示） */}
+            {currentStep === 1 && (() => {
+              const mdConversionComplete = files.length > 0 && files.every(f => f.status === 'done')
+              return (
+              <MacOSCard style={{ marginTop: 12 }}>
+                <div className="flex-between mb-md">
+                  <div className="flex-row gap-md">
+                    <h4 className="text-md font-semibold">证据提取</h4>
+                    {evidenceList.length > 0 && <span className="text-xs text-secondary">{evidenceList.length} 份</span>}
+                  </div>
+                  <div className="flex-row gap-sm">
+                    {processing ? (
+                      <MacOSButton variant="secondary" onClick={handleStopExtract} style={{ color: '#ff9500', borderColor: '#ff9500' }}>停止</MacOSButton>
+                    ) : evidenceExtracted ? (
+                      <>
+                        <MacOSButton variant="secondary" onClick={handleExtractEvidence}>重新提取</MacOSButton>
+                        <MacOSButton variant="secondary" onClick={handleClearEvidence} style={{ color: 'var(--macos-danger)', borderColor: 'var(--macos-danger)' }}>清除</MacOSButton>
+                      </>
+                    ) : mdConversionComplete ? (
+                      <MacOSButton variant="primary" onClick={handleExtractEvidence}>提取证据</MacOSButton>
+                    ) : (
+                      <MacOSButton variant="secondary" disabled>请先转换 PDF</MacOSButton>
+                    )}
+                  </div>
+                </div>
+                {evidenceList.length > 0 && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '300px', overflowY: 'auto' }}>
+                      {evidenceList.map(ev => (
+                        <div key={ev.id} style={{
+                          display: 'flex', alignItems: 'center', gap: '12px',
+                          padding: '10px 12px',
+                          background: 'var(--macos-bg-secondary)',
+                          borderRadius: '8px',
+                          border: '1px solid var(--macos-border)'
+                        }}>
+                          <div style={{
+                            width: '28px', height: '28px', borderRadius: '6px',
+                            background: 'var(--macos-accent-light)',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            fontSize: '12px', fontWeight: '600', color: 'var(--macos-accent)'
+                          }}>{ev.id}</div>
+                          <div style={{ flex: 1, overflow: 'hidden' }}>
+                            <div style={{ fontSize: '13px', fontWeight: '500', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {ev.name}
+                            </div>
+                            <div style={{ fontSize: '11px', color: 'var(--macos-text-secondary)' }}>
+                              {ev.type} · {ev.source}{ev.page_range ? ' · ' + ev.page_range : ''}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                )}
+                {!evidenceExtracted && !mdConversionComplete && (
+                  <div style={{ fontSize: '12px', color: 'var(--macos-text-tertiary)', padding: '12px 0' }}>
+                    请先完成全部文件的转换，然后再提取证据
+                  </div>
+                )}
+                {evidenceExtracted && (
+                  <div style={{ fontSize: '12px', color: '#3b5998', padding: '12px 0' }}>
+                    已完成证据提取
+                  </div>
+                )}
+              </MacOSCard>
+              )
+            })()}
+
+            {/* 步骤 2：案卷分析 */}
+            {currentStep === 2 && (
               <>
+                {/* 证据文件列表 */}
+                {evidenceList.length > 0 && (
+                  <MacOSCard style={{ marginBottom: 12 }}>
+                    <div className="flex-between mb-sm">
+                      <div className="flex-row gap-sm">
+                        <h4 className="text-md font-semibold">证据文件</h4>
+                        <span className="text-xs text-secondary">{evidenceList.length} 份</span>
+                      </div>
+                      <button
+                        onClick={async () => {
+                          try {
+                            const data = await api.getEvidenceIndex(caseId!)
+                            if (data.total_evidence > 0) {
+                              setEvidenceList(data.evidence || [])
+                              setProgress('证据列表已刷新')
+                              setTimeout(() => setProgress(''), 1500)
+                            }
+                          } catch (err) {
+                            console.error('刷新证据列表失败:', err)
+                          }
+                        }}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}
+                        title="刷新证据列表"
+                      >
+                        <RefreshCw className="w-4 h-4" color="#86868b" />
+                      </button>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '180px', overflowY: 'auto' }}>
+                      {evidenceList.map((ev: any) => (
+                        <div key={ev.id} style={{
+                          display: 'flex', alignItems: 'center', gap: '10px',
+                          padding: '8px 10px',
+                          background: 'var(--macos-bg-secondary)',
+                          borderRadius: '6px',
+                          fontSize: '12px'
+                        }}>
+                          <div style={{
+                            width: '24px', height: '24px', borderRadius: '6px',
+                            background: 'var(--macos-accent-light)',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            fontSize: '11px', fontWeight: '600', color: 'var(--macos-accent)'
+                          }}>{ev.id}</div>
+                          <div style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {ev.name}
+                          </div>
+                          <div style={{ color: 'var(--macos-text-tertiary)', fontSize: '11px' }}>
+                            {ev.type}
+                          </div>
+                          {ev.md_file && (
+                            <button
+                              onClick={async () => {
+                                const mdPath = `${API_BASE}/cases/${caseId}/serve-file?file_path=${encodeURIComponent(ev.md_file)}&dir=evidence`
+                                setPreviewFile({ id: ev.id, name: ev.md_file, size: 0, status: 'done', path: mdPath })
+                              }}
+                              style={{
+                                padding: '4px 8px',
+                                background: 'var(--macos-accent-light)',
+                                border: 'none',
+                                borderRadius: '4px',
+                                cursor: 'pointer',
+                                fontSize: '11px',
+                                color: 'var(--macos-accent)'
+                              }}
+                            >预览</button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </MacOSCard>
+                )}
+
                 {/* 被告人信息 + 罪名输入 */}
-                <MacOSCard style={{ marginBottom: '16px' }}>
+                <MacOSCard style={{ marginBottom: '12px' }}>
                   <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '12px' }}>
                     <div style={{ flex: 1 }}>
                       <div style={{ fontSize: '11px', color: 'var(--macos-text-tertiary)', marginBottom: '4px' }}>被告人</div>
@@ -2645,7 +2646,7 @@ export function CaseDetailPage() {
                 </MacOSCard>
 
                 {/* 5 阶段独立按钮 */}
-                <MacOSCard style={{ marginBottom: '16px' }}>
+                <MacOSCard style={{ marginBottom: '12px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
                     <h4 style={{ fontSize: '14px', fontWeight: '600', margin: 0 }}>分析阶段（不建议并行处理）</h4>
                     <button
@@ -2711,18 +2712,18 @@ export function CaseDetailPage() {
                           display: 'flex', alignItems: 'center', gap: '12px',
                           padding: '12px',
                           borderRadius: '8px',
-                          border: `1px solid ${status === 'completed' ? 'rgba(52,199,89,0.3)' : status === 'error' ? 'rgba(255,59,48,0.2)' : 'var(--macos-border)'}`,
-                          background: status === 'completed' ? 'rgba(52,199,89,0.04)' : status === 'error' ? 'rgba(255,59,48,0.03)' : 'var(--macos-bg-secondary)',
+                          border: `1px solid ${status === 'completed' ? 'rgba(59,89,152,0.2)' : status === 'error' ? 'rgba(102,102,102,0.15)' : 'var(--macos-border)'}`,
+                          background: status === 'completed' ? 'rgba(59,89,152,0.04)' : status === 'error' ? 'rgba(102,102,102,0.03)' : 'var(--macos-bg-secondary)',
                           opacity: analysisDisabled ? 0.5 : 1,
                           transition: 'opacity 0.2s'
                         }}>
                           {/* 状态图标 */}
                           <div style={{
                             width: '28px', height: '28px', borderRadius: '50%',
-                            background: status === 'completed' ? 'rgba(52,199,89,0.15)' : isRunning ? 'var(--macos-accent-light)' : status === 'error' ? 'rgba(255,59,48,0.1)' : 'var(--macos-bg-tertiary)',
+                            background: status === 'completed' ? 'rgba(59,89,152,0.1)' : isRunning ? 'var(--macos-accent-light)' : status === 'error' ? 'rgba(102,102,102,0.1)' : 'var(--macos-bg-tertiary)',
                             display: 'flex', alignItems: 'center', justifyContent: 'center',
                             fontSize: '14px', fontWeight: '600', flexShrink: 0,
-                            color: status === 'completed' ? '#2d8f3d' : isRunning ? 'var(--macos-accent)' : status === 'error' ? '#ff3b30' : '#86868b'
+                            color: status === 'completed' ? '#3b5998' : isRunning ? 'var(--macos-accent)' : status === 'error' ? '#666666' : '#86868b'
                           }}>
                             {status === 'completed' ? '✓' : isRunning ? <Loader2 className="w-4 h-4 animate-spin" /> : stage.num}
                           </div>
@@ -2731,7 +2732,7 @@ export function CaseDetailPage() {
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ fontSize: '13px', fontWeight: '500' }}>{stage.name}</div>
                             {msg && <div style={{ fontSize: '11px', color: 'var(--macos-accent)' }}>{msg}</div>}
-                            {errMsg && <div style={{ fontSize: '11px', color: '#ff3b30' }}>{errMsg}</div>}
+                            {errMsg && <div style={{ fontSize: '11px', color: '#666666' }}>{errMsg}</div>}
                             {!msg && !errMsg && seqDisabled && (
                               <div style={{ fontSize: '11px', color: '#86868b' }}>
                                 等待前序阶段完成
@@ -2752,8 +2753,8 @@ export function CaseDetailPage() {
                                 }}>查看</button>
                                 <button onClick={() => handleClearStage(stage.num)} disabled={analysisDisabled} style={{
                                   padding: '4px 10px', borderRadius: '6px',
-                                  border: analysisDisabled ? '1px solid #d1d1d6' : '1px solid #ff3b30', background: 'transparent',
-                                  color: analysisDisabled ? '#d1d1d6' : '#ff3b30',
+                                  border: analysisDisabled ? '1px solid #d1d1d6' : '1px solid #666666', background: 'transparent',
+                                  color: analysisDisabled ? '#d1d1d6' : '#666666',
                                   fontSize: '12px', cursor: analysisDisabled ? 'not-allowed' : 'pointer'
                                 }}>清除</button>
                               </>
@@ -2761,7 +2762,7 @@ export function CaseDetailPage() {
                             {status === 'error' && (
                               <button onClick={() => handleRunStage(stage.num)} disabled={analysisDisabled} style={{
                                 padding: '4px 10px', borderRadius: '6px',
-                                border: 'none', background: analysisDisabled ? '#d1d1d6' : '#ff3b30',
+                                border: 'none', background: analysisDisabled ? '#d1d1d6' : '#666666',
                                 color: '#fff', fontSize: '12px',
                                 cursor: analysisDisabled ? 'not-allowed' : 'pointer'
                               }}>重试</button>
@@ -2792,453 +2793,6 @@ export function CaseDetailPage() {
             )}
 
             {/* 步骤 4：案卷分析 - 旧版流水线（保留兼容） */}
-            {false && currentStep === 4 && (
-              <>
-                {/* 被告人信息 + 罪名输入 + 执行按钮 */}
-                <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '16px' }}>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: '11px', color: 'var(--macos-text-tertiary)', marginBottom: '4px' }}>被告人</div>
-                    <div style={{ fontSize: '14px', color: 'var(--macos-text-primary)', fontWeight: 500 }}>{defendant || '未指定'}</div>
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: '11px', color: 'var(--macos-text-tertiary)', marginBottom: '4px' }}>罪名（可选）</div>
-                    <input
-                      type="text"
-                      value={crimeType}
-                      onChange={(e) => setCrimeType(e.target.value)}
-                      placeholder="如：诈骗罪、职务侵占罪"
-                      style={{
-                        width: '100%',
-                        padding: '6px 10px',
-                        border: '1px solid var(--macos-border)',
-                        borderRadius: '8px',
-                        fontSize: '13px',
-                        background: 'var(--macos-bg-secondary)',
-                        boxSizing: 'border-box'
-                      }}
-                    />
-                  </div>
-                  <MacOSButton
-                    variant="primary"
-                    icon={pipelineRunning ? Loader2 : Scale}
-                    onClick={executeNextStep}
-                    disabled={pipelineRunning || (pipelineStatus[5] && nextStep !== 4.5) || !defendant.trim()}
-                  >
-                    {pipelineRunning ? '分析中...' : pipelineStatus[5] && nextStep === 4.5 ? '补充控辩对抗' : pipelineStatus[5] ? '分析完成' : '执行下一步'}
-                  </MacOSButton>
-                  {nextStep && !pipelineRunning && (
-                    <MacOSButton
-                      variant="secondary"
-                      icon={RefreshCw}
-                      onClick={handleResumeAnalysis}
-                      disabled={!defendant.trim()}
-                    >
-                      继续分析（步骤 {nextStep}）
-                    </MacOSButton>
-                  )}
-                </div>
-
-                {/* 流水线步骤进度条 */}
-                <div style={{ display: 'flex', gap: '4px', marginBottom: '16px' }}>
-                  {PIPELINE_STEPS.map(step => {
-                    const isDone = pipelineStatus[step.num]
-                    const isRunning = pipelineRunning && currentPipelineStep === step.num
-                    const canRun = !isDone && !pipelineRunning
-                    return (
-                      <div
-                        key={step.num}
-                        style={{
-                          flex: 1,
-                          padding: '8px 8px',
-                          borderRadius: '6px',
-                          background: isDone ? 'rgba(52,199,89,0.1)' : isRunning ? 'var(--macos-accent-light)' : 'var(--macos-bg-secondary)',
-                          fontSize: '11px',
-                          textAlign: 'center',
-                          color: isDone ? '#2d8f3d' : isRunning ? 'var(--macos-accent)' : 'var(--macos-text-tertiary)',
-                          fontWeight: isDone || isRunning ? '600' : '400',
-                          border: isRunning ? '1px solid var(--macos-accent-border)' : '1px solid transparent',
-                          cursor: canRun ? 'pointer' : 'default',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          gap: '4px',
-                        }}
-                        onClick={() => canRun && executeSingleStep(step.num)}
-                        title={canRun ? '点击执行此步骤' : ''}
-                      >
-                        {isDone ? (
-                          <>✓ {step.name}</>
-                        ) : isRunning ? (
-                          <>⟳ {step.name}</>
-                        ) : (
-                          <>
-                            <Play className="w-3 h-3" style={{ flexShrink: 0, opacity: 0.6 }} />
-                            {step.name}
-                          </>
-                        )}
-                      </div>
-                    )
-                  })}
-                </div>
-
-                {/* 已有分析结果摘要 */}
-                {(Object.keys(pipelineStatus).length > 0 || analysisCompleted || nextStep) && (
-                  <MacOSCard style={{ marginBottom: '12px', padding: '12px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                      <div style={{ fontSize: '13px', fontWeight: '600', color: 'var(--macos-text-primary)' }}>
-                        {analysisCompleted ? '✓ 6 阶段分析已完成' : pipelineStatus[5] ? (nextStep === 4.5 ? '分析已完成，可补充控辩对抗' : '分析记录') : nextStep ? `部分分析完成（${Object.values(pipelineStatus).filter(Boolean).length}/6 步，继续从步骤 ${nextStep} 开始）` : `已有 ${Object.values(pipelineStatus).filter(Boolean).length}/6 步完成`}
-                      </div>
-                      <div style={{ display: 'flex', gap: '8px' }}>
-                        {nextStep && !pipelineRunning && (
-                          <MacOSButton
-                            variant="secondary"
-                            icon={RefreshCw}
-                            onClick={handleResumeAnalysis}
-                            disabled={!defendant.trim()}
-                          >
-                            {nextStep === 4.5 && pipelineStatus[5] ? '补充控辩对抗' : '继续分析'}
-                          </MacOSButton>
-                        )}
-                        <MacOSButton
-                            variant="primary"
-                            icon={FileText}
-                            onClick={() => navigate(`/case/${caseId}/report`)}
-                            disabled={!pipelineStatus[4] && stageStatus[4] !== 'completed' && stageStatus[5] !== 'completed'}
-                          >
-                            查看报告
-                          </MacOSButton>
-                      </div>
-                    </div>
-                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                      {PIPELINE_STEPS.map(step => {
-                        const done = pipelineStatus[step.num]
-                        const result = stepResults[step.num]
-                        let summary = ''
-                        if (step.num === 1 && result) summary = `${result.total_persons || 0} 人，${result.total_sessions || 0} 次笔录`
-                        else if (step.num === 2 && result) summary = `${result.total_persons || 0} 人总结`
-                        else if (step.num === 3 && result) summary = `${result.total_analyzed || 0} 人矛盾分析`
-                        else if (step.num === 4 && result) {
-                          const subs = result.sub_steps || []
-                          const done = subs.filter((s: any) => s.status === 'done').length
-                          summary = `Wiki ${done}/${subs.length} 子步骤`
-                        }
-                        else if (step.num === 4.5 && result) summary = '控辩对抗已生成'
-                        else if (step.num === 5 && result) summary = '辩护意见已生成'
-                        return (
-                          <div key={step.num} style={{
-                            flex: '1 1 calc(20% - 8px)', minWidth: '120px',
-                            padding: '8px', borderRadius: '6px',
-                            background: done ? 'rgba(52,199,89,0.06)' : 'var(--macos-bg-secondary)',
-                            border: `1px solid ${done ? 'rgba(52,199,89,0.2)' : 'transparent'}`,
-                          }}>
-                            <div style={{ fontSize: '11px', fontWeight: '600', color: done ? '#2d8f3d' : 'var(--macos-text-tertiary)', marginBottom: '2px' }}>
-                              {done ? '✓' : '○'} {step.name}
-                            </div>
-                            {done && summary && (
-                              <div style={{ fontSize: '10px', color: 'var(--macos-text-tertiary)', lineHeight: '1.4' }}>
-                                {summary}
-                              </div>
-                            )}
-                          </div>
-                        )
-                      })}
-                    </div>
-                  </MacOSCard>
-                )}
-
-                {/* 进度文字 */}
-                {progress && (
-                  <div style={{ fontSize: '12px', color: 'var(--macos-text-secondary)', marginBottom: '12px' }}>
-                    {progress}
-                  </div>
-                )}
-
-                {/* LLM 实时进度 */}
-                {liveProgress && (
-                  <MacOSCard style={{ marginBottom: '12px', background: 'rgba(0,122,255,0.04)', border: '1px solid rgba(0,122,255,0.15)' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                      <Loader2 className="w-5 h-5 animate-spin" color="var(--macos-accent)" />
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: '13px', fontWeight: '500', color: 'var(--macos-accent)', marginBottom: '4px' }}>
-                          {liveProgress!.message}
-                        </div>
-                        <div style={{ fontSize: '11px', color: 'var(--macos-text-tertiary)' }}>
-                          {liveProgress!.total > 0 ? `${liveProgress!.current}/${liveProgress!.total} 份文件 · ` : ''}
-                          已运行 {Math.floor(liveProgress!.elapsed / 60)}分{liveProgress!.elapsed % 60}秒，请耐心等待
-                        </div>
-                        {liveProgress!.total > 0 && (
-                          <div style={{ marginTop: '8px', height: '4px', background: 'var(--macos-accent-light)', borderRadius: '2px', overflow: 'hidden' }}>
-                            <div style={{
-                              width: `${(liveProgress!.current / liveProgress!.total) * 100}%`,
-                              height: '100%',
-                              background: 'var(--macos-accent)',
-                              borderRadius: '2px',
-                              transition: 'width 0.3s ease',
-                            }} />
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </MacOSCard>
-                )}
-
-                {/* 错误提示 */}
-                {error && (
-                  <div style={{
-                    padding: '10px 14px',
-                    background: 'rgba(255,59,48,0.08)',
-                    border: '1px solid rgba(255,59,48,0.2)',
-                    borderRadius: '8px',
-                    fontSize: '13px',
-                    color: '#ff3b30',
-                    marginBottom: '12px'
-                  }}>
-                    {error}
-                  </div>
-                )}
-
-                {/* 本次新完成的完成卡片 */}
-                {progress === '' && pipelineStatus[5] && (
-                  <MacOSCard style={{ padding: '16px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                      <div style={{
-                        width: '40px', height: '40px', borderRadius: '50%',
-                        background: 'rgba(52,199,89,0.1)', display: 'flex',
-                        alignItems: 'center', justifyContent: 'center'
-                      }}>
-                        <span style={{ fontSize: '20px' }}>✓</span>
-                      </div>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: '14px', fontWeight: '600', color: '#2d8f3d' }}>分析完成</div>
-                        <div style={{ fontSize: '12px', color: 'var(--macos-text-secondary)', marginTop: '2px' }}>
-                          5 步流水线分析已完成，查看完整报告
-                        </div>
-                      </div>
-                      <MacOSButton
-                        variant="primary"
-                        icon={FileText}
-                        onClick={() => navigate(`/case/${caseId}/report`)}
-                        disabled={!pipelineStatus[4] && stageStatus[4] !== 'completed' && stageStatus[5] !== 'completed'}
-                      >
-                        查看报告
-                      </MacOSButton>
-                    </div>
-                  </MacOSCard>
-                )}
-
-                {/* 分析报告浏览（步骤 4 完成后显示） */}
-                {pipelineStatus[4] && (
-                  <MacOSCard style={{ padding: '0', overflow: 'hidden' }}>
-                    <div style={{ display: 'flex', height: '600px' }}>
-                      {/* 左侧：证据文件浏览器 */}
-                      <div style={{
-                        width: '240px', background: 'var(--macos-bg-secondary)',
-                        borderRight: '1px solid var(--macos-border)', overflow: 'auto', padding: '12px', flexShrink: 0
-                      }}>
-                        <div style={{ fontSize: '12px', fontWeight: '600', marginBottom: '10px', color: 'var(--macos-text-primary)' }}>
-                          📁 证据文件
-                        </div>
-
-                        {/* 言辞证据（汇总） */}
-                        <div style={{ marginBottom: '4px' }}>
-                          <button
-                            onClick={() => {
-                              const next = new Set(expandedCategories)
-                              if (next.has('言辞证据')) next.delete('言辞证据'); else next.add('言辞证据')
-                              setExpandedCategories(next)
-                            }}
-                            style={{
-                              width: '100%', textAlign: 'left', padding: '4px 6px', borderRadius: '4px',
-                              fontSize: '11px', fontWeight: '600', background: 'transparent',
-                              border: 'none', cursor: 'pointer', color: 'var(--macos-text-primary)',
-                              display: 'flex', alignItems: 'center', gap: '4px'
-                            }}
-                          >
-                            {expandedCategories.has('言辞证据') ? '▼' : '▶'} 言辞证据（汇总）
-                          </button>
-                          {expandedCategories.has('言辞证据') && evidenceSummaries.map(cat => (
-                            <div key={cat.name} style={{ paddingLeft: '12px' }}>
-                              <button
-                                onClick={() => {
-                                  const next = new Set(expandedCategories)
-                                  if (next.has(cat.name)) next.delete(cat.name); else next.add(cat.name)
-                                  setExpandedCategories(next)
-                                }}
-                                style={{
-                                  width: '100%', textAlign: 'left', padding: '3px 6px', borderRadius: '4px',
-                                  fontSize: '10px', fontWeight: '600', background: 'transparent',
-                                  border: 'none', cursor: 'pointer', color: 'var(--macos-text-secondary)',
-                                  display: 'flex', alignItems: 'center', gap: '4px'
-                                }}
-                              >
-                                {expandedCategories.has(cat.name) ? '▼' : '▶'} {cat.name} ({cat.files.length})
-                              </button>
-                              {expandedCategories.has(cat.name) && cat.files.map(file => (
-                                <button
-                                  key={file.name}
-                                  onClick={() => { setSelectedAnalysisCard(-1); loadEvidenceContent(cat.name, file.name) }}
-                                  style={{
-                                    display: 'block', width: '100%', textAlign: 'left',
-                                    padding: '3px 8px', marginBottom: '1px', borderRadius: '4px',
-                                    fontSize: '10px', background: 'transparent',
-                                    border: 'none', cursor: 'pointer', color: 'var(--macos-text-secondary)',
-                                  }}
-                                  onMouseEnter={e => (e.currentTarget.style.background = 'rgba(0,122,255,0.08)')}
-                                  onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-                                >
-                                  {file.displayName}
-                                </button>
-                              ))}
-                            </div>
-                          ))}
-                        </div>
-
-                        {/* 其他证据 */}
-                        <div style={{ marginBottom: '4px' }}>
-                          <button
-                            onClick={() => {
-                              const next = new Set(expandedCategories)
-                              if (next.has('其他证据')) next.delete('其他证据'); else next.add('其他证据')
-                              setExpandedCategories(next)
-                            }}
-                            style={{
-                              width: '100%', textAlign: 'left', padding: '4px 6px', borderRadius: '4px',
-                              fontSize: '11px', fontWeight: '600', background: 'transparent',
-                              border: 'none', cursor: 'pointer', color: 'var(--macos-text-primary)',
-                              display: 'flex', alignItems: 'center', gap: '4px'
-                            }}
-                          >
-                            {expandedCategories.has('其他证据') ? '▼' : '▶'} 其他证据 ({evidenceOther.length})
-                          </button>
-                          {expandedCategories.has('其他证据') && evidenceOther.map(file => (
-                            <button
-                              key={file.name}
-                              onClick={() => { setSelectedAnalysisCard(-1); loadEvidenceContent('', file.name, file.dir) }}
-                              style={{
-                                display: 'block', width: '100%', textAlign: 'left',
-                                padding: '3px 8px 3px 18px', marginBottom: '1px', borderRadius: '4px',
-                                fontSize: '10px', background: 'transparent',
-                                border: 'none', cursor: 'pointer', color: 'var(--macos-text-secondary)',
-                              }}
-                              onMouseEnter={e => (e.currentTarget.style.background = 'rgba(0,122,255,0.08)')}
-                              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-                            >
-                              {file.name.replace('.pdf', '')}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* 中间：分析卡片导航 */}
-                      <div style={{
-                        width: '180px', background: 'var(--macos-bg-secondary)',
-                        borderRight: '1px solid var(--macos-border)', overflow: 'auto', padding: '12px', flexShrink: 0
-                      }}>
-                        <div style={{ fontSize: '12px', fontWeight: '600', marginBottom: '10px', color: 'var(--macos-text-primary)' }}>
-                          📊 分析结果
-                        </div>
-                        {[
-                          { num: 0, icon: '📋', label: '指控要素' },
-                          { num: 1, icon: '🔍', label: '证据分析' },
-                          { num: 2, icon: '⚡', label: '矛盾分析' },
-                          { num: 3, icon: '⚖️', label: '法律依据' },
-                          { num: 4, icon: '📝', label: '辩护意见' },
-                        ].map(item => {
-                          const isActive = selectedAnalysisCard === item.num
-                          return (
-                            <div key={item.num}>
-                              <button
-                                onClick={() => setSelectedAnalysisCard(item.num)}
-                                style={{
-                                  display: 'block', width: '100%', textAlign: 'left',
-                                  padding: '6px 8px', marginBottom: '2px', borderRadius: '4px',
-                                  fontSize: '11px',
-                                  background: isActive ? 'var(--macos-accent-light)' : 'transparent',
-                                  color: isActive ? 'var(--macos-accent)' : 'var(--macos-text-secondary)',
-                                  border: 'none', cursor: 'pointer',
-                                  fontWeight: isActive ? '600' : '400',
-                                }}
-                              >
-                                {item.icon} {item.label}
-                              </button>
-                              {/* 证据分析子项 */}
-                              {item.num === 1 && isActive && evidenceAnalysisFiles.length > 0 && (
-                                <div style={{ paddingLeft: '8px', marginTop: '2px', marginBottom: '4px' }}>
-                                  <select
-                                    value={selectedEvidenceAnalysis}
-                                    onChange={e => {
-                                      setSelectedEvidenceAnalysis(e.target.value)
-                                      loadAnalysisContent(1, e.target.value)
-                                    }}
-                                    style={{
-                                      width: '100%', fontSize: '10px', padding: '2px 4px',
-                                      background: 'var(--macos-bg-secondary)', color: 'var(--macos-text-primary)',
-                                      border: '1px solid var(--macos-border)', borderRadius: '3px'
-                                    }}
-                                  >
-                                    {evidenceAnalysisFiles.map(p => {
-                                      const name = p.replace('03-证据分析/', '').replace('.md', '')
-                                      return <option key={p} value={p}>{name}</option>
-                                    })}
-                                  </select>
-                                </div>
-                              )}
-                              {/* 矛盾分析子项 */}
-                              {item.num === 2 && isActive && contradictionFilesList.length > 1 && (
-                                <div style={{ paddingLeft: '8px', marginTop: '2px', marginBottom: '4px' }}>
-                                  <select
-                                    value={selectedContradictionFile}
-                                    onChange={e => {
-                                      setSelectedContradictionFile(e.target.value)
-                                      loadAnalysisContent(2)
-                                    }}
-                                    style={{
-                                      width: '100%', fontSize: '10px', padding: '2px 4px',
-                                      background: 'var(--macos-bg-secondary)', color: 'var(--macos-text-primary)',
-                                      border: '1px solid var(--macos-border)', borderRadius: '3px'
-                                    }}
-                                  >
-                                    {contradictionFilesList.map(f => (
-                                      <option key={f.filename} value={f.filename}>{f.displayName}</option>
-                                    ))}
-                                  </select>
-                                </div>
-                              )}
-                            </div>
-                          )
-                        })}
-                      </div>
-
-                      {/* 右侧：内容浏览区 */}
-                      <div style={{ flex: 1, overflow: 'auto', padding: '16px' }}>
-                        {evidenceLoading || (selectedAnalysisCard >= 0 && !analysisContent) ? (
-                          <div style={{ textAlign: 'center', padding: '40px', color: 'var(--macos-text-tertiary)' }}>
-                            <Loader2 className="w-5 h-5" style={{ animation: 'spin 1s linear infinite' }} />
-                            <div style={{ marginTop: '8px', fontSize: '12px' }}>加载中...</div>
-                          </div>
-                        ) : evidenceContent.startsWith('__pdf__:') ? (
-                          /* PDF 预览 */
-                          <iframe
-                            src={evidenceContent.replace('__pdf__:', '')}
-                            style={{ width: '100%', height: '100%', border: 'none' }}
-                            title="证据预览"
-                          />
-                        ) : (analysisContent || evidenceContent) ? (
-                          <div
-                            style={{ fontSize: '13px', lineHeight: '1.7' }}
-                            dangerouslySetInnerHTML={{ __html: marked.parse(analysisContent || evidenceContent, { async: false }) as string }}
-                          />
-                        ) : (
-                          <div style={{ textAlign: 'center', padding: '40px', color: 'var(--macos-text-tertiary)' }}>
-                            选择左侧证据文件或中间分析结果进行浏览
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </MacOSCard>
-                )}
-              </>
-            )}
           </div>
         </div>
       </div>
@@ -3310,7 +2864,7 @@ export function CaseDetailPage() {
         style={{ display: 'none' }}
         onChange={handleFileSelect}
       />
-    </div>
+    </PageLayout>
   )
 }
 
@@ -3353,7 +2907,7 @@ function MDPreview({ url }: { url: string }) {
   }, [url])
 
   if (loading) return <div style={{ color: '#86868b', fontSize: '14px' }}>加载中...</div>
-  if (error) return <div style={{ color: '#ff3b30', fontSize: '14px' }}>加载失败：{error}</div>
+  if (error) return <div style={{ color: '#666666', fontSize: '14px' }}>加载失败：{error}</div>
 
   return (
     <div style={{

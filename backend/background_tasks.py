@@ -67,12 +67,13 @@ def _save_tasks():
 def init_tasks():
     """初始化：从文件恢复任务状态"""
     persisted = _load_tasks()
-    for task_id, state in persisted.items():
-        if state.get("status") in ("running", "pending"):
-            # 之前运行中的任务标记为中断
-            state["status"] = "interrupted"
-            state["updated_at"] = datetime.now().isoformat()
-        _task_states[task_id] = state
+    with _lock:
+        for task_id, state in persisted.items():
+            if state.get("status") in ("running", "pending"):
+                # 之前运行中的任务标记为中断
+                state["status"] = "interrupted"
+                state["updated_at"] = datetime.now().isoformat()
+            _task_states[task_id] = state
     print(f"[后台任务] 已恢复 {len(_task_states)} 个任务状态")
 
 

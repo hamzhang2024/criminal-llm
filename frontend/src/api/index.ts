@@ -21,6 +21,17 @@ async function tauriOpen(url: string): Promise<void> {
 /** API 基础地址：开发模式走 Vite 代理，生产模式直连后端 */
 export const API_BASE = import.meta.env.PROD ? 'http://localhost:8080/api' : '/api'
 
+/** AbortSignal.timeout polyfill（兼容旧版浏览器） */
+function timeoutSignal(ms: number): AbortSignal {
+  if (typeof AbortSignal.timeout === 'function') {
+    return AbortSignal.timeout(ms)
+  }
+  // Polyfill: 手动创建 AbortController 并设置超时
+  const controller = new AbortController()
+  setTimeout(() => controller.abort(new DOMException('TimeoutError', 'TimeoutError')), ms)
+  return controller.signal
+}
+
 /** 后端就绪检测：轮询 /api/health 直到后端启动完成
  * @param timeout 最大等待时间（毫秒），默认 30 秒
  * @param interval 轮询间隔（毫秒），默认 500ms
@@ -33,7 +44,7 @@ export async function waitForBackend(timeout = 30000, interval = 500): Promise<b
     try {
       // 后端 health 端点是 /api/health
       const res = await fetch(`${API_BASE}/health`, {
-        signal: AbortSignal.timeout(2000) // 单次请求 2 秒超时
+        signal: timeoutSignal(2000) // 单次请求 2 秒超时
       })
       if (res.ok) {
         return true
@@ -310,6 +321,17 @@ export async function uploadFiles(caseId: string, files: File[]): Promise<any> {
 
 export async function deleteFile(caseId: string, fileName: string): Promise<any> {
   const res = await fetch(`${API_BASE}/cases/${caseId}/file/${encodeURIComponent(fileName)}`, {
+    method: 'DELETE'
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail || err.error || res.statusText)
+  }
+  return res.json()
+}
+
+export async function deleteOriginalFileOnly(caseId: string, fileName: string): Promise<any> {
+  const res = await fetch(`${API_BASE}/cases/${caseId}/original-file/${encodeURIComponent(fileName)}`, {
     method: 'DELETE'
   })
   if (!res.ok) {
@@ -997,6 +1019,7 @@ export const api = {
   getLlmSegmentNames,
   getThumbnails,
   deleteFile,
+  deleteOriginalFileOnly,
   cleanupProcessed,
   // 案卷分析
   createAnalysis,

@@ -27,16 +27,51 @@ jobs:
           - os: macos-14
             target: aarch64-apple-darwin
             tauri-args: "--target aarch64-apple-darwin"
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            tauri-args: ""
 
     runs-on: ${{ matrix.platform.os }}
     steps:
       - uses: actions/checkout@v4
+
+      # ---- macOS 证书（可选） ----
+      - name: Import macOS signing certificate
+        if: matrix.platform.os == 'macos-14' && env.MACOS_CERT_BASE64 != ''
+        env:
+          MACOS_CERT_BASE64: ${{ secrets.MACOS_SIGNING_CERTIFICATE }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_SIGNING_CERTIFICATE_PASSWORD }}
+          MACOS_CERT_NAME: ${{ secrets.MACOS_CERTIFICATE_NAME }}
+        run: |
+          echo "导入 macOS 签名证书..."
+          echo $MACOS_CERT_BASE64 | base64 --decode > certificate.p12
+          security create-keychain -p actions temp.keychain
+          security import certificate.p12 -k temp.keychain -P $MACOS_CERT_PASSWORD -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k actions temp.keychain
+          security list-keychains -d user -s temp.keychain
+
+      # ---- Windows 证书（可选） ----
+      - name: Import Windows signing certificate
+        if: matrix.platform.os == 'windows-latest' && env.WINDOWS_CERT_BASE64 != ''
+        env:
+          WINDOWS_CERT_BASE64: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
+        run: |
+          echo "导入 Windows 签名证书..."
+          [System.IO.File]::WriteAllBytes("certificate.pfx", [System.Convert]::FromBase64String($env:WINDOWS_CERT_BASE64))
 
       # ---- Rust ----
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.platform.target }}
+
+      # ---- Linux 依赖 ----
+      - name: Install Linux dependencies
+        if: matrix.platform.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
 
       # ---- Node ----
       - name: Install Node.js
@@ -92,6 +127,12 @@ jobs:
             cp -r backend/dist/* "$RES_DIR/" 2>/dev/null || true
           fi
 
+          # macOS: 确保后端可执行文件有执行权限
+          if [ "${{ matrix.platform.os }}" != "windows-latest" ]; then
+            chmod +x "$RES_DIR/criminal-llm" 2>/dev/null || true
+            echo "✅ 已设置后端可执行权限"
+          fi
+
       # ---- 验证构建完整性 ----
       - name: Verify build integrity
         shell: bash
@@ -127,6 +168,16 @@ jobs:
           fi
 
           echo ""
+          echo "=== 验证关键 Python 模块（通过文件大小推断） ==="
+          # 检查是否有 PyMuPDF 相关文件（通常打包后会很大）
+          TOTAL_SIZE=$(du -sb "$RES_DIR" 2>/dev/null | cut -f1 || du -s "$RES_DIR" | awk '{print $1*1024}')
+          echo "后端资源总大小: $TOTAL_SIZE bytes"
+          if [ "$TOTAL_SIZE" -lt 52428800 ]; then  # 50MB
+            echo "⚠️ 后端资源总大小小于 50MB，可能有模块遗漏"
+            echo "请检查 PyInstaller spec 文件的 hiddenimports"
+          fi
+
+          echo ""
           echo "=== 验证前端构建产物 ==="
           if [ -f "frontend/dist/index.html" ]; then
             echo "✅ dist/index.html 存在"
@@ -141,6 +192,24 @@ jobs:
             exit 1
           fi
 
+          # 检查关键前端依赖是否打包
+          echo ""
+          echo "=== 验证前端关键依赖 ==="
+          DIST_JS=$(ls frontend/dist/assets/index*.js 2>/dev/null | head -1)
+          if [ -f "$DIST_JS" ]; then
+            # 检查是否包含 marked、lucide-react 等关键依赖
+            if grep -q "marked" "$DIST_JS" 2>/dev/null; then
+              echo "✅ marked 已打包"
+            else
+              echo "⚠️ marked 可能未打包"
+            fi
+            if grep -q "lucide" "$DIST_JS" 2>/dev/null; then
+              echo "✅ lucide-react 已打包"
+            else
+              echo "⚠️ lucide-react 可能未打包"
+            fi
+          fi
+
           echo ""
           echo "=== 全部完整性检查通过 ==="
 
@@ -149,9 +218,35 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # macOS 签名（如果配置了 secrets）
+          APPLE_CERTIFICATE: ${{ secrets.MACOS_SIGNING_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_SIGNING_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.MACOS_CERTIFICATE_NAME }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          # Windows 签名（如果配置了 secrets）
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
+          WINDOWS_SIGNING_SUBJECT: ${{ secrets.WINDOWS_SIGNING_SUBJECT }}
         with:
           projectPath: frontend/src-tauri
           args: ${{ matrix.platform.tauri-args }}
+
+      # ---- macOS 公证（可选） ----
+      - name: Notarize macOS app
+        if: matrix.platform.os == 'macos-14' && env.APPLE_ID != ''
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          echo "开始 macOS 公证..."
+          DMG_PATH=$(find frontend/src-tauri/target -name "*.dmg" | head -1)
+          if [ -n "$DMG_PATH" ]; then
+            xcrun notarytool submit "$DMG_PATH" --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
+            xcrun stapler staple "$DMG_PATH"
+            echo "✅ 公证完成"
+          fi
 
       # ---- Generate checksums ----
       - name: Generate checksums
@@ -159,7 +254,8 @@ jobs:
         run: |
           echo "=== 生成 SHA256 校验文件 ==="
           cd frontend/src-tauri/target
-          find . -path "*/release/bundle/*" -type f \( -name "*.dmg" -o -name "*.app.tar.gz" -o -name "*.msi" -o -name "*.exe" \) | while read f; do
+          # 只保留需要的产物：Windows .msi, macOS .dmg, Linux .deb
+          find . -path "*/release/bundle/*" -type f \( -name "*.msi" -o -name "*.dmg" -o -name "*.deb" \) | while read f; do
             echo "$(sha256sum "$f" | head -c 64)  ${f#*/release/bundle/}"
           done | tee checksums.txt
           echo ""
@@ -172,10 +268,9 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         with:
           files: |
-            frontend/src-tauri/target/**/release/bundle/**/*.exe
             frontend/src-tauri/target/**/release/bundle/**/*.msi
             frontend/src-tauri/target/**/release/bundle/**/*.dmg
-            frontend/src-tauri/target/**/release/bundle/**/*.app.tar.gz
+            frontend/src-tauri/target/**/release/bundle/**/*.deb
             frontend/src-tauri/target/checksums.txt
           draft: false
           prerelease: false

@@ -90,11 +90,11 @@ export function EvidenceContrastTable({ markdown }: EvidenceContrastTableProps) 
                       const hasCorroboration = cells.some(c =>
                         c.includes('印证') || c.includes('一致') || c.includes('相符')
                       )
-                      const rowBg = hasContradiction ? 'rgba(255,59,48,0.06)'
-                        : hasCorroboration ? 'rgba(52,199,89,0.06)'
+                      const rowBg = hasContradiction ? 'rgba(102, 102, 102, 0.06)'
+                        : hasCorroboration ? 'rgba(59, 89, 152, 0.06)'
                         : 'transparent'
-                      const borderColor = hasContradiction ? 'rgba(255,59,48,0.2)'
-                        : hasCorroboration ? 'rgba(52,199,89,0.2)'
+                      const borderColor = hasContradiction ? 'rgba(102, 102, 102, 0.15)'
+                        : hasCorroboration ? 'rgba(59, 89, 152, 0.15)'
                         : 'transparent'
 
                       return (
@@ -105,7 +105,7 @@ export function EvidenceContrastTable({ markdown }: EvidenceContrastTableProps) 
                           {cells.map((cell, ci) => (
                             <td key={ci} style={{
                               padding: '8px 12px',
-                              color: hasContradiction ? '#ff3b30' : hasCorroboration ? '#34c759' : 'var(--macos-text-primary)',
+                              color: hasContradiction ? '#666666' : hasCorroboration ? '#3b5998' : 'var(--macos-text-primary)',
                             }}>
                               {cell}
                             </td>

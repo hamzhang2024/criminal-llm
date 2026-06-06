@@ -44,7 +44,7 @@ except Exception:
 
 def _get_bailian_config() -> tuple[str, Optional[str], str]:
     """
-    获取 LLM 配置（从 config_manager 读取）
+    获取 LLM 配置（从 config_manager 读取，带缓存）
 
     Returns:
         (baseUrl, apiKey, defaultModel)
@@ -67,8 +67,13 @@ class LLMRetryExhaustedError(Exception):
 class LLMClient:
     """LLM 客户端 - 支持 OpenAI 兼容 API"""
 
+    # 类级别配置缓存
+    _config_cache: Optional[Dict[str, Any]] = None
+    _config_cache_time: float = 0
+    _config_cache_ttl: float = 30.0  # 缓存有效期 30 秒
+
     def __init__(self):
-        base_url, api_key, default_model = _get_bailian_config()
+        base_url, api_key, default_model = self._get_cached_config()
         self.base_url = base_url
         self.api_key = api_key
         self.model = default_model
@@ -84,9 +89,28 @@ class LLMClient:
         logger.info("[LLM 客户端] model: %s", default_model)
         logger.info("[LLM 客户端] apiKey: %s", '已配置' if api_key else '未配置')
 
+    @classmethod
+    def _get_cached_config(cls) -> tuple[str, Optional[str], str]:
+        """获取配置（带缓存，30秒有效期）"""
+        now = time.time()
+        if cls._config_cache is not None and (now - cls._config_cache_time) < cls._config_cache_ttl:
+            config = cls._config_cache
+        else:
+            from config_manager import load_config
+            config = load_config()
+            cls._config_cache = config
+            cls._config_cache_time = now
+
+        api_key = config.get("llm_api_key")
+        base_url = config.get("llm_base_url", "")
+        default_model = config.get("llm_model", "")
+        return base_url, api_key, default_model
+
     def reload_config(self):
-        """重新读取配置"""
-        base_url, api_key, default_model = _get_bailian_config()
+        """重新读取配置（强制刷新缓存）"""
+        # 清除缓存
+        LLMClient._config_cache = None
+        base_url, api_key, default_model = self._get_cached_config()
         self.base_url = base_url
         self.api_key = api_key
         self.model = default_model

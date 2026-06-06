@@ -458,6 +458,29 @@ async def delete_file(case_id: str, file_name: str):
     return {"success": True, "message": f"已删除 {file_name}"}
 
 
+@router.delete("/{case_id}/original-file/{file_name}")
+async def delete_original_file_only(case_id: str, file_name: str):
+    """仅删除 original/ 中的原始文件（处理成功后节省空间用）"""
+    import urllib.parse
+    file_name = urllib.parse.unquote(file_name)
+
+    case_path = find_case_path(case_id)
+    if not case_path:
+        return {"success": False, "error": "案件不存在"}
+
+    original_dir = case_path / "original"
+    file_path = original_dir / file_name
+    if not file_path.exists():
+        # 文件已不存在，视为成功
+        return {"success": True, "message": f"原始文件已不存在"}
+
+    # 仅删除 original 文件
+    file_path.unlink()
+    print(f"[delete] removed original only: {file_path}")
+
+    return {"success": True, "message": f"已删除原始文件 {file_name}"}
+
+
 @router.get("/{case_id}/files")
 async def list_case_files(case_id: str):
     """列出案件的所有文件"""

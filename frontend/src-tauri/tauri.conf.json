@@ -26,7 +26,13 @@
       "icons/icon.png"
     ],
     "macOS": {
-      "signingIdentity": null
+      "signingIdentity": null,
+      "minimumSystemVersion": "10.13"
+    },
+    "windows": {
+      "wix": {
+        "language": "zh-CN"
+      }
     },
     "resources": [
       "resources/backend/**/*"

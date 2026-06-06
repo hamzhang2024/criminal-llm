@@ -435,10 +435,6 @@ async def start_process(request: ProcessRequest):
     return {
         "task_id": task_id,
         "total_files": len(request.files),
-        "options": {
-            "remove_watermark": remove_watermark,
-            "ocr": ocr
-        },
         "message": f"已开始处理 {len(request.files)} 个文件"
     }
 

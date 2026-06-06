@@ -80,10 +80,10 @@ export function useDialogProvider() {
 // 内部对话框渲染组件
 function DialogRenderer({ dialog, onClose }: { dialog: DialogState; onClose: () => void }) {
   const variantConfig: Record<DialogVariant, { icon: typeof Info; color: string; bg: string }> = {
-    danger: { icon: XCircle, color: '#ff3b30', bg: 'rgba(255, 59, 48, 0.1)' },
+    danger: { icon: XCircle, color: '#666666', bg: 'rgba(102, 102, 102, 0.1)' },
     warning: { icon: AlertTriangle, color: '#ff9500', bg: 'rgba(255, 149, 0, 0.1)' },
     info: { icon: Info, color: 'var(--macos-accent)', bg: 'rgba(0, 122, 255, 0.1)' },
-    success: { icon: CheckCircle, color: '#34c759', bg: 'rgba(52, 199, 89, 0.1)' },
+    success: { icon: CheckCircle, color: '#3b5998', bg: 'rgba(59, 89, 152, 0.1)' },
   }
 
   const { icon: Icon, color, bg } = variantConfig[dialog.variant || 'info']
@@ -160,7 +160,7 @@ function DialogRenderer({ dialog, onClose }: { dialog: DialogState; onClose: () 
               padding: '8px 18px',
               borderRadius: '8px',
               border: 'none',
-              background: dialog.variant === 'danger' ? '#ff3b30' : 'var(--macos-accent)',
+              background: dialog.variant === 'danger' ? '#666666' : 'var(--macos-accent)',
               color: '#fff',
               fontSize: '13px',
               fontWeight: '500',

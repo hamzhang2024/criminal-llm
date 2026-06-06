@@ -9,6 +9,7 @@ import { FileText, Loader2, Send, Download, Check,
 import { api } from '../api'
 import { showAlert } from '../components/MacOSDialog'
 import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 
 // 配置 marked 使用同步解析
 marked.setOptions({ async: false })
@@ -920,7 +921,7 @@ export function ReportPage() {
           }}>
             <div style={{
               width: `${defenseProgress.percent}%`, height: '100%',
-              background: 'linear-gradient(90deg, #007aff, #34c759)',
+              background: 'linear-gradient(90deg, #3b5998, #5a7bc0)',
               borderRadius: '3px', transition: 'width 0.5s ease',
             }} />
           </div>
@@ -1516,7 +1517,7 @@ export function ReportPage() {
                             <div
                               className="report-content"
                               style={{ fontSize: '12px', lineHeight: '1.75' }}
-                              dangerouslySetInnerHTML={{ __html: marked.parse(selectedEvidenceContent, { async: false }) as string }}
+                              dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(marked.parse(selectedEvidenceContent, { async: false }) as string) }}
                             />
                           ) : (
                             <div style={{ padding: '20px 0', fontSize: '12px', color: colors.textTertiary, textAlign: 'center' }}>选择证据查看详情</div>
@@ -1861,7 +1862,7 @@ export function ReportPage() {
                                 border: `1px solid ${colors.border}`,
                                 boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
                               }}>
-                                <div dangerouslySetInnerHTML={{ __html: marked.parse(msg.content, { async: false }) as string }} />
+                                <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(marked.parse(msg.content, { async: false }) as string) }} />
                               </div>
                             )}
                           </div>

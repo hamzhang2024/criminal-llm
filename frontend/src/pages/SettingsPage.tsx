@@ -541,8 +541,8 @@ export function SettingsPage() {
   }
 
   const statusIcon = (configured: boolean, testState: 'ok' | 'fail' | null) => {
-    if (testState === 'ok') return <Check className="w-4 h-4" color="#2d8f3d" />
-    if (testState === 'fail') return <span style={{ fontSize: '11px', color: '#ff3b30' }}>失败</span>
+    if (testState === 'ok') return <Check className="w-4 h-4" color="#8b6914" />
+    if (testState === 'fail') return <span style={{ fontSize: '11px', color: '#666666' }}>失败</span>
     if (configured) return <Check className="w-4 h-4" color="#86868b" />
     return null
   }
@@ -635,8 +635,8 @@ export function SettingsPage() {
                 }}
                 style={{
                   padding: '8px 16px', fontSize: 13, fontWeight: 500,
-                  background: 'transparent', border: '1.5px solid #ff3b30',
-                  borderRadius: '8px', cursor: 'pointer', color: '#ff3b30',
+                  background: 'transparent', border: '1.5px solid #666666',
+                  borderRadius: '8px', cursor: 'pointer', color: '#666666',
                 }}
               >
                 退出登录
@@ -820,7 +820,7 @@ export function SettingsPage() {
                       </span>
                       <span style={{
                         fontSize: '12px', fontWeight: 600,
-                        color: status.paddleocr_quota.exceeded ? '#ff3b30' : '#1d1d1f',
+                        color: status.paddleocr_quota.exceeded ? '#666666' : '#1d1d1f',
                       }}>
                         {status.paddleocr_quota.exceeded
                           ? '已用完'
@@ -834,7 +834,7 @@ export function SettingsPage() {
                       <div style={{
                         height: '100%',
                         width: `${(status.paddleocr_quota.used_pages / status.paddleocr_quota.total_limit) * 100}%`,
-                        background: status.paddleocr_quota.exceeded ? '#ff3b30' : 'var(--macos-accent)',
+                        background: status.paddleocr_quota.exceeded ? '#666666' : 'var(--macos-accent)',
                         borderRadius: '2px',
                         transition: 'width 0.3s ease',
                       }} />
@@ -852,7 +852,7 @@ export function SettingsPage() {
           <MacOSCard style={{ marginTop: '16px' }}>
             <h2 style={{ fontSize: '15px', fontWeight: '600', color: '#1d1d1f', display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
               大模型配置
-              <span style={{ fontSize: '11px', color: '#2d8f3d', fontWeight: 500, background: 'rgba(52,199,89,0.1)', padding: '2px 8px', borderRadius: '4px' }}>推荐 ollama qwen3.6 35b-a3b</span>
+              <span style={{ fontSize: '11px', color: '#8b6914', fontWeight: 500, background: 'rgba(139,105,20,0.1)', padding: '2px 8px', borderRadius: '4px' }}>推荐 ollama qwen3.6 35b-a3b</span>
             </h2>
 
             <div style={{ marginBottom: '16px' }}>

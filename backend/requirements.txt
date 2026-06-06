@@ -1,12 +1,14 @@
-# FastAPI - 使用最基础的版本，兼容性更好
+# FastAPI 及依赖
 fastapi
 uvicorn
 python-multipart
+pydantic
 
 # PDF 处理
 pypdf
 pdf2image
 PyMuPDF  # PDF 文本提取
+Pillow   # 图像处理（打包必需）
 
 # HTTP 客户端
 httpx
@@ -17,8 +19,4 @@ aiohttp  # 异步 HTTP 客户端（PaddleOCR/MinerU 异步转换依赖）
 python-dotenv
 
 # 打包
-PyInstaller
-
-# 注意：
-# - Pillow 使用系统安装的版本
-# - 移除 pydantic，使用 FastAPI 内置的类型验证
+pyinstaller

@@ -6,8 +6,8 @@ interface ThreeTierCardProps {
 
 const TIER_COLORS = {
   constitutive: { bg: 'var(--macos-accent-surface)', border: 'var(--macos-accent-border)', accent: 'var(--macos-accent)', label: '构成要件符合性' },
-  illegality: { bg: 'rgba(52,199,89,0.06)', border: 'rgba(52,199,89,0.2)', accent: '#34c759', label: '违法性' },
-  responsibility: { bg: 'rgba(255,149,0,0.06)', border: 'rgba(255,149,0,0.2)', accent: '#ff9500', label: '有责性' },
+  illegality: { bg: 'rgba(59, 89, 152, 0.06)', border: 'rgba(59, 89, 152, 0.2)', accent: '#3b5998', label: '违法性' },
+  responsibility: { bg: 'rgba(240, 165, 0, 0.06)', border: 'rgba(240, 165, 0, 0.2)', accent: '#f0a500', label: '有责性' },
 }
 
 export function ThreeTierCard({ tier, title, content }: ThreeTierCardProps) {
