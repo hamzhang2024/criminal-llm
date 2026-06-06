@@ -649,7 +649,7 @@ def _do_batch_process(case_id: str, step: int, file_names: list, password: str =
         output_dir.mkdir(exist_ok=True)
 
         # 确定哪些选项被启用
-        do_watermark = remove_watermark if remove_watermark is not None else True
+        do_watermark = remove_watermark if remove_watermark is not None else False
         do_enhance = enhance_resolution if enhance_resolution is not None else False
 
         if do_watermark:
@@ -696,7 +696,10 @@ def _do_batch_process(case_id: str, step: int, file_names: list, password: str =
                         results.append({"file": file_name, "success": False, "error": f"处理失败: {str(e)[:100]}"})
                         continue
                 else:
-                    current_path = input_file
+                    # 不处理水印但复制到 processed/，保证转MD模块有输入
+                    target = output_dir / file_name  # 保持原名
+                    shutil.copy2(str(input_file), str(target))
+                    current_path = target
 
                 # 精度提升（在最终文件上操作）
                 if do_enhance:

@@ -1891,8 +1891,28 @@ export function CaseDetailPage() {
       const needProcess = optDecrypt || optWatermark
 
       if (!needProcess) {
-        // 两个选项都未勾选，直接跳过步骤 1，进入转换步骤
-        setCurrentStep(1)
+        // 两个选项都未勾选，但仍需复制文件到 processed/ 供转MD使用
+        setProcessing(true)
+        setProgress('准备文件...')
+        try {
+          const filesToProcess = files.filter(f => f.status === 'pending')
+          if (filesToProcess.length === 0) {
+            // 所有文件已处理，直接跳转
+            setCurrentStep(1)
+            return
+          }
+          // 调用 batchProcess 复制文件到 processed/（不传 remove_watermark）
+          await api.batchProcess(caseId!, 1, filesToProcess.map(f => f.name), { delete_original: optDeleteOriginal })
+          setProgress(optDeleteOriginal
+            ? `${filesToProcess.length} 个文件已准备就绪，已删除原始文件`
+            : `${filesToProcess.length} 个文件已准备就绪`)
+          setCurrentStep(1)
+        } catch (err) {
+          setError(err instanceof Error ? err.message : '准备文件失败')
+          setProgress('')
+        } finally {
+          setProcessing(false)
+        }
         return
       }
 
