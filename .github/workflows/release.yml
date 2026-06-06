@@ -21,11 +21,12 @@ jobs:
       fail-fast: false
       matrix:
         platform:
-          - os: windows-latest
+          - os: self-hosted
             target: x86_64-pc-windows-msvc
             tauri-args: ""
+            runs-on: self-hosted
 
-    runs-on: ${{ matrix.platform.os }}
+    runs-on: ${{ matrix.platform.runs-on || matrix.platform.os }}
     steps:
       - uses: actions/checkout@v4
 
@@ -46,7 +47,7 @@ jobs:
 
       # ---- Windows 证书（可选） ----
       - name: Import Windows signing certificate
-        if: matrix.platform.os == 'windows-latest' && env.WINDOWS_CERT_BASE64 != ''
+        if: matrix.platform.os == 'self-hosted' && env.WINDOWS_CERT_BASE64 != ''
         env:
           WINDOWS_CERT_BASE64: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE }}
           WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
@@ -122,7 +123,7 @@ jobs:
           fi
 
           # macOS: 确保后端可执行文件有执行权限
-          if [ "${{ matrix.platform.os }}" != "windows-latest" ]; then
+          if [ "${{ matrix.platform.os }}" != "self-hosted" ]; then
             chmod +x "$RES_DIR/criminal-llm" 2>/dev/null || true
             echo "✅ 已设置后端可执行权限"
           fi
@@ -133,7 +134,7 @@ jobs:
         run: |
           echo "=== 验证后端构建产物 ==="
           RES_DIR="frontend/src-tauri/resources/backend"
-          if [ "${{ matrix.platform.os }}" = "windows-latest" ]; then
+          if [ "${{ matrix.platform.os }}" = "self-hosted" ]; then
             EXEC="$RES_DIR/criminal-llm.exe"
           else
             EXEC="$RES_DIR/criminal-llm"
