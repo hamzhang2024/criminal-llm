@@ -211,16 +211,6 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # macOS 签名（如果配置了 secrets）
-          APPLE_CERTIFICATE: ${{ secrets.MACOS_SIGNING_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_SIGNING_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.MACOS_CERTIFICATE_NAME }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          # Windows 签名（如果配置了 secrets）
-          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE }}
-          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
-          WINDOWS_SIGNING_SUBJECT: ${{ secrets.WINDOWS_SIGNING_SUBJECT }}
         with:
           projectPath: frontend/src-tauri
           args: ${{ matrix.platform.tauri-args }}
@@ -267,4 +257,4 @@ jobs:
             frontend/src-tauri/target/checksums.txt
           draft: false
           prerelease: false
-          generateReleaseNotes: true
+          generate_release_notes: true
