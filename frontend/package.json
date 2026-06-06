@@ -1,7 +1,7 @@
 {
   "name": "criminal-pdf-webui",
   "private": true,
-  "version": "1.3.7",
+  "version": "1.3.8",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
