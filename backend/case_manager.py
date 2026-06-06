@@ -511,7 +511,7 @@ async def list_case_files(case_id: str):
 async def get_step_files(case_id: str, step: int):
     """获取某一步骤的输入文件
 
-    step: 0=原始文件, 1=PDF处理后, 2=转MD(读取processed/), 3=MD文件(分析)
+    step: 0=原始文件(original/), 1=待转换PDF(processed/), 2=已转换MD(md/), 3=分析用MD(md/)
     兼容旧映射: step=2 旧拆分, step=3 旧转MD, step=4 旧分析
     """
     case_path = find_case_path(case_id)
@@ -522,7 +522,8 @@ async def get_step_files(case_id: str, step: int):
     if step == 0:
         input_dir = case_path / "original"
     elif step == 1:
-        input_dir = case_path / "original"
+        # 步骤1：证据提取，读取 processed/ 目录（步骤0已将所有文件复制到这里）
+        input_dir = case_path / "processed"
     elif step == 2:
         # 转MD：读取 md/ 目录下已转换的 MD 文件
         input_dir = case_path / "md"
@@ -540,43 +541,48 @@ async def get_step_files(case_id: str, step: int):
     # 步骤0-1 只加载 PDF，步骤2-3 只加载 MD
     allowed_suffixes = {".pdf"} if step <= 1 else {".md"}
 
-    # 对于步骤1，检查 processed/ 中是否已有对应文件（标记为 done）
-    processed_dir = case_path / "processed"
+    # 对于步骤1，检查 md/ 中是否已有对应文件（标记为 done）
+    md_dir = case_path / "md"
 
-    def _is_freshly_processed(src: Path, dst: Path) -> bool:
-        """检查目标文件是否确实是在源文件之后生成的（防止误判）"""
-        if not dst.exists():
+    def _has_md_file(pdf_file: Path, md_dir: Path) -> bool:
+        """检查 md/ 中是否有对应 PDF 的 MD 文件（含 _去水印 后缀变体）"""
+        if not md_dir.exists():
             return False
-        src_stat = src.stat()
-        dst_stat = dst.stat()
-        # 处理后文件的修改时间必须晚于或等于源文件的修改时间。
-        # 不再强制要求大小差异——去水印/去密码可能只改变很小一部分内容，
-        # 特别是大文件差异可能不到 1%。
-        # 只要求：时间戳合理 + 文件不完全相同（inode 不同）。
-        if dst_stat.st_mtime < src_stat.st_mtime:
-            return False
-        # 如果大小完全相同，检查是否是硬链接或同一文件
-        if dst_stat.st_size == src_stat.st_size and dst_stat.st_ino == src_stat.st_ino:
-            return False  # 同一 inode，不是处理后生成的文件
-        return True
+        stem = pdf_file.stem
+        # 直接匹配同名 MD
+        md_file = md_dir / f"{stem}.md"
+        if md_file.exists():
+            return True
+        # 也检查带 _去水印 后缀的 PDF（去掉后缀匹配）
+        if stem.endswith("_去水印"):
+            base_stem = stem[:-4]  # 去掉 "_去水印"
+            md_file = md_dir / f"{base_stem}.md"
+            if md_file.exists():
+                return True
+        # 反向检查：MD 文件可能带或不带 _去水印 后缀
+        for mf in md_dir.iterdir():
+            if mf.is_file() and mf.suffix == ".md":
+                md_stem = mf.stem
+                # MD stem == PDF stem（完全匹配）
+                if md_stem == stem:
+                    return True
+                # MD stem == PDF stem 去掉 _去水印
+                if stem.endswith("_去水印") and md_stem == stem[:-4]:
+                    return True
+                # PDF stem == MD stem 去掉 _去水印
+                if md_stem.endswith("_去水印") and stem == md_stem[:-4]:
+                    return True
+        return False
 
     for f in sorted(input_dir.iterdir(), key=natural_sort_key):
         if f.is_file() and f.suffix.lower() in allowed_suffixes:
             stat = f.stat()
-            # 步骤1：检查 processed/ 中是否已有同名文件（含 _去水印 后缀变体）
+            # 步骤1：检查 md/ 中是否已有对应 MD 文件
             # 步骤2/3：MD 文件已存在说明已转换完成，直接标记 done
             status = "pending"
-            if step == 1 and processed_dir.exists():
-                processed_file = processed_dir / f.name
-                if _is_freshly_processed(f, processed_file):
+            if step == 1 and md_dir.exists():
+                if _has_md_file(f, md_dir):
                     status = "done"
-                else:
-                    # 也检查带 _去水印 后缀的文件
-                    stem_no_ext = f.stem
-                    for pf in processed_dir.iterdir():
-                        if pf.is_file() and pf.stem.startswith(stem_no_ext) and _is_freshly_processed(f, pf):
-                            status = "done"
-                            break
             elif step >= 2:
                 # MD 文件已存在于 md/ 目录，说明转换已完成
                 status = "done"
