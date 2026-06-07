@@ -275,10 +275,14 @@ class AnalysisEngine:
                     try:
                         text = md_file.read_text(encoding="utf-8")
                         if text.strip():
-                            is_indictment = "起诉书" in md_file.stem or "起诉意见书" in md_file.stem
+                            # 检查文件名和内容判断是否为起诉书
+                            is_indictment = (
+                                "起诉书" in md_file.stem or "起诉意见书" in md_file.stem or
+                                "起诉书" in text[:2000] or "起诉意见书" in text[:2000]
+                            )
                             texts.append({
                                 "filename": md_file.stem,
-                                "type": "起诉意见书" if "起诉意见书" in md_file.stem else "起诉书" if "起诉书" in md_file.stem else "其他证据",
+                                "type": "起诉意见书" if "起诉意见书" in text[:2000] else "起诉书" if "起诉书" in text[:2000] else "其他证据",
                                 "text": text,
                                 "evidence_ref": f"证据{idx:03d}" if not is_indictment else "",
                                 "is_indictment": is_indictment,
@@ -286,7 +290,27 @@ class AnalysisEngine:
                     except Exception:
                         pass
 
-        # 如果 evidence/ 不存在或为空，回退到 md/ 目录
+        # 额外检查：如果 evidence/ 中没有起诉意见书，从 md/ 目录补充
+        has_indictment = any(t.get("is_indictment") for t in texts)
+        if not has_indictment:
+            md_dir = self.case_dir / "md"
+            if md_dir.exists():
+                for md_file in sorted(md_dir.glob("*.md")):
+                    try:
+                        text = md_file.read_text(encoding="utf-8")
+                        if text.strip() and ("起诉书" in text[:3000] or "起诉意见书" in text[:3000]):
+                            is_indictment = "起诉书" in text[:3000] or "起诉意见书" in text[:3000]
+                            texts.append({
+                                "filename": md_file.name,
+                                "type": "起诉书" if "起诉书" in text[:3000] else "起诉意见书",
+                                "text": text,
+                                "is_indictment": True,
+                            })
+                            break  # 找到一个就够了
+                    except Exception:
+                        pass
+
+        # 如果 evidence/ 不存在或为空，完全回退到 md/ 目录
         if not texts:
             md_dir = self.case_dir / "md"
             if md_dir.exists():
