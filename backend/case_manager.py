@@ -522,15 +522,8 @@ async def get_step_files(case_id: str, step: int):
     if step == 0:
         input_dir = case_path / "original"
     elif step == 1:
-        # 步骤1：证据提取，优先读取 processed/，若为空则读取 original/
-        processed_dir = case_path / "processed"
-        original_dir = case_path / "original"
-        if processed_dir.exists() and any(f.suffix.lower() == ".pdf" for f in processed_dir.iterdir() if f.is_file()):
-            input_dir = processed_dir
-        elif original_dir.exists() and any(f.suffix.lower() == ".pdf" for f in original_dir.iterdir() if f.is_file()):
-            input_dir = original_dir
-        else:
-            return []
+        # 步骤1：证据提取，读取 processed/ 目录
+        input_dir = case_path / "processed"
     elif step == 2:
         # 转MD：读取 md/ 目录下已转换的 MD 文件
         input_dir = case_path / "md"
