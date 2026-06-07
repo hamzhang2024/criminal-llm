@@ -134,34 +134,58 @@ def _clear_progress(case_id: str):
 
 @router.get("/{case_id}/indictment-candidates")
 async def get_indictment_candidates(case_id: str):
-    """扫描案件 MD 文件，找出所有起诉书和起诉意见书候选。"""
+    """扫描案件 MD 文件和证据目录，找出所有起诉书和起诉意见书候选。"""
     case_path = find_case_path(case_id)
     if not case_path:
         raise HTTPException(status_code=404, detail="案件不存在")
 
-    md_dir = case_path / "md"
-    if not md_dir.exists():
-        return {"case_id": case_id, "candidates": []}
-
     candidates = []
-    for f in sorted(md_dir.iterdir(), key=lambda x: x.name):
-        if f.suffix.lower() != ".md":
-            continue
-        text = f.read_text(encoding="utf-8")
-        head = text[:3000]
 
-        doc_type = None
-        if _contains_indictment_title(head):
-            doc_type = "起诉书"
-        elif any(p in head for p in _OPINION_PATTERNS):
-            doc_type = "起诉意见书"
+    # 1. 扫描 evidence/ 目录（证据提取后的文件）
+    evidence_dir = case_path / "evidence"
+    if evidence_dir.exists():
+        for f in sorted(evidence_dir.iterdir(), key=lambda x: x.name):
+            if f.suffix.lower() != ".md":
+                continue
+            text = f.read_text(encoding="utf-8")
+            head = text[:3000]
 
-        if doc_type:
-            candidates.append({
-                "filename": f.name,
-                "doc_type": doc_type,
-                "preview": text[:500],
-            })
+            doc_type = None
+            if _contains_indictment_title(head):
+                doc_type = "起诉书"
+            elif any(p in head for p in _OPINION_PATTERNS):
+                doc_type = "起诉意见书"
+
+            if doc_type:
+                candidates.append({
+                    "filename": f.name,
+                    "doc_type": doc_type,
+                    "source": "evidence",
+                    "preview": text[:500],
+                })
+
+    # 2. 扫描 md/ 目录（原始转换的文件）
+    md_dir = case_path / "md"
+    if md_dir.exists():
+        for f in sorted(md_dir.iterdir(), key=lambda x: x.name):
+            if f.suffix.lower() != ".md":
+                continue
+            text = f.read_text(encoding="utf-8")
+            head = text[:3000]
+
+            doc_type = None
+            if _contains_indictment_title(head):
+                doc_type = "起诉书"
+            elif any(p in head for p in _OPINION_PATTERNS):
+                doc_type = "起诉意见书"
+
+            if doc_type:
+                candidates.append({
+                    "filename": f.name,
+                    "doc_type": doc_type,
+                    "source": "md",
+                    "preview": text[:500],
+                })
 
     return {"case_id": case_id, "candidates": candidates}
 

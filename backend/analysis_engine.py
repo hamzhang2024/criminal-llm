@@ -250,7 +250,12 @@ class AnalysisEngine:
                             if text.strip():
                                 ev_id = ev.get("id", 0)
                                 ev_type = ev.get("type", "其他证据")
-                                is_indictment = ev_type in ("起诉书", "起诉意见书")
+                                ev_name = ev.get("name", "")
+                                # 判断是否为起诉书/起诉意见书（类型或名称包含关键词）
+                                is_indictment = (
+                                    "起诉书" in ev_type or "起诉意见书" in ev_type or
+                                    "起诉书" in ev_name or "起诉意见书" in ev_name
+                                )
                                 texts.append({
                                     "filename": ev["name"],
                                     "type": ev_type,
