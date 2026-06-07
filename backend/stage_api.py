@@ -134,14 +134,14 @@ def _clear_progress(case_id: str):
 
 @router.get("/{case_id}/indictment-candidates")
 async def get_indictment_candidates(case_id: str):
-    """扫描案件 MD 文件和证据目录，找出所有起诉书和起诉意见书候选。"""
+    """扫描证据目录，找出所有起诉书和起诉意见书候选。"""
     case_path = find_case_path(case_id)
     if not case_path:
         raise HTTPException(status_code=404, detail="案件不存在")
 
     candidates = []
 
-    # 1. 扫描 evidence/ 目录（证据提取后的文件）
+    # 扫描 evidence/ 目录（证据提取后的文件）
     evidence_dir = case_path / "evidence"
     if evidence_dir.exists():
         for f in sorted(evidence_dir.iterdir(), key=lambda x: x.name):
@@ -164,29 +164,6 @@ async def get_indictment_candidates(case_id: str):
                     "preview": text[:500],
                 })
 
-    # 2. 扫描 md/ 目录（原始转换的文件）
-    md_dir = case_path / "md"
-    if md_dir.exists():
-        for f in sorted(md_dir.iterdir(), key=lambda x: x.name):
-            if f.suffix.lower() != ".md":
-                continue
-            text = f.read_text(encoding="utf-8")
-            head = text[:3000]
-
-            doc_type = None
-            if _contains_indictment_title(head):
-                doc_type = "起诉书"
-            elif any(p in head for p in _OPINION_PATTERNS):
-                doc_type = "起诉意见书"
-
-            if doc_type:
-                candidates.append({
-                    "filename": f.name,
-                    "doc_type": doc_type,
-                    "source": "md",
-                    "preview": text[:500],
-                })
-
     return {"case_id": case_id, "candidates": candidates}
 
 
@@ -200,11 +177,6 @@ async def _execute_all_stages(case_id: str, defendant: str, crime_type: Optional
         case_path = find_case_path(case_id)
         if not case_path:
             ANALYSIS_TASKS[case_id] = {"status": "error", "error": "案件不存在"}
-            return
-
-        md_dir = case_path / "md"
-        if not md_dir.exists() or not any(md_dir.glob("*.md")):
-            ANALYSIS_TASKS[case_id] = {"status": "error", "error": "案件中无 MD 文件"}
             return
 
         evidence_dir = case_path / "evidence"
@@ -266,10 +238,6 @@ async def run_all_stages(
     case_path = find_case_path(case_id)
     if not case_path:
         raise HTTPException(status_code=404, detail="案件不存在")
-
-    md_dir = case_path / "md"
-    if not md_dir.exists() or not any(md_dir.glob("*.md")):
-        raise HTTPException(status_code=400, detail="案件中无 MD 文件，请先完成 PDF 转 MD")
 
     evidence_dir = case_path / "evidence"
     index_file = evidence_dir / "index.json"

@@ -226,19 +226,65 @@ class AnalysisPipeline:
     # ========== 工具方法 ==========
 
     def _load_md_files(self) -> list[dict]:
-        """读取 md/ 目录下所有 Markdown 文件"""
-        md_dir = self.case_dir / "md"
-        if not md_dir.exists():
-            raise ValueError("md/ 目录不存在，请先完成案卷拆分和转MD")
+        """读取证据文件，优先从 evidence/ 目录，回退到 md/ 目录"""
         files = []
-        for f in sorted(md_dir.iterdir(), key=lambda x: x.name):
-            if f.suffix.lower() == ".md":
-                files.append({
-                    "filename": f.name,
-                    "filepath": str(f),
-                    "text": f.read_text(encoding="utf-8"),
-                    "type": infer_evidence_type(f.name),
-                })
+
+        # 优先从 evidence/ 目录加载
+        evidence_dir = self.case_dir / "evidence"
+        if evidence_dir.exists():
+            index_file = evidence_dir / "index.json"
+            if index_file.exists():
+                try:
+                    import json
+                    index = json.loads(index_file.read_text(encoding="utf-8"))
+                    for ev in index.get("evidence", []):
+                        md_file = evidence_dir / ev.get("md_file", "")
+                        if md_file.exists():
+                            text = md_file.read_text(encoding="utf-8")
+                            if text.strip():
+                                files.append({
+                                    "filename": ev.get("name", md_file.name),
+                                    "filepath": str(md_file),
+                                    "text": text,
+                                    "type": ev.get("type", infer_evidence_type(md_file.name)),
+                                })
+                except Exception:
+                    pass
+
+            # 如果 index.json 不存在或为空，直接扫描 .md 文件
+            if not files:
+                for f in sorted(evidence_dir.glob("*.md"), key=lambda x: x.name):
+                    try:
+                        text = f.read_text(encoding="utf-8")
+                        if text.strip():
+                            files.append({
+                                "filename": f.name,
+                                "filepath": str(f),
+                                "text": text,
+                                "type": infer_evidence_type(f.name),
+                            })
+                    except Exception:
+                        pass
+
+        # 回退到 md/ 目录
+        if not files:
+            md_dir = self.case_dir / "md"
+            if md_dir.exists():
+                for f in sorted(md_dir.iterdir(), key=lambda x: x.name):
+                    if f.suffix.lower() == ".md":
+                        try:
+                            files.append({
+                                "filename": f.name,
+                                "filepath": str(f),
+                                "text": f.read_text(encoding="utf-8"),
+                                "type": infer_evidence_type(f.name),
+                            })
+                        except Exception:
+                            pass
+
+        if not files:
+            raise ValueError("案件中无证据文件，请先完成证据提取")
+
         return files
 
     async def _find_indictment_in_md_files(self) -> tuple[str, str]:
