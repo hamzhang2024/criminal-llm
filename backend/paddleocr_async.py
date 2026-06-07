@@ -28,6 +28,9 @@ from typing import Optional, List, Dict, Any, Tuple, Callable
 from dataclasses import dataclass, field
 
 import aiohttp
+import logging
+
+logger = logging.getLogger(__name__)
 
 # 打包后 certifi 证书路径可能失效，macOS 用系统证书
 if sys.platform == "darwin" and getattr(sys, "frozen", False):
@@ -216,7 +219,7 @@ def _split_pdf_pages(pdf_path: Path, chunk_size: int = PADDLEOCR_MAX_PAGES) -> L
         new_doc.close()
         chunks.append((tmp_path, start + 1, end))  # 页码从1开始
 
-    print(f"[PaddleOCR] 大文件分段: {pdf_path.name} → {len(chunks)} 个 chunk")
+    logger.info(f"[PaddleOCR] 大文件分段: {pdf_path.name} → {len(chunks)} 个 chunk")
     return chunks
 
 
@@ -386,7 +389,7 @@ class AsyncPaddleOCRConverter:
                 if not job_id:
                     return ConvertResult(file_name=pdf_path.name, success=False, error="提交任务失败")
 
-                print(f"[PaddleOCR] 任务已提交: {pdf_path.name}, job_id={job_id}")
+                logger.info(f"[PaddleOCR] 任务已提交: {pdf_path.name}, job_id={job_id}")
 
                 # 2. 轮询结果
                 if progress_cb:
@@ -412,7 +415,7 @@ class AsyncPaddleOCRConverter:
                 target_md = output_dir / f"{stem}.md"
                 target_md.write_text(text, encoding="utf-8")
 
-                print(f"[PaddleOCR] 转换完成 {pdf_path.name}: {len(text)} 字符, {total_pages} 页")
+                logger.info(f"[PaddleOCR] 转换完成 {pdf_path.name}: {len(text)} 字符, {total_pages} 页")
 
                 return ConvertResult(
                     file_name=pdf_path.name,
@@ -423,7 +426,7 @@ class AsyncPaddleOCRConverter:
                 )
 
         except Exception as e:
-            print(f"[PaddleOCR] 异常: {pdf_path.name}, {e}")
+            logger.error(f"[PaddleOCR] 异常: {pdf_path.name}, {e}")
             return ConvertResult(file_name=pdf_path.name, success=False, error=str(e)[:200])
 
     async def _convert_chunks(
@@ -439,7 +442,7 @@ class AsyncPaddleOCRConverter:
         Args:
             chunks: List of (chunk_path, start_page, end_page) tuples
         """
-        print(f"[PaddleOCR] 分段转换 {original_pdf.name}: 共 {len(chunks)} 个 chunk")
+        logger.info(f"[PaddleOCR] 分段转换 {original_pdf.name}: 共 {len(chunks)} 个 chunk")
 
         chunk_results = []
         all_images_dirs = []
@@ -463,9 +466,9 @@ class AsyncPaddleOCRConverter:
                 chunk_results.append((result.text, start_page, end_page))
                 if result.images_dir:
                     all_images_dirs.append(result.images_dir)
-                print(f"[PaddleOCR] 分段转换 chunk {i} 成功 (第{start_page}-{end_page}页)")
+                logger.info(f"[PaddleOCR] 分段转换 chunk {i} 成功 (第{start_page}-{end_page}页)")
             else:
-                print(f"[PaddleOCR] 分段转换 chunk {i} 失败: {result.error}")
+                logger.error(f"[PaddleOCR] 分段转换 chunk {i} 失败: {result.error}")
 
             # 清理临时目录
             shutil.rmtree(chunk_output, ignore_errors=True)
@@ -518,7 +521,7 @@ class AsyncPaddleOCRConverter:
         total_pages = len(doc)
         doc.close()
 
-        print(f"[PaddleOCR] 分段转换完成 {original_pdf.name}: {len(merged_text)} 字符, {total_pages} 页")
+        logger.info(f"[PaddleOCR] 分段转换完成 {original_pdf.name}: {len(merged_text)} 字符, {total_pages} 页")
 
         return ConvertResult(
             file_name=original_pdf.name,
@@ -628,23 +631,23 @@ class AsyncPaddleOCRConverter:
                     quota = _load_quota()
                     quota["used_pages"] = PADDLEOCR_DAILY_PAGE_LIMIT
                     _save_quota(quota)
-                    print(f"[PaddleOCR] 每日配额已用完（服务端返回 429）")
+                    logger.info(f"[PaddleOCR] 每日配额已用完（服务端返回 429）")
                     return None
 
                 if resp.status != 200:
                     text = await resp.text()
-                    print(f"[PaddleOCR] 提交任务失败: HTTP {resp.status}, {text[:300]}")
+                    logger.error(f"[PaddleOCR] 提交任务失败: HTTP {resp.status}, {text[:300]}")
                     return None
 
                 result = await resp.json()
                 return result["data"]["jobId"]
 
         except asyncio.TimeoutError:
-            print(f"[PaddleOCR] 提交任务超时: {pdf_path.name} ({file_size / (1024*1024):.1f}MB)")
+            logger.error(f"[PaddleOCR] 提交任务超时: {pdf_path.name} ({file_size / (1024*1024):.1f}MB)")
             return None
         except Exception as e:
             import traceback
-            print(f"[PaddleOCR] 提交任务异常: {pdf_path.name}, {type(e).__name__}: {e}")
+            logger.error(f"[PaddleOCR] 提交任务异常: {pdf_path.name}, {type(e).__name__}: {e}")
             traceback.print_exc()
             return None
 
@@ -677,7 +680,7 @@ class AsyncPaddleOCRConverter:
 
                     if state == "pending":
                         if waited % 15 == 0:  # 每 15 秒打印一次
-                            print(f"[PaddleOCR] 任务排队中...（已等待 {waited}s）")
+                            logger.info(f"[PaddleOCR] 任务排队中...（已等待 {waited}s）")
 
                     elif state == "running":
                         try:
@@ -685,29 +688,29 @@ class AsyncPaddleOCRConverter:
                             total = prog.get("totalPages", "?")
                             done = prog.get("extractedPages", 0)
                             if waited % 15 == 0:
-                                print(f"[PaddleOCR] 正在识别 {done}/{total} 页...（已等待 {waited}s）")
+                                logger.info(f"[PaddleOCR] 正在识别 {done}/{total} 页...（已等待 {waited}s）")
                         except (KeyError, TypeError):
                             pass
 
                     elif state == "done":
                         prog = job_data.get("extractProgress", {})
                         pages = prog.get("extractedPages", "?")
-                        print(f"[PaddleOCR] 任务完成，共 {pages} 页")
+                        logger.info(f"[PaddleOCR] 任务完成，共 {pages} 页")
                         json_url = job_data.get("resultUrl", {}).get("jsonUrl", "")
                         return json_url if json_url else None
 
                     elif state == "failed":
                         err = job_data.get("errorMsg", "未知错误")
-                        print(f"[PaddleOCR] 任务失败: {err}")
+                        logger.error(f"[PaddleOCR] 任务失败: {err}")
                         return None
 
             except Exception as e:
-                print(f"[PaddleOCR] 轮询异常: {e}")
+                logger.error(f"[PaddleOCR] 轮询异常: {e}")
 
             await asyncio.sleep(POLL_INTERVAL)
             waited += POLL_INTERVAL
 
-        print(f"[PaddleOCR] 轮询超时（{timeout}s）")
+        logger.error(f"[PaddleOCR] 轮询超时（{timeout}s）")
         return None
 
     async def _download_and_parse(
@@ -730,7 +733,7 @@ class AsyncPaddleOCRConverter:
             ) as resp:
                 raw_jsonl = await resp.text()
         except Exception as e:
-            print(f"[PaddleOCR] 下载结果失败: {e}")
+            logger.error(f"[PaddleOCR] 下载结果失败: {e}")
             return None, None
 
         lines = raw_jsonl.strip().split('\n')

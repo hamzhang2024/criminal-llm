@@ -291,18 +291,47 @@ def start_convert_task(case_id: str, max_concurrent: int = 3):
 
                 # 构建完成消息
                 if skipped_files:
-                    msg = f"完成: 新转换 {converted}/{len(pending_files)}，跳过 {len(skipped_files)} 个已转换文件"
+                    msg = f"完成: 新转换 {converted}/{len(pending_files)}，跳过 {skipped_files} 个已转换文件"
                 else:
                     msg = f"完成: {converted}/{len(pdf_files)} 个文件转换成功"
 
-                _update_task(
-                    case_id,
-                    status="completed",
-                    total=len(pdf_files),
-                    message=msg,
-                    results=results,
-                )
-                logger.info(f"[后台任务] {case_id}: {msg}")
+                # 如果没有跳过文件且转换全部失败，标记为失败
+                all_failed = converted == 0 and not skipped_files and len(pdf_files) > 0
+                if all_failed:
+                    # 收集错误信息
+                    error_msgs = []
+                    for r in results:
+                        if r.get("error"):
+                            error_msgs.append(f'{r["file"]}: {r["error"]}')
+                    error_detail = "; ".join(error_msgs[:5])
+                    _update_task(
+                        case_id,
+                        status="failed",
+                        total=len(pdf_files),
+                        message=f"所有 {len(pdf_files)} 个文件转换失败: {error_detail}",
+                        results=results,
+                        error_details=[{
+                            "reason": "all_conversions_failed",
+                            "message": f"全部 {len(pdf_files)} 个文件转换失败",
+                            "recoverable": True,
+                        }],
+                    )
+                    logger.error(f"[后台任务] {case_id}: 所有 {len(pdf_files)} 个文件转换失败")
+                else:
+                    # 至少部分成功
+                    if converted < len(pending_files):
+                        msg = f"部分成功: 成功 {converted}/{len(pending_files)}，失败 {len(pending_files) - converted}"
+                        if skipped_files:
+                            msg += f"，跳过 {len(skipped_files)} 个已转换文件"
+
+                    _update_task(
+                        case_id,
+                        status="completed",
+                        total=len(pdf_files),
+                        message=msg,
+                        results=results,
+                    )
+                    logger.info(f"[后台任务] {case_id}: {msg}")
 
             except Exception as e:
                 logger.exception(f"[后台任务] {case_id}: 任务异常")

@@ -30,6 +30,10 @@ from datetime import datetime
 
 import aiohttp
 import fitz
+import logging
+
+# 配置日志（PyInstaller --noconsole 模式下 print() 不可见，必须用 logger）
+logger = logging.getLogger(__name__)
 
 # 打包后 certifi 证书路径可能失效，macOS 用系统证书
 if sys.platform == "darwin" and getattr(sys, "frozen", False):
@@ -138,7 +142,7 @@ def _split_pdf_pages(pdf_path: Path, chunk_size: int = MINERU_MAX_PAGES) -> List
         # 检查实际文件大小
         actual_size = tmp_path.stat().st_size
         if actual_size > MINERU_MAX_FILE_SIZE * 0.95:
-            print(f"[分段] chunk {start+1}-{end} 超限，减半重新拆分")
+            logger.warning(f"[MinerU] chunk {start+1}-{end} 超限，减半重新拆分")
             tmp_path.unlink(missing_ok=True)
             sub_size = max(chunk_size // 2, 10)
             for sub_start in range(start, end, sub_size):
@@ -309,7 +313,6 @@ class AsyncMinerUConverter:
         progress_cb: Optional[Callable[[BatchProgress], None]] = None,
     ) -> List[ConvertResult]:
         """批量转换多个 PDF 文件（并发处理）
-
         Args:
             pdf_paths: PDF 文件路径列表
             output_dir: 输出目录
@@ -349,7 +352,7 @@ class AsyncMinerUConverter:
                     if not result.success and result.error:
                         if "429" in result.error or "限频" in result.error or "队列已满" in result.error:
                             wait_time = 30 * (attempt + 1)  # 30s, 60s, 90s
-                            print(f"[MinerU] 触发限频，{wait_time}s 后重试 ({attempt + 1}/{max_retries}): {pdf_path.name}")
+                            logger.info(f"[MinerU] 触发限频，{wait_time}s 后重试 ({attempt + 1}/{max_retries}): {pdf_path.name}")
                             await asyncio.sleep(wait_time)
                             continue
 
@@ -402,7 +405,7 @@ class AsyncMinerUConverter:
                 if progress_cb:
                     progress_cb("submitting", "正在提交转换任务...")
 
-                batch_id, upload_url = await self._submit_task(
+                batch_id, upload_url, submit_error = await self._submit_task(
                     session, pdf_path, stem
                 )
 
@@ -410,10 +413,10 @@ class AsyncMinerUConverter:
                     return ConvertResult(
                         file_name=pdf_path.name,
                         success=False,
-                        error="获取上传链接失败"
+                        error=submit_error or "获取上传链接失败"
                     )
 
-                print(f"[MinerU] 开始上传 {pdf_path.name} (batch_id={batch_id})")
+                logger.info(f"[MinerU] 开始上传 {pdf_path.name} (batch_id={batch_id})")
 
                 # 2. 上传文件
                 if progress_cb:
@@ -470,6 +473,7 @@ class AsyncMinerUConverter:
                         images_dir=images_dir
                     )
 
+                logger.error(f"[MinerU] 结果内容为空: {pdf_path.name}")
                 return ConvertResult(
                     file_name=pdf_path.name,
                     success=False,
@@ -477,7 +481,7 @@ class AsyncMinerUConverter:
                 )
 
         except Exception as e:
-            print(f"[MinerU] 异常: {pdf_path.name}, {e}")
+            logger.error(f"[MinerU] 异常: {pdf_path.name}, {e}")
             return ConvertResult(
                 file_name=pdf_path.name,
                 success=False,
@@ -497,7 +501,7 @@ class AsyncMinerUConverter:
         Args:
             chunks: List of (chunk_path, start_page, end_page) tuples
         """
-        print(f"[分段转换] {original_pdf.name}: 共 {len(chunks)} 个 chunk")
+        logger.info(f"[分段转换] {original_pdf.name}: 共 {len(chunks)} 个 chunk")
 
         chunk_results = []
         all_images_dirs = []
@@ -522,9 +526,9 @@ class AsyncMinerUConverter:
                 chunk_results.append((result.text, start_page, end_page))
                 if result.images_dir:
                     all_images_dirs.append(result.images_dir)
-                print(f"[分段转换] chunk {i} 成功 (第{start_page}-{end_page}页)")
+                logger.info(f"[分段转换] chunk {i} 成功 (第{start_page}-{end_page}页)")
             else:
-                print(f"[分段转换] chunk {i} 失败: {result.error}")
+                logger.info(f"[分段转换] chunk {i} 失败: {result.error}")
 
             # 清理临时目录
             shutil.rmtree(chunk_output, ignore_errors=True)
@@ -569,7 +573,7 @@ class AsyncMinerUConverter:
         target_md = output_dir / f"{original_pdf.stem}.md"
         target_md.write_text(merged_text, encoding="utf-8")
 
-        print(f"[MinerU] 分段转换完成 {original_pdf.name}: {len(merged_text)} 字符")
+        logger.info(f"[MinerU] 分段转换完成 {original_pdf.name}: {len(merged_text)} 字符")
 
         return ConvertResult(
             file_name=original_pdf.name,
@@ -583,8 +587,14 @@ class AsyncMinerUConverter:
         session: aiohttp.ClientSession,
         pdf_path: Path,
         data_id: str,
-    ) -> Tuple[Optional[str], Optional[str]]:
-        """提交转换任务，返回 (batch_id, upload_url)"""
+    ) -> Tuple[Optional[str], Optional[str], str]:
+        """提交转换任务，返回 (batch_id, upload_url, error_msg)
+
+        Returns:
+            Tuple of (batch_id, upload_url, error_msg)
+            On success: (batch_id, upload_url, "")
+            On failure: (None, None, error_description)
+        """
         try:
             params = {
                 "is_ocr": "true",
@@ -604,24 +614,41 @@ class AsyncMinerUConverter:
                 timeout=aiohttp.ClientTimeout(total=30),
                 ssl=_SSL_VERIFY if isinstance(_SSL_VERIFY, bool) else _SSL_VERIFY,
             ) as resp:
+                # 先检查 HTTP 状态码
+                if resp.status != 200:
+                    body = await resp.text()
+                    err_msg = f"MinerU API HTTP {resp.status}: {body[:200]}"
+                    logger.error(f"[MinerU] {err_msg}")
+                    return None, None, err_msg
+
                 result = await resp.json()
 
                 if result.get("code") != 0:
-                    err_msg = result.get("msg", "未知错误")
                     err_code = result.get("code")
-                    print(f"[MinerU] 获取上传链接失败: code={err_code}, msg={err_msg}")
-                    return None, None
+                    err_msg = result.get("msg", "未知错误")
+                    logger.error(f"[MinerU] API 错误 code={err_code}: {err_msg}")
+                    return None, None, f"MinerU API 错误 ({err_code}): {err_msg}"
 
                 data = result.get("data", {})
                 batch_id = data.get("batch_id")
                 file_urls = data.get("file_urls", [])
                 upload_url = file_urls[0] if file_urls else None
 
-                return batch_id, upload_url
+                if not batch_id or not upload_url:
+                    logger.error(f"[MinerU] 返回数据不完整: batch_id={'有' if batch_id else '无'}, upload_url={'有' if upload_url else '无'}")
+                    return None, None, "MinerU 返回数据不完整"
 
+                return batch_id, upload_url, ""
+
+        except asyncio.TimeoutError:
+            logger.error(f"[MinerU] 提交任务超时: {pdf_path.name}")
+            return None, None, "MinerU 提交超时"
+        except aiohttp.ClientError as e:
+            logger.error(f"[MinerU] 网络错误: {e}")
+            return None, None, f"MinerU 网络错误: {str(e)[:100]}"
         except Exception as e:
-            print(f"[MinerU] 提交任务异常: {e}")
-            return None, None
+            logger.error(f"[MinerU] 提交任务异常: {e}")
+            return None, None, f"MinerU 提交异常: {str(e)[:100]}"
 
     async def _upload_file(
         self,
@@ -654,11 +681,11 @@ class AsyncMinerUConverter:
             ) as resp:
                 if resp.status not in (200, 201, 203, 204):
                     text = await resp.text()
-                    print(f"[MinerU] 上传失败: HTTP {resp.status}, {text[:200]}")
+                    logger.error(f"[MinerU] 上传失败: HTTP {resp.status}, {text[:200]}")
                 return resp.status in (200, 201, 203, 204)
 
         except Exception as e:
-            print(f"[MinerU] 上传异常: {e}")
+            logger.error(f"[MinerU] 上传异常: {e}")
             return False
 
     async def _poll_result(
@@ -696,23 +723,23 @@ class AsyncMinerUConverter:
                     state = results[0].get("state")
 
                     if state == "done":
-                        print(f"[MinerU] 转换完成: {data_id}")
+                        logger.info(f"[MinerU] 转换完成: {data_id}")
                         return results[0]
 
                     elif state == "failed":
                         err_info = results[0].get("err_msg") or results[0].get("task_status_msg") or "未知错误"
-                        print(f"[MinerU] 云端转换失败: {data_id}, {err_info}")
+                        logger.error(f"[MinerU] 云端转换失败: {data_id}, {err_info}")
                         return None
 
                     await asyncio.sleep(poll_interval)
                     waited += poll_interval
 
             except Exception as e:
-                print(f"[MinerU] 轮询异常: {e}")
+                logger.error(f"[MinerU] 轮询异常: {e}")
                 await asyncio.sleep(poll_interval)
                 waited += poll_interval
 
-        print(f"[MinerU] 转换超时: {data_id}")
+        logger.error(f"[MinerU] 转换超时: {data_id}")
         return None
 
     async def _download_and_parse(
@@ -724,7 +751,7 @@ class AsyncMinerUConverter:
         """下载并解析转换结果"""
         zip_url = result_data.get("full_zip_url", "")
         if not zip_url:
-            print(f"[MinerU] 未找到 full_zip_url")
+            logger.error(f"[MinerU] 未找到 full_zip_url")
             return None, None
 
         # 创建临时目录
