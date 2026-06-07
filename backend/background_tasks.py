@@ -14,12 +14,16 @@ import shutil
 import threading
 import time
 import asyncio
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 
 from config import DATA_DIR
+
+# 配置日志
+logger = logging.getLogger(__name__)
 
 TASKS_FILE = DATA_DIR / "criminal-llm-tasks.json"
 
@@ -74,7 +78,7 @@ def init_tasks():
                 state["status"] = "interrupted"
                 state["updated_at"] = datetime.now().isoformat()
             _task_states[task_id] = state
-    print(f"[后台任务] 已恢复 {len(_task_states)} 个任务状态")
+    logger.info(f"[后台任务] 已恢复 {len(_task_states)} 个任务状态")
 
 
 def _make_task_id(case_id: str) -> str:
@@ -150,30 +154,50 @@ def start_convert_task(case_id: str, max_concurrent: int = 3):
                     return
 
                 processed_dir = case_path / "processed"
+                original_dir = case_path / "original"
                 md_dir = case_path / "md"
                 md_dir.mkdir(parents=True, exist_ok=True)
 
-                if not processed_dir.exists():
-                    _update_task(case_id, status="failed", message="案件中无已处理的 PDF 文件")
-                    return
+                # 优先从 processed/ 读取，不存在则从 original/ 读取
+                pdf_files = []
+                if processed_dir.exists():
+                    pdf_files = [f for f in sorted(processed_dir.iterdir()) if f.is_file() and f.suffix.lower() == ".pdf"]
+                    logger.info(f"[后台任务] {case_id}: processed/ 目录存在，找到 {len(pdf_files)} 个 PDF 文件")
+                    for pdf in pdf_files:
+                        logger.info(f"  - {pdf.name}")
 
-                pdf_files = [f for f in sorted(processed_dir.iterdir()) if f.is_file() and f.suffix.lower() == ".pdf"]
+                # 如果 processed/ 没有文件，尝试从 original/ 读取
+                if not pdf_files and original_dir.exists():
+                    pdf_files = [f for f in sorted(original_dir.iterdir()) if f.is_file() and f.suffix.lower() == ".pdf"]
+                    logger.info(f"[后台任务] {case_id}: processed/ 为空，从 original/ 读取，找到 {len(pdf_files)} 个 PDF 文件")
+
                 if not pdf_files:
-                    _update_task(case_id, status="failed", message="processed/ 目录中无 PDF 文件")
+                    logger.info(f"[后台任务] {case_id}: 案件中无 PDF 文件")
+                    _update_task(case_id, status="failed", message="案件中无 PDF 文件（请先上传 PDF）")
                     return
 
                 # 过滤掉已有 MD 文件的 PDF（跳过已转换的）
                 pending_files = []
                 skipped_files = []
+                logger.info(f"[后台任务] {case_id}: 检查 MD 文件是否已存在...")
+                logger.info(f"[后台任务] {case_id}: md_dir = {md_dir}, exists = {md_dir.exists()}")
+                if md_dir.exists():
+                    existing_md_files = [f.name for f in md_dir.glob("*.md")]
+                    logger.info(f"[后台任务] {case_id}: md/ 目录中有 {len(existing_md_files)} 个 MD 文件: {existing_md_files}")
+
                 for pdf in pdf_files:
                     md_path = md_dir / f"{pdf.stem}.md"
+                    logger.info(f"[后台任务] {case_id}: 检查 PDF '{pdf.name}' -> MD '{md_path.name}', exists={md_path.exists()}, size={md_path.stat().st_size if md_path.exists() else 0}")
                     if md_path.exists() and md_path.stat().st_size > 100:  # 至少 100 字节才算有效
                         skipped_files.append(pdf.name)
+                        logger.info(f"  -> 跳过（已有 MD）")
                     else:
                         pending_files.append(pdf)
+                        logger.info(f"  -> 待转换")
 
                 # 全部已转换完成
                 if not pending_files:
+                    logger.info(f"[后台任务] {case_id}: 所有 {len(pdf_files)} 个 PDF 都已有对应 MD，无需转换")
                     _update_task(
                         case_id,
                         status="completed",
@@ -185,7 +209,7 @@ def start_convert_task(case_id: str, max_concurrent: int = 3):
 
                 # 部分已转换，仅处理待转换文件
                 if skipped_files:
-                    print(f"[后台任务] {case_id}: 跳过 {len(skipped_files)} 个已转换文件")
+                    logger.info(f"[后台任务] {case_id}: 跳过 {len(skipped_files)} 个已转换文件")
 
                 _update_task(
                     case_id,
@@ -278,12 +302,10 @@ def start_convert_task(case_id: str, max_concurrent: int = 3):
                     message=msg,
                     results=results,
                 )
-                print(f"[后台任务] {case_id}: {msg}")
+                logger.info(f"[后台任务] {case_id}: {msg}")
 
             except Exception as e:
-                import traceback
-                error_traceback = traceback.format_exc()
-                print(f"[后台任务] {case_id}: 任务异常 {e}")
+                logger.exception(f"[后台任务] {case_id}: 任务异常")
                 _update_task(case_id, status="failed", message=str(e)[:500], error_details=[{
                     "reason": "generic",
                     "message": str(e)[:500],

@@ -183,12 +183,20 @@ def scan_pending_folders() -> List[PendingFolder]:
 def find_case_path(case_id: str) -> Optional[Path]:
     """查找案件目录（扫描 CASES_DIR 下所有子目录匹配 case_id）"""
     if not CASES_DIR.exists():
+        logger.warning(f"[find_case_path] CASES_DIR 不存在: {CASES_DIR}")
         return None
+
+    logger.debug(f"[find_case_path] 搜索 case_id={case_id}, CASES_DIR={CASES_DIR}")
+
     for case_dir in CASES_DIR.iterdir():
         if case_dir.is_dir() and case_dir.name == case_id:
+            logger.debug(f"[find_case_path] 找到匹配目录: {case_dir}")
             for sub in case_dir.iterdir():
                 if sub.is_dir() and (sub / "case.json").exists():
+                    logger.info(f"[find_case_path] case_id={case_id} -> {sub}")
                     return sub
+
+    logger.warning(f"[find_case_path] case_id={case_id} 未找到")
     return None
 
 
@@ -1136,10 +1144,18 @@ async def extract_evidence(case_id: str):
     """
     case_path = find_case_path(case_id)
     if not case_path:
+        logger.error(f"[证据提取] case_id={case_id} 案件不存在，find_case_path 返回 None")
         raise HTTPException(status_code=404, detail="案件不存在")
 
     md_dir = case_path / "md"
-    if not md_dir.exists() or not any(md_dir.glob("*.md")):
+    logger.info(f"[证据提取] case_id={case_id}, case_path={case_path}, md_dir={md_dir}, md_dir.exists={md_dir.exists()}")
+
+    # 检查 MD 文件是否存在
+    md_files = list(md_dir.glob("*.md")) if md_dir.exists() else []
+    logger.info(f"[证据提取] md/ 目录中有 {len(md_files)} 个 MD 文件: {[f.name for f in md_files]}")
+
+    if not md_files:
+        logger.error(f"[证据提取] case_id={case_id} 案件中无 MD 文件，md_dir.exists={md_dir.exists()}")
         raise HTTPException(status_code=400, detail="案件中无 MD 文件，请先完成 PDF 转 MD")
 
     evidence_dir = case_path / "evidence"
@@ -1149,7 +1165,7 @@ async def extract_evidence(case_id: str):
         raise HTTPException(status_code=409, detail="证据提取已在运行中")
 
     # 统计文件总数（用于进度显示）
-    total_md_count = len(list(md_dir.glob("*.md")))
+    total_md_count = len(md_files)
 
     EXTRACT_TASKS[case_id] = {
         "status": "running",
@@ -1181,10 +1197,10 @@ async def _run_extract_background(case_id: str, case_path, md_dir, evidence_dir)
         logger.info("[证据提取] 后台任务启动: %s", case_id)
         await _do_extract_evidence(case_id, case_path, md_dir, evidence_dir)
         logger.info("[证据提取] 后台任务完成: %s", case_id)
+        # 成功完成后清除任务状态
+        EXTRACT_TASKS.pop(case_id, None)
     except Exception as e:
         logger.exception("[证据提取] 后台任务失败: %s", e)
-        import traceback
-        traceback.print_exc()
         # 记录结构化错误详情到 EXTRACT_TASKS，让前端轮询能拿到
         task = EXTRACT_TASKS.get(case_id)
         if isinstance(task, dict):
@@ -1195,7 +1211,7 @@ async def _run_extract_background(case_id: str, case_path, md_dir, evidence_dir)
                 "recoverable": True,
             }]
             task["recoverable"] = True
-        EXTRACT_TASKS.pop(case_id, None)
+        # 错误状态保留，不清除，让前端能读取到错误信息
 
 
 async def _do_extract_evidence(
