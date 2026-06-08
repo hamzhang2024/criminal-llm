@@ -26,8 +26,8 @@ export { extractEvidence, stopExtractEvidence, getEvidenceIndex, getExtractStatu
 export { runPipelineStep, getPipelineStatus, getPipelineProgress, getStepResult, getAnalysisState, resumePipeline, getDefenseStages, getDefenseStageContent, getWikiIndex, getWikiPage, getMdFile, getPdfText, uploadWikiReference, clearWiki, getEvidenceSummaries, getEvidenceOther, getSummaryContent, getEvidenceFiles, getContradictionFiles, getContradictionContent } from './pipeline'
 
 // 5 阶段分析引擎
-export { getIndictmentCandidates, runAllStages, getStageStatus, getStageProgress, runSingleStage, getStageResult, getStageMarkdown, getFullReport, saveStageMarkdown, saveFullReport } from './stages'
-export type { IndictmentCandidate } from './stages'
+export { getIndictmentCandidates, runAllStages, getStageStatus, getStageProgress, runSingleStage, getStageResult, getStageMarkdown, getFullReport, saveStageMarkdown, saveFullReport, reviewEvidence, getEvidenceReview, generateReviewNotes, getReviewNotes, generateCrossExamination, getCrossExamination, getEvidenceChain, getPersonRelation, getEventTimeline, searchSimilarCases } from './stages'
+export type { IndictmentCandidate, EvidenceReviewItem, EvidenceReviewResult, ReviewNotesResult, CrossExaminationResult, EvidenceChainNode, EvidenceChainEdge, EvidenceChainGroup, EvidenceChainData, PersonNode, RelationEdge, RelationGraphData, EventNode, TimelineData, SimilarCase, SimilarCasesData } from './stages'
 
 // 法律知识库
 export { listLegalKB, getLegalKBItem, createLegalKBItem, updateLegalKBItem, deleteLegalKBItem, searchLaws } from './legal'
@@ -44,9 +44,15 @@ import { getAppVersion, checkUpdate } from './config'
 import { listCases, getPendingCases, getTrash, getCaseInfo, getCaseFiles, getStepFiles, createCase, importCase, deleteCase, restoreCase, permanentDeleteCase, claimCases, uploadFiles, deleteFile, deleteOriginalFileOnly, batchProcess, convertToMd, deleteMdFile, deletePdfFile, openFile, getLlmSegmentNames, getThumbnails, cleanupProcessed, createAnalysis, analyzeCase, getAnalysisProgress, chatAboutCase, getReport, selectEvidence } from './cases'
 import { extractEvidence, stopExtractEvidence, getEvidenceIndex, getExtractStatus, getEvidenceSummary, getMdFiles, getProcessedPdfs } from './evidence'
 import { runPipelineStep, getPipelineStatus, getPipelineProgress, getStepResult, getAnalysisState, resumePipeline, getDefenseStages, getDefenseStageContent, getWikiIndex, getWikiPage, getMdFile, getPdfText, uploadWikiReference, clearWiki, getEvidenceSummaries, getEvidenceOther, getSummaryContent, getEvidenceFiles, getContradictionFiles, getContradictionContent } from './pipeline'
-import { getIndictmentCandidates, runAllStages, getStageStatus, getStageProgress, runSingleStage, getStageResult, getStageMarkdown, getFullReport, saveStageMarkdown, saveFullReport } from './stages'
+import { getIndictmentCandidates, runAllStages, getStageStatus, getStageProgress, runSingleStage, getStageResult, getStageMarkdown, getFullReport, saveStageMarkdown, saveFullReport, reviewEvidence, getEvidenceReview, generateReviewNotes, getReviewNotes, generateCrossExamination, getCrossExamination, getEvidenceChain, getPersonRelation, getEventTimeline, searchSimilarCases } from './stages'
 import { listLegalKB, getLegalKBItem, createLegalKBItem, updateLegalKBItem, deleteLegalKBItem, searchLaws } from './legal'
 import { pickFiles, pickFolder, pickMultiple, sendNotification, showNativeConfirm, createWorkflow, updateWorkflowStatus, listWorkflows, getWorkflow, addStep, updateStep, getSteps, addFile, updateFilePaths, getFiles, logOperation, deleteWorkflow } from './native'
+
+// 获取后端日志
+export async function getBackendLog(lines: number = 500): Promise<{ success: boolean; lines?: string[]; total_lines?: number; error?: string }> {
+  const res = await fetch(`${API_BASE}/logs/backend?lines=${lines}`)
+  return res.json()
+}
 
 export const api = {
   // 案件管理
@@ -123,6 +129,21 @@ export const api = {
   getFullReport,
   saveStageMarkdown,
   saveFullReport,
+  // 证据三性审查
+  reviewEvidence,
+  getEvidenceReview,
+  // 阅卷笔录
+  generateReviewNotes,
+  getReviewNotes,
+  // 质证意见
+  generateCrossExamination,
+  getCrossExamination,
+  // 证据链可视化
+  getEvidenceChain,
+  getPersonRelation,
+  getEventTimeline,
+  // 类案检索
+  searchSimilarCases,
   // 证据提取
   extractEvidence,
   stopExtractEvidence,
@@ -154,4 +175,6 @@ export const api = {
   getFiles,
   logOperation,
   deleteWorkflow,
+  // 日志
+  getBackendLog,
 }

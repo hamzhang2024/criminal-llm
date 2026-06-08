@@ -247,10 +247,12 @@ def start_convert_task(case_id: str, max_concurrent: int = 3):
                     )
 
                 # 执行异步批量转换（仅处理待转换文件）
+                logger.info(f"[后台任务] {case_id}: 使用引擎 '{pdf_engine}'，转换 {len(pending_files)} 个文件，并发={max_concurrent}")
+                convert_results: List[ConvertResult] = []
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
                 try:
-                    convert_results: List[ConvertResult] = loop.run_until_complete(
+                    convert_results = loop.run_until_complete(
                         converter.convert_batch(
                             pending_files,
                             md_dir,
@@ -259,6 +261,10 @@ def start_convert_task(case_id: str, max_concurrent: int = 3):
                             progress_cb=batch_progress_cb,
                         )
                     )
+                    logger.info(f"[后台任务] {case_id}: convert_batch 返回 {len(convert_results)} 个结果")
+                except Exception as e:
+                    logger.exception(f"[后台任务] {case_id}: 转换循环异常: {type(e).__name__}: {e}")
+                    convert_results = []
                 finally:
                     loop.close()
 
@@ -267,16 +273,24 @@ def start_convert_task(case_id: str, max_concurrent: int = 3):
                     results.append({"file": f, "success": True, "skipped": True})
 
                 converted = 0
+                error_details = []
                 for i, result in enumerate(convert_results):
-                    results.append({
+                    result_dict = {
                         "file": result.file_name,
                         "success": result.success,
                         "md_name": f"{Path(result.file_name).stem}.md" if result.success else None,
                         "md_size": len(result.text) if result.text else 0,
                         "error": result.error,
-                    })
+                    }
+                    results.append(result_dict)
                     if result.success:
                         converted += 1
+                    else:
+                        error_details.append(f'{result.file_name}: {result.error}')
+                        logger.warning(f"[后台任务] {case_id}: 文件转换失败: {result_dict['error']}")
+
+                if not convert_results and not skipped_files:
+                    logger.error(f"[后台任务] {case_id}: convert_results 为空（既无成功结果也无跳过文件），可能是 convert_batch 抛出异常或返回空列表")
 
                 # 安全清理（使用全部 PDF 文件列表）
                 pdf_stems = {f.stem for f in pdf_files}

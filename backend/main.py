@@ -36,7 +36,7 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=_handlers,
 )
-del _log_path, _handlers
+del _handlers  # _log_path 保留供 /api/logs/backend 端点使用
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
@@ -330,11 +330,41 @@ async def manual_cleanup(days: int = 7):
     }
 
 
+@app.get("/api/logs/backend/download")
+async def download_backend_log():
+    """下载完整的后端日志文件"""
+    if not _log_path.exists():
+        raise HTTPException(status_code=404, detail="日志文件不存在")
+    return FileResponse(
+        str(_log_path),
+        media_type="text/plain",
+        filename="criminal-llm-backend.log",
+    )
+
+
+@app.get("/api/logs/backend")
+async def get_backend_log(lines: int = 500):
+    """获取后端日志的最后 N 行（默认 500 行）"""
+    if not _log_path.exists():
+        return {"success": False, "error": "日志文件不存在", "path": str(_log_path)}
+    try:
+        all_lines = _log_path.read_text(encoding="utf-8").splitlines()
+        tail = all_lines[-lines:] if len(all_lines) > lines else all_lines
+        return {
+            "success": True,
+            "total_lines": len(all_lines),
+            "returned_lines": len(tail),
+            "lines": tail,
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 @app.get("/api/storage-stats")
 async def storage_stats():
     """
     获取存储统计信息
-    
+
     Returns:
         各目录的大小和文件数量
     """

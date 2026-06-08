@@ -539,18 +539,10 @@ class AsyncPaddleOCRConverter:
         timeout: int = DEFAULT_TIMEOUT,
         progress_cb: Optional[Callable[[BatchProgress], None]] = None,
     ) -> List[ConvertResult]:
-        """批量转换多个 PDF 文件（并发处理）
-
-        Args:
-            pdf_paths: PDF 文件路径列表
-            output_dir: 输出目录
-            max_concurrent: 最大并发数（默认 3，建议 1-5，过高可能触发 API 限流）
-            timeout: 单文件超时时间
-            progress_cb: 进度回调
-
-        Returns:
-            ConvertResult 列表
-        """
+        """批量转换多个 PDF 文件（并发处理）"""
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"[PaddleOCR] convert_batch 入口: {len(pdf_paths)} 个文件, output_dir={output_dir}, max_concurrent={max_concurrent}")
         output_dir.mkdir(parents=True, exist_ok=True)
 
         # 创建信号量控制并发

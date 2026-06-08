@@ -84,6 +84,7 @@ def _get_mineru_token() -> str:
     # 环境变量优先
     token = os.environ.get("MINERU_TOKEN", "")
     if token:
+        logger.debug(f"[MinerU] Token 来源: 环境变量 MINERU_TOKEN")
         return token
 
     # 应用配置
@@ -91,6 +92,7 @@ def _get_mineru_token() -> str:
         from config_manager import get_config_value
         token = get_config_value("mineru_token")
         if token:
+            logger.debug(f"[MinerU] Token 来源: 配置文件 criminal-llm-config.json")
             return token
     except ImportError:
         pass
@@ -102,8 +104,11 @@ def _get_mineru_token() -> str:
         for line in env_path.read_text().splitlines():
             if line.startswith("MINERU_TOKEN="):
                 token = line.split("=", 1)[1].strip()
+                logger.debug(f"[MinerU] Token 来源: {env_path}")
                 break
 
+    if not token:
+        logger.warning(f"[MinerU] 未找到 Token（已检查环境变量、配置文件、.env）")
     return token
 
 
@@ -276,6 +281,9 @@ class AsyncMinerUConverter:
         self.token = token or _get_mineru_token()
         if not self.token:
             raise ValueError("MinerU Token 未配置，请设置 MINERU_TOKEN 环境变量或在设置中配置")
+        # 调试日志：显示 token 来源和前几位（不泄露完整 token）
+        source = "参数传入" if token else "配置文件/环境变量"
+        logger.info(f"[MinerU] 初始化: token来源={source}, token前20字符={self.token[:20]}...")
 
     async def convert_single(
         self,
@@ -312,22 +320,8 @@ class AsyncMinerUConverter:
         timeout: int = DEFAULT_TIMEOUT,
         progress_cb: Optional[Callable[[BatchProgress], None]] = None,
     ) -> List[ConvertResult]:
-        """批量转换多个 PDF 文件（并发处理）
-        Args:
-            pdf_paths: PDF 文件路径列表
-            output_dir: 输出目录
-            max_concurrent: 最大并发数（默认 3，建议 1-5）
-            timeout: 单文件超时时间
-            progress_cb: 进度回调
-
-        Returns:
-            ConvertResult 列表
-
-        注意：
-            - MinerU API 无明确并发限制，但高频请求会触发 429 限频
-            - VLM 模式处理时间较长，建议并发 3-5
-            - 遇到 429 或 -60009 错误时会自动退避重试
-        """
+        """批量转换多个 PDF 文件（并发处理）"""
+        logger.info(f"[MinerU] convert_batch 入口: {len(pdf_paths)} 个文件, output_dir={output_dir}, max_concurrent={max_concurrent}")
         output_dir.mkdir(parents=True, exist_ok=True)
         results = []
 
@@ -372,8 +366,10 @@ class AsyncMinerUConverter:
                 return result
 
         # 并发执行所有转换
+        logger.info(f"[MinerU] 启动 {len(tasks)} 个并发任务, gather 开始...")
         tasks = [_convert_with_semaphore(pdf) for pdf in pdf_paths]
         results = await asyncio.gather(*tasks, return_exceptions=True)
+        logger.info(f"[MinerU] gather 完成, 原始结果数={len(results)}")
 
         # 处理异常结果
         final_results = []
@@ -615,6 +611,11 @@ class AsyncMinerUConverter:
                 ssl=_SSL_VERIFY if isinstance(_SSL_VERIFY, bool) else _SSL_VERIFY,
             ) as resp:
                 # 先检查 HTTP 状态码
+                if resp.status == 401:
+                    body = await resp.text()
+                    err_msg = "MinerU Token 无效或已过期，请在设置页面重新配置"
+                    logger.error(f"[MinerU] 认证失败 (401): {body[:200]}")
+                    return None, None, err_msg
                 if resp.status != 200:
                     body = await resp.text()
                     err_msg = f"MinerU API HTTP {resp.status}: {body[:200]}"
@@ -708,6 +709,11 @@ class AsyncMinerUConverter:
                     timeout=aiohttp.ClientTimeout(total=30),
                     ssl=_SSL_VERIFY if isinstance(_SSL_VERIFY, bool) else _SSL_VERIFY,
                 ) as resp:
+                    # 先检查 HTTP 状态码
+                    if resp.status == 401:
+                        logger.error(f"[MinerU] 轮询认证失败 (401): Token 无效或已过期")
+                        return None
+
                     result = await resp.json()
 
                     data = result.get("data", {})
