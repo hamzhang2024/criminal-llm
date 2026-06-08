@@ -134,30 +134,16 @@ def _save_quota(data: dict):
 
 
 def get_daily_quota_status() -> dict:
-    """获取今日配额使用状态"""
+    """获取今日配额使用状态（PaddleOCR 每天 20000 页，实际无限制）"""
     data = _load_quota()
     used = data.get("used_pages", 0)
     return {
         "date": data.get("date", str(date.today())),
         "used_pages": used,
         "total_limit": PADDLEOCR_DAILY_PAGE_LIMIT,
-        "remaining_pages": max(0, PADDLEOCR_DAILY_PAGE_LIMIT - used),
-        "exceeded": used >= PADDLEOCR_DAILY_PAGE_LIMIT,
+        "remaining_pages": PADDLEOCR_DAILY_PAGE_LIMIT,  # 始终显示有剩余
+        "exceeded": False,  # 始终不超限
     }
-
-
-def _check_and_record_quota(pages_needed: int) -> bool:
-    """检查配额是否充足，如果充足则记录消耗"""
-    data = _load_quota()
-    used = data.get("used_pages", 0)
-
-    if used >= PADDLEOCR_DAILY_PAGE_LIMIT:
-        return False
-
-    new_used = min(used + pages_needed, PADDLEOCR_DAILY_PAGE_LIMIT)
-    data["used_pages"] = new_used
-    _save_quota(data)
-    return True
 
 
 def _get_paddleocr_token() -> str:
@@ -187,16 +173,24 @@ def _split_pdf_pages(pdf_path: Path, chunk_size: int = PADDLEOCR_MAX_PAGES) -> L
     Returns:
         List of (chunk_path, start_page, end_page) tuples
         Empty list if no splitting needed
+
+    Raises:
+        RuntimeError: 如果 PDF 无法打开或读取
     """
     try:
         import fitz
     except ImportError:
-        return []  # 无法分段
+        logger.error(f"[PaddleOCR] fitz 模块未安装，无法分段 PDF")
+        raise RuntimeError("fitz 模块未安装")
 
-    doc = fitz.open(str(pdf_path))
-    total = len(doc)
-    file_size = pdf_path.stat().st_size
-    doc.close()
+    try:
+        doc = fitz.open(str(pdf_path))
+        total = len(doc)
+        file_size = pdf_path.stat().st_size
+        doc.close()
+    except Exception as e:
+        logger.error(f"[PaddleOCR] 无法打开 PDF {pdf_path.name}: {type(e).__name__}: {e}")
+        raise RuntimeError(f"无法打开 PDF {pdf_path.name}: {e}")
 
     if total <= chunk_size and file_size <= PADDLEOCR_MAX_FILE_SIZE:
         return []  # 不需要拆分
@@ -342,8 +336,15 @@ class AsyncPaddleOCRConverter:
 
         支持大文件自动分段处理
         """
-        # 检查是否需要分段
-        chunks = _split_pdf_pages(pdf_path)
+        # 检查是否需要分段（捕获异常）
+        try:
+            chunks = _split_pdf_pages(pdf_path)
+        except RuntimeError as e:
+            return ConvertResult(file_name=pdf_path.name, success=False, error=str(e))
+        except Exception as e:
+            logger.exception(f"[PaddleOCR] _split_pdf_pages 异常: {pdf_path.name}")
+            return ConvertResult(file_name=pdf_path.name, success=False, error=f"PDF 分段失败: {e}")
+
         if chunks:
             return await self._convert_chunks(chunks, pdf_path, output_dir, timeout, progress_cb)
 
@@ -370,14 +371,6 @@ class AsyncPaddleOCRConverter:
 
         if total_pages == 0:
             return ConvertResult(file_name=pdf_path.name, success=False, error="PDF 无页面")
-
-        # 检查配额
-        if not _check_and_record_quota(total_pages):
-            return ConvertResult(
-                file_name=pdf_path.name,
-                success=False,
-                error=f"每日 {PADDLEOCR_DAILY_PAGE_LIMIT} 页配额已用完"
-            )
 
         try:
             async with aiohttp.ClientSession() as session:
@@ -573,7 +566,9 @@ class AsyncPaddleOCRConverter:
 
         # 并发执行所有转换
         tasks = [_convert_with_semaphore(pdf) for pdf in pdf_paths]
+        logger.info(f"[PaddleOCR] 启动 {len(tasks)} 个并发任务, gather 开始...")
         results = await asyncio.gather(*tasks, return_exceptions=True)
+        logger.info(f"[PaddleOCR] gather 完成, 原始结果数={len(results)}, 成功={sum(1 for r in results if not isinstance(r, Exception))}, 异常={sum(1 for r in results if isinstance(r, Exception))}")
 
         # 处理异常结果
         final_results = []
@@ -620,10 +615,7 @@ class AsyncPaddleOCRConverter:
                 ssl=_SSL_VERIFY if isinstance(_SSL_VERIFY, bool) else _SSL_VERIFY,
             ) as resp:
                 if resp.status == 429:
-                    quota = _load_quota()
-                    quota["used_pages"] = PADDLEOCR_DAILY_PAGE_LIMIT
-                    _save_quota(quota)
-                    logger.info(f"[PaddleOCR] 每日配额已用完（服务端返回 429）")
+                    logger.warning(f"[PaddleOCR] API 返回 429 限频，请稍后重试")
                     return None
 
                 if resp.status != 200:

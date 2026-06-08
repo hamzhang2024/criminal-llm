@@ -1166,8 +1166,353 @@ class AnalysisEngine:
         self._save_stage(5, data, full_report)
         return data
 
+    # ========== 阅卷笔录 ==========
+
+    async def generate_review_notes(self) -> Dict[str, Any]:
+        """生成阅卷笔录
+
+        阅卷笔录是律师阅卷工作的核心文档，汇总案件关键信息。
+        """
+        texts = self._load_evidence_texts()
+
+        # 获取各阶段分析结果
+        stage1_md = _read_stage_md(self.analysis_dir, 1)  # 指控要素
+        stage2_md = _read_stage_md(self.analysis_dir, 2)  # 人物关系
+        stage3_md = _read_stage_md(self.analysis_dir, 3)  # 事件时间线
+        stage4_md = _read_stage_md(self.analysis_dir, 4)  # 法律法规
+
+        # 检查是否有证据审查结果
+        review_file = self.analysis_dir / "evidence_review.json"
+        review_data = None
+        if review_file.exists():
+            try:
+                review_data = json.loads(review_file.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+
+        # 构建阅卷笔录内容
+        notes_md = "# 阅卷笔录\n\n"
+        notes_md += f"> 生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
+
+        # 一、案件基本信息（从 stage 1 提取）
+        if stage1_md:
+            notes_md += "## 一、案件基本信息\n\n"
+            # 提取关键信息
+            import re
+            defendant_match = re.search(r"被告人[：:]\s*(.+?)(?:\n|$)", stage1_md)
+            crime_match = re.search(r"涉嫌罪名[：:]\s*(.+?)(?:\n|$)", stage1_md)
+            if defendant_match or crime_match:
+                if defendant_match:
+                    notes_md += f"**被告人**：{defendant_match.group(1).strip()}\n\n"
+                if crime_match:
+                    notes_md += f"**涉嫌罪名**：{crime_match.group(1).strip()}\n\n"
+            notes_md += "### 指控要素摘要\n\n"
+            # 截取前 2000 字
+            notes_md += stage1_md[:2000] + "\n\n"
+
+        # 二、证据目录
+        notes_md += "## 二、证据目录\n\n"
+        notes_md += "| 编号 | 证据名称 | 类型 |\n|------|---------|------|\n"
+        for t in texts:
+            ref = t.get("evidence_ref", "")
+            if ref:
+                notes_md += f"| {ref} | {t['filename']} | {t.get('type', '其他')} |\n"
+
+        # 三、证据三性审查摘要
+        if review_data and review_data.get("reviews"):
+            notes_md += "\n## 三、证据三性审查摘要\n\n"
+            for rev in review_data["reviews"][:10]:  # 最多显示前 10 个
+                name = rev.get("evidence_name", "未知证据")
+                notes_md += f"### {name}\n\n"
+                if rev.get("authenticity"):
+                    score = rev["authenticity"].get("score", 0)
+                    notes_md += f"- **真实性**：{score}分 — {rev['authenticity'].get('conclusion', '')}\n"
+                if rev.get("legality"):
+                    score = rev["legality"].get("score", 0)
+                    notes_md += f"- **合法性**：{score}分 — {rev['legality'].get('conclusion', '')}\n"
+                if rev.get("relevance"):
+                    score = rev["relevance"].get("score", 0)
+                    notes_md += f"- **关联性**：{score}分 — {rev['relevance'].get('conclusion', '')}\n"
+                notes_md += "\n"
+
+        # 四、人物关系（从 stage 2 提取）
+        if stage2_md:
+            notes_md += "## 四、人物关系\n\n"
+            notes_md += stage2_md[:1500] + "\n\n"
+
+        # 五、事件时间线（从 stage 3 提取）
+        if stage3_md:
+            notes_md += "## 五、事件时间线\n\n"
+            notes_md += stage3_md[:1500] + "\n\n"
+
+        # 六、法律分析（从 stage 4 提取）
+        if stage4_md:
+            notes_md += "## 六、法律分析\n\n"
+            notes_md += stage4_md[:1500] + "\n\n"
+
+        # 七、辩护要点（待补充）
+        notes_md += "## 七、辩护要点\n\n"
+        notes_md += "> 请在完成三阶层分析后补充辩护要点\n"
+
+        # 保存阅卷笔录
+        notes_file = self.analysis_dir / "review_notes.md"
+        notes_file.write_text(notes_md, encoding="utf-8")
+
+        return {
+            "case_id": self.case_id,
+            "content": notes_md,
+            "generated_at": datetime.now().isoformat(),
+        }
+
+    # ========== 质证意见 ==========
+
+    async def generate_cross_examination(self) -> Dict[str, Any]:
+        """生成质证意见
+
+        基于证据三性审查结果，对有问题的证据生成质证策略。
+        """
+        # 检查是否有证据审查结果
+        review_file = self.analysis_dir / "evidence_review.json"
+        if not review_file.exists():
+            return {
+                "case_id": self.case_id,
+                "content": "",
+                "error": "请先进行证据三性审查",
+            }
+
+        try:
+            review_data = json.loads(review_file.read_text(encoding="utf-8"))
+        except Exception:
+            return {
+                "case_id": self.case_id,
+                "content": "",
+                "error": "证据审查结果读取失败",
+            }
+
+        reviews = review_data.get("reviews", [])
+        if not reviews:
+            return {
+                "case_id": self.case_id,
+                "content": "",
+                "error": "无证据审查结果",
+            }
+
+        # 筛选有问题的证据（任一维度分数 < 70）
+        problematic = []
+        for rev in reviews:
+            issues = []
+            auth_score = rev.get("authenticity", {}).get("score", 100)
+            leg_score = rev.get("legality", {}).get("score", 100)
+            rel_score = rev.get("relevance", {}).get("score", 100)
+
+            if auth_score < 70:
+                issues.append(("真实性", auth_score, rev.get("authenticity", {}).get("issues", [])))
+            if leg_score < 70:
+                issues.append(("合法性", leg_score, rev.get("legality", {}).get("issues", [])))
+            if rel_score < 70:
+                issues.append(("关联性", rel_score, rev.get("relevance", {}).get("issues", [])))
+
+            if issues:
+                problematic.append({
+                    "name": rev.get("evidence_name", "未知证据"),
+                    "issues": issues,
+                })
+
+        # 构建质证意见
+        cross_md = "# 质证意见\n\n"
+        cross_md += f"> 生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
+        cross_md += f"> 问题证据数量：{len(problematic)} / {len(reviews)}\n\n"
+
+        if not problematic:
+            cross_md += "## 审查结论\n\n"
+            cross_md += "经证据三性审查，本案证据总体质量较好，未发现明显问题。\n\n"
+            cross_md += "建议重点审查：\n"
+            cross_md += "1. 证据收集程序是否合法\n"
+            cross_md += "2. 证据之间的印证关系\n"
+            cross_md += "3. 言词证据的稳定性\n"
+        else:
+            cross_md += "## 问题证据清单\n\n"
+            cross_md += "| 序号 | 证据名称 | 问题类型 | 分数 | 质证要点 |\n"
+            cross_md += "|------|---------|---------|------|----------|\n"
+
+            for i, item in enumerate(problematic, 1):
+                name = item["name"]
+                for issue_type, score, issue_list in item["issues"]:
+                    issue_text = "；".join(issue_list[:2]) if issue_list else "详见审查报告"
+                    cross_md += f"| {i} | {name} | {issue_type} | {score} | {issue_text[:50]} |\n"
+
+            cross_md += "\n## 详细质证意见\n\n"
+
+            for i, item in enumerate(problematic, 1):
+                cross_md += f"### {i}. {item['name']}\n\n"
+                for issue_type, score, issue_list in item["issues"]:
+                    cross_md += f"**{issue_type}问题（{score}分）**：\n\n"
+                    for issue in issue_list:
+                        cross_md += f"- {issue}\n"
+
+                    # 添加质证策略建议
+                    cross_md += f"\n**质证策略**：\n"
+                    if issue_type == "真实性":
+                        cross_md += "- 申请核实证据来源\n"
+                        cross_md += "- 要求出示原始载体\n"
+                        cross_md += "- 申请鉴定真伪\n"
+                    elif issue_type == "合法性":
+                        cross_md += "- 申请非法证据排除\n"
+                        cross_md += "- 要求说明收集程序\n"
+                        cross_md += "- 申请程序合法性说明\n"
+                    elif issue_type == "关联性":
+                        cross_md += "- 主张与待证事实无关\n"
+                        cross_md += "- 请求排除无关证据\n"
+                    cross_md += "\n"
+
+        # 保存质证意见
+        cross_file = self.analysis_dir / "cross_examination.md"
+        cross_file.write_text(cross_md, encoding="utf-8")
+
+        return {
+            "case_id": self.case_id,
+            "content": cross_md,
+            "total_evidence": len(reviews),
+            "problematic_count": len(problematic),
+            "generated_at": datetime.now().isoformat(),
+        }
+
 
 # ========== 工具函数 ==========
+
+def generate_evidence_chain(case_path: Path) -> Dict[str, Any]:
+    """生成证据链可视化数据
+
+    分析证据之间的印证、矛盾、补充关系，返回节点和边数据。
+    用于前端 SVG 渲染。
+    """
+    analysis_dir = case_path / "analysis"
+    evidence_dir = case_path / "evidence"
+
+    nodes = []
+    edges = []
+    groups = []
+
+    # 1. 读取证据清单
+    index_file = evidence_dir / "index.json"
+    if not index_file.exists():
+        return {
+            "nodes": [],
+            "edges": [],
+            "groups": [],
+            "total_evidence": 0,
+            "total_relations": 0,
+            "error": "证据清单不存在，请先进行证据提取",
+        }
+
+    try:
+        evidence_list = json.loads(index_file.read_text(encoding="utf-8"))
+    except Exception:
+        return {
+            "nodes": [],
+            "edges": [],
+            "groups": [],
+            "total_evidence": 0,
+            "total_relations": 0,
+            "error": "证据清单读取失败",
+        }
+
+    if not evidence_list:
+        return {
+            "nodes": [],
+            "edges": [],
+            "groups": [],
+            "total_evidence": 0,
+            "total_relations": 0,
+            "error": "无证据数据",
+        }
+
+    # 2. 构建证据节点
+    type_colors = {
+        "起诉书": "#e74c3c",
+        "起诉意见书": "#e74c3c",
+        "讯问笔录": "#3498db",
+        "证人证言": "#2ecc71",
+        "鉴定意见": "#9b59b6",
+        "勘验笔录": "#f39c12",
+        "辨认笔录": "#1abc9c",
+        "书证-金融": "#e67e22",
+        "书证-合同": "#e67e22",
+        "程序性文书": "#95a5a6",
+        "其他证据": "#7f8c8d",
+    }
+
+    type_groups = {}
+
+    for i, ev in enumerate(evidence_list, 1):
+        ev_id = ev.get("evidence_id", i)
+        ev_name = ev.get("evidence_name", f"证据{i}")
+        ev_type = ev.get("evidence_type", "其他证据")
+
+        # 确定颜色
+        color = type_colors.get(ev_type, "#7f8c8d")
+
+        nodes.append({
+            "id": ev_id,
+            "name": ev_name,
+            "type": ev_type,
+            "persons": ev.get("persons", ""),
+            "group": ev_type,
+        })
+
+        # 统计类型分组
+        if ev_type not in type_groups:
+            type_groups[ev_type] = {"id": ev_type, "name": ev_type, "color": color, "count": 0}
+        type_groups[ev_type]["count"] += 1
+
+    groups = list(type_groups.values())
+
+    # 3. 分析证据关系（基于共同出现的人物/事件）
+    # 简化版本：基于证据编号相邻性建立"补充"关系
+    for i in range(len(evidence_list) - 1):
+        ev1 = evidence_list[i]
+        ev2 = evidence_list[i + 1]
+        ev1_id = ev1.get("evidence_id", i + 1)
+        ev2_id = ev2.get("evidence_id", i + 2)
+
+        # 检查是否有共同人物
+        persons1 = set(ev1.get("persons", "").split("、")) if ev1.get("persons") else set()
+        persons2 = set(ev2.get("persons", "").split("、")) if ev2.get("persons") else set()
+
+        if persons1 and persons2 and persons1 & persons2:
+            edges.append({
+                "source": ev1_id,
+                "target": ev2_id,
+                "type": "corroborate",
+                "label": "印证",
+            })
+
+    # 4. 如果有矛盾分析结果，添加矛盾边
+    contradiction_file = analysis_dir / "stage_5" / "contradiction.json"
+    if contradiction_file.exists():
+        try:
+            contradictions = json.loads(contradiction_file.read_text(encoding="utf-8"))
+            for c in contradictions:
+                ev1_id = c.get("evidence1_id")
+                ev2_id = c.get("evidence2_id")
+                if ev1_id and ev2_id:
+                    edges.append({
+                        "source": ev1_id,
+                        "target": ev2_id,
+                        "type": "contradict",
+                        "label": c.get("issue", "矛盾"),
+                    })
+        except Exception:
+            pass
+
+    return {
+        "nodes": nodes,
+        "edges": edges,
+        "groups": groups,
+        "total_evidence": len(nodes),
+        "total_relations": len(edges),
+    }
+
 
 def _infer_evidence_type(filename: str) -> str:
     """从文件名推断证据类型"""

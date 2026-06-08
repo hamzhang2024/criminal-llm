@@ -82,3 +82,251 @@ export async function saveFullReport(caseId: string, content: string): Promise<a
   })
   return res.json()
 }
+
+// ========== 证据三性审查 ==========
+
+export interface EvidenceReviewItem {
+  evidence_id: number
+  evidence_name: string
+  authenticity: {
+    score: number
+    issues: string[]
+    conclusion: string
+  }
+  legality: {
+    score: number
+    issues: string[]
+    conclusion: string
+  }
+  relevance: {
+    score: number
+    issues: string[]
+    conclusion: string
+  }
+  review_summary: string
+}
+
+export interface EvidenceReviewResult {
+  case_id: string
+  total_evidence: number
+  reviews: EvidenceReviewItem[]
+  generated_at?: string
+  error?: string
+}
+
+/** 对全部证据进行三性审查 */
+export async function reviewEvidence(caseId: string): Promise<EvidenceReviewResult> {
+  const res = await fetch(`${API_BASE}/stage-analysis/${caseId}/review-evidence`, {
+    method: 'POST',
+  })
+  if (!res.ok) {
+    throw new Error('证据审查失败')
+  }
+  return res.json()
+}
+
+/** 获取证据三性审查结果 */
+export async function getEvidenceReview(caseId: string): Promise<EvidenceReviewResult> {
+  const res = await fetch(`${API_BASE}/stage-analysis/${caseId}/evidence-review`)
+  if (!res.ok) {
+    return { case_id: caseId, total_evidence: 0, reviews: [], error: '获取失败' }
+  }
+  return res.json()
+}
+
+// ========== 阅卷笔录 API ==========
+
+export interface ReviewNotesResult {
+  case_id: string
+  content: string
+  generated_at?: string
+  error?: string
+}
+
+/** 生成阅卷笔录 */
+export async function generateReviewNotes(caseId: string): Promise<ReviewNotesResult> {
+  const res = await fetch(`${API_BASE}/stage-analysis/${caseId}/review-notes`, {
+    method: 'POST',
+  })
+  if (!res.ok) {
+    throw new Error('阅卷笔录生成失败')
+  }
+  return res.json()
+}
+
+/** 获取阅卷笔录 */
+export async function getReviewNotes(caseId: string): Promise<ReviewNotesResult> {
+  const res = await fetch(`${API_BASE}/stage-analysis/${caseId}/review-notes`)
+  if (!res.ok) {
+    return { case_id: caseId, content: '', error: '获取失败' }
+  }
+  return res.json()
+}
+
+// ========== 质证意见 API ==========
+
+export interface CrossExaminationResult {
+  case_id: string
+  content: string
+  total_evidence?: number
+  problematic_count?: number
+  generated_at?: string
+  error?: string
+}
+
+/** 生成质证意见 */
+export async function generateCrossExamination(caseId: string): Promise<CrossExaminationResult> {
+  const res = await fetch(`${API_BASE}/stage-analysis/${caseId}/cross-examination`, {
+    method: 'POST',
+  })
+  if (!res.ok) {
+    throw new Error('质证意见生成失败')
+  }
+  return res.json()
+}
+
+/** 获取质证意见 */
+export async function getCrossExamination(caseId: string): Promise<CrossExaminationResult> {
+  const res = await fetch(`${API_BASE}/stage-analysis/${caseId}/cross-examination`)
+  if (!res.ok) {
+    return { case_id: caseId, content: '', error: '获取失败' }
+  }
+  return res.json()
+}
+
+// ========== 证据链可视化 ==========
+
+export interface EvidenceChainNode {
+  id: number
+  name: string
+  type: string
+  persons: string
+  group: string
+}
+
+export interface EvidenceChainEdge {
+  source: number
+  target: number
+  type: 'corroborate' | 'contradict' | 'supplement'
+  label: string
+}
+
+export interface EvidenceChainGroup {
+  id: string
+  name: string
+  color: string
+  count: number
+}
+
+export interface EvidenceChainData {
+  nodes: EvidenceChainNode[]
+  edges: EvidenceChainEdge[]
+  groups: EvidenceChainGroup[]
+  total_evidence: number
+  total_relations: number
+  error?: string
+}
+
+/** 获取证据链可视化数据 */
+export async function getEvidenceChain(caseId: string): Promise<EvidenceChainData> {
+  const res = await fetch(`${API_BASE}/stage-analysis/${caseId}/evidence-chain`)
+  if (!res.ok) {
+    return { nodes: [], edges: [], groups: [], total_evidence: 0, total_relations: 0, error: '获取失败' }
+  }
+  return res.json()
+}
+
+// ========== 人物关系图（SVG 可视化）==========
+
+export interface PersonNode {
+  id: string
+  name: string
+  role: 'defendant' | 'co defendant' | 'victim' | 'witness' | 'other'
+  description?: string
+  evidenceRefs?: string[]
+}
+
+export interface RelationEdge {
+  source: string
+  target: string
+  type: 'cooperation' | 'fraud' | 'friend' | 'family' | 'business' | 'debt' | 'other'
+  label: string
+}
+
+export interface RelationGraphData {
+  nodes: PersonNode[]
+  edges: RelationEdge[]
+  error?: string
+}
+
+/** 获取人物关系图数据 */
+export async function getPersonRelation(caseId: string): Promise<RelationGraphData> {
+  const url = `${API_BASE}/stage-analysis/${caseId}/person-relation`
+  console.log('[API] getPersonRelation URL:', url, 'PROD:', import.meta.env.PROD)
+  const res = await fetch(url)
+  console.log('[API] getPersonRelation response status:', res.status, res.url)
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    console.error('[API] getPersonRelation error body:', text)
+    return { nodes: [], edges: [], error: '获取失败' }
+  }
+  const json = await res.json()
+  console.log('[API] getPersonRelation data nodes:', json.nodes?.length, 'edges:', json.edges?.length)
+  return json
+}
+
+// ========== 事件时间线（SVG 可视化）==========
+
+export interface EventNode {
+  id: string
+  date: string
+  title: string
+  description?: string
+  type?: 'crime' | 'evidence' | 'procedure' | 'defense' | 'other'
+  persons?: string[]
+  evidenceRefs?: string[]
+}
+
+export interface TimelineData {
+  events: EventNode[]
+  error?: string
+}
+
+/** 获取事件时间线数据 */
+export async function getEventTimeline(caseId: string): Promise<TimelineData> {
+  const res = await fetch(`${API_BASE}/stage-analysis/${caseId}/event-timeline`)
+  if (!res.ok) {
+    return { events: [], error: '获取失败' }
+  }
+  return res.json()
+}
+
+// ========== 类案检索 ==========
+
+export interface SimilarCase {
+  title: string
+  court: string
+  crime_type: string
+  amount?: string
+  result: string
+  key_point: string
+  link?: string
+}
+
+export interface SimilarCasesData {
+  crime_type: string
+  key_facts: string[]
+  similar_cases: SimilarCase[]
+  error?: string
+}
+
+/** 搜索类似案例 */
+export async function searchSimilarCases(caseId: string): Promise<SimilarCasesData> {
+  const res = await fetch(`${API_BASE}/stage-analysis/${caseId}/similar-cases`, {
+    method: 'POST',
+  })
+  if (!res.ok) {
+    return { crime_type: '', key_facts: [], similar_cases: [], error: '搜索失败' }
+  }
+  return res.json()
+}

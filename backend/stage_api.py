@@ -10,6 +10,7 @@
 """
 import asyncio
 import json
+import logging
 import time
 from pathlib import Path
 from typing import Optional
@@ -19,6 +20,8 @@ from fastapi import APIRouter, Body, HTTPException
 from analysis_engine import AnalysisEngine
 from analysis_pipeline import AnalysisPipeline, _contains_indictment_title
 from case_manager import find_case_path
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/stage-analysis", tags=["5阶段案卷分析"])
 
@@ -492,3 +495,495 @@ async def save_full_report(
     report_file.parent.mkdir(parents=True, exist_ok=True)
     report_file.write_text(content, encoding="utf-8")
     return {"success": True}
+
+
+# ========== 证据三性审查 API ==========
+
+@router.post("/{case_id}/review-evidence")
+async def review_evidence(case_id: str):
+    """对全部证据进行三性审查（真实性、合法性、关联性）
+
+    审查结果保存到 evidence/evidence_review.json
+    """
+    case_path = find_case_path(case_id)
+    if not case_path:
+        raise HTTPException(status_code=404, detail="案件不存在")
+
+    engine = AnalysisEngine(case_id, case_path)
+
+    try:
+        result = await engine.review_evidence_triple_property()
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{case_id}/evidence-review")
+async def get_evidence_review(case_id: str):
+    """获取证据三性审查结果"""
+    case_path = find_case_path(case_id)
+    if not case_path:
+        raise HTTPException(status_code=404, detail="案件不存在")
+
+    review_file = case_path / "evidence" / "evidence_review.json"
+    if not review_file.exists():
+        return {"case_id": case_id, "total_evidence": 0, "reviews": [], "error": "证据审查结果不存在，请先运行审查"}
+
+    return json.loads(review_file.read_text(encoding="utf-8"))
+
+
+# ========== 阅卷笔录 API ==========
+
+@router.post("/{case_id}/review-notes")
+async def generate_review_notes(case_id: str):
+    """生成阅卷笔录
+
+    阅卷笔录是律师阅卷工作的核心文档，包含：
+    - 案件基本信息
+    - 证据目录
+    - 证据三性审查摘要
+    - 指控要素
+    - 事实认定
+    - 法律分析
+    - 辩护要点
+    """
+    case_path = find_case_path(case_id)
+    if not case_path:
+        raise HTTPException(status_code=404, detail="案件不存在")
+
+    engine = AnalysisEngine(case_id, case_path)
+
+    try:
+        result = await engine.generate_review_notes()
+        return result
+    except Exception as e:
+        logger.error(f"[阅卷笔录] {case_id}: 生成失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{case_id}/review-notes")
+async def get_review_notes(case_id: str):
+    """获取阅卷笔录"""
+    case_path = find_case_path(case_id)
+    if not case_path:
+        raise HTTPException(status_code=404, detail="案件不存在")
+
+    notes_file = case_path / "analysis" / "review_notes.md"
+    if not notes_file.exists():
+        return {"case_id": case_id, "content": "", "error": "阅卷笔录尚未生成，请先点击生成"}
+
+    content = notes_file.read_text(encoding="utf-8")
+    return {"case_id": case_id, "content": content}
+
+
+# ========== 质证意见 API ==========
+
+@router.post("/{case_id}/cross-examination")
+async def generate_cross_examination(case_id: str):
+    """生成质证意见
+
+    基于证据三性审查结果，对有问题的证据生成质证策略。
+    格式：证据名称 → 问题 → 质证策略 → 法律依据
+    """
+    case_path = find_case_path(case_id)
+    if not case_path:
+        raise HTTPException(status_code=404, detail="案件不存在")
+
+    engine = AnalysisEngine(case_id, case_path)
+
+    try:
+        result = await engine.generate_cross_examination()
+        return result
+    except Exception as e:
+        logger.error(f"[质证意见] {case_id}: 生成失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{case_id}/cross-examination")
+async def get_cross_examination(case_id: str):
+    """获取质证意见"""
+    case_path = find_case_path(case_id)
+    if not case_path:
+        raise HTTPException(status_code=404, detail="案件不存在")
+
+    notes_file = case_path / "analysis" / "cross_examination.md"
+    if not notes_file.exists():
+        return {"case_id": case_id, "content": "", "error": "质证意见尚未生成，请先进行证据三性审查"}
+
+    content = notes_file.read_text(encoding="utf-8")
+    return {"case_id": case_id, "content": content}
+
+
+# ========== 证据链可视化 ==========
+
+@router.get("/{case_id}/evidence-chain")
+async def get_evidence_chain(case_id: str):
+    """获取证据链可视化数据
+
+    返回证据节点和关系边，用于前端 SVG 可视化渲染：
+    - nodes: 证据节点列表
+    - edges: 关系边（印证/矛盾/补充）
+    - groups: 证据类型分组
+    """
+    case_path = find_case_path(case_id)
+    if not case_path:
+        raise HTTPException(status_code=404, detail="案件不存在")
+
+    from analysis_engine import generate_evidence_chain
+
+    try:
+        result = generate_evidence_chain(case_path)
+        return result
+    except Exception as e:
+        logger.error(f"[证据链] {case_id}: 分析失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ========== 人物关系图 & 事件时间线（SVG 可视化）==========
+
+@router.get("/{case_id}/person-relation")
+async def get_person_relation(case_id: str):
+    """获取人物关系图数据（SVG 可视化用）
+
+    从 stage_2/output.md 解析人物节点和关系边
+    """
+    case_path = find_case_path(case_id)
+    if not case_path:
+        raise HTTPException(status_code=404, detail="案件不存在")
+
+    analysis_dir = case_path / "analysis"
+    stage2_file = analysis_dir / "stage_2" / "output.md"
+
+    if not stage2_file.exists():
+        return {"nodes": [], "edges": [], "error": "人物关系分析尚未完成"}
+
+    try:
+        content = stage2_file.read_text(encoding="utf-8")
+        result = _parse_person_relation(content)
+        return result
+    except Exception as e:
+        logger.error(f"[人物关系] {case_id}: 解析失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{case_id}/event-timeline")
+async def get_event_timeline(case_id: str):
+    """获取事件时间线数据（SVG 可视化用）
+
+    从 stage_3/output.md 解析事件节点
+    """
+    case_path = find_case_path(case_id)
+    if not case_path:
+        raise HTTPException(status_code=404, detail="案件不存在")
+
+    analysis_dir = case_path / "analysis"
+    stage3_file = analysis_dir / "stage_3" / "output.md"
+
+    if not stage3_file.exists():
+        return {"events": [], "error": "事件时间线分析尚未完成"}
+
+    try:
+        content = stage3_file.read_text(encoding="utf-8")
+        result = _parse_event_timeline(content)
+        return result
+    except Exception as e:
+        logger.error(f"[事件时间线] {case_id}: 解析失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _parse_person_relation(content: str) -> dict:
+    """从 stage_2 Markdown 解析人物关系数据"""
+    import re
+
+    nodes = []
+    edges = []
+
+    # 解析人物表格
+    # 格式：| 姓名 | 角色 | 与xxx的关系 | ... |
+    table_pattern = r'\|\s*\*?\*([^|*]+)\*?\*?\s*\|\s*([^|]+)\s*\|'
+    matches = re.findall(table_pattern, content)
+
+    # 角色映射
+    role_map = {
+        "被告人": "defendant",
+        "同案犯": "co defendant",
+        "被害人": "victim",
+        "证人": "witness",
+        "关联人": "witness",
+    }
+
+    seen_names = set()
+    for name, role in matches[:50]:  # 限制数量
+        name = name.strip()
+        if not name or name in seen_names or len(name) > 10:
+            continue
+        if "涉案人员" in name or "姓名" in name:
+            continue
+
+        # 确定角色
+        node_role = "other"
+        for key, val in role_map.items():
+            if key in role:
+                node_role = val
+                break
+
+        nodes.append({
+            "id": name,
+            "name": name,
+            "role": node_role,
+            "description": role.strip(),
+        })
+        seen_names.add(name)
+
+    # 解析关系（从表格的"与xxx的关系"列）
+    # 简化处理：根据角色推断关系
+    defendant = next((n for n in nodes if n["role"] == "defendant"), None)
+    if defendant:
+        for node in nodes:
+            if node["id"] != defendant["id"]:
+                # 根据角色推断关系类型
+                if node["role"] == "victim":
+                    edges.append({
+                        "source": defendant["id"],
+                        "target": node["id"],
+                        "type": "fraud",
+                        "label": "诈骗对象",
+                    })
+                elif node["role"] == "co defendant":
+                    edges.append({
+                        "source": defendant["id"],
+                        "target": node["id"],
+                        "type": "cooperation",
+                        "label": "共犯",
+                    })
+                elif node["role"] == "witness":
+                    edges.append({
+                        "source": defendant["id"],
+                        "target": node["id"],
+                        "type": "other",
+                        "label": "关联",
+                    })
+
+    return {"nodes": nodes, "edges": edges}
+
+
+def _parse_event_timeline(content: str) -> dict:
+    """从 stage_3 Markdown 解析事件时间线数据
+
+    从 mermaid timeline 代码块提取所有细粒度事件（10个），
+    并尝试从"事件拆解与证据归组"部分匹配详细描述。
+    """
+    import re
+
+    events = []
+
+    def normalize_event_date(raw: str) -> str:
+        if not raw:
+            return '1900-01-01'
+        raw = re.split(r'至|\s*-\s+', raw)[0].strip()
+        if "年中" in raw:
+            raw = raw.replace("年中", "06")
+        elif "年底" in raw:
+            raw = raw.replace("年底", "12")
+        raw = re.sub(r'起$', '', raw)
+        raw = raw.replace("年", "-").replace("月", "-").replace("日", "").replace(".", "-").strip("-")
+        raw = re.sub(r'-+', '-', raw)
+        parts = raw.strip("-").split("-")
+        if len(parts) == 1:
+            return f"{parts[0]}-01-01"
+        elif len(parts) == 2:
+            return f"{parts[0]}-{parts[1].zfill(2)}-01"
+        else:
+            return f"{parts[0]}-{parts[1].zfill(2)}-{parts[2].zfill(2)}"
+
+    def infer_event_type(text: str) -> str:
+        if any(kw in text for kw in ["诈骗", "骗取", "投资", "借款", "转账", "倒卖", "吸金", "犯罪", "名借"]):
+            return "crime"
+        elif any(kw in text for kw in ["拘留", "逮捕", "取保", "立案", "移送", "起诉", "抓获"]):
+            return "procedure"
+        elif any(kw in text for kw in ["证据", "笔录", "鉴定", "辨认"]):
+            return "evidence"
+        elif any(kw in text for kw in ["辩护", "律师", "申诉"]):
+            return "defense"
+        return "other"
+
+    # 从 mermaid timeline 代码块提取细粒度事件
+    block_match = re.search(r'```(?:mermaid\s+)?timeline(.*?)```', content, re.DOTALL)
+    if block_match:
+        block = block_match.group(1)
+        timeline_pattern = r'(\d{4}[年0-9\-./][^:\n]{0,25}?)\s*[:：]\s*([^\n]+)'
+        matches = re.findall(timeline_pattern, block)
+
+        for date_raw, desc in matches[:50]:
+            desc = desc.strip()
+            if not desc or len(desc) < 3:
+                continue
+
+            date_str = normalize_event_date(date_raw)
+
+            # 提取相关证据
+            evidence_refs = re.findall(r'证据\d+', desc)
+
+            # 截取标题
+            title = desc.split("，")[0] if "，" in desc else desc
+            if len(title) > 30:
+                title = title[:30] + "..."
+
+            events.append({
+                "id": f"event_{len(events)}",
+                "date": date_str,
+                "title": title,
+                "description": desc,
+                "type": infer_event_type(desc),
+                "evidenceRefs": evidence_refs[:5],
+            })
+
+    return {"events": events}
+
+
+# ========== 类案检索 ==========
+
+@router.post("/{case_id}/similar-cases")
+async def search_similar_cases(case_id: str):
+    """类案检索
+
+    从起诉书/起诉意见书中提取罪名和关键事实，
+    使用 LLM 联网搜索类似案例，返回结构化结果。
+
+    Returns:
+        {
+            "crime_type": "诈骗罪",
+            "key_facts": ["...", "..."],
+            "similar_cases": [
+                {"title": "...", "court": "...", "result": "...", "link": "..."}
+            ]
+        }
+    """
+    case_path = find_case_path(case_id)
+    if not case_path:
+        raise HTTPException(status_code=404, detail="案件不存在")
+
+    # 读取 stage_1 结果（指控要素）
+    stage1_file = case_path / "analysis" / "stage_1" / "output.md"
+    if not stage1_file.exists():
+        return {
+            "crime_type": "",
+            "key_facts": [],
+            "similar_cases": [],
+            "error": "请先完成阶段1分析（指控要素提取）"
+        }
+
+    stage1_content = stage1_file.read_text(encoding="utf-8")
+
+    try:
+        result = await _search_similar_cases_llm(stage1_content)
+        return result
+    except Exception as e:
+        logger.error(f"[类案检索] {case_id}: 搜索失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+async def _search_similar_cases_llm(stage1_content: str) -> dict:
+    """使用 LLM 联网搜索类案"""
+    import re
+    from llm_client import get_llm_client
+
+    client = get_llm_client()
+
+    # 从 stage_1 提取罪名
+    crime_type = ""
+    crime_match = re.search(r'罪名[：:]\s*([^\n]+)', stage1_content)
+    if crime_match:
+        crime_type = crime_match.group(1).strip()
+    else:
+        # 尝试从标题提取
+        crime_match2 = re.search(r'涉嫌(.{2,10}罪)', stage1_content)
+        if crime_match2:
+            crime_type = crime_match2.group(1).strip()
+
+    if not crime_type:
+        return {
+            "crime_type": "",
+            "key_facts": [],
+            "similar_cases": [],
+            "error": "未能识别罪名"
+        }
+
+    # 提取关键事实（简化版：取前3个要点）
+    key_facts = []
+    facts_section = re.search(r'犯罪事实[：:]\s*(.+?)(?:\n\n|\n##|$)', stage1_content, re.DOTALL)
+    if facts_section:
+        facts_text = facts_section.group(1).strip()
+        # 提取前3个要点
+        bullet_points = re.findall(r'[•\-\*]\s*([^\n]+)', facts_text)
+        key_facts = [p.strip() for p in bullet_points[:3] if len(p.strip()) > 10]
+
+    if not key_facts:
+        # 回退：取 stage_1 前500字
+        key_facts = [stage1_content[:500].replace("\n", " ").strip()]
+
+    # 构建搜索提示
+    search_prompt = f"""请搜索与以下罪名和事实相似的已判决案例：
+
+**罪名**：{crime_type}
+
+**关键事实**：
+{chr(10).join(f"- {f}" for f in key_facts)}
+
+请搜索中国裁判文书网、最高法院指导性案例等公开来源，找出3-5个相似的已判决案例。
+
+**输出格式**（JSON）：
+```json
+[
+  {
+    "title": "案件标题（如：张三诈骗案）",
+    "court": "审理法院",
+    "crime_type": "认定罪名",
+    "amount": "涉案金额（如有）",
+    "result": "判决结果（刑期/罚金）",
+    "key_point": "裁判要旨（100字以内）",
+    "link": "来源链接（如有）"
+  }
+]
+```
+
+**注意**：
+1. 优先选择最高法院指导性案例、典型案例
+2. 关注涉案金额相近、情节相似的案例
+3. 如无法联网搜索，请基于训练数据提供参考案例，并注明"基于训练数据"
+"""
+
+    try:
+        # 使用 enable_search 启用联网搜索
+        response = client.chat(
+            messages=[
+                {"role": "system", "content": "你是法律检索专家，擅长搜索和分析类案。请返回严格的 JSON 格式。"},
+                {"role": "user", "content": search_prompt},
+            ],
+            extra_body={"enable_search": True},
+        )
+
+        # 解析 JSON
+        content = response.get("content", "")
+        # 提取 JSON 数组
+        json_match = re.search(r'\[\s*\{.*\}\s*\]', content, re.DOTALL)
+        if json_match:
+            import json
+            similar_cases = json.loads(json_match.group(0))
+        else:
+            similar_cases = []
+
+        return {
+            "crime_type": crime_type,
+            "key_facts": key_facts,
+            "similar_cases": similar_cases[:5],
+        }
+
+    except Exception as e:
+        logger.error(f"[类案检索] LLM 调用失败: {e}")
+        return {
+            "crime_type": crime_type,
+            "key_facts": key_facts,
+            "similar_cases": [],
+            "error": str(e),
+        }

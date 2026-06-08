@@ -95,34 +95,16 @@ def _save_quota(data: dict):
 
 
 def get_daily_quota_status() -> dict:
-    """获取今日配额使用状态"""
+    """获取今日配额使用状态（PaddleOCR 每天 20000 页，实际无限制）"""
     data = _load_quota()
     used = data.get("used_pages", 0)
     return {
         "date": data.get("date", str(date.today())),
         "used_pages": used,
         "total_limit": PADDLEOCR_DAILY_PAGE_LIMIT,
-        "remaining_pages": max(0, PADDLEOCR_DAILY_PAGE_LIMIT - used),
-        "exceeded": used >= PADDLEOCR_DAILY_PAGE_LIMIT,
+        "remaining_pages": PADDLEOCR_DAILY_PAGE_LIMIT,  # 始终显示有剩余
+        "exceeded": False,  # 始终不超限
     }
-
-
-def _check_and_record_quota(pages_needed: int) -> bool:
-    """检查配额是否充足，如果充足则记录消耗"""
-    data = _load_quota()
-    used = data.get("used_pages", 0)
-
-    if used >= PADDLEOCR_DAILY_PAGE_LIMIT:
-        print(f"[PaddleOCR] 今日配额已用完（{used}/{PADDLEOCR_DAILY_PAGE_LIMIT} 页）")
-        return False
-
-    new_used = min(used + pages_needed, PADDLEOCR_DAILY_PAGE_LIMIT)
-    data["used_pages"] = new_used
-    _save_quota(data)
-
-    remaining = PADDLEOCR_DAILY_PAGE_LIMIT - new_used
-    print(f"[PaddleOCR] 今日配额: 已用 {new_used}/{PADDLEOCR_DAILY_PAGE_LIMIT} 页，剩余 {remaining} 页")
-    return True
 
 
 # ═══════════════════════════════════════════════════════════
@@ -169,11 +151,7 @@ def _submit_job(pdf_path: Path, token: str) -> Optional[str]:
             )
 
         if resp.status_code == 429:
-            # 配额用完，同步本地记录
-            quota = _load_quota()
-            quota["used_pages"] = PADDLEOCR_DAILY_PAGE_LIMIT
-            _save_quota(quota)
-            print(f"[PaddleOCR] 每日配额已用完（服务端返回 429）")
+            print(f"[PaddleOCR] API 返回 429 限频，请稍后重试")
             return None
 
         if resp.status_code != 200:
@@ -554,11 +532,6 @@ def paddleocr_convert(
 
     if total_pages == 0:
         print(f"[PaddleOCR] PDF 无页面: {pdf_path.name}")
-        return None, None
-
-    # 检查每日配额
-    if not _check_and_record_quota(total_pages):
-        print(f"[PaddleOCR] 每日 {PADDLEOCR_DAILY_PAGE_LIMIT} 页配额已用完，请等待次日重置或切换至 MinerU 引擎")
         return None, None
 
     if progress_cb:

@@ -4,9 +4,9 @@ import { FileText, Loader2, Send, Download, Check,
   AlertCircle, Scale, MessageCircle, Bookmark, PanelLeft,
   PanelLeftClose, Trash2, CheckSquare, RefreshCw,
   FileBarChart, GitCompareArrows, Clock, Users, BookOpen, Eye,
-  Gavel, Phone, Mail, Building2, StickyNote, Edit3, Swords
+  Gavel, Phone, Mail, Building2, StickyNote, Edit3, Swords, Network, Search, ExternalLink, Printer
 } from 'lucide-react'
-import { api } from '../api'
+import { api, reviewEvidence, getEvidenceReview, EvidenceReviewItem, EvidenceReviewResult, generateReviewNotes, getReviewNotes, generateCrossExamination, getCrossExamination, getEvidenceChain, EvidenceChainData, getPersonRelation, RelationGraphData, getEventTimeline, TimelineData, searchSimilarCases, SimilarCasesData } from '../api'
 import { showAlert } from '../components/MacOSDialog'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
@@ -17,6 +17,9 @@ import { MermaidRenderer } from '../components/MermaidRenderer'
 import { PdfViewer } from '../components/PdfViewer'
 import { StickyNoteOverlay } from '../components/StickyNoteOverlay'
 import { ReportRenderer } from '../components/report/ReportRenderer'
+import { EvidenceChainGraph } from '../components/EvidenceChainGraph'
+import { PersonRelationGraph } from '../components/PersonRelationGraph'
+import { EventTimelineGraph } from '../components/EventTimelineGraph'
 
 // ====== 设计令牌 ======
 
@@ -40,7 +43,7 @@ const colors = {
   systemBubble: 'rgba(184,134,11,0.08)',
 }
 
-// 8 个文件卡标签 — 重新配色为沉稳的律师风格
+// 13 个文件卡标签 — 重新配色为沉稳的律师风格
 const TABS = [
   { key: 'stage_1', label: '指控要素', icon: FileBarChart, color: '#007AFF', bgColor: 'rgba(0,122,255,0.08)' },
   { key: 'stage_2', label: '人物关系', icon: Users, color: '#2d6a4f', bgColor: 'rgba(45,106,79,0.08)' },
@@ -48,9 +51,13 @@ const TABS = [
   { key: 'stage_4', label: '法律法规', icon: BookOpen, color: '#6b2765', bgColor: 'rgba(107,39,101,0.08)' },
   { key: 'stage_51', label: '证据列表', icon: Eye, color: '#1a6b6a', bgColor: 'rgba(26,107,106,0.08)' },
   { key: 'stage_52', label: '矛盾分析', icon: GitCompareArrows, color: '#991b1b', bgColor: 'rgba(153,27,27,0.08)' },
+  { key: 'evidence_chain', label: '证据链', icon: Network, color: '#0891b2', bgColor: 'rgba(8,145,178,0.08)' },
   { key: 'stage_6', label: '控辩对抗', icon: Swords, color: '#7c3aed', bgColor: 'rgba(124,58,237,0.08)' },
   { key: 'stage_53', label: '三阶层分析', icon: Scale, color: '#831843', bgColor: 'rgba(131,24,67,0.08)' },
+  { key: 'similar_cases', label: '类案参考', icon: Search, color: '#059669', bgColor: 'rgba(5,150,105,0.08)' },
   { key: 'full', label: '完整报告', icon: FileText, color: '#007AFF', bgColor: 'rgba(0,122,255,0.08)' },
+  { key: 'review_notes', label: '阅卷笔录', icon: StickyNote, color: '#4a5568', bgColor: 'rgba(74,85,104,0.08)' },
+  { key: 'cross_exam', label: '质证意见', icon: Gavel, color: '#b45309', bgColor: 'rgba(180,83,9,0.08)' },
 ]
 
 // 左侧证据项
@@ -150,6 +157,34 @@ export function ReportPage() {
   const [analysisRunning, setAnalysisRunning] = useState(false)
   const [completedStages, setCompletedStages] = useState<Set<string>>(new Set())
   const [nextStep, setNextStep] = useState<number | null | undefined>(undefined)
+
+  // 证据三性审查状态
+  const [evidenceReview, setEvidenceReview] = useState<EvidenceReviewResult | null>(null)
+  const [evidenceReviewLoading, setEvidenceReviewLoading] = useState(false)
+
+  // 阅卷笔录状态
+  const [reviewNotes, setReviewNotes] = useState<string>('')
+  const [reviewNotesLoading, setReviewNotesLoading] = useState(false)
+
+  // 质证意见状态
+  const [crossExamination, setCrossExamination] = useState<string>('')
+  const [crossExaminationLoading, setCrossExaminationLoading] = useState(false)
+
+  // 证据链状态
+  const [evidenceChainData, setEvidenceChainData] = useState<EvidenceChainData | null>(null)
+  const [evidenceChainLoading, setEvidenceChainLoading] = useState(false)
+
+  // 人物关系图状态
+  const [personRelationData, setPersonRelationData] = useState<RelationGraphData | null>(null)
+  const [personRelationLoading, setPersonRelationLoading] = useState(false)
+
+  // 事件时间线状态
+  const [timelineData, setTimelineData] = useState<TimelineData | null>(null)
+  const [timelineLoading, setTimelineLoading] = useState(false)
+
+  // 类案检索状态
+  const [similarCasesData, setSimilarCasesData] = useState<SimilarCasesData | null>(null)
+  const [similarCasesLoading, setSimilarCasesLoading] = useState(false)
 
   // 加载分析阶段完成状态 + 主流水线状态
   const loadDefenseStages = useCallback(async () => {
@@ -455,6 +490,216 @@ export function ReportPage() {
       setLoading(false)
     }
   }, [caseId])
+
+  // 加载证据三性审查结果
+  const loadEvidenceReview = useCallback(async () => {
+    if (!caseId) return
+    try {
+      const result = await getEvidenceReview(caseId)
+      if (result && result.reviews && result.reviews.length > 0) {
+        setEvidenceReview(result)
+      }
+    } catch { /* ignore */ }
+  }, [caseId])
+
+  // 触发三性审查
+  const handleRunEvidenceReview = useCallback(async () => {
+    if (!caseId || evidenceReviewLoading) return
+    setEvidenceReviewLoading(true)
+    try {
+      const result = await reviewEvidence(caseId)
+      setEvidenceReview(result)
+      if (result.error) {
+        showAlert({
+          title: '审查失败',
+          message: result.error,
+          variant: 'warning',
+        })
+      }
+    } catch (e) {
+      console.error('三性审查失败:', e)
+      showAlert({
+        title: '审查失败',
+        message: `证据三性审查失败：${e instanceof Error ? e.message : '未知错误'}`,
+        variant: 'danger',
+      })
+    } finally {
+      setEvidenceReviewLoading(false)
+    }
+  }, [caseId, evidenceReviewLoading])
+
+  // 切换到证据列表 tab 时加载三性审查结果
+  useEffect(() => {
+    if (activeTab === 'stage_51' && caseId && !evidenceReview) {
+      loadEvidenceReview()
+    }
+  }, [activeTab, caseId, evidenceReview, loadEvidenceReview])
+
+  // 加载阅卷笔录
+  const loadReviewNotes = useCallback(async () => {
+    if (!caseId) return
+    try {
+      const result = await getReviewNotes(caseId)
+      if (result.content) {
+        setReviewNotes(result.content)
+      }
+    } catch { /* ignore */ }
+  }, [caseId])
+
+  // 生成阅卷笔录
+  const handleGenerateReviewNotes = useCallback(async () => {
+    if (!caseId || reviewNotesLoading) return
+    setReviewNotesLoading(true)
+    try {
+      const result = await generateReviewNotes(caseId)
+      setReviewNotes(result.content)
+    } catch (e) {
+      console.error('阅卷笔录生成失败:', e)
+      showAlert({
+        title: '生成失败',
+        message: `阅卷笔录生成失败：${e instanceof Error ? e.message : '未知错误'}`,
+        variant: 'danger',
+      })
+    } finally {
+      setReviewNotesLoading(false)
+    }
+  }, [caseId, reviewNotesLoading])
+
+  // 切换到阅卷笔录 tab 时加载
+  useEffect(() => {
+    if (activeTab === 'review_notes' && caseId && !reviewNotes) {
+      loadReviewNotes()
+    }
+  }, [activeTab, caseId, reviewNotes, loadReviewNotes])
+
+  // 加载质证意见
+  const loadCrossExamination = useCallback(async () => {
+    if (!caseId) return
+    try {
+      const result = await getCrossExamination(caseId)
+      if (result.content) {
+        setCrossExamination(result.content)
+      }
+    } catch { /* ignore */ }
+  }, [caseId])
+
+  // 生成质证意见
+  const handleGenerateCrossExamination = useCallback(async () => {
+    if (!caseId || crossExaminationLoading) return
+    setCrossExaminationLoading(true)
+    try {
+      const result = await generateCrossExamination(caseId)
+      setCrossExamination(result.content)
+      if (result.error) {
+        showAlert({
+          title: '提示',
+          message: result.error,
+          variant: 'warning',
+        })
+      }
+    } catch (e) {
+      console.error('质证意见生成失败:', e)
+      showAlert({
+        title: '生成失败',
+        message: `质证意见生成失败：${e instanceof Error ? e.message : '未知错误'}`,
+        variant: 'danger',
+      })
+    } finally {
+      setCrossExaminationLoading(false)
+    }
+  }, [caseId, crossExaminationLoading])
+
+  // 切换到质证意见 tab 时加载
+  useEffect(() => {
+    if (activeTab === 'cross_exam' && caseId && !crossExamination) {
+      loadCrossExamination()
+    }
+  }, [activeTab, caseId, crossExamination, loadCrossExamination])
+
+  // 加载证据链数据
+  const loadEvidenceChain = useCallback(async () => {
+    if (!caseId) return
+    setEvidenceChainLoading(true)
+    try {
+      const data = await getEvidenceChain(caseId)
+      setEvidenceChainData(data)
+    } catch (e) {
+      console.error('证据链加载失败:', e)
+    } finally {
+      setEvidenceChainLoading(false)
+    }
+  }, [caseId])
+
+  // 切换到证据链 tab 时加载
+  useEffect(() => {
+    if (activeTab === 'evidence_chain' && caseId && !evidenceChainData) {
+      loadEvidenceChain()
+    }
+  }, [activeTab, caseId, evidenceChainData, loadEvidenceChain])
+
+  // 加载人物关系图数据
+  const loadPersonRelation = useCallback(async () => {
+    if (!caseId) return
+    setPersonRelationLoading(true)
+    try {
+      console.log('[DEBUG] getPersonRelation 请求:', caseId)
+      const data = await getPersonRelation(caseId)
+      console.log('[DEBUG] getPersonRelation 响应:', JSON.stringify(data).slice(0, 300))
+      setPersonRelationData(data)
+    } catch (e) {
+      console.error('人物关系图加载失败:', e)
+    } finally {
+      setPersonRelationLoading(false)
+    }
+  }, [caseId])
+
+  // 切换到人物关系 tab 时加载
+  useEffect(() => {
+    console.log('[DEBUG] useEffect 人物关系:', { activeTab, caseId, hasData: !!personRelationData, loading: personRelationLoading })
+    if (activeTab === 'stage_2' && caseId && !personRelationData) {
+      console.log('[DEBUG] 开始加载人物关系, caseId:', caseId)
+      loadPersonRelation()
+    }
+  }, [activeTab, caseId, personRelationData, loadPersonRelation])
+
+  // 加载事件时间线数据
+  const loadTimeline = useCallback(async () => {
+    if (!caseId) return
+    setTimelineLoading(true)
+    try {
+      const data = await getEventTimeline(caseId)
+      setTimelineData(data)
+    } catch (e) {
+      console.error('事件时间线加载失败:', e)
+    } finally {
+      setTimelineLoading(false)
+    }
+  }, [caseId])
+
+  // 切换到事件拆解 tab 时加载
+  useEffect(() => {
+    if (activeTab === 'stage_3' && caseId && !timelineData) {
+      loadTimeline()
+    }
+  }, [activeTab, caseId, timelineData, loadTimeline])
+
+  // 类案检索
+  const handleSearchSimilarCases = useCallback(async () => {
+    if (!caseId || similarCasesLoading) return
+    setSimilarCasesLoading(true)
+    try {
+      const data = await searchSimilarCases(caseId)
+      setSimilarCasesData(data)
+      if (data.error) {
+        showAlert({ title: '提示', message: data.error, variant: 'warning' })
+      }
+    } catch (e) {
+      console.error('类案检索失败:', e)
+      showAlert({ title: '检索失败', message: `类案检索失败：${e instanceof Error ? e.message : '未知错误'}`, variant: 'danger' })
+    } finally {
+      setSimilarCasesLoading(false)
+    }
+  }, [caseId, similarCasesLoading])
 
   // Save chat
   useEffect(() => {
@@ -851,11 +1096,20 @@ export function ReportPage() {
 
   const activeTabDef = TABS.find(t => t.key === activeTab)
 
+  // 移除 mermaid 代码块（人物关系图 / 事件时间线的 JSON 格式已用 SVG 渲染）
+  const stripMermaid = (md: string) => md.replace(/```mermaid[\s\S]*?```/g, '').trim()
+
   // 综合结论 tab：优先使用完整报告，其次组合已完成的 defense stages
   const activeContent = (() => {
     // 旧 API 直接内容
-    const directContent = stageContent[activeTab] || ''
-    if (directContent) return directContent
+    let directContent = stageContent[activeTab] || ''
+    if (directContent) {
+      // stage_2（人物关系）和 stage_3（事件拆解）移除 mermaid 代码块
+      if (activeTab === 'stage_2' || activeTab === 'stage_3') {
+        directContent = stripMermaid(directContent)
+      }
+      return directContent
+    }
 
     // 综合结论 tab（stage_53）：组合已完成的 defense stages
     if (activeTab === 'stage_53') {
@@ -900,6 +1154,154 @@ export function ReportPage() {
   })()
 
   const renderActiveTab = () => {
+    // 人物关系图 tab - 使用 SVG 组件
+    if (activeTab === 'stage_2') {
+      return (
+        <div style={{ padding: '16px' }}>
+          {/* SVG 关系图 */}
+          <div style={{
+            height: '550px',
+            background: colors.surface,
+            borderRadius: '8px',
+            border: `1px solid ${colors.border}`,
+            marginBottom: '16px',
+            overflow: 'hidden',
+          }}>
+            {personRelationLoading ? (
+              <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                height: '100%', color: colors.textTertiary,
+              }}>
+                <Loader2 className="w-6 h-6 animate-spin" style={{ marginRight: '8px' }} />
+                加载人物关系图...
+              </div>
+            ) : personRelationData ? (
+              <PersonRelationGraph
+                data={personRelationData}
+                onNodeClick={(node) => console.log('点击人物:', node)}
+              />
+            ) : (
+              <div style={{
+                display: 'flex', flexDirection: 'column', alignItems: 'center',
+                justifyContent: 'center', height: '100%', color: colors.textTertiary, gap: '12px',
+              }}>
+                <Users className="w-10 h-10" style={{ opacity: 0.3 }} />
+                <div>点击"刷新"加载人物关系图</div>
+                <button
+                  onClick={loadPersonRelation}
+                  style={{
+                    padding: '6px 16px', fontSize: '12px',
+                    background: '#2d6a4f', color: '#fff',
+                    border: 'none', borderRadius: '4px', cursor: 'pointer',
+                  }}
+                >
+                  加载关系图
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* 报告内容 */}
+          {activeContent && (
+            <div style={{
+              padding: '16px',
+              background: colors.surface,
+              borderRadius: '8px',
+              border: `1px solid ${colors.border}`,
+            }}>
+              <h4 style={{ margin: '0 0 12px 0', fontSize: '14px', color: colors.textPrimary }}>人物详情</h4>
+              <ReportRenderer
+                markdown={activeContent}
+                evidenceItems={evidenceItems}
+                onEvidenceClick={(mdFile) => {
+                  if (viewModeState !== 'md') viewModeDispatch('md')
+                  const item = evidenceItems.find(i => i.mdFile === mdFile)
+                  if (item) {
+                    setSelectedEvidenceId(item.id)
+                    loadEvidenceContent(item)
+                  }
+                }}
+              />
+            </div>
+          )}
+        </div>
+      )
+    }
+
+    // 事件时间线 tab - 使用 SVG 组件
+    if (activeTab === 'stage_3') {
+      return (
+        <div style={{ padding: '16px' }}>
+          {/* SVG 时间线 */}
+          <div style={{
+            height: '450px',
+            background: colors.surface,
+            borderRadius: '8px',
+            border: `1px solid ${colors.border}`,
+            marginBottom: '16px',
+            overflow: 'hidden',
+          }}>
+            {timelineLoading ? (
+              <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                height: '100%', color: colors.textTertiary,
+              }}>
+                <Loader2 className="w-6 h-6 animate-spin" style={{ marginRight: '8px' }} />
+                加载事件时间线...
+              </div>
+            ) : timelineData ? (
+              <EventTimelineGraph
+                data={timelineData}
+                onEventClick={(event) => console.log('点击事件:', event)}
+              />
+            ) : (
+              <div style={{
+                display: 'flex', flexDirection: 'column', alignItems: 'center',
+                justifyContent: 'center', height: '100%', color: colors.textTertiary, gap: '12px',
+              }}>
+                <Clock className="w-10 h-10" style={{ opacity: 0.3 }} />
+                <div>点击"刷新"加载事件时间线</div>
+                <button
+                  onClick={loadTimeline}
+                  style={{
+                    padding: '6px 16px', fontSize: '12px',
+                    background: '#9c661b', color: '#fff',
+                    border: 'none', borderRadius: '4px', cursor: 'pointer',
+                  }}
+                >
+                  加载时间线
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* 报告内容 */}
+          {activeContent && (
+            <div style={{
+              padding: '16px',
+              background: colors.surface,
+              borderRadius: '8px',
+              border: `1px solid ${colors.border}`,
+            }}>
+              <h4 style={{ margin: '0 0 12px 0', fontSize: '14px', color: colors.textPrimary }}>事件详情</h4>
+              <ReportRenderer
+                markdown={activeContent}
+                evidenceItems={evidenceItems}
+                onEvidenceClick={(mdFile) => {
+                  if (viewModeState !== 'md') viewModeDispatch('md')
+                  const item = evidenceItems.find(i => i.mdFile === mdFile)
+                  if (item) {
+                    setSelectedEvidenceId(item.id)
+                    loadEvidenceContent(item)
+                  }
+                }}
+              />
+            </div>
+          )}
+        </div>
+      )
+    }
+
     // 综合结论 tab 进度条
     if (defenseProgress) {
       return (
@@ -982,7 +1384,7 @@ export function ReportPage() {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
         {/* 顶部标签栏 */}
-        <div style={{
+        <div className="report-page-tabs" style={{
           display: 'flex', alignItems: 'center', gap: '2px',
           padding: '8px 12px 0',
           background: 'transparent',
@@ -1074,6 +1476,11 @@ export function ReportPage() {
                   </div>
                   {renderActiveTab()}
                   {renderLegalKBPanel()}
+                  {renderEvidenceReviewPanel()}
+                  {renderReviewNotesPanel()}
+                  {renderCrossExaminationPanel()}
+                  {renderEvidenceChainPanel()}
+                  {renderSimilarCasesPanel()}
                 </>
               ) : null}
             </div>
@@ -1246,7 +1653,475 @@ export function ReportPage() {
     )
   }
 
-  // ===== 加载/错误 =====
+  // ===== 证据三性审查面板 =====
+  const renderEvidenceReviewPanel = () => {
+    if (activeTab !== 'stage_51') return null
+
+    // 三性评分颜色映射
+    const getScoreColor = (score: number) => {
+      if (score >= 0.8) return '#16a34a' // 绿色
+      if (score >= 0.5) return '#ca8a04' // 黄色
+      return '#dc2626' // 红色
+    }
+
+    const getScoreBg = (score: number) => {
+      if (score >= 0.8) return 'rgba(22,163,74,0.1)'
+      if (score >= 0.5) return 'rgba(202,138,4,0.1)'
+      return 'rgba(220,38,38,0.1)'
+    }
+
+    // 评分徽章组件
+    const EvidenceBadge = ({ label, score }: { label: string; score: number }) => (
+      <span style={{
+        fontSize: '10px', padding: '2px 6px', borderRadius: '4px',
+        background: getScoreBg(score),
+        color: getScoreColor(score),
+        border: `1px solid ${getScoreColor(score)}33`,
+      }}>
+        {label}:{Math.round(score * 100)}%
+      </span>
+    )
+
+    return (
+      <div style={{
+        borderTop: '1px solid', borderColor: '#1a6b6a33',
+        marginTop: '28px', paddingTop: '20px',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Eye className="w-4 h-4" style={{ color: '#1a6b6a' }} />
+            <span style={{ fontSize: '13px', fontWeight: 600, color: colors.textPrimary }}>证据三性审查</span>
+            {evidenceReview && (
+              <span style={{ fontSize: '11px', color: colors.textTertiary }}>
+                {evidenceReview.reviews.length} 条已审查
+              </span>
+            )}
+          </div>
+          <button onClick={handleRunEvidenceReview} disabled={evidenceReviewLoading}
+            style={{
+              padding: '4px 12px', fontSize: '11px', borderRadius: '6px',
+              background: evidenceReviewLoading ? 'rgba(26,107,106,0.05)' : '#1a6b6a',
+              color: evidenceReviewLoading ? colors.textTertiary : '#fff',
+              border: '1px solid #1a6b6a33',
+              cursor: evidenceReviewLoading ? 'default' : 'pointer', fontWeight: 500,
+              display: 'flex', alignItems: 'center', gap: '4px',
+            }}>
+            {evidenceReviewLoading ? (
+              <>
+                <Loader2 className="w-3 h-3 animate-spin" />
+                审查中...
+              </>
+            ) : (
+              <>
+                <RefreshCw className="w-3 h-3" />
+                {evidenceReview ? '重新审查' : '开始审查'}
+              </>
+            )}
+          </button>
+        </div>
+
+        {!evidenceReview ? (
+          <div style={{
+            textAlign: 'center', padding: '20px 0', fontSize: '12px', color: colors.textTertiary,
+            border: `1px dashed ${colors.borderStrong}`, borderRadius: '8px',
+          }}>
+            点击"开始审查"对证据进行三性（真实性、合法性、关联性）审查
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {evidenceReview.reviews.map((review, idx) => (
+              <div key={review.evidence_id || idx} style={{
+                background: colors.surfaceElevated, border: `1px solid ${colors.border}`, borderRadius: '8px',
+                padding: '10px 14px',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                  <div style={{ fontSize: '12px', fontWeight: 600, color: colors.textPrimary, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {review.evidence_name}
+                  </div>
+                  <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
+                    <EvidenceBadge label="真" score={review.authenticity?.score || 0} />
+                    <EvidenceBadge label="法" score={review.legality?.score || 0} />
+                    <EvidenceBadge label="关" score={review.relevance?.score || 0} />
+                  </div>
+                </div>
+                {/* 问题提示 */}
+                {((review.authenticity?.issues?.length || 0) > 0 ||
+                  (review.legality?.issues?.length || 0) > 0 ||
+                  (review.relevance?.issues?.length || 0) > 0) && (
+                  <div style={{ fontSize: '11px', color: colors.textSecondary, lineHeight: '1.5' }}>
+                    {(review.legality?.issues || []).slice(0, 2).map((issue, i) => (
+                      <div key={i} style={{ color: '#991b1b' }}>• {issue}</div>
+                    ))}
+                  </div>
+                )}
+                {/* 审查结论 */}
+                {review.review_summary && (
+                  <div style={{ fontSize: '11px', color: colors.textTertiary, marginTop: '4px', fontStyle: 'italic' }}>
+                    {review.review_summary}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // ===== 阅卷笔录面板 =====
+  const renderReviewNotesPanel = () => {
+    if (activeTab !== 'review_notes') return null
+
+    return (
+      <div style={{ marginTop: '20px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+          <div style={{ fontSize: '13px', color: colors.textSecondary }}>
+            阅卷笔录是律师阅卷工作的核心文档，组合案件基本信息、证据目录、三性审查、分析结果生成。
+          </div>
+          <button onClick={handleGenerateReviewNotes} disabled={reviewNotesLoading}
+            style={{
+              padding: '6px 14px', fontSize: '12px', borderRadius: '6px',
+              background: reviewNotesLoading ? 'rgba(74,85,104,0.05)' : '#4a5568',
+              color: reviewNotesLoading ? colors.textTertiary : '#fff',
+              border: '1px solid rgba(74,85,104,0.3)',
+              cursor: reviewNotesLoading ? 'default' : 'pointer', fontWeight: 500,
+              display: 'flex', alignItems: 'center', gap: '5px',
+            }}>
+            {reviewNotesLoading ? (
+              <>
+                <Loader2 className="w-3 h-3 animate-spin" />
+                生成中...
+              </>
+            ) : (
+              <>
+                <RefreshCw className="w-3 h-3" />
+                {reviewNotes ? '重新生成' : '生成阅卷笔录'}
+              </>
+            )}
+          </button>
+        </div>
+
+        {!reviewNotes ? (
+          <div style={{
+            textAlign: 'center', padding: '40px 0', fontSize: '13px', color: colors.textTertiary,
+            border: `1px dashed ${colors.borderStrong}`, borderRadius: '8px',
+          }}>
+            <StickyNote className="w-8 h-8" style={{ opacity: 0.3, marginBottom: '12px' }} />
+            <div>点击"生成阅卷笔录"组合现有分析结果</div>
+          </div>
+        ) : (
+          <div
+            className="report-content"
+            style={{
+              fontSize: '13px', lineHeight: '1.8',
+              padding: '20px', background: colors.surface, borderRadius: '8px',
+              border: `1px solid ${colors.border}`,
+            }}
+            dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(marked.parse(reviewNotes, { async: false }) as string) }}
+          />
+        )}
+      </div>
+    )
+  }
+
+  // ===== 质证意见面板 =====
+  const renderCrossExaminationPanel = () => {
+    if (activeTab !== 'cross_exam') return null
+
+    return (
+      <div style={{ marginTop: '20px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+          <div style={{ fontSize: '13px', color: colors.textSecondary }}>
+            质证意见基于证据三性审查结果，针对有问题的证据制定质证策略。
+          </div>
+          <button onClick={handleGenerateCrossExamination} disabled={crossExaminationLoading}
+            style={{
+              padding: '6px 14px', fontSize: '12px', borderRadius: '6px',
+              background: crossExaminationLoading ? 'rgba(180,83,9,0.05)' : '#b45309',
+              color: crossExaminationLoading ? colors.textTertiary : '#fff',
+              border: '1px solid rgba(180,83,9,0.3)',
+              cursor: crossExaminationLoading ? 'default' : 'pointer', fontWeight: 500,
+              display: 'flex', alignItems: 'center', gap: '5px',
+            }}>
+            {crossExaminationLoading ? (
+              <>
+                <Loader2 className="w-3 h-3 animate-spin" />
+                生成中...
+              </>
+            ) : (
+              <>
+                <RefreshCw className="w-3 h-3" />
+                {crossExamination ? '重新生成' : '生成质证意见'}
+              </>
+            )}
+          </button>
+        </div>
+
+        {!crossExamination ? (
+          <div style={{
+            textAlign: 'center', padding: '40px 0', fontSize: '13px', color: colors.textTertiary,
+            border: `1px dashed ${colors.borderStrong}`, borderRadius: '8px',
+          }}>
+            <Gavel className="w-8 h-8" style={{ opacity: 0.3, marginBottom: '12px' }} />
+            <div>请先进行证据三性审查，再生成质证意见</div>
+          </div>
+        ) : (
+          <div
+            className="report-content"
+            style={{
+              fontSize: '13px', lineHeight: '1.8',
+              padding: '20px', background: colors.surface, borderRadius: '8px',
+              border: `1px solid ${colors.border}`,
+            }}
+            dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(marked.parse(crossExamination, { async: false }) as string) }}
+          />
+        )}
+      </div>
+    )
+  }
+
+  // ===== 证据链面板 =====
+  const renderEvidenceChainPanel = () => {
+    if (activeTab !== 'evidence_chain') return null
+
+    return (
+      <div style={{
+        padding: '16px',
+        background: colors.surface,
+        borderRadius: '8px',
+        border: `1px solid ${colors.border}`,
+        height: '600px',
+        overflow: 'hidden',
+      }}>
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          marginBottom: '12px',
+        }}>
+          <h3 style={{ margin: 0, fontSize: '15px', color: colors.textPrimary }}>
+            证据链关系图
+          </h3>
+          <button
+            onClick={loadEvidenceChain}
+            disabled={evidenceChainLoading}
+            style={{
+              padding: '6px 12px',
+              fontSize: '12px',
+              background: evidenceChainLoading ? colors.textTertiary : '#0891b2',
+              color: '#fff',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: evidenceChainLoading ? 'default' : 'pointer',
+            }}
+          >
+            {evidenceChainLoading ? '加载中...' : '刷新'}
+          </button>
+        </div>
+
+        {evidenceChainLoading ? (
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            height: '500px',
+            color: colors.textTertiary,
+          }}>
+            <Loader2 className="w-6 h-6 animate-spin" style={{ marginRight: '8px' }} />
+            正在分析证据关系...
+          </div>
+        ) : evidenceChainData ? (
+          <EvidenceChainGraph
+            data={evidenceChainData}
+            onNodeClick={(node) => {
+              console.log('点击证据节点:', node)
+              // 可以跳转到证据详情或切换到证据列表 tab
+            }}
+          />
+        ) : (
+          <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            height: '500px',
+            color: colors.textTertiary,
+            gap: '12px',
+          }}>
+            <Network className="w-10 h-10" style={{ opacity: 0.3 }} />
+            <div>点击"刷新"加载证据链数据</div>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // ===== 类案参考面板 =====
+  const renderSimilarCasesPanel = () => {
+    if (activeTab !== 'similar_cases') return null
+
+    return (
+      <div style={{
+        padding: '16px',
+        background: colors.surface,
+        borderRadius: '8px',
+        border: `1px solid ${colors.border}`,
+      }}>
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          marginBottom: '16px',
+        }}>
+          <h3 style={{ margin: 0, fontSize: '15px', color: colors.textPrimary }}>
+            类案参考
+          </h3>
+          <button
+            onClick={handleSearchSimilarCases}
+            disabled={similarCasesLoading}
+            style={{
+              padding: '6px 16px',
+              fontSize: '12px',
+              background: similarCasesLoading ? colors.textTertiary : '#059669',
+              color: '#fff',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: similarCasesLoading ? 'default' : 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+            }}
+          >
+            {similarCasesLoading ? (
+              <>
+                <Loader2 className="w-3 h-3 animate-spin" />
+                搜索中...
+              </>
+            ) : (
+              <>
+                <Search className="w-3 h-3" />
+                搜索类案
+              </>
+            )}
+          </button>
+        </div>
+
+        {similarCasesData ? (
+          <>
+            {/* 罪名和关键事实 */}
+            {similarCasesData.crime_type && (
+              <div style={{
+                padding: '12px',
+                background: colors.surfaceAlt,
+                borderRadius: '6px',
+                marginBottom: '16px',
+              }}>
+                <div style={{ fontSize: '13px', fontWeight: 600, color: colors.textPrimary, marginBottom: '8px' }}>
+                  本案罪名：{similarCasesData.crime_type}
+                </div>
+                {similarCasesData.key_facts.length > 0 && (
+                  <div style={{ fontSize: '12px', color: colors.textSecondary }}>
+                    <div style={{ marginBottom: '4px' }}>关键事实：</div>
+                    {similarCasesData.key_facts.map((fact, i) => (
+                      <div key={i} style={{ marginLeft: '12px', marginBottom: '2px' }}>
+                        • {fact.length > 100 ? fact.slice(0, 100) + '...' : fact}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* 类案列表 */}
+            {similarCasesData.similar_cases.length > 0 ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                {similarCasesData.similar_cases.map((c, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      padding: '12px',
+                      background: colors.surfaceAlt,
+                      borderRadius: '6px',
+                      border: `1px solid ${colors.border}`,
+                    }}
+                  >
+                    <div style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'flex-start',
+                      marginBottom: '8px',
+                    }}>
+                      <h4 style={{ margin: 0, fontSize: '14px', color: colors.textPrimary, flex: 1 }}>
+                        {c.title}
+                      </h4>
+                      {c.link && (
+                        <a
+                          href={c.link}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '2px',
+                            fontSize: '11px',
+                            color: colors.accent,
+                            textDecoration: 'none',
+                          }}
+                        >
+                          查看原文 <ExternalLink className="w-3 h-3" />
+                        </a>
+                      )}
+                    </div>
+                    <div style={{ fontSize: '12px', color: colors.textSecondary, marginBottom: '6px' }}>
+                      <span style={{ marginRight: '12px' }}>审理法院：{c.court}</span>
+                      <span style={{ marginRight: '12px' }}>罪名：{c.crime_type}</span>
+                      {c.amount && <span>涉案金额：{c.amount}</span>}
+                    </div>
+                    <div style={{
+                      fontSize: '12px',
+                      color: colors.gold,
+                      fontWeight: 500,
+                      marginBottom: '6px',
+                    }}>
+                      判决结果：{c.result}
+                    </div>
+                    <div style={{ fontSize: '12px', color: colors.textSecondary, lineHeight: 1.6 }}>
+                      裁判要旨：{c.key_point}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div style={{
+                textAlign: 'center',
+                padding: '40px',
+                color: colors.textTertiary,
+                fontSize: '13px',
+              }}>
+                {similarCasesData.error || '未找到相似案例'}
+              </div>
+            )}
+          </>
+        ) : (
+          <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '60px',
+            color: colors.textTertiary,
+            gap: '12px',
+          }}>
+            <Search className="w-10 h-10" style={{ opacity: 0.3 }} />
+            <div>点击"搜索类案"查找相似案例</div>
+            <div style={{ fontSize: '11px', color: colors.textTertiary }}>
+              需要先完成阶段1分析（指控要素提取）
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
 
   if (loading) {
     return (
@@ -1274,9 +2149,52 @@ export function ReportPage() {
   const caseInitial = defendant ? defendant.charAt(0) : '案'
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: colors.surface }}>
+    <>
+      {/* 打印样式 */}
+      <style>{`
+        @media print {
+          /* 隐藏左侧栏和右侧栏 */
+          .report-page-left-panel,
+          .report-page-right-panel,
+          .report-page-toolbar {
+            display: none !important;
+          }
+          /* 主内容区全宽 */
+          .report-page-content {
+            width: 100% !important;
+            max-width: 100% !important;
+            margin: 0 !important;
+            padding: 20px !important;
+            border: none !important;
+          }
+          /* 标签栏只显示当前激活的标签 */
+          .report-page-tabs {
+            display: none !important;
+          }
+          /* 打印时显示完整内容 */
+          .report-page-content article {
+            page-break-inside: avoid;
+          }
+          /* 打印字体调整 */
+          body {
+            font-size: 12pt;
+            line-height: 1.6;
+          }
+          /* 表格打印样式 */
+          table {
+            page-break-inside: avoid;
+          }
+          /* 链接显示 URL */
+          a[href]:after {
+            content: " (" attr(href) ")";
+            font-size: 0.8em;
+            color: #666;
+          }
+        }
+      `}</style>
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: colors.surface }}>
       {/* ===== Top bar ===== */}
-      <div style={{
+      <div className="report-page-toolbar" style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         padding: '10px 20px', background: colors.surfaceElevated,
         borderBottom: `1px solid ${colors.border}`, flexShrink: 0,
@@ -1373,6 +2291,16 @@ export function ReportPage() {
           }}>
             <Download className="w-3 h-3" />导出报告
           </button>
+          <button onClick={() => window.print()} style={{
+            padding: '5px 12px',
+            background: colors.surfaceElevated,
+            color: colors.textSecondary,
+            border: `1px solid ${colors.border}`,
+            borderRadius: '6px', cursor: 'pointer',
+            fontSize: '11px', display: 'flex', alignItems: 'center', gap: '5px', fontWeight: 500,
+          }}>
+            <Printer className="w-3 h-3" />导出 PDF
+          </button>
         </div>
       </div>
 
@@ -1382,7 +2310,7 @@ export function ReportPage() {
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden', position: 'relative' }}>
 
         {/* ===== Left: Evidence ===== */}
-        <div style={{
+        <div className="report-page-left-panel" style={{
           width: leftCollapsed ? 36 : rightCollapsed ? '100%' : leftWidth,
           background: colors.surfaceAlt,
           borderRight: `1px solid ${colors.border}`,
@@ -1544,7 +2472,7 @@ export function ReportPage() {
         )}
 
         {/* ===== Middle: Safari-style tabs ===== */}
-        <div style={{ flex: 1, overflow: 'hidden', background: colors.surfaceElevated }}>
+        <div className="report-page-content" style={{ flex: 1, overflow: 'hidden', background: colors.surfaceElevated }}>
           {renderSafariTabs()}
         </div>
 
@@ -1561,7 +2489,7 @@ export function ReportPage() {
         )}
 
         {/* ===== Right: Chat ===== */}
-        <div style={{
+        <div className="report-page-right-panel" style={{
           width: rightCollapsed ? 36 : rightWidth,
           background: colors.surfaceAlt,
           borderLeft: `1px solid ${colors.border}`,
@@ -2009,7 +2937,7 @@ export function ReportPage() {
                               border: `1px solid ${colors.border}`,
                               boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
                             }}>
-                              <div dangerouslySetInnerHTML={{ __html: marked.parse(msg.content, { async: false }) as string }} />
+                              <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(marked.parse(msg.content, { async: false }) as string) }} />
                             </div>
                           )}
                         </div>
@@ -2023,6 +2951,7 @@ export function ReportPage() {
         </div>
       </div>
     </div>
+    </>
   )
 }
 
