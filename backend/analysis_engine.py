@@ -19,12 +19,20 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 
 try:
-    from legal_knowledge import get_legal_knowledge, get_dynamic_legal_knowledge, THEORY_THREE_TIERS, CONSTITUTIVE_ELEMENT_ANALYSIS
+    from legal_knowledge import (
+        get_legal_knowledge, get_dynamic_legal_knowledge, THEORY_THREE_TIERS,
+        CONSTITUTIVE_ELEMENT_ANALYSIS, EVIDENCE_REVIEW_TEMPLATES,
+        LEGAL_BASIS_FOR_REVIEW, CROSS_EXAMINATION_STRATEGIES, CROSS_EXAMINATION_TEMPLATE
+    )
 except ImportError:
     def get_legal_knowledge(): return ""
     def get_dynamic_legal_knowledge(crime_type=None): return ""
     THEORY_THREE_TIERS = ""
     CONSTITUTIVE_ELEMENT_ANALYSIS = ""
+    EVIDENCE_REVIEW_TEMPLATES = {}
+    LEGAL_BASIS_FOR_REVIEW = ""
+    CROSS_EXAMINATION_STRATEGIES = {}
+    CROSS_EXAMINATION_TEMPLATE = ""
 
 try:
     from pdf_to_md import get_evidence_text
@@ -1169,12 +1177,177 @@ class AnalysisEngine:
         self._save_stage(5, data, full_report)
         return data
 
-    # ========== 证据三性审查 ==========
+    # ========== 证据质证意见生成（合并三性审查） ==========
 
-    async def review_evidence_triple_property(self) -> Dict[str, Any]:
-        """对全部证据进行三性审查（真实性、合法性、关联性）
+    def _get_review_template(self, evidence_type: str) -> str:
+        """根据证据类型获取对应的审查模板"""
+        # 标准化证据类型名称
+        type_mapping = {
+            "讯问笔录": "被告人供述",
+            "询问笔录": "证人证言",
+            "证人证言": "证人证言",
+            "被害人陈述": "被害人陈述",
+            "被告人供述": "被告人供述",
+            "物证": "物证",
+            "书证": "书证",
+            "鉴定意见": "鉴定意见",
+            "鉴定书": "鉴定意见",
+            "勘验笔录": "勘验检查笔录",
+            "检查笔录": "勘验检查笔录",
+            "勘验检查笔录": "勘验检查笔录",
+            "视听资料": "视听资料",
+            "电子数据": "电子数据",
+            "辨认笔录": "辨认笔录",
+        }
+        normalized_type = type_mapping.get(evidence_type, "其他证据")
+        return EVIDENCE_REVIEW_TEMPLATES.get(normalized_type, EVIDENCE_REVIEW_TEMPLATES.get("其他证据", ""))
 
-        审查结果保存到 evidence/evidence_review.json
+    def _build_review_prompt(self, evidence: Dict[str, Any], template: str) -> str:
+        """构建差异化的证据审查提示词"""
+        ev_name = evidence.get("filename", "未知证据")
+        ev_ref = evidence.get("evidence_ref", "")
+        ev_type = evidence.get("type", "其他证据")
+        ev_text = evidence.get("text", "")[:6000]  # 截断长文本
+
+        prompt = f"""你是一名经验丰富的刑事辩护律师，正在对证据进行严格的三性审查并生成质证意见。
+
+# 证据信息
+- 证据名称：{ev_name}
+- 证据编号：{ev_ref}
+- 证据类型：{ev_type}
+
+# 证据内容摘要
+{ev_text[:4000]}
+
+# 审查模板（请按此模板逐项审查）
+{template}
+
+# 法律依据参考
+{LEGAL_BASIS_FOR_REVIEW[:3000]}
+
+# 输出要求
+请严格按照以下 JSON 格式输出审查结果，每个维度都要有具体的审查发现和法律依据：
+
+{{
+  "evidence_name": "{ev_name}",
+  "evidence_ref": "{ev_ref}",
+  "evidence_type": "{ev_type}",
+  "legality": {{
+    "conclusion": "采信/不采信/存疑",
+    "score": 0-100,
+    "findings": [
+      {{
+        "issue": "发现的具体问题",
+        "legal_basis": "对应法条（如：刑诉法第117条）",
+        "details": "问题详细说明"
+      }}
+    ],
+    "cross_opinion": "可当庭陈述的质证意见（一句话）",
+    "strategy": ["质证策略1", "质证策略2"]
+  }},
+  "authenticity": {{
+    "conclusion": "采信/不采信/存疑",
+    "score": 0-100,
+    "findings": [
+      {{
+        "issue": "发现的具体问题",
+        "legal_basis": "对应法条",
+        "details": "问题详细说明"
+      }}
+    ],
+    "cross_opinion": "可当庭陈述的质证意见",
+    "strategy": ["质证策略1"]
+  }},
+  "relevance": {{
+    "conclusion": "采信/不采信/存疑",
+    "score": 0-100,
+    "findings": [
+      {{
+        "issue": "发现的具体问题",
+        "legal_basis": "对应法条",
+        "details": "问题详细说明"
+      }}
+    ],
+    "cross_opinion": "可当庭陈述的质证意见",
+    "strategy": ["质证策略1"]
+  }},
+  "final_conclusion": "综合结论：采信/不采信/存疑",
+  "cross_examination_summary": "综合质证意见（可当庭陈述，200字以内）"
+}}
+
+# 评分标准
+- 90-100分：无明显问题，建议采信
+- 70-89分：存在轻微问题，可采信但需注意
+- 50-69分：存在明显问题，建议存疑
+- 0-49分：存在严重问题，建议不采信
+
+# 注意事项
+1. 合法性审查重点关注：取证主体资格、取证程序、证据形式、非法证据排除
+2. 真实性审查重点关注：来源可靠性、内容客观性、保管链条、同一性确认
+3. 关联性审查重点关注：与待证事实的关系、证明价值、证据间印证
+4. 每个问题都要有具体的法律依据引用
+5. 质证意见要具体、可操作，能直接用于庭审
+
+只输出 JSON，不要其他内容。"""
+        return prompt
+
+    def _parse_review_result(self, response: str, evidence: Dict[str, Any]) -> Dict[str, Any]:
+        """解析 LLM 返回的审查结果"""
+        import re
+        ev_name = evidence.get("filename", "未知证据")
+        ev_ref = evidence.get("evidence_ref", "")
+
+        try:
+            json_match = re.search(r'\{[\s\S]*\}', response)
+            if json_match:
+                result = json.loads(json_match.group())
+                result["evidence_name"] = ev_name
+                result["evidence_ref"] = ev_ref
+                return result
+        except Exception as e:
+            logger.error(f"[证据审查] JSON 解析失败: {e}")
+
+        # 解析失败，返回默认结果
+        return {
+            "evidence_name": ev_name,
+            "evidence_ref": ev_ref,
+            "evidence_type": evidence.get("type", "其他证据"),
+            "legality": {
+                "conclusion": "存疑",
+                "score": 70,
+                "findings": [],
+                "cross_opinion": "审查失败，需人工复核",
+                "strategy": ["人工复核"]
+            },
+            "authenticity": {
+                "conclusion": "存疑",
+                "score": 70,
+                "findings": [],
+                "cross_opinion": "审查失败，需人工复核",
+                "strategy": ["人工复核"]
+            },
+            "relevance": {
+                "conclusion": "存疑",
+                "score": 70,
+                "findings": [],
+                "cross_opinion": "审查失败，需人工复核",
+                "strategy": ["人工复核"]
+            },
+            "final_conclusion": "存疑",
+            "cross_examination_summary": "审查失败，需人工复核该证据的三性。",
+            "error": "解析失败"
+        }
+
+    async def generate_cross_examination_opinion(self) -> Dict[str, Any]:
+        """生成证据质证意见（合并三性审查）
+
+        审查过程即质证过程，每一项审查结论都包含：
+        1. 审查结论（采信/不采信/存疑）
+        2. 法律依据（具体法条引用）
+        3. 质证意见（可当庭陈述的质证理由）
+        4. 质证策略（申请/请求/主张）
+
+        结果保存到 evidence/evidence_review.json 和 analysis/cross_examination.md
         """
         from llm_client import LLMClient
 
@@ -1196,86 +1369,49 @@ class AnalysisEngine:
 
         for ev in evidence_texts:
             ev_name = ev.get("filename", "未知证据")
-            ev_ref = ev.get("evidence_ref", "")
             ev_type = ev.get("type", "其他证据")
-            ev_text = ev.get("text", "")[:8000]  # 截断长文本
+            ev_text = ev.get("text", "")
 
             if not ev_text.strip():
                 continue
 
-            # 构建审查提示词
-            prompt = f"""请对以下证据进行三性审查（真实性、合法性、关联性）。
+            # 获取对应证据类型的审查模板
+            template = self._get_review_template(ev_type)
 
-证据名称：{ev_name}
-证据编号：{ev_ref}
-证据类型：{ev_type}
-
-证据内容摘要：
-{ev_text[:3000]}
-
-请按以下格式输出 JSON：
-{{
-  "evidence_name": "{ev_name}",
-  "evidence_ref": "{ev_ref}",
-  "authenticity": {{
-    "score": 0-100,
-    "conclusion": "一句话结论",
-    "issues": ["问题1", "问题2"]
-  }},
-  "legality": {{
-    "score": 0-100,
-    "conclusion": "一句话结论",
-    "issues": ["问题1", "问题2"]
-  }},
-  "relevance": {{
-    "score": 0-100,
-    "conclusion": "一句话结论",
-    "issues": ["问题1", "问题2"]
-  }}
-}}
-
-评分标准：
-- 90-100分：无明显问题
-- 70-89分：存在轻微问题
-- 50-69分：存在明显问题
-- 0-49分：存在严重问题
-
-只输出 JSON，不要其他内容。"""
+            # 构建差异化审查提示词
+            prompt = self._build_review_prompt(ev, template)
 
             try:
                 response = await llm.chat([
-                    {"role": "system", "content": "你是刑事辩护律师，正在逐份审查证据，评估证据的合法性、真实性、关联性。"},
+                    {"role": "system", "content": "你是一名资深刑事辩护律师，精通证据法和庭审质证技巧。你的任务是严格审查证据的三性（合法性、真实性、关联性），并生成可直接用于庭审的质证意见。审查要具体、有针对性，法律依据要准确。"},
                     {"role": "user", "content": prompt}
                 ])
 
-                # 解析 JSON
-                import re
-                json_match = re.search(r'\{[\s\S]*\}', response)
-                if json_match:
-                    review = json.loads(json_match.group())
-                    review["evidence_name"] = ev_name
-                    review["evidence_ref"] = ev_ref
-                    reviews.append(review)
-                else:
-                    # 解析失败，创建默认审查结果
-                    reviews.append({
-                        "evidence_name": ev_name,
-                        "evidence_ref": ev_ref,
-                        "authenticity": {"score": 70, "conclusion": "审查失败", "issues": ["自动生成"]},
-                        "legality": {"score": 70, "conclusion": "审查失败", "issues": ["自动生成"]},
-                        "relevance": {"score": 70, "conclusion": "审查失败", "issues": ["自动生成"]},
-                    })
+                # 解析审查结果
+                review = self._parse_review_result(response, ev)
+                reviews.append(review)
+
             except Exception as e:
                 logger.error(f"[证据审查] {ev_name} 审查失败: {e}")
                 reviews.append({
                     "evidence_name": ev_name,
-                    "evidence_ref": ev_ref,
-                    "error": str(e),
+                    "evidence_ref": ev.get("evidence_ref", ""),
+                    "evidence_type": ev_type,
+                    "legality": {"conclusion": "存疑", "score": 70, "findings": [], "cross_opinion": f"审查失败: {str(e)}", "strategy": ["人工复核"]},
+                    "authenticity": {"conclusion": "存疑", "score": 70, "findings": [], "cross_opinion": f"审查失败: {str(e)}", "strategy": ["人工复核"]},
+                    "relevance": {"conclusion": "存疑", "score": 70, "findings": [], "cross_opinion": f"审查失败: {str(e)}", "strategy": ["人工复核"]},
+                    "final_conclusion": "存疑",
+                    "cross_examination_summary": f"审查失败: {str(e)}",
+                    "error": str(e)
                 })
 
-        # 保存审查结果到 evidence/ 目录
+        # 生成质证意见 Markdown
+        cross_md = self._generate_cross_examination_markdown(reviews)
+
+        # 保存审查结果
         evidence_dir = self.case_dir / "evidence"
         evidence_dir.mkdir(parents=True, exist_ok=True)
+
         review_file = evidence_dir / "evidence_review.json"
         result = {
             "case_id": self.case_id,
@@ -1289,7 +1425,181 @@ class AnalysisEngine:
         analysis_review_file = self.analysis_dir / "evidence_review.json"
         analysis_review_file.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
 
+        # 保存质证意见 Markdown
+        cross_file = self.analysis_dir / "cross_examination.md"
+        cross_file.write_text(cross_md, encoding="utf-8")
+
         return result
+
+    def _generate_cross_examination_markdown(self, reviews: List[Dict[str, Any]]) -> str:
+        """生成质证意见 Markdown 文档"""
+        md = "# 证据质证意见\n\n"
+        md += f"> 生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
+        md += f"> 审查证据数量：{len(reviews)}\n\n"
+
+        # 统计问题证据
+        problematic = []
+        for rev in reviews:
+            issues = []
+            leg_score = rev.get("legality", {}).get("score", 100)
+            auth_score = rev.get("authenticity", {}).get("score", 100)
+            rel_score = rev.get("relevance", {}).get("score", 100)
+
+            if leg_score < 70:
+                issues.append(("合法性", leg_score, rev.get("legality", {})))
+            if auth_score < 70:
+                issues.append(("真实性", auth_score, rev.get("authenticity", {})))
+            if rel_score < 70:
+                issues.append(("关联性", rel_score, rev.get("relevance", {})))
+
+            if issues:
+                problematic.append((rev, issues))
+
+        # 概览
+        md += "## 一、审查概览\n\n"
+        md += f"- 审查证据总数：{len(reviews)}\n"
+        md += f"- 问题证据数量：{len(problematic)}\n"
+        md += f"- 无明显问题证据：{len(reviews) - len(problematic)}\n\n"
+
+        if not problematic:
+            md += "**结论**：经审查，本案证据总体质量较好，未发现明显问题。建议重点审查证据收集程序是否合法、证据之间的印证关系、言词证据的稳定性。\n\n"
+        else:
+            md += f"**结论**：发现 {len(problematic)} 份证据存在问题，需要重点质证。\n\n"
+
+        # 问题证据清单
+        if problematic:
+            md += "## 二、问题证据清单\n\n"
+            md += "| 序号 | 证据名称 | 证据编号 | 问题类型 | 分数 | 质证要点 |\n"
+            md += "|------|---------|---------|---------|------|----------|\n"
+
+            for i, (rev, issues) in enumerate(problematic, 1):
+                name = rev.get("evidence_name", "未知证据")
+                ref = rev.get("evidence_ref", "")
+                for issue_type, score, issue_data in issues:
+                    cross_opinion = issue_data.get("cross_opinion", "详见审查报告")
+                    md += f"| {i} | {name} | {ref} | {issue_type} | {score} | {cross_opinion[:40]}... |\n"
+
+            md += "\n"
+
+        # 详细质证意见
+        md += "## 三、详细质证意见\n\n"
+
+        for i, rev in enumerate(reviews, 1):
+            name = rev.get("evidence_name", "未知证据")
+            ref = rev.get("evidence_ref", "")
+            ev_type = rev.get("evidence_type", "其他证据")
+
+            md += f"### {i}. {name}\n\n"
+            md += f"**证据编号**：{ref}\n\n"
+            md += f"**证据类型**：{ev_type}\n\n"
+
+            # 合法性审查
+            legality = rev.get("legality", {})
+            leg_score = legality.get("score", 0)
+            leg_conclusion = legality.get("conclusion", "存疑")
+            md += f"#### （一）合法性审查\n\n"
+            md += f"**审查结论**：{leg_conclusion}（{leg_score}分）\n\n"
+
+            findings = legality.get("findings", [])
+            if findings:
+                md += "**发现问题**：\n\n"
+                for f in findings:
+                    md += f"- **{f.get('issue', '问题')}**\n"
+                    if f.get('legal_basis'):
+                        md += f"  - 法条依据：{f['legal_basis']}\n"
+                    if f.get('details'):
+                        md += f"  - 详细说明：{f['details']}\n"
+                md += "\n"
+
+            cross_opinion = legality.get("cross_opinion", "")
+            if cross_opinion:
+                md += f"**质证意见**：{cross_opinion}\n\n"
+
+            strategy = legality.get("strategy", [])
+            if strategy:
+                md += "**质证策略**：\n"
+                for s in strategy:
+                    md += f"- {s}\n"
+                md += "\n"
+
+            # 真实性审查
+            authenticity = rev.get("authenticity", {})
+            auth_score = authenticity.get("score", 0)
+            auth_conclusion = authenticity.get("conclusion", "存疑")
+            md += f"#### （二）真实性审查\n\n"
+            md += f"**审查结论**：{auth_conclusion}（{auth_score}分）\n\n"
+
+            findings = authenticity.get("findings", [])
+            if findings:
+                md += "**发现问题**：\n\n"
+                for f in findings:
+                    md += f"- **{f.get('issue', '问题')}**\n"
+                    if f.get('legal_basis'):
+                        md += f"  - 法条依据：{f['legal_basis']}\n"
+                    if f.get('details'):
+                        md += f"  - 详细说明：{f['details']}\n"
+                md += "\n"
+
+            cross_opinion = authenticity.get("cross_opinion", "")
+            if cross_opinion:
+                md += f"**质证意见**：{cross_opinion}\n\n"
+
+            strategy = authenticity.get("strategy", [])
+            if strategy:
+                md += "**质证策略**：\n"
+                for s in strategy:
+                    md += f"- {s}\n"
+                md += "\n"
+
+            # 关联性审查
+            relevance = rev.get("relevance", {})
+            rel_score = relevance.get("score", 0)
+            rel_conclusion = relevance.get("conclusion", "存疑")
+            md += f"#### （三）关联性审查\n\n"
+            md += f"**审查结论**：{rel_conclusion}（{rel_score}分）\n\n"
+
+            findings = relevance.get("findings", [])
+            if findings:
+                md += "**发现问题**：\n\n"
+                for f in findings:
+                    md += f"- **{f.get('issue', '问题')}**\n"
+                    if f.get('legal_basis'):
+                        md += f"  - 法条依据：{f['legal_basis']}\n"
+                    if f.get('details'):
+                        md += f"  - 详细说明：{f['details']}\n"
+                md += "\n"
+
+            cross_opinion = relevance.get("cross_opinion", "")
+            if cross_opinion:
+                md += f"**质证意见**：{cross_opinion}\n\n"
+
+            strategy = relevance.get("strategy", [])
+            if strategy:
+                md += "**质证策略**：\n"
+                for s in strategy:
+                    md += f"- {s}\n"
+                md += "\n"
+
+            # 综合结论
+            final_conclusion = rev.get("final_conclusion", "存疑")
+            summary = rev.get("cross_examination_summary", "")
+            md += f"#### （四）综合结论\n\n"
+            md += f"**结论**：{final_conclusion}\n\n"
+            if summary:
+                md += f"**综合质证意见**：{summary}\n\n"
+
+            md += "---\n\n"
+
+        return md
+
+    # 保留旧方法名作为别名，保持向后兼容
+    async def review_evidence_triple_property(self) -> Dict[str, Any]:
+        """对全部证据进行三性审查（真实性、合法性、关联性）
+
+        已重构为 generate_cross_examination_opinion()
+        审查结果保存到 evidence/evidence_review.json
+        """
+        return await self.generate_cross_examination_opinion()
 
     # ========== 阅卷笔录 ==========
 
@@ -1389,116 +1699,47 @@ class AnalysisEngine:
             "generated_at": datetime.now().isoformat(),
         }
 
-    # ========== 质证意见 ==========
+    # ========== 质证意见（向后兼容） ==========
 
     async def generate_cross_examination(self) -> Dict[str, Any]:
-        """生成质证意见
+        """生成质证意见（向后兼容方法）
 
-        基于证据三性审查结果，对有问题的证据生成质证策略。
+        注意：此方法已合并到 generate_cross_examination_opinion() 中。
+        如果未进行证据审查，会先执行审查。
         """
-        # 检查是否有证据审查结果
+        # 检查是否已有审查结果
         review_file = self.analysis_dir / "evidence_review.json"
         if not review_file.exists():
-            return {
-                "case_id": self.case_id,
-                "content": "",
-                "error": "请先进行证据三性审查",
-            }
-
-        try:
-            review_data = json.loads(review_file.read_text(encoding="utf-8"))
-        except Exception:
-            return {
-                "case_id": self.case_id,
-                "content": "",
-                "error": "证据审查结果读取失败",
-            }
-
-        reviews = review_data.get("reviews", [])
-        if not reviews:
-            return {
-                "case_id": self.case_id,
-                "content": "",
-                "error": "无证据审查结果",
-            }
-
-        # 筛选有问题的证据（任一维度分数 < 70）
-        problematic = []
-        for rev in reviews:
-            issues = []
-            auth_score = rev.get("authenticity", {}).get("score", 100)
-            leg_score = rev.get("legality", {}).get("score", 100)
-            rel_score = rev.get("relevance", {}).get("score", 100)
-
-            if auth_score < 70:
-                issues.append(("真实性", auth_score, rev.get("authenticity", {}).get("issues", [])))
-            if leg_score < 70:
-                issues.append(("合法性", leg_score, rev.get("legality", {}).get("issues", [])))
-            if rel_score < 70:
-                issues.append(("关联性", rel_score, rev.get("relevance", {}).get("issues", [])))
-
-            if issues:
-                problematic.append({
-                    "name": rev.get("evidence_name", "未知证据"),
-                    "issues": issues,
-                })
-
-        # 构建质证意见
-        cross_md = "# 质证意见\n\n"
-        cross_md += f"> 生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
-        cross_md += f"> 问题证据数量：{len(problematic)} / {len(reviews)}\n\n"
-
-        if not problematic:
-            cross_md += "## 审查结论\n\n"
-            cross_md += "经证据三性审查，本案证据总体质量较好，未发现明显问题。\n\n"
-            cross_md += "建议重点审查：\n"
-            cross_md += "1. 证据收集程序是否合法\n"
-            cross_md += "2. 证据之间的印证关系\n"
-            cross_md += "3. 言词证据的稳定性\n"
+            # 执行审查
+            result = await self.generate_cross_examination_opinion()
         else:
-            cross_md += "## 问题证据清单\n\n"
-            cross_md += "| 序号 | 证据名称 | 问题类型 | 分数 | 质证要点 |\n"
-            cross_md += "|------|---------|---------|------|----------|\n"
+            # 读取已有结果
+            try:
+                result = json.loads(review_file.read_text(encoding="utf-8"))
+            except Exception:
+                result = await self.generate_cross_examination_opinion()
 
-            for i, item in enumerate(problematic, 1):
-                name = item["name"]
-                for issue_type, score, issue_list in item["issues"]:
-                    issue_text = "；".join(issue_list[:2]) if issue_list else "详见审查报告"
-                    cross_md += f"| {i} | {name} | {issue_type} | {score} | {issue_text[:50]} |\n"
-
-            cross_md += "\n## 详细质证意见\n\n"
-
-            for i, item in enumerate(problematic, 1):
-                cross_md += f"### {i}. {item['name']}\n\n"
-                for issue_type, score, issue_list in item["issues"]:
-                    cross_md += f"**{issue_type}问题（{score}分）**：\n\n"
-                    for issue in issue_list:
-                        cross_md += f"- {issue}\n"
-
-                    # 添加质证策略建议
-                    cross_md += f"\n**质证策略**：\n"
-                    if issue_type == "真实性":
-                        cross_md += "- 申请核实证据来源\n"
-                        cross_md += "- 要求出示原始载体\n"
-                        cross_md += "- 申请鉴定真伪\n"
-                    elif issue_type == "合法性":
-                        cross_md += "- 申请非法证据排除\n"
-                        cross_md += "- 要求说明收集程序\n"
-                        cross_md += "- 申请程序合法性说明\n"
-                    elif issue_type == "关联性":
-                        cross_md += "- 主张与待证事实无关\n"
-                        cross_md += "- 请求排除无关证据\n"
-                    cross_md += "\n"
-
-        # 保存质证意见
+        # 读取生成的质证意见 Markdown
         cross_file = self.analysis_dir / "cross_examination.md"
-        cross_file.write_text(cross_md, encoding="utf-8")
+        cross_content = ""
+        if cross_file.exists():
+            cross_content = cross_file.read_text(encoding="utf-8")
+
+        # 统计问题证据数量
+        problematic_count = 0
+        reviews = result.get("reviews", [])
+        for rev in reviews:
+            leg_score = rev.get("legality", {}).get("score", 100)
+            auth_score = rev.get("authenticity", {}).get("score", 100)
+            rel_score = rev.get("relevance", {}).get("score", 100)
+            if leg_score < 70 or auth_score < 70 or rel_score < 70:
+                problematic_count += 1
 
         return {
             "case_id": self.case_id,
-            "content": cross_md,
+            "content": cross_content,
             "total_evidence": len(reviews),
-            "problematic_count": len(problematic),
+            "problematic_count": problematic_count,
             "generated_at": datetime.now().isoformat(),
         }
 
@@ -1534,7 +1775,7 @@ def generate_evidence_chain(case_path: Path) -> Dict[str, Any]:
         return {"nodes": [], "edges": [], "groups": [], "total_evidence": 0, "total_relations": 0, "error": "无证据数据"}
 
     # 2. 提取指控事实（从起诉书/起诉意见书）
-    accusation = _extract_accusation(evidence_list, analysis_dir)
+    accusation = _extract_accusation(evidence_list, analysis_dir, evidence_dir)
 
     # 3. 定义待证事实（构成要件事实）
     facts_to_prove = [
@@ -1550,7 +1791,7 @@ def generate_evidence_chain(case_path: Path) -> Dict[str, Any]:
             "name": "主观事实",
             "description": "犯罪故意/过失、目的、动机",
             "required": True,
-            "keywords": ["故意", "明知", "目的", "动机", "应当知道", "应当预见", "过失", "放任", "希望"],
+            "keywords": ["故意", "明知", "目的", "动机", "应当知道", "应当预见", "过失", "放任", "希望", "牟利", "非法利益", "营利", "谋利"],
         },
         {
             "id": "fact_behavior",
@@ -1582,15 +1823,97 @@ def generate_evidence_chain(case_path: Path) -> Dict[str, Any]:
         },
     ]
 
-    # 4. 证据类型定义
+    # 4. 证据类型定义（依据刑事诉讼法第50条规定的八种法定证据种类）
+    #
+    # 法定证据种类（8类）：
+    # 1. 物证 - 以物质属性证明案件（形状、颜色、大小等）
+    # 2. 书证 - 以记载内容、文字、符号证明案件
+    # 3. 证人证言 - 证人对案件事实的陈述
+    # 4. 被害人陈述 - 被害人对案件事实的陈述
+    # 5. 犯罪嫌疑人、被告人供述和辩解 - 嫌疑人/被告人的陈述
+    # 6. 鉴定意见 - 专业人员（鉴定人）对专门性问题的技术性结论，需要鉴定资质
+    # 7. 勘验、检查、辨认、侦查实验等笔录 - 侦查活动的程序性记录
+    # 8. 视听资料、电子数据 - 以科技手段存储的信息
+    #
+    # 关键区分：
+    # - 电子数据检查笔录 = 勘验检查笔录（程序性记录），不是电子数据本身
+    # - 手机检查笔录 = 勘验检查笔录，记录检查过程
+    # - 提取的微信记录、转账记录等 = 电子数据（内容本身）
+    # - 鉴定意见需要鉴定人资质，如法医鉴定、DNA鉴定、毒物鉴定等
+    #
     evidence_types = {
-        "indictment": {"name": "指控文书", "color": "#dc2626", "keywords": ["起诉书", "起诉意见书", "公诉书"]},
-        "confession": {"name": "被告人供述", "color": "#2563eb", "keywords": ["讯问笔录", "供述", "被告人"]},
-        "witness": {"name": "证人证言", "color": "#16a34a", "keywords": ["证人", "证言", "询问笔录"]},
-        "documentary": {"name": "书证", "color": "#9333ea", "keywords": ["合同", "协议", "银行", "流水", "转账", "收据", "发票", "清单", "账本"]},
-        "expert": {"name": "鉴定意见", "color": "#ea580c", "keywords": ["鉴定", "检验", "评估", "认定"]},
-        "inspection": {"name": "勘验笔录", "color": "#0891b2", "keywords": ["勘验", "检查", "现场", "辨认"]},
-        "other": {"name": "其他证据", "color": "#6b7280", "keywords": []},
+        "indictment": {
+            "name": "指控文书",
+            "color": "#dc2626",
+            "keywords": ["起诉书", "起诉意见书", "公诉书"],
+            "desc": "起诉书、起诉意见书等指控材料"
+        },
+        "confession": {
+            "name": "被告人供述",
+            "color": "#2563eb",
+            "keywords": ["供述", "辩解", "讯问笔录"],
+            "desc": "犯罪嫌疑人、被告人的陈述"
+        },
+        "witness": {
+            "name": "证人证言",
+            "color": "#16a34a",
+            "keywords": ["证人证言"],
+            "desc": "证人对案件事实的陈述"
+        },
+        "victim": {
+            "name": "被害人陈述",
+            "color": "#f59e0b",
+            "keywords": ["被害人陈述"],
+            "desc": "被害人对案件事实的陈述"
+        },
+        "documentary": {
+            "name": "书证",
+            "color": "#9333ea",
+            "keywords": ["书证"],
+            "desc": "以记载内容证明案件（合同、协议、决定书等）"
+        },
+        "physical": {
+            "name": "物证",
+            "color": "#78716c",
+            "keywords": ["物证"],
+            "desc": "以物质属性证明案件"
+        },
+        "expert": {
+            "name": "鉴定意见",
+            "color": "#ea580c",
+            "keywords": ["鉴定意见"],
+            "desc": "专业人员的技术性结论（需要鉴定资质）"
+        },
+        "inspection": {
+            "name": "勘验检查笔录",
+            "color": "#0891b2",
+            "keywords": ["勘验", "检查笔录", "辨认笔录", "侦查实验"],
+            "desc": "侦查活动的程序性记录"
+        },
+        "electronic": {
+            "name": "电子数据",
+            "color": "#6366f1",
+            "keywords": ["电子数据"],
+            "desc": "以科技手段存储的信息（聊天记录、转账记录等）"
+        },
+        "audiovisual": {
+            "name": "视听资料",
+            "color": "#14b8a6",
+            "keywords": ["视听资料"],
+            "desc": "视频、音频等"
+        },
+        "procedural": {
+            "name": "程序性文书",
+            "color": "#6b7280",
+            "keywords": ["程序性文书", "立案决定", "拘留证", "逮捕证", "受案登记"],
+            "desc": "诉讼程序文书（立案、拘留、逮捕等）"
+        },
+        "other": {
+            "name": "其他证据",
+            "color": "#6b7280",
+            "keywords": [],
+            "desc": ""
+        },
     }
 
     # 5. 分类证据并关联待证事实
@@ -1607,18 +1930,96 @@ def generate_evidence_chain(case_path: Path) -> Dict[str, Any]:
         ev_summary = ev.get("summary_preview", "")
         ev_content = ev.get("content", "")
 
-        # 分类证据
-        combined = ev_name + " " + ev_type + " " + ev_summary
+        # 分类证据：严格依据刑事诉讼法法定证据种类
+        # 优先根据证据 type 字段精确匹配，再使用关键词 fallback
         cat = "other"
-        for type_key, type_info in evidence_types.items():
-            if any(kw in combined for kw in type_info["keywords"]):
-                cat = type_key
-                break
+
+        # 1. 指控文书（起诉书、起诉意见书）- 单独分类便于识别
+        if "起诉书" in ev_type or "起诉意见书" in ev_type:
+            cat = "indictment"
+
+        # 2. 犯罪嫌疑人供述和辩解（法定种类第5类）
+        elif "犯罪嫌疑人供述" in ev_type or "供述和辩解" in ev_type:
+            cat = "confession"
+
+        # 3. 证人证言（法定种类第3类）
+        elif "证人证言" in ev_type:
+            cat = "witness"
+
+        # 4. 被害人陈述（法定种类第4类）
+        elif "被害人陈述" in ev_type:
+            cat = "victim"
+
+        # 5. 勘验检查辨认笔录（法定种类第7类）- 优先级要高！
+        # 包括：现场勘验笔录、检查笔录、辨认笔录、电子数据检查笔录
+        # 注意：电子数据检查笔录是笔录类，不是鉴定意见或电子数据！
+        # 通过证据名称判断：如果名称包含"检查笔录"、"勘验"、"辨认"，归为笔录类
+        elif "勘验检查辨认笔录" in ev_type:
+            cat = "inspection"
+        elif "勘验" in ev_type and "笔录" in ev_type:
+            cat = "inspection"
+        elif "检查笔录" in ev_name or "检查笔录" in ev_type:
+            # 手机检查笔录、电子数据检查笔录都属于勘验检查笔录
+            cat = "inspection"
+        elif "辨认笔录" in ev_type:
+            cat = "inspection"
+
+        # 6. 鉴定意见（法定种类第6类）
+        # 必须是专业鉴定人出具的技术性结论，如DNA鉴定、法医鉴定等
+        # 注意：电子数据检查笔录不是鉴定意见！要通过上面的笔录类优先排除
+        elif ev_type == "鉴定意见":
+            cat = "expert"
+
+        # 7. 视听资料（法定种类第8类的一部分）
+        elif "视听资料" in ev_type:
+            cat = "audiovisual"
+
+        # 8. 电子数据（法定种类第8类）
+        # 提取的聊天记录、转账记录、文件内容等
+        # 注意：电子数据检查笔录已经在上面的笔录类排除了
+        elif ev_type == "电子数据" or "电子证据" in ev_type:
+            cat = "electronic"
+
+        # 9. 书证（法定种类第2类）
+        # 以记载内容证明案件：合同、协议、决定书、行政处罚决定书等
+        elif ev_type == "书证":
+            cat = "documentary"
+
+        # 10. 物证（法定种类第1类）
+        elif "物证" in ev_type:
+            cat = "physical"
+
+        # 11. 程序性文书（诉讼程序性材料）
+        # 立案决定书、拘留证、逮捕证、受案登记表、提请批准逮捕书等
+        # 注意：程序性文书/书证 优先归类为程序性文书
+        elif "程序性文书" in ev_type:
+            cat = "procedural"
+
+        # 12. 书证（兜底，处理单独的书证标记）
+        elif "书证" in ev_type:
+            cat = "documentary"
+
+        else:
+            # 关键词匹配作为 fallback
+            combined = ev_name + " " + ev_type + " " + ev_summary
+            for type_key, type_info in evidence_types.items():
+                if any(kw in combined for kw in type_info["keywords"]):
+                    cat = type_key
+                    break
 
         # 分析该证据能证明哪些待证事实
         proves_facts = []
         proves_strength = {}  # 记录每个事实的证明强度
         full_text = (ev_name + " " + ev_summary + " " + ev_content[:3000]).lower()
+
+        # 如果 index.json 中没有 content，尝试读取 MD 文件
+        if not ev_content and ev.get("md_file"):
+            md_path = evidence_dir / ev["md_file"]
+            if md_path.exists():
+                try:
+                    full_text = (ev_name + " " + ev_summary + " " + md_path.read_text(encoding="utf-8")[:5000]).lower()
+                except Exception:
+                    pass
 
         for fact in facts_to_prove:
             match_count = sum(1 for kw in fact["keywords"] if kw.lower() in full_text)
@@ -1638,6 +2039,7 @@ def generate_evidence_chain(case_path: Path) -> Dict[str, Any]:
             "color": evidence_types[cat]["color"],
             "proves": proves_facts,
             "proves_strength": proves_strength,
+            "summary": ev_summary[:150] if ev_summary else "",  # 证据摘要（前150字）
         }
 
         evidence_by_type[cat].append(evidence_item)
@@ -1684,7 +2086,20 @@ def generate_evidence_chain(case_path: Path) -> Dict[str, Any]:
     groups.append({"id": "facts", "name": "待证事实", "color": "#1f2937", "count": len(facts_to_prove)})
 
     # 6.3 证据节点（每类限制数量，优先显示证明关系多的）
-    max_per_type = {"indictment": 3, "confession": 5, "witness": 6, "documentary": 6, "expert": 3, "inspection": 3, "other": 4}
+    max_per_type = {
+        "indictment": 5,
+        "confession": 10,
+        "witness": 10,
+        "documentary": 10,
+        "expert": 5,
+        "inspection": 10,
+        "electronic": 5,
+        "audiovisual": 5,
+        "procedural": 10,
+        "physical": 5,
+        "victim": 5,
+        "other": 10
+    }
     evidence_nodes = []
 
     for cat, items in evidence_by_type.items():
@@ -1804,9 +2219,14 @@ def generate_evidence_chain(case_path: Path) -> Dict[str, Any]:
                     "risk": "medium",
                 })
 
-    # 8. 统计摘要
+    # 8. 更新 facts_to_prove 中的 evidence_count
+    for fact in facts_to_prove:
+        ev_count = sum(1 for ev in all_evidence if fact["id"] in ev.get("proves", []))
+        fact["evidence_count"] = ev_count
+
+    # 9. 统计摘要
     strong_chains = [f["name"] for f in facts_to_prove
-                     if sum(1 for ev in all_evidence if f["id"] in ev.get("proves", [])) >= 3]
+                     if f.get("evidence_count", 0) >= 3]
     weak_chains = [wp["fact_name"] for wp in weak_points if wp["risk"] == "high"]
 
     return {
@@ -1830,12 +2250,55 @@ def generate_evidence_chain(case_path: Path) -> Dict[str, Any]:
     }
 
 
-def _extract_accusation(evidence_list: list, analysis_dir: Path) -> Optional[Dict[str, Any]]:
+def _extract_accusation(evidence_list: list, analysis_dir: Path, evidence_dir: Path) -> Optional[Dict[str, Any]]:
     """从起诉书/起诉意见书提取指控事实
 
-    优先级：stage_1 分析结果 > 直接解析起诉书 MD
+    优先级：stage_1/output.md > stage_1/output.json > 直接解析起诉书 MD
     """
-    # 1. 尝试从 stage_1 分析结果读取
+    # 1. 尝试从 stage_1/output.md 提取（内容更丰富）
+    stage_1_md = analysis_dir / "stage_1" / "output.md"
+    if stage_1_md.exists():
+        try:
+            content = stage_1_md.read_text(encoding="utf-8")
+            # 提取关键信息
+            lines = content.split("\n")
+            crime_type = ""
+            accusation_summary = []
+            defendant = ""
+
+            for line in lines:
+                # 提取罪名
+                if "**开设赌场罪**" in line or "指控罪名" in line:
+                    crime_type = "开设赌场罪"
+                elif "**" in line and "罪**" in line:
+                    # 提取其他罪名
+                    import re
+                    match = re.search(r'\*\*(.+?罪)\*\*', line)
+                    if match:
+                        crime_type = match.group(1)
+
+                # 提取被告人
+                if "被告人" in line and ("高为峰" in line or "主犯" in line):
+                    import re
+                    match = re.search(r'(高为峰|丁以建|方天兴)', line)
+                    if match:
+                        defendant = match.group(1)
+
+                # 提取指控事实摘要
+                if any(kw in line for kw in ["指控事实", "核心行为", "危害结果", "抽头渔利"]):
+                    accusation_summary.append(line.strip())
+
+            if crime_type and accusation_summary:
+                return {
+                    "name": f"指控：{crime_type}",
+                    "description": " ".join(accusation_summary[:3])[:500],
+                    "source": "阶段1分析",
+                    "defendant": defendant,
+                }
+        except Exception:
+            pass
+
+    # 2. 尝试从 stage_1/output.json 读取
     stage_1_file = analysis_dir / "stage_1" / "output.json"
     if stage_1_file.exists():
         try:
@@ -1849,6 +2312,17 @@ def _extract_accusation(evidence_list: list, analysis_dir: Path) -> Optional[Dic
                     "description": stage_1_data.get("accusation_summary", ""),
                     "source": "阶段1分析",
                 }
+            # 提取被告人信息
+            defendant = stage_1_data.get("defendant", "")
+            indictment_source = stage_1_data.get("indictment_source", "")
+            if defendant and indictment_source:
+                # 从 stage_1 信息推断罪名
+                return {
+                    "name": "指控：开设赌场罪" if "赌场" in indictment_source else "指控事实",
+                    "description": f"被告人：{defendant}；来源：{indictment_source}",
+                    "source": indictment_source,
+                    "defendant": defendant,
+                }
         except Exception:
             pass
 
@@ -1858,26 +2332,27 @@ def _extract_accusation(evidence_list: list, analysis_dir: Path) -> Optional[Dic
             continue
         ev_name = ev.get("name", "")
         if "起诉书" in ev_name or "起诉意见书" in ev_name:
-            # 读取 MD 文件内容
-            md_file = Path(ev.get("md_file", ""))
-            if md_file and md_file.exists():
-                try:
-                    content = md_file.read_text(encoding="utf-8")
-                    # 提取前 500 字作为指控事实描述
-                    lines = content.split("\n")
-                    # 查找指控相关段落
-                    accusation_lines = []
-                    for line in lines[:50]:  # 只看前 50 行
-                        if any(kw in line for kw in ["指控", "犯罪", "实施", "经查"]):
-                            accusation_lines.append(line.strip())
-                    description = " ".join(accusation_lines[:5])[:300] if accusation_lines else content[:300]
-                    return {
-                        "name": f"指控：{ev_name.replace('.md', '')}",
-                        "description": description,
-                        "source": ev_name,
-                    }
-                except Exception:
-                    pass
+            # 读取 MD 文件内容（拼接 evidence_dir）
+            md_filename = ev.get("md_file", "")
+            if md_filename:
+                md_file = evidence_dir / md_filename
+                if md_file.exists():
+                    try:
+                        content = md_file.read_text(encoding="utf-8")
+                        # 提取指控相关内容
+                        lines = content.split("\n")
+                        accusation_lines = []
+                        for line in lines[:50]:
+                            if any(kw in line for kw in ["指控", "犯罪", "实施", "经查", "认定"]):
+                                accusation_lines.append(line.strip())
+                        description = " ".join(accusation_lines[:5])[:300] if accusation_lines else content[:300]
+                        return {
+                            "name": f"指控：{ev_name.replace('.md', '')}",
+                            "description": description,
+                            "source": ev_name,
+                        }
+                    except Exception:
+                        pass
 
     # 3. 返回默认值
     return {

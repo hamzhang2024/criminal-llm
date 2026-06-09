@@ -1735,32 +1735,41 @@ export function ReportPage() {
     )
   }
 
-  // ===== 证据三性审查面板 =====
+  // ===== 证据质证意见面板（合并三性审查） =====
   const renderEvidenceReviewPanel = () => {
     if (activeTab !== 'stage_51') return null
 
     // 三性评分颜色映射
     const getScoreColor = (score: number) => {
-      if (score >= 0.8) return '#16a34a' // 绿色
-      if (score >= 0.5) return '#ca8a04' // 黄色
-      return '#dc2626' // 红色
+      if (score >= 90) return '#16a34a' // 绿色 - 无明显问题
+      if (score >= 70) return '#ca8a04' // 黄色 - 轻微问题
+      if (score >= 50) return '#f97316' // 橙色 - 明显问题
+      return '#dc2626' // 红色 - 严重问题
     }
 
     const getScoreBg = (score: number) => {
-      if (score >= 0.8) return 'rgba(22,163,74,0.1)'
-      if (score >= 0.5) return 'rgba(202,138,4,0.1)'
+      if (score >= 90) return 'rgba(22,163,74,0.1)'
+      if (score >= 70) return 'rgba(202,138,4,0.1)'
+      if (score >= 50) return 'rgba(249,115,22,0.1)'
       return 'rgba(220,38,38,0.1)'
     }
 
+    const getConclusionColor = (conclusion: string) => {
+      if (conclusion === '采信') return '#16a34a'
+      if (conclusion === '存疑') return '#ca8a04'
+      if (conclusion === '不采信') return '#dc2626'
+      return colors.textSecondary
+    }
+
     // 评分徽章组件
-    const EvidenceBadge = ({ label, score }: { label: string; score: number }) => (
+    const EvidenceBadge = ({ label, score, conclusion }: { label: string; score: number; conclusion?: string }) => (
       <span style={{
         fontSize: '10px', padding: '2px 6px', borderRadius: '4px',
         background: getScoreBg(score),
         color: getScoreColor(score),
         border: `1px solid ${getScoreColor(score)}33`,
       }}>
-        {label}:{Math.round(score * 100)}%
+        {label}:{score}分
       </span>
     )
 
@@ -1772,7 +1781,7 @@ export function ReportPage() {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <Eye className="w-4 h-4" style={{ color: '#1a6b6a' }} />
-            <span style={{ fontSize: '13px', fontWeight: 600, color: colors.textPrimary }}>证据三性审查</span>
+            <span style={{ fontSize: '13px', fontWeight: 600, color: colors.textPrimary }}>证据质证意见</span>
             {evidenceReview && (
               <span style={{ fontSize: '11px', color: colors.textTertiary }}>
                 {evidenceReview.reviews.length} 条已审查
@@ -1807,43 +1816,157 @@ export function ReportPage() {
             textAlign: 'center', padding: '20px 0', fontSize: '12px', color: colors.textTertiary,
             border: `1px dashed ${colors.borderStrong}`, borderRadius: '8px',
           }}>
-            点击"开始审查"对证据进行三性（真实性、合法性、关联性）审查
+            点击"开始审查"对证据进行三性（合法性、真实性、关联性）审查，生成质证意见
           </div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            {evidenceReview.reviews.map((review, idx) => (
-              <div key={review.evidence_id || idx} style={{
-                background: colors.surfaceElevated, border: `1px solid ${colors.border}`, borderRadius: '8px',
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            {/* 审查概览 */}
+            {evidenceReview.reviews.length > 0 && (
+              <div style={{
+                background: 'rgba(26,107,106,0.05)',
+                border: '1px solid rgba(26,107,106,0.2)',
+                borderRadius: '8px',
                 padding: '10px 14px',
+                marginBottom: '4px',
               }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-                  <div style={{ fontSize: '12px', fontWeight: 600, color: colors.textPrimary, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {review.evidence_name}
+                <div style={{ fontSize: '11px', color: colors.textSecondary }}>
+                  审查证据总数：{evidenceReview.reviews.length} 条
+                  {' | '}
+                  问题证据：{evidenceReview.reviews.filter(r =>
+                    (r.legality?.score || 100) < 70 ||
+                    (r.authenticity?.score || 100) < 70 ||
+                    (r.relevance?.score || 100) < 70
+                  ).length} 条
+                </div>
+              </div>
+            )}
+
+            {evidenceReview.reviews.map((review, idx) => {
+              const hasIssues = (review.legality?.score || 100) < 70 ||
+                               (review.authenticity?.score || 100) < 70 ||
+                               (review.relevance?.score || 100) < 70
+
+              return (
+              <div key={review.evidence_ref || idx} style={{
+                background: hasIssues ? 'rgba(220,38,38,0.03)' : colors.surfaceElevated,
+                border: `1px solid ${hasIssues ? 'rgba(220,38,38,0.2)' : colors.border}`,
+                borderRadius: '8px',
+                padding: '12px 14px',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: '12px', fontWeight: 600, color: colors.textPrimary, marginBottom: '2px' }}>
+                      {review.evidence_name}
+                    </div>
+                    <div style={{ fontSize: '10px', color: colors.textTertiary }}>
+                      {review.evidence_ref} · {review.evidence_type || '其他证据'}
+                    </div>
                   </div>
                   <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
-                    <EvidenceBadge label="真" score={review.authenticity?.score || 0} />
-                    <EvidenceBadge label="法" score={review.legality?.score || 0} />
-                    <EvidenceBadge label="关" score={review.relevance?.score || 0} />
+                    <EvidenceBadge label="法" score={review.legality?.score || 0} conclusion={review.legality?.conclusion} />
+                    <EvidenceBadge label="真" score={review.authenticity?.score || 0} conclusion={review.authenticity?.conclusion} />
+                    <EvidenceBadge label="关" score={review.relevance?.score || 0} conclusion={review.relevance?.conclusion} />
                   </div>
                 </div>
-                {/* 问题提示 */}
-                {((review.authenticity?.issues?.length || 0) > 0 ||
-                  (review.legality?.issues?.length || 0) > 0 ||
-                  (review.relevance?.issues?.length || 0) > 0) && (
-                  <div style={{ fontSize: '11px', color: colors.textSecondary, lineHeight: '1.5' }}>
-                    {(review.legality?.issues || []).slice(0, 2).map((issue, i) => (
-                      <div key={i} style={{ color: '#991b1b' }}>• {issue}</div>
+
+                {/* 综合结论 */}
+                {review.final_conclusion && (
+                  <div style={{
+                    fontSize: '11px',
+                    fontWeight: 600,
+                    color: getConclusionColor(review.final_conclusion),
+                    marginBottom: '8px',
+                    padding: '4px 8px',
+                    background: review.final_conclusion === '采信' ? 'rgba(22,163,74,0.1)' :
+                               review.final_conclusion === '存疑' ? 'rgba(202,138,4,0.1)' : 'rgba(220,38,38,0.1)',
+                    borderRadius: '4px',
+                    display: 'inline-block',
+                  }}>
+                    综合结论：{review.final_conclusion}
+                  </div>
+                )}
+
+                {/* 发现问题及法律依据 */}
+                {review.legality?.findings && review.legality.findings.length > 0 && (
+                  <div style={{ marginBottom: '8px' }}>
+                    <div style={{ fontSize: '10px', fontWeight: 600, color: '#991b1b', marginBottom: '4px' }}>合法性问题：</div>
+                    {review.legality.findings.slice(0, 2).map((f: any, i: number) => (
+                      <div key={i} style={{ fontSize: '10px', color: colors.textSecondary, marginLeft: '8px', marginBottom: '2px' }}>
+                        • {f.issue}
+                        {f.legal_basis && <span style={{ color: '#1a6b6a' }}>（{f.legal_basis}）</span>}
+                      </div>
                     ))}
                   </div>
                 )}
-                {/* 审查结论 */}
-                {review.review_summary && (
-                  <div style={{ fontSize: '11px', color: colors.textTertiary, marginTop: '4px', fontStyle: 'italic' }}>
-                    {review.review_summary}
+
+                {review.authenticity?.findings && review.authenticity.findings.length > 0 && (
+                  <div style={{ marginBottom: '8px' }}>
+                    <div style={{ fontSize: '10px', fontWeight: 600, color: '#991b1b', marginBottom: '4px' }}>真实性问题：</div>
+                    {review.authenticity.findings.slice(0, 2).map((f: any, i: number) => (
+                      <div key={i} style={{ fontSize: '10px', color: colors.textSecondary, marginLeft: '8px', marginBottom: '2px' }}>
+                        • {f.issue}
+                        {f.legal_basis && <span style={{ color: '#1a6b6a' }}>（{f.legal_basis}）</span>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* 质证意见 */}
+                {(review.legality?.cross_opinion || review.authenticity?.cross_opinion || review.relevance?.cross_opinion) && (
+                  <div style={{
+                    background: 'rgba(131,24,67,0.05)',
+                    border: '1px solid rgba(131,24,67,0.15)',
+                    borderRadius: '6px',
+                    padding: '8px 10px',
+                    marginTop: '8px',
+                  }}>
+                    <div style={{ fontSize: '10px', fontWeight: 600, color: '#831843', marginBottom: '4px' }}>质证意见：</div>
+                    <div style={{ fontSize: '11px', color: colors.textPrimary, lineHeight: '1.5' }}>
+                      {review.legality?.cross_opinion && <div>• {review.legality.cross_opinion}</div>}
+                      {review.authenticity?.cross_opinion && <div>• {review.authenticity.cross_opinion}</div>}
+                      {review.relevance?.cross_opinion && <div>• {review.relevance.cross_opinion}</div>}
+                    </div>
+                  </div>
+                )}
+
+                {/* 质证策略 */}
+                {((review.legality?.strategy && review.legality.strategy.length > 0) || (review.authenticity?.strategy && review.authenticity.strategy.length > 0)) && (
+                  <div style={{ marginTop: '6px' }}>
+                    <div style={{ fontSize: '10px', fontWeight: 500, color: colors.textTertiary, marginBottom: '2px' }}>质证策略：</div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                      {[...(review.legality?.strategy || []), ...(review.authenticity?.strategy || [])].slice(0, 3).map((s: string, i: number) => (
+                        <span key={i} style={{
+                          fontSize: '9px',
+                          padding: '2px 6px',
+                          background: colors.surfaceElevated,
+                          border: `1px solid ${colors.border}`,
+                          borderRadius: '4px',
+                          color: colors.textSecondary,
+                        }}>
+                          {s}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* 综合质证意见 */}
+                {review.cross_examination_summary && (
+                  <div style={{
+                    fontSize: '11px',
+                    color: colors.textSecondary,
+                    marginTop: '8px',
+                    padding: '8px 10px',
+                    background: colors.surfaceElevated,
+                    borderRadius: '6px',
+                    border: `1px solid ${colors.border}`,
+                    lineHeight: '1.5',
+                  }}>
+                    {review.cross_examination_summary}
                   </div>
                 )}
               </div>
-            ))}
+            )})}
           </div>
         )}
       </div>
@@ -2312,12 +2435,12 @@ export function ReportPage() {
           )}
         </div>
 
-        {/* 2. 证据三性审查（可折叠） */}
+        {/* 2. 证据质证意见（合并三性审查） */}
         <div style={{ border: `1px solid ${colors.border}`, borderRadius: '8px', overflow: 'hidden' }}>
           <div style={panelHeaderStyle} onClick={() => togglePanel('evidenceReview')}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <Gavel className="w-4 h-4" style={{ color: '#0891b2' }} />
-              <span style={{ fontSize: '13px', fontWeight: 600, color: colors.textPrimary }}>证据三性审查</span>
+              <span style={{ fontSize: '13px', fontWeight: 600, color: colors.textPrimary }}>证据质证意见</span>
               {evidenceReview && (
                 <span style={{ fontSize: '11px', color: colors.textTertiary }}>{evidenceReview.reviews.length} 条已审查</span>
               )}
@@ -2326,7 +2449,7 @@ export function ReportPage() {
           </div>
           {evidenceCenterPanels.evidenceReview && (
             <div style={{ padding: '16px', background: colors.surface }}>
-              {/* 复用原有的三性审查渲染逻辑 */}
+              {/* 审查按钮 */}
               <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '12px' }}>
                 <button onClick={handleRunEvidenceReview} disabled={evidenceReviewLoading}
                   style={{
@@ -2343,31 +2466,133 @@ export function ReportPage() {
                   )}
                 </button>
               </div>
+
               {!evidenceReview ? (
                 <div style={{ textAlign: 'center', padding: '20px', color: colors.textTertiary, border: `1px dashed ${colors.border}`, borderRadius: '6px' }}>
-                  点击"开始审查"对证据进行三性（真实性、合法性、关联性）审查
+                  点击"开始审查"对证据进行三性（合法性、真实性、关联性）审查，生成质证意见
                 </div>
               ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '400px', overflow: 'auto' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '500px', overflow: 'auto' }}>
+                  {/* 审查概览 */}
+                  {evidenceReview.reviews.length > 0 && (
+                    <div style={{
+                      background: 'rgba(8,145,178,0.05)',
+                      border: '1px solid rgba(8,145,178,0.2)',
+                      borderRadius: '6px',
+                      padding: '8px 12px',
+                      marginBottom: '4px',
+                    }}>
+                      <span style={{ fontSize: '11px', color: colors.textSecondary }}>
+                        审查证据：{evidenceReview.reviews.length} 条
+                        {' | '}
+                        问题证据：{evidenceReview.reviews.filter(r =>
+                          (r.legality?.score || 100) < 70 ||
+                          (r.authenticity?.score || 100) < 70 ||
+                          (r.relevance?.score || 100) < 70
+                        ).length} 条
+                      </span>
+                    </div>
+                  )}
+
                   {evidenceReview.reviews.map((review, idx) => {
-                    // 兼容分数格式：0-100 或 0-1
-                    const normalizeScore = (score: number) => score > 1 ? score / 100 : score
-                    const authScore = normalizeScore(review.authenticity?.score || 0)
-                    const legScore = normalizeScore(review.legality?.score || 0)
-                    const relScore = normalizeScore(review.relevance?.score || 0)
+                    const hasIssues = (review.legality?.score || 100) < 70 ||
+                                     (review.authenticity?.score || 100) < 70 ||
+                                     (review.relevance?.score || 100) < 70
+
+                    const getScoreColor = (score: number) => {
+                      if (score >= 90) return '#16a34a'
+                      if (score >= 70) return '#ca8a04'
+                      if (score >= 50) return '#f97316'
+                      return '#dc2626'
+                    }
+
                     return (
-                    <div key={idx} style={{ background: colors.surfaceAlt, border: `1px solid ${colors.border}`, borderRadius: '6px', padding: '10px 12px' }}>
+                    <div key={review.evidence_ref || idx} style={{
+                      background: hasIssues ? 'rgba(220,38,38,0.03)' : colors.surfaceAlt,
+                      border: `1px solid ${hasIssues ? 'rgba(220,38,38,0.2)' : colors.border}`,
+                      borderRadius: '6px',
+                      padding: '10px 12px',
+                    }}>
+                      {/* 证据名称和评分 */}
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
-                        <span style={{ fontSize: '12px', fontWeight: 600, color: colors.textPrimary }}>{review.evidence_name}</span>
-                        <div style={{ display: 'flex', gap: '4px' }}>
-                          <span style={{ fontSize: '10px', padding: '2px 6px', borderRadius: '4px', background: authScore >= 0.8 ? 'rgba(22,163,74,0.1)' : authScore >= 0.5 ? 'rgba(202,138,4,0.1)' : 'rgba(220,38,38,0.1)', color: authScore >= 0.8 ? '#16a34a' : authScore >= 0.5 ? '#ca8a04' : '#dc2626' }}>真:{Math.round(authScore * 100)}%</span>
-                          <span style={{ fontSize: '10px', padding: '2px 6px', borderRadius: '4px', background: legScore >= 0.8 ? 'rgba(22,163,74,0.1)' : legScore >= 0.5 ? 'rgba(202,138,4,0.1)' : 'rgba(220,38,38,0.1)', color: legScore >= 0.8 ? '#16a34a' : legScore >= 0.5 ? '#ca8a04' : '#dc2626' }}>法:{Math.round(legScore * 100)}%</span>
-                          <span style={{ fontSize: '10px', padding: '2px 6px', borderRadius: '4px', background: relScore >= 0.8 ? 'rgba(22,163,74,0.1)' : relScore >= 0.5 ? 'rgba(202,138,4,0.1)' : 'rgba(220,38,38,0.1)', color: relScore >= 0.8 ? '#16a34a' : relScore >= 0.5 ? '#ca8a04' : '#dc2626' }}>关:{Math.round(relScore * 100)}%</span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: '12px', fontWeight: 600, color: colors.textPrimary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {review.evidence_name}
+                          </div>
+                          <div style={{ fontSize: '10px', color: colors.textTertiary }}>
+                            {review.evidence_ref} · {review.evidence_type || '其他证据'}
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', gap: '3px', flexShrink: 0 }}>
+                          {['法', '真', '关'].map((label, i) => {
+                            const scores = [review.legality?.score || 0, review.authenticity?.score || 0, review.relevance?.score || 0]
+                            const score = scores[i]
+                            return (
+                              <span key={label} style={{
+                                fontSize: '9px', padding: '2px 5px', borderRadius: '3px',
+                                background: score >= 90 ? 'rgba(22,163,74,0.1)' : score >= 70 ? 'rgba(202,138,4,0.1)' : score >= 50 ? 'rgba(249,115,22,0.1)' : 'rgba(220,38,38,0.1)',
+                                color: getScoreColor(score),
+                              }}>{label}:{score}</span>
+                            )
+                          })}
                         </div>
                       </div>
-                      {(review.legality?.issues?.length || 0) > 0 && (
-                        <div style={{ fontSize: '11px', color: '#991b1b' }}>
-                          {review.legality?.issues?.slice(0, 1).map((issue, i) => <div key={i}>• {issue}</div>)}
+
+                      {/* 综合结论 */}
+                      {review.final_conclusion && (
+                        <div style={{
+                          fontSize: '10px',
+                          fontWeight: 600,
+                          color: review.final_conclusion === '采信' ? '#16a34a' : review.final_conclusion === '存疑' ? '#ca8a04' : '#dc2626',
+                          marginBottom: '6px',
+                          padding: '3px 6px',
+                          background: review.final_conclusion === '采信' ? 'rgba(22,163,74,0.1)' : review.final_conclusion === '存疑' ? 'rgba(202,138,4,0.1)' : 'rgba(220,38,38,0.1)',
+                          borderRadius: '3px',
+                          display: 'inline-block',
+                        }}>
+                          综合结论：{review.final_conclusion}
+                        </div>
+                      )}
+
+                      {/* 发现问题 */}
+                      {review.legality?.findings && review.legality.findings.length > 0 && (
+                        <div style={{ marginBottom: '6px' }}>
+                          <div style={{ fontSize: '10px', fontWeight: 600, color: '#991b1b', marginBottom: '2px' }}>合法性问题：</div>
+                          {review.legality.findings.slice(0, 2).map((f: any, i: number) => (
+                            <div key={i} style={{ fontSize: '10px', color: colors.textSecondary, marginLeft: '6px' }}>
+                              • {f.issue}
+                              {f.legal_basis && <span style={{ color: '#0891b2' }}>（{f.legal_basis?.substring(0, 30)}...）</span>}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* 质证意见 */}
+                      {review.legality?.cross_opinion && (
+                        <div style={{
+                          background: 'rgba(131,24,67,0.04)',
+                          border: '1px solid rgba(131,24,67,0.1)',
+                          borderRadius: '4px',
+                          padding: '6px 8px',
+                          marginTop: '6px',
+                        }}>
+                          <div style={{ fontSize: '9px', fontWeight: 600, color: '#831843', marginBottom: '2px' }}>质证意见：</div>
+                          <div style={{ fontSize: '10px', color: colors.textPrimary, lineHeight: '1.4' }}>
+                            {review.legality.cross_opinion.substring(0, 80)}...
+                          </div>
+                        </div>
+                      )}
+
+                      {/* 质证策略 */}
+                      {review.legality?.strategy && review.legality.strategy.length > 0 && (
+                        <div style={{ marginTop: '4px', display: 'flex', flexWrap: 'wrap', gap: '3px' }}>
+                          {review.legality.strategy.slice(0, 2).map((s: string, i: number) => (
+                            <span key={i} style={{
+                              fontSize: '9px', padding: '1px 5px',
+                              background: colors.surfaceElevated, border: `1px solid ${colors.border}`,
+                              borderRadius: '3px', color: colors.textSecondary,
+                            }}>{s.substring(0, 15)}...</span>
+                          ))}
                         </div>
                       )}
                     </div>

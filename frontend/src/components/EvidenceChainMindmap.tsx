@@ -21,6 +21,7 @@ interface TreeNode {
   width?: number
   height?: number
   originalNode?: any
+  summary?: string  // 证据摘要
 }
 
 /**
@@ -58,9 +59,14 @@ export function EvidenceChainMindmap({ data, onNodeClick }: Props) {
       { key: 'indictment', label: '指控文书', color: '#dc2626' },
       { key: 'confession', label: '供述', color: '#2563eb' },
       { key: 'witness', label: '证言', color: '#16a34a' },
+      { key: 'victim', label: '被害人陈述', color: '#f59e0b' },
       { key: 'documentary', label: '书证', color: '#9333ea' },
+      { key: 'physical', label: '物证', color: '#78716c' },
       { key: 'expert', label: '鉴定', color: '#ea580c' },
       { key: 'inspection', label: '勘验', color: '#0891b2' },
+      { key: 'electronic', label: '电子数据', color: '#6366f1' },
+      { key: 'audiovisual', label: '视听资料', color: '#14b8a6' },
+      { key: 'procedural', label: '程序文书', color: '#6b7280' },
       { key: 'other', label: '其他', color: '#6b7280' },
     ]
 
@@ -90,6 +96,7 @@ export function EvidenceChainMindmap({ data, onNodeClick }: Props) {
             type: 'evidence' as const,
             color: cfg.color,
             originalNode: ev,
+            summary: ev.summary || '',  // 传递摘要
           })),
         }
       }).filter(Boolean) as TreeNode[]
@@ -135,6 +142,7 @@ export function EvidenceChainMindmap({ data, onNodeClick }: Props) {
           type: 'evidence' as const,
           color: cfg.color,
           originalNode: ev,
+          summary: ev.summary || '',  // 传递摘要
         })),
       }
     }).filter(Boolean) as TreeNode[]
@@ -361,7 +369,7 @@ export function EvidenceChainMindmap({ data, onNodeClick }: Props) {
           >
             {displayName.length > 12 ? displayName.slice(0, 12) + '...' : displayName}
           </text>
-          <title>{node.name}{node.description ? `\n${node.description}` : ''}</title>
+          <title>{node.name}{node.description ? `\n${node.description}` : ''}{node.summary ? `\n\n摘要：${node.summary}` : ''}</title>
 
           {/* 展开/折叠图标 */}
           {hasChildren && (

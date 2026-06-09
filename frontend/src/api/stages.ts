@@ -83,27 +83,36 @@ export async function saveFullReport(caseId: string, content: string): Promise<a
   return res.json()
 }
 
-// ========== 证据三性审查 ==========
+// ========== 证据质证意见 ==========
+
+// 审查发现（结构化问题）
+export interface EvidenceFinding {
+  issue: string
+  legal_basis: string
+  details: string
+}
+
+// 单项审查结果（合法性/真实性/关联性）
+export interface PropertyReview {
+  conclusion: '采信' | '存疑' | '不采信'
+  score: number
+  findings?: EvidenceFinding[]
+  issues?: string[]  // 兼容旧格式
+  cross_opinion?: string
+  strategy?: string[]
+}
 
 export interface EvidenceReviewItem {
-  evidence_id: number
+  evidence_id?: number
   evidence_name: string
-  authenticity: {
-    score: number
-    issues: string[]
-    conclusion: string
-  }
-  legality: {
-    score: number
-    issues: string[]
-    conclusion: string
-  }
-  relevance: {
-    score: number
-    issues: string[]
-    conclusion: string
-  }
-  review_summary: string
+  evidence_ref?: string
+  evidence_type?: string
+  authenticity: PropertyReview
+  legality: PropertyReview
+  relevance: PropertyReview
+  review_summary?: string
+  final_conclusion?: '采信' | '存疑' | '不采信'
+  cross_examination_summary?: string
 }
 
 export interface EvidenceReviewResult {

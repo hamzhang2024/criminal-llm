@@ -497,13 +497,26 @@ async def save_full_report(
     return {"success": True}
 
 
-# ========== 证据三性审查 API ==========
+# ========== 证据质证意见 API ==========
 
 @router.post("/{case_id}/review-evidence")
 async def review_evidence(case_id: str):
-    """对全部证据进行三性审查（真实性、合法性、关联性）
+    """对全部证据进行质证意见生成（合并三性审查）
 
-    审查结果保存到 evidence/evidence_review.json
+    审查内容包括：
+    - 合法性审查：取证主体资格、取证程序、证据形式、非法证据排除
+    - 真实性审查：来源可靠性、内容客观性、保管链条、同一性确认
+    - 关联性审查：与待证事实的关系、证明价值、证据间印证
+
+    审查结果包含：
+    - 审查结论（采信/不采信/存疑）
+    - 法律依据（具体法条引用）
+    - 质证意见（可当庭陈述的质证理由）
+    - 质证策略（申请/请求/主张）
+
+    输出保存到：
+    - evidence/evidence_review.json（结构化数据）
+    - analysis/cross_examination.md（质证意见文档）
     """
     case_path = find_case_path(case_id)
     if not case_path:
@@ -520,7 +533,13 @@ async def review_evidence(case_id: str):
 
 @router.get("/{case_id}/evidence-review")
 async def get_evidence_review(case_id: str):
-    """获取证据三性审查结果"""
+    """获取证据质证审查结果
+
+    返回结构化的三性审查数据，包含每份证据的：
+    - 合法性、真实性、关联性评分和发现
+    - 具体法律依据引用
+    - 质证意见和质证策略
+    """
     case_path = find_case_path(case_id)
     if not case_path:
         raise HTTPException(status_code=404, detail="案件不存在")
@@ -576,14 +595,19 @@ async def get_review_notes(case_id: str):
     return {"case_id": case_id, "content": content}
 
 
-# ========== 质证意见 API ==========
+# ========== 质证意见文档 API ==========
 
 @router.post("/{case_id}/cross-examination")
 async def generate_cross_examination(case_id: str):
-    """生成质证意见
+    """生成或获取质证意见文档
 
-    基于证据三性审查结果，对有问题的证据生成质证策略。
-    格式：证据名称 → 问题 → 质证策略 → 法律依据
+    注意：此功能已合并到证据审查中。如果已进行证据审查，直接返回结果；
+    如果未审查，会自动执行质证意见生成（包含三性审查）。
+
+    质证意见格式：
+    - 审查概览
+    - 问题证据清单
+    - 详细质证意见（每份证据的三性审查+质证策略）
     """
     case_path = find_case_path(case_id)
     if not case_path:
@@ -601,14 +625,20 @@ async def generate_cross_examination(case_id: str):
 
 @router.get("/{case_id}/cross-examination")
 async def get_cross_examination(case_id: str):
-    """获取质证意见"""
+    """获取质证意见 Markdown 文档
+
+    返回可直接用于庭审的质证意见文档，包含：
+    - 审查概览
+    - 问题证据清单
+    - 每份证据的详细质证意见
+    """
     case_path = find_case_path(case_id)
     if not case_path:
         raise HTTPException(status_code=404, detail="案件不存在")
 
     notes_file = case_path / "analysis" / "cross_examination.md"
     if not notes_file.exists():
-        return {"case_id": case_id, "content": "", "error": "质证意见尚未生成，请先进行证据三性审查"}
+        return {"case_id": case_id, "content": "", "error": "质证意见尚未生成，请先进行证据审查"}
 
     content = notes_file.read_text(encoding="utf-8")
     return {"case_id": case_id, "content": content}
