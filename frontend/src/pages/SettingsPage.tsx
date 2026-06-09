@@ -1000,42 +1000,6 @@ export function SettingsPage() {
             <strong>API Key：</strong>在阿里云百炼平台开通，推荐 <code style={{ fontSize: '11px' }}>qwen-plus</code>。Base URL 和模型名称可在上方输入框中自定义
           </div>
 
-          {/* 日志与诊断 */}
-          <MacOSCard style={{ marginTop: '16px' }}>
-            <h2 style={{ fontSize: '15px', fontWeight: '600', marginBottom: '16px', color: '#1d1d1f' }}>
-              日志与诊断
-            </h2>
-            <div style={{ display: 'flex', gap: '12px' }}>
-              <button
-                onClick={async () => {
-                  try {
-                    const logUrl = `${API_BASE}/logs/backend/download`
-                    const link = document.createElement('a')
-                    link.href = logUrl
-                    link.download = 'criminal-llm-backend.log'
-                    document.body.appendChild(link)
-                    link.click()
-                    document.body.removeChild(link)
-                  } catch (err) {
-                    showAlert({ title: '下载失败', message: err instanceof Error ? err.message : '未知错误', variant: 'danger' })
-                  }
-                }}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: '6px',
-                  padding: '8px 16px', fontSize: 13, fontWeight: 500,
-                  background: 'transparent', border: '1.5px solid var(--macos-accent)',
-                  borderRadius: '8px', cursor: 'pointer', color: 'var(--macos-accent)',
-                }}
-              >
-                <Download className="w-4 h-4" />
-                下载后端日志
-              </button>
-            </div>
-            <div style={{ fontSize: '12px', color: '#86868b', marginTop: '8px' }}>
-              如遇到转换失败、提取失败等问题，请下载此日志文件并发给开发者。
-            </div>
-          </MacOSCard>
-
           {/* 版本与更新 */}
           <MacOSCard style={{ marginTop: '16px' }}>
             <h2 style={{ fontSize: '15px', fontWeight: '600', marginBottom: '16px', color: '#1d1d1f' }}>
