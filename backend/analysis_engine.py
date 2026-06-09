@@ -1776,48 +1776,52 @@ def generate_evidence_chain(case_path: Path) -> Dict[str, Any]:
 
     # 2. 提取指控事实（从起诉书/起诉意见书）
     accusation = _extract_accusation(evidence_list, analysis_dir, evidence_dir)
+    defendant = accusation.get("defendant", "") if accusation else ""
+
+    # 2.5 提取具体的待证事实内容（从分析结果）
+    facts_content = _extract_facts_to_prove(analysis_dir, defendant)
 
     # 3. 定义待证事实（构成要件事实）
     facts_to_prove = [
         {
             "id": "fact_subject",
             "name": "主体事实",
-            "description": "被告人身份、刑事责任能力",
+            "description": facts_content.get("fact_subject", "被告人身份、刑事责任能力"),
             "required": True,
             "keywords": ["身份", "户籍", "年龄", "精神", "责任能力", "被告人", "犯罪嫌疑人", "姓名", "出生"],
         },
         {
             "id": "fact_subjective",
             "name": "主观事实",
-            "description": "犯罪故意/过失、目的、动机",
+            "description": facts_content.get("fact_subjective", "犯罪故意/过失、目的、动机"),
             "required": True,
             "keywords": ["故意", "明知", "目的", "动机", "应当知道", "应当预见", "过失", "放任", "希望", "牟利", "非法利益", "营利", "谋利"],
         },
         {
             "id": "fact_behavior",
             "name": "行为事实",
-            "description": "具体犯罪行为、手段、方式",
+            "description": facts_content.get("fact_behavior", "具体犯罪行为、手段、方式"),
             "required": True,
             "keywords": ["实施", "行为", "手段", "方式", "参与", "组织", "策划", "实施", "操作", "进行"],
         },
         {
             "id": "fact_result",
             "name": "结果事实",
-            "description": "危害后果、数额、损失",
+            "description": facts_content.get("fact_result", "危害后果、数额、损失"),
             "required": True,
             "keywords": ["数额", "金额", "损失", "后果", "获利", "渔利", "赌资", "抽头", "价值", "人民币"],
         },
         {
             "id": "fact_causation",
             "name": "因果关系",
-            "description": "行为与结果的因果链",
+            "description": facts_content.get("fact_causation", "行为与结果的因果链"),
             "required": True,
             "keywords": ["导致", "致使", "造成", "引起", "引发", "结果", "因果"],
         },
         {
             "id": "fact_circumstance",
             "name": "情节事实",
-            "description": "自首、坦白、认罪认罚、累犯等",
+            "description": facts_content.get("fact_circumstance", "自首、坦白、认罪认罚、累犯等"),
             "required": False,
             "keywords": ["自首", "坦白", "认罪", "从轻", "从重", "累犯", "立功", "退赃", "赔偿"],
         },
@@ -2360,6 +2364,89 @@ def _extract_accusation(evidence_list: list, analysis_dir: Path, evidence_dir: P
         "description": "请完成阶段1分析以提取指控事实",
         "source": "待分析",
     }
+
+
+def _extract_facts_to_prove(analysis_dir: Path, defendant: str = "") -> Dict[str, str]:
+    """从分析结果中提取具体的待证事实内容
+
+    从 stage_1/output.md 中提取具体的构成要件事实描述，
+    用于在证据链可视化中展示具体案件内容。
+
+    Returns:
+        Dict[fact_id, 具体描述内容]
+    """
+    facts_content = {}
+
+    # 1. 尝试从 stage_1/output.md 提取
+    stage_1_md = analysis_dir / "stage_1" / "output.md"
+    if not stage_1_md.exists():
+        return facts_content
+
+    try:
+        content = stage_1_md.read_text(encoding="utf-8")
+        lines = content.split("\n")
+
+        # 提取主体事实
+        subject_info = []
+        for line in lines:
+            if any(kw in line for kw in ["被告人", "犯罪嫌疑人", "身份", "户籍", "出生", "年龄", "刑事责任"]):
+                # 过滤掉表头和分隔符
+                if "|" not in line or "**" in line:
+                    continue
+                if "---" in line:
+                    continue
+                subject_info.append(line.strip())
+        if subject_info:
+            facts_content["fact_subject"] = "；".join(subject_info[:3])[:200]
+
+        # 提取主观事实
+        subjective_info = []
+        for line in lines:
+            if any(kw in line for kw in ["故意", "明知", "目的", "牟利", "营利", "非法利益", "主观"]):
+                if "---" not in line:
+                    subjective_info.append(line.strip().replace("*", ""))
+        if subjective_info:
+            facts_content["fact_subjective"] = "；".join(subjective_info[:3])[:200]
+
+        # 提取行为事实
+        behavior_info = []
+        capture_behavior = False
+        for line in lines:
+            # 检测行为描述段落
+            if "指控行为" in line or "核心行为" in line:
+                capture_behavior = True
+                continue
+            if capture_behavior:
+                if line.startswith("###") or line.startswith("##"):
+                    capture_behavior = False
+                    continue
+                if line.strip() and not line.startswith("---"):
+                    behavior_info.append(line.strip().replace("*", ""))
+        if behavior_info:
+            facts_content["fact_behavior"] = " ".join(behavior_info[:4])[:300]
+
+        # 提取结果事实
+        result_info = []
+        for line in lines:
+            if any(kw in line for kw in ["数额", "金额", "渔利", "获利", "损失", "人民币", "万元"]):
+                if "---" not in line and len(line.strip()) > 5:
+                    result_info.append(line.strip().replace("*", ""))
+        if result_info:
+            facts_content["fact_result"] = "；".join(result_info[:3])[:200]
+
+        # 提取情节事实
+        circumstance_info = []
+        for line in lines:
+            if any(kw in line for kw in ["自首", "坦白", "认罪", "从轻", "立功", "退赃", "赔偿", "累犯"]):
+                if "---" not in line:
+                    circumstance_info.append(line.strip().replace("*", ""))
+        if circumstance_info:
+            facts_content["fact_circumstance"] = "；".join(circumstance_info[:2])[:150]
+
+    except Exception:
+        pass
+
+    return facts_content
 
 
 def _infer_evidence_type(filename: str) -> str:

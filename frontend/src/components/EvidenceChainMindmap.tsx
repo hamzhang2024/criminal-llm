@@ -169,6 +169,7 @@ export function EvidenceChainMindmap({ data, onNodeClick }: Props) {
   const calculateLayout = useCallback((tree: TreeNode) => {
     const nodeWidth = 140
     const nodeHeight = 36
+    const factNodeHeight = 60  // 待证事实节点更高，显示描述
     const levelGapX = 180
     const nodeGapY = 45
 
@@ -176,8 +177,9 @@ export function EvidenceChainMindmap({ data, onNodeClick }: Props) {
 
     const layoutSubtree = (node: TreeNode, depth: number, startY: number): number => {
       const x = 40 + depth * levelGapX
-      const height = node.collapsed ? nodeHeight : calculateSubtreeHeight(node)
-      positions.set(node.id, { x, y: startY, width: nodeWidth, height: nodeHeight })
+      // 待证事实节点更高
+      const height = node.type === 'fact' ? factNodeHeight : nodeHeight
+      positions.set(node.id, { x, y: startY, width: nodeWidth, height: height })
 
       if (node.collapsed || !node.children?.length) {
         return startY + nodeGapY
@@ -195,7 +197,7 @@ export function EvidenceChainMindmap({ data, onNodeClick }: Props) {
       const lastPos = positions.get(lastChild.id)
       if (firstPos && lastPos) {
         const centerY = (firstPos.y + lastPos.y) / 2
-        positions.set(node.id, { x, y: centerY, width: nodeWidth, height: nodeHeight })
+        positions.set(node.id, { x, y: centerY, width: nodeWidth, height: height })
       }
 
       return currentY
@@ -358,9 +360,10 @@ export function EvidenceChainMindmap({ data, onNodeClick }: Props) {
             stroke={borderColor}
             strokeWidth={node.type === 'evidence' ? 2 : 0}
           />
+          {/* 节点名称 */}
           <text
             x={node.type === 'root' ? pos.width / 2 : hasChildren ? 20 : pos.width / 2}
-            y={pos.height / 2}
+            y={node.type === 'fact' ? 16 : pos.height / 2}
             textAnchor={node.type === 'root' ? 'middle' : hasChildren ? 'start' : 'middle'}
             dominantBaseline="middle"
             fill={textColor}
@@ -369,13 +372,39 @@ export function EvidenceChainMindmap({ data, onNodeClick }: Props) {
           >
             {displayName.length > 12 ? displayName.slice(0, 12) + '...' : displayName}
           </text>
+          {/* 待证事实节点：显示具体描述 */}
+          {node.type === 'fact' && node.description && (
+            <text
+              x={10}
+              y={32}
+              textAnchor="start"
+              dominantBaseline="middle"
+              fill="rgba(255,255,255,0.85)"
+              fontSize={9}
+            >
+              {node.description.length > 18 ? node.description.slice(0, 18) + '...' : node.description}
+            </text>
+          )}
+          {/* 证据节点：显示摘要 */}
+          {node.type === 'evidence' && node.summary && (
+            <text
+              x={10}
+              y={24}
+              textAnchor="start"
+              dominantBaseline="middle"
+              fill="#6b7280"
+              fontSize={8}
+            >
+              {node.summary.length > 16 ? node.summary.slice(0, 16) + '...' : node.summary}
+            </text>
+          )}
           <title>{node.name}{node.description ? `\n${node.description}` : ''}{node.summary ? `\n\n摘要：${node.summary}` : ''}</title>
 
           {/* 展开/折叠图标 */}
           {hasChildren && (
             <text
               x={10}
-              y={pos.height / 2}
+              y={node.type === 'fact' ? 48 : pos.height / 2}
               textAnchor="middle"
               dominantBaseline="middle"
               fill={textColor}
