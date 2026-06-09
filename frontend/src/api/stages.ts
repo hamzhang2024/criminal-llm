@@ -197,18 +197,28 @@ export async function getCrossExamination(caseId: string): Promise<CrossExaminat
 // ========== 证据链可视化 ==========
 
 export interface EvidenceChainNode {
-  id: number
+  id: number | string
   name: string
   type: string
-  persons: string
-  group: string
+  description?: string
+  category?: string
+  color?: string
+  persons?: string
+  group?: string
+  required?: boolean
+  evidence_count?: number
+  strength?: string
+  proves?: string[]
+  proves_strength?: Record<string, string>
 }
 
 export interface EvidenceChainEdge {
-  source: number
-  target: number
-  type: 'corroborate' | 'contradict' | 'supplement'
+  source: number | string
+  target: number | string
+  type: 'prove' | 'corroborate' | 'contradict' | 'support' | 'basis'
   label: string
+  strength?: string
+  detail?: string
 }
 
 export interface EvidenceChainGroup {
@@ -218,10 +228,38 @@ export interface EvidenceChainGroup {
   count: number
 }
 
+export interface EvidenceChainAccusation {
+  id?: string
+  name: string
+  description: string
+  source: string
+}
+
+export interface EvidenceChainWeakPoint {
+  fact_id: string
+  fact_name: string
+  issue: string
+  risk: 'high' | 'medium' | 'low'
+}
+
+export interface EvidenceChainSummary {
+  total_evidence: number
+  displayed_evidence?: number
+  total_relations: number
+  strong_chains: string[]
+  weak_chains: string[]
+}
+
 export interface EvidenceChainData {
+  accusation?: EvidenceChainAccusation
   nodes: EvidenceChainNode[]
   edges: EvidenceChainEdge[]
   groups: EvidenceChainGroup[]
+  facts_to_prove?: EvidenceChainNode[]
+  evidence_groups?: EvidenceChainGroup[]
+  weak_points?: EvidenceChainWeakPoint[]
+  contradictions?: { evidence: string; name: string; issues: string[] }[]
+  summary?: EvidenceChainSummary
   total_evidence: number
   total_relations: number
   error?: string

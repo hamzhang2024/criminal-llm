@@ -9,8 +9,11 @@ interface Props {
 interface TreeNode {
   id: string | number
   name: string
-  type: 'root' | 'fact' | 'category' | 'evidence'
+  type: 'root' | 'accusation' | 'fact' | 'category' | 'evidence'
   color?: string
+  description?: string
+  evidence_count?: number
+  strength?: string
   children?: TreeNode[]
   collapsed?: boolean
   x?: number
@@ -24,13 +27,13 @@ interface TreeNode {
  * 证据链思维导图组件
  *
  * 布局：树形结构，可折叠展开
- * - 根节点：案件证据链
- * - 第一层：待证事实（三阶层）
+ * - 根节点：指控事实（从起诉书提取）
+ * - 第一层：待证事实（主体、主观、行为、结果、情节）
  * - 第二层：证据类别
  * - 第三层：具体证据
  */
 export function EvidenceChainMindmap({ data, onNodeClick }: Props) {
-  const { nodes, edges, total_evidence, total_relations, error, contradictions } = data as any
+  const { nodes, edges, accusation, weak_points, summary, error } = data as any
 
   // 折叠状态
   const [collapsedNodes, setCollapsedNodes] = useState<Set<string | number>>(new Set())
@@ -47,21 +50,24 @@ export function EvidenceChainMindmap({ data, onNodeClick }: Props) {
       return { id: 'root', name: '证据链', type: 'root', children: [] }
     }
 
-    const facts = nodes.filter((n: any) => n.type === 'fact' || n.category === 'fact')
-    const evidences = nodes.filter((n: any) => n.type !== 'fact' && n.category !== 'fact')
+    const facts = nodes.filter((n: any) => n.type === 'fact')
+    const evidences = nodes.filter((n: any) => n.type !== 'fact' && n.type !== 'accusation')
 
-    // 按类型分组证据
+    // 证据类型配置
     const categoryConfigs = [
       { key: 'indictment', label: '指控文书', color: '#dc2626' },
       { key: 'confession', label: '供述', color: '#2563eb' },
       { key: 'witness', label: '证言', color: '#16a34a' },
-      { key: 'objective', label: '客观证据', color: '#9333ea' },
+      { key: 'documentary', label: '书证', color: '#9333ea' },
+      { key: 'expert', label: '鉴定', color: '#ea580c' },
+      { key: 'inspection', label: '勘验', color: '#0891b2' },
+      { key: 'other', label: '其他', color: '#6b7280' },
     ]
 
     // 为每个待证事实构建子树
     const factNodes: TreeNode[] = facts.map((fact: any) => {
       // 找出与该事实相关的证据（通过边关系）
-      const relatedEdges = edges.filter((e: any) => e.target === fact.id)
+      const relatedEdges = edges.filter((e: any) => e.target === fact.id && e.type === 'prove')
       const relatedEvidenceIds = new Set(relatedEdges.map((e: any) => e.source))
 
       // 按类别组织相关证据
@@ -88,29 +94,42 @@ export function EvidenceChainMindmap({ data, onNodeClick }: Props) {
         }
       }).filter(Boolean) as TreeNode[]
 
+      // 节点颜色根据证据强度
+      const strength = fact.strength || 'weak'
+      let nodeColor = '#6b7280'
+      if (strength === 'strong') nodeColor = '#16a34a'
+      else if (strength === 'medium') nodeColor = '#ca8a04'
+      else nodeColor = '#dc2626'
+
       return {
         id: fact.id,
         name: fact.name,
         type: 'fact' as const,
-        color: '#1f2937',
+        color: nodeColor,
+        description: fact.description,
+        evidence_count: fact.evidence_count,
+        strength: strength,
         children: categoryNodes,
         collapsed: collapsedNodes.has(fact.id),
       }
     })
 
+    // 根节点：指控事实
+    const rootName = accusation?.name || '案件证据链'
+    const rootDescription = accusation?.description || ''
+
     // 未关联到任何事实的证据
+    const assignedIds = new Set(edges.filter((e: any) => e.type === 'prove').map((e: any) => e.source))
+    const unassigned = evidences.filter((ev: any) => !assignedIds.has(ev.id))
     const unassignedCategoryNodes: TreeNode[] = categoryConfigs.map(cfg => {
-      const assignedIds = new Set(edges.map((e: any) => e.source))
-      const unassigned = evidences.filter((ev: any) =>
-        ev.category === cfg.key && !assignedIds.has(ev.id)
-      )
-      if (unassigned.length === 0) return null
+      const catUnassigned = unassigned.filter((ev: any) => ev.category === cfg.key)
+      if (catUnassigned.length === 0) return null
       return {
         id: `unassigned_${cfg.key}`,
-        name: `${cfg.label} (${unassigned.length})`,
+        name: `${cfg.label} (${catUnassigned.length})`,
         type: 'category' as const,
         color: cfg.color,
-        children: unassigned.map((ev: any) => ({
+        children: catUnassigned.map((ev: any) => ({
           id: ev.id,
           name: ev.name,
           type: 'evidence' as const,
@@ -122,8 +141,9 @@ export function EvidenceChainMindmap({ data, onNodeClick }: Props) {
 
     return {
       id: 'root',
-      name: '案件证据链',
-      type: 'root',
+      name: rootName,
+      type: 'root' as const,
+      description: rootDescription,
       children: [
         ...factNodes,
         ...(unassignedCategoryNodes.length > 0 ? [{
@@ -135,7 +155,7 @@ export function EvidenceChainMindmap({ data, onNodeClick }: Props) {
         }] : []),
       ],
     }
-  }, [nodes, edges, collapsedNodes])
+  }, [nodes, edges, accusation, collapsedNodes])
 
   // 计算布局
   const calculateLayout = useCallback((tree: TreeNode) => {
@@ -269,7 +289,7 @@ export function EvidenceChainMindmap({ data, onNodeClick }: Props) {
     let borderColor = '#e5e7eb'
 
     if (node.type === 'root') {
-      bg = '#1f2937'
+      bg = '#1e3a5f'
       textColor = '#fff'
     } else if (node.type === 'fact') {
       bg = node.color || '#1f2937'
@@ -280,6 +300,12 @@ export function EvidenceChainMindmap({ data, onNodeClick }: Props) {
     } else if (node.type === 'evidence') {
       bg = '#fff'
       borderColor = node.color || '#6b7280'
+    }
+
+    // 显示证据数量
+    let displayName = node.name
+    if (node.type === 'fact' && node.evidence_count !== undefined) {
+      displayName = `${node.name} (${node.evidence_count})`
     }
 
     return (
@@ -333,9 +359,9 @@ export function EvidenceChainMindmap({ data, onNodeClick }: Props) {
             fontSize={node.type === 'root' ? 13 : 11}
             fontWeight={node.type === 'evidence' ? 'normal' : '600'}
           >
-            {node.name.length > 12 ? node.name.slice(0, 12) + '...' : node.name}
+            {displayName.length > 12 ? displayName.slice(0, 12) + '...' : displayName}
           </text>
-          <title>{node.name}</title>
+          <title>{node.name}{node.description ? `\n${node.description}` : ''}</title>
 
           {/* 展开/折叠图标 */}
           {hasChildren && (
@@ -358,12 +384,16 @@ export function EvidenceChainMindmap({ data, onNodeClick }: Props) {
     )
   }
 
+  // 统计数据
+  const totalEvidence = summary?.total_evidence || data.total_evidence || 0
+  const totalRelations = summary?.total_relations || data.total_relations || 0
+
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       {/* 工具栏 */}
       <div style={toolbarStyle}>
         <span style={{ fontSize: 12, color: '#6b7280' }}>
-          证据 <b>{total_evidence}</b> 份 | 证明关系 <b>{total_relations}</b> 个
+          证据 <b>{totalEvidence}</b> 份 | 证明关系 <b>{totalRelations}</b> 个
         </span>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
           <button onClick={expandAll} style={btnStyle}>全部展开</button>
@@ -400,24 +430,37 @@ export function EvidenceChainMindmap({ data, onNodeClick }: Props) {
 
       {/* 图例 */}
       <div style={{ marginTop: 4, display: 'flex', gap: 12, fontSize: 10, color: '#6b7280' }}>
-        <span><span style={{ width: 12, height: 12, background: '#1f2937', borderRadius: 2, display: 'inline-block' }} /> 待证事实</span>
-        <span><span style={{ width: 12, height: 12, background: '#dc2626', borderRadius: 2, display: 'inline-block' }} /> 指控文书</span>
+        <span><span style={{ width: 12, height: 12, background: '#16a34a', borderRadius: 2, display: 'inline-block' }} /> 证据充分</span>
+        <span><span style={{ width: 12, height: 12, background: '#ca8a04', borderRadius: 2, display: 'inline-block' }} /> 证据一般</span>
+        <span><span style={{ width: 12, height: 12, background: '#dc2626', borderRadius: 2, display: 'inline-block' }} /> 证据薄弱</span>
         <span><span style={{ width: 12, height: 12, background: '#2563eb', borderRadius: 2, display: 'inline-block' }} /> 供述</span>
         <span><span style={{ width: 12, height: 12, background: '#16a34a', borderRadius: 2, display: 'inline-block' }} /> 证言</span>
-        <span><span style={{ width: 12, height: 12, background: '#9333ea', borderRadius: 2, display: 'inline-block' }} /> 客观证据</span>
+        <span><span style={{ width: 12, height: 12, background: '#9333ea', borderRadius: 2, display: 'inline-block' }} /> 书证</span>
       </div>
 
-      {/* 矛盾问题 */}
-      {contradictions?.length > 0 && (
-        <div style={{ marginTop: 6, padding: '6px 10px', background: '#fef2f2', borderRadius: 4, border: '1px solid #fecaca', maxHeight: 60, overflow: 'auto' }}>
+      {/* 证据链薄弱环节 */}
+      {weak_points?.length > 0 && (
+        <div style={{ marginTop: 6, padding: '6px 10px', background: '#fef2f2', borderRadius: 4, border: '1px solid #fecaca', maxHeight: 80, overflow: 'auto' }}>
           <div style={{ fontSize: 11, fontWeight: 600, color: '#991b1b' }}>
-            ⚠️ 证据问题 ({contradictions.length})
+            ⚠️ 证据链薄弱环节 ({weak_points.length})
           </div>
-          {contradictions.slice(0, 2).map((c: any, i: number) => (
+          {weak_points.map((wp: any, i: number) => (
             <div key={i} style={{ fontSize: 10, color: '#7f1d1d' }}>
-              • {c.name?.slice(0, 20)}: {c.issues?.[0]?.slice(0, 30)}
+              • {wp.fact_name}：{wp.issue}
             </div>
           ))}
+        </div>
+      )}
+
+      {/* 强弱链总结 */}
+      {summary && (summary.strong_chains?.length > 0 || summary.weak_chains?.length > 0) && (
+        <div style={{ marginTop: 4, fontSize: 10, color: '#6b7280', display: 'flex', gap: 16 }}>
+          {summary.strong_chains?.length > 0 && (
+            <span style={{ color: '#16a34a' }}>✓ 强链：{summary.strong_chains.join('、')}</span>
+          )}
+          {summary.weak_chains?.length > 0 && (
+            <span style={{ color: '#dc2626' }}>✗ 弱链：{summary.weak_chains.join('、')}</span>
+          )}
         </div>
       )}
     </div>

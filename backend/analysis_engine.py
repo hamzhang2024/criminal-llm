@@ -1508,19 +1508,16 @@ class AnalysisEngine:
 def generate_evidence_chain(case_path: Path) -> Dict[str, Any]:
     """生成证据链可视化数据
 
-    结合待证事实与证据的证明关系：
-    - 待证事实（犯罪构成要件）：主体、主观、客观、结果
-    - 每个待证事实对应的证据
-    - 证据之间的印证关系
+    结构：
+    - 顶层：指控事实（从起诉书提取）
+    - 中层：待证事实（构成要件事实：主体、主观、行为、结果、情节）
+    - 底层：证据（按类型分组）
+    - 边：证明关系、印证关系、矛盾关系
 
-    返回节点和边数据，用于前端 SVG 渲染。
+    核心逻辑：证据用于证明事实
     """
     analysis_dir = case_path / "analysis"
     evidence_dir = case_path / "evidence"
-
-    nodes = []
-    edges = []
-    groups = []
 
     # 1. 读取证据清单
     index_file = evidence_dir / "index.json"
@@ -1536,165 +1533,209 @@ def generate_evidence_chain(case_path: Path) -> Dict[str, Any]:
     if not evidence_list:
         return {"nodes": [], "edges": [], "groups": [], "total_evidence": 0, "total_relations": 0, "error": "无证据数据"}
 
-    # 2. 定义待证事实（三阶层犯罪论体系）
+    # 2. 提取指控事实（从起诉书/起诉意见书）
+    accusation = _extract_accusation(evidence_list, analysis_dir)
+
+    # 3. 定义待证事实（构成要件事实）
     facts_to_prove = [
         {
-            "id": "fact_1",
-            "name": "构成要件符合性",
-            "description": "主体、主观故意、客观行为、危害结果",
-            "keywords": ["主体", "故意", "开设赌场", "赌具", "场所", "赌客", "抽头", "渔利"],
+            "id": "fact_subject",
+            "name": "主体事实",
+            "description": "被告人身份、刑事责任能力",
+            "required": True,
+            "keywords": ["身份", "户籍", "年龄", "精神", "责任能力", "被告人", "犯罪嫌疑人", "姓名", "出生"],
         },
         {
-            "id": "fact_2",
-            "name": "违法性",
-            "description": "是否存在正当化事由（正当防卫、紧急避险等）",
-            "keywords": ["正当", "防卫", "避险", "紧急", "合法", "授权"],
+            "id": "fact_subjective",
+            "name": "主观事实",
+            "description": "犯罪故意/过失、目的、动机",
+            "required": True,
+            "keywords": ["故意", "明知", "目的", "动机", "应当知道", "应当预见", "过失", "放任", "希望"],
         },
         {
-            "id": "fact_3",
-            "name": "有责性",
-            "description": "刑事责任能力、违法性认识、期待可能性",
-            "keywords": ["责任", "能力", "认识", "期待", "精神", "年龄", "明知"],
+            "id": "fact_behavior",
+            "name": "行为事实",
+            "description": "具体犯罪行为、手段、方式",
+            "required": True,
+            "keywords": ["实施", "行为", "手段", "方式", "参与", "组织", "策划", "实施", "操作", "进行"],
+        },
+        {
+            "id": "fact_result",
+            "name": "结果事实",
+            "description": "危害后果、数额、损失",
+            "required": True,
+            "keywords": ["数额", "金额", "损失", "后果", "获利", "渔利", "赌资", "抽头", "价值", "人民币"],
+        },
+        {
+            "id": "fact_causation",
+            "name": "因果关系",
+            "description": "行为与结果的因果链",
+            "required": True,
+            "keywords": ["导致", "致使", "造成", "引起", "引发", "结果", "因果"],
+        },
+        {
+            "id": "fact_circumstance",
+            "name": "情节事实",
+            "description": "自首、坦白、认罪认罚、累犯等",
+            "required": False,
+            "keywords": ["自首", "坦白", "认罪", "从轻", "从重", "累犯", "立功", "退赃", "赔偿"],
         },
     ]
 
-    # 添加待证事实节点
-    for fact in facts_to_prove:
-        nodes.append({
-            "id": fact["id"],
-            "name": fact["name"],
-            "description": fact["description"],
-            "type": "fact",
-            "category": "fact",
-            "color": "#1f2937",
-        })
-
-    groups.append({"id": "fact", "name": "待证事实", "color": "#1f2937", "count": len(facts_to_prove)})
-
-    # 3. 分类证据并关联待证事实
-    evidence_by_type = {
-        "indictment": [],   # 指控文书
-        "confession": [],   # 供述
-        "witness": [],      # 证言
-        "objective": [],    # 客观证据
+    # 4. 证据类型定义
+    evidence_types = {
+        "indictment": {"name": "指控文书", "color": "#dc2626", "keywords": ["起诉书", "起诉意见书", "公诉书"]},
+        "confession": {"name": "被告人供述", "color": "#2563eb", "keywords": ["讯问笔录", "供述", "被告人"]},
+        "witness": {"name": "证人证言", "color": "#16a34a", "keywords": ["证人", "证言", "询问笔录"]},
+        "documentary": {"name": "书证", "color": "#9333ea", "keywords": ["合同", "协议", "银行", "流水", "转账", "收据", "发票", "清单", "账本"]},
+        "expert": {"name": "鉴定意见", "color": "#ea580c", "keywords": ["鉴定", "检验", "评估", "认定"]},
+        "inspection": {"name": "勘验笔录", "color": "#0891b2", "keywords": ["勘验", "检查", "现场", "辨认"]},
+        "other": {"name": "其他证据", "color": "#6b7280", "keywords": []},
     }
 
-    type_colors = {
-        "indictment": "#dc2626",
-        "confession": "#2563eb",
-        "witness": "#16a34a",
-        "objective": "#9333ea",
-    }
-
-    type_names = {
-        "indictment": "指控文书",
-        "confession": "被告人供述",
-        "witness": "证人证言",
-        "objective": "客观证据",
-    }
+    # 5. 分类证据并关联待证事实
+    evidence_by_type = {t: [] for t in evidence_types}
+    all_evidence = []
 
     for i, ev in enumerate(evidence_list):
         if not isinstance(ev, dict):
             continue
 
-        ev_id = ev.get("id", i)
+        ev_id = ev.get("id", f"ev_{i}")
         ev_name = ev.get("name", f"证据{i}")
         ev_type = ev.get("type", "")
         ev_summary = ev.get("summary_preview", "")
+        ev_content = ev.get("content", "")
 
-        # 分类
-        if "起诉意见书" in ev_name or "起诉书" in ev_name:
-            cat = "indictment"
-        elif "供述" in ev_type or "讯问" in ev_name:
-            cat = "confession"
-        elif "证言" in ev_type or "证人" in ev_name:
-            cat = "witness"
-        else:
-            cat = "objective"
+        # 分类证据
+        combined = ev_name + " " + ev_type + " " + ev_summary
+        cat = "other"
+        for type_key, type_info in evidence_types.items():
+            if any(kw in combined for kw in type_info["keywords"]):
+                cat = type_key
+                break
 
-        # 计算该证据能证明哪些待证事实
+        # 分析该证据能证明哪些待证事实
         proves_facts = []
-        combined_text = (ev_name + " " + ev_summary).lower()
-        for fact in facts_to_prove:
-            for kw in fact["keywords"]:
-                if kw.lower() in combined_text:
-                    proves_facts.append(fact["id"])
-                    break
+        proves_strength = {}  # 记录每个事实的证明强度
+        full_text = (ev_name + " " + ev_summary + " " + ev_content[:3000]).lower()
 
-        evidence_by_type[cat].append({
+        for fact in facts_to_prove:
+            match_count = sum(1 for kw in fact["keywords"] if kw.lower() in full_text)
+            if match_count > 0:
+                proves_facts.append(fact["id"])
+                # 根据匹配关键词数量估算证明力
+                if match_count >= 3:
+                    proves_strength[fact["id"]] = "high"
+                elif match_count >= 1:
+                    proves_strength[fact["id"]] = "medium"
+
+        evidence_item = {
             "id": ev_id,
             "name": ev_name,
             "type": ev_type[:20] if ev_type else "其他",
             "category": cat,
+            "color": evidence_types[cat]["color"],
             "proves": proves_facts,
+            "proves_strength": proves_strength,
+        }
+
+        evidence_by_type[cat].append(evidence_item)
+        all_evidence.append(evidence_item)
+
+    # 6. 构建节点和边
+    nodes = []
+    edges = []
+    groups = []
+
+    # 6.1 指控事实节点
+    if accusation:
+        nodes.append({
+            "id": "accusation",
+            "name": accusation.get("name", "指控事实"),
+            "description": accusation.get("description", "")[:100],
+            "type": "accusation",
+            "color": "#1e3a5f",
         })
 
-    # 4. 添加证据节点（每类限制数量）
-    max_per_type = {"indictment": 2, "confession": 3, "witness": 4, "objective": 5}
+    # 6.2 待证事实节点
+    for fact in facts_to_prove:
+        # 统计关联证据数量
+        ev_count = sum(1 for ev in all_evidence if fact["id"] in ev.get("proves", []))
+        fact_node = {
+            "id": fact["id"],
+            "name": fact["name"],
+            "description": fact["description"],
+            "type": "fact",
+            "required": fact["required"],
+            "evidence_count": ev_count,
+            # 根据证据数量判断强弱
+            "strength": "strong" if ev_count >= 3 else ("medium" if ev_count >= 1 else "weak"),
+        }
+        # 颜色根据证据充分度
+        if ev_count >= 3:
+            fact_node["color"] = "#16a34a"  # 绿色-充分
+        elif ev_count >= 1:
+            fact_node["color"] = "#ca8a04"  # 黄色-一般
+        else:
+            fact_node["color"] = "#dc2626"  # 红色-薄弱
+        nodes.append(fact_node)
+
+    groups.append({"id": "facts", "name": "待证事实", "color": "#1f2937", "count": len(facts_to_prove)})
+
+    # 6.3 证据节点（每类限制数量，优先显示证明关系多的）
+    max_per_type = {"indictment": 3, "confession": 5, "witness": 6, "documentary": 6, "expert": 3, "inspection": 3, "other": 4}
     evidence_nodes = []
 
     for cat, items in evidence_by_type.items():
-        for item in items[:max_per_type.get(cat, 3)]:
-            item["color"] = type_colors[cat]
+        # 按证明事实数量排序，优先显示证明关系多的
+        sorted_items = sorted(items, key=lambda x: len(x.get("proves", [])), reverse=True)
+        for item in sorted_items[:max_per_type.get(cat, 4)]:
             nodes.append(item)
             evidence_nodes.append(item)
 
         if items:
             groups.append({
                 "id": cat,
-                "name": type_names[cat],
-                "color": type_colors[cat],
+                "name": evidence_types[cat]["name"],
+                "color": evidence_types[cat]["color"],
                 "count": len(items),
             })
 
-    # 5. 构建证明关系边
-    # 5.1 证据 → 待证事实（证明关系）
+    # 6.4 构建边：证据 → 待证事实（证明关系）
     for ev in evidence_nodes:
         for fact_id in ev.get("proves", []):
+            strength = ev.get("proves_strength", {}).get(fact_id, "medium")
             edges.append({
                 "source": ev["id"],
                 "target": fact_id,
                 "type": "prove",
                 "label": "证明",
+                "strength": strength,
             })
 
-    # 5.2 指控文书 → 供述（指控依据）
-    for ind in evidence_by_type["indictment"][:1]:
-        for conf in evidence_by_type["confession"][:2]:
-            edges.append({
-                "source": ind["id"],
-                "target": conf["id"],
-                "type": "basis",
-                "label": "依据",
-            })
+    # 6.5 待证事实 → 指控事实（支撑关系）
+    if accusation:
+        for fact in facts_to_prove:
+            if fact["required"]:  # 只有必要的待证事实才关联指控
+                edges.append({
+                    "source": fact["id"],
+                    "target": "accusation",
+                    "type": "support",
+                    "label": "支撑",
+                })
 
-    # 5.3 供述 ↔ 证言（印证）
-    for conf in evidence_by_type["confession"][:2]:
-        for wit in evidence_by_type["witness"][:2]:
-            edges.append({
-                "source": conf["id"],
-                "target": wit["id"],
-                "type": "corroborate",
-                "label": "印证",
-            })
-
-    # 5.4 言词证据 ↔ 客观证据（客观印证）
-    for wit in evidence_by_type["witness"][:2]:
-        for obj in evidence_by_type["objective"][:2]:
-            edges.append({
-                "source": wit["id"],
-                "target": obj["id"],
-                "type": "support",
-                "label": "佐证",
-            })
-
-    # 6. 读取证据三性审查，提取问题
+    # 6.6 读取证据三性审查，提取矛盾关系
     review_file = analysis_dir / "evidence_review.json"
     contradictions = []
+    evidence_issues = {}  # 记录每个证据的问题
+
     if review_file.exists():
         try:
             review_data = json.loads(review_file.read_text(encoding="utf-8"))
             for review in review_data.get("reviews", []):
+                ev_ref = review.get("evidence_ref", "")
+                ev_name = review.get("evidence_name", "")
                 issues = []
                 for prop in ["authenticity", "legality", "relevance"]:
                     prop_data = review.get(prop, {})
@@ -1702,21 +1743,147 @@ def generate_evidence_chain(case_path: Path) -> Dict[str, Any]:
                         issues.extend(prop_data.get("issues", []))
                 if issues:
                     contradictions.append({
-                        "evidence": review.get("evidence_ref", ""),
-                        "name": review.get("evidence_name", ""),
+                        "evidence": ev_ref,
+                        "name": ev_name,
                         "issues": issues[:2],
                     })
+                    evidence_issues[ev_ref] = issues[:2]
         except Exception:
             pass
 
+    # 6.7 构建证据间的印证/矛盾关系
+    # 印证关系：证明同一待证事实的不同证据
+    fact_evidence_map = {}  # fact_id -> [evidence_ids]
+    for ev in evidence_nodes:
+        for fact_id in ev.get("proves", []):
+            if fact_id not in fact_evidence_map:
+                fact_evidence_map[fact_id] = []
+            fact_evidence_map[fact_id].append(ev["id"])
+
+    # 添加印证边（同一事实的证据间）
+    for fact_id, ev_ids in fact_evidence_map.items():
+        if len(ev_ids) >= 2:
+            # 取前两个证据建立印证关系
+            edges.append({
+                "source": ev_ids[0],
+                "target": ev_ids[1],
+                "type": "corroborate",
+                "label": "印证",
+            })
+
+    # 7. 分析证据链薄弱环节
+    weak_points = []
+    for fact in facts_to_prove:
+        ev_count = sum(1 for ev in all_evidence if fact["id"] in ev.get("proves", []))
+        if fact["required"] and ev_count == 0:
+            weak_points.append({
+                "fact_id": fact["id"],
+                "fact_name": fact["name"],
+                "issue": f"无直接证据证明",
+                "risk": "high",
+            })
+        elif fact["required"] and ev_count == 1:
+            weak_points.append({
+                "fact_id": fact["id"],
+                "fact_name": fact["name"],
+                "issue": "仅有单一证据，缺乏印证",
+                "risk": "medium",
+            })
+
+    # 检查是否仅有言词证据
+    for fact in facts_to_prove:
+        related_ev = [ev for ev in all_evidence if fact["id"] in ev.get("proves", [])]
+        verbal_only = all(ev["category"] in ["confession", "witness", "indictment"] for ev in related_ev)
+        if verbal_only and len(related_ev) > 0 and fact["required"]:
+            existing = next((wp for wp in weak_points if wp["fact_id"] == fact["id"]), None)
+            if not existing:
+                weak_points.append({
+                    "fact_id": fact["id"],
+                    "fact_name": fact["name"],
+                    "issue": "仅有言词证据，缺乏客观证据印证",
+                    "risk": "medium",
+                })
+
+    # 8. 统计摘要
+    strong_chains = [f["name"] for f in facts_to_prove
+                     if sum(1 for ev in all_evidence if f["id"] in ev.get("proves", [])) >= 3]
+    weak_chains = [wp["fact_name"] for wp in weak_points if wp["risk"] == "high"]
+
     return {
+        "accusation": accusation,
         "nodes": nodes,
         "edges": edges,
         "groups": groups,
+        "facts_to_prove": facts_to_prove,
+        "evidence_groups": [{"id": k, "name": v["name"], "color": v["color"],
+                            "count": len(evidence_by_type[k])} for k, v in evidence_types.items()
+                           if evidence_by_type[k]],
+        "weak_points": weak_points,
         "contradictions": contradictions[:5],
-        "total_evidence": len(evidence_nodes),
-        "total_relations": len(edges),
-        "factsCount": len(facts_to_prove),
+        "summary": {
+            "total_evidence": len(all_evidence),
+            "displayed_evidence": len(evidence_nodes),
+            "total_relations": len(edges),
+            "strong_chains": strong_chains,
+            "weak_chains": weak_chains,
+        },
+    }
+
+
+def _extract_accusation(evidence_list: list, analysis_dir: Path) -> Optional[Dict[str, Any]]:
+    """从起诉书/起诉意见书提取指控事实
+
+    优先级：stage_1 分析结果 > 直接解析起诉书 MD
+    """
+    # 1. 尝试从 stage_1 分析结果读取
+    stage_1_file = analysis_dir / "stage_1" / "output.json"
+    if stage_1_file.exists():
+        try:
+            stage_1_data = json.loads(stage_1_file.read_text(encoding="utf-8"))
+            if stage_1_data.get("accusation"):
+                return stage_1_data["accusation"]
+            # 从分析结果提取
+            if stage_1_data.get("crime_type"):
+                return {
+                    "name": f"指控：{stage_1_data.get('crime_type', '罪名')}",
+                    "description": stage_1_data.get("accusation_summary", ""),
+                    "source": "阶段1分析",
+                }
+        except Exception:
+            pass
+
+    # 2. 从起诉书/起诉意见书 MD 文件提取
+    for ev in evidence_list:
+        if not isinstance(ev, dict):
+            continue
+        ev_name = ev.get("name", "")
+        if "起诉书" in ev_name or "起诉意见书" in ev_name:
+            # 读取 MD 文件内容
+            md_file = Path(ev.get("md_file", ""))
+            if md_file and md_file.exists():
+                try:
+                    content = md_file.read_text(encoding="utf-8")
+                    # 提取前 500 字作为指控事实描述
+                    lines = content.split("\n")
+                    # 查找指控相关段落
+                    accusation_lines = []
+                    for line in lines[:50]:  # 只看前 50 行
+                        if any(kw in line for kw in ["指控", "犯罪", "实施", "经查"]):
+                            accusation_lines.append(line.strip())
+                    description = " ".join(accusation_lines[:5])[:300] if accusation_lines else content[:300]
+                    return {
+                        "name": f"指控：{ev_name.replace('.md', '')}",
+                        "description": description,
+                        "source": ev_name,
+                    }
+                except Exception:
+                    pass
+
+    # 3. 返回默认值
+    return {
+        "name": "指控事实",
+        "description": "请完成阶段1分析以提取指控事实",
+        "source": "待分析",
     }
 
 
