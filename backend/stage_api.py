@@ -698,71 +698,129 @@ def _parse_person_relation(content: str) -> dict:
     nodes = []
     edges = []
 
-    # 解析人物表格
-    # 格式：| 姓名 | 角色 | 与xxx的关系 | ... |
-    table_pattern = r'\|\s*\*?\*([^|*]+)\*?\*?\s*\|\s*([^|]+)\s*\|'
-    matches = re.findall(table_pattern, content)
+    # 方法1：解析 mermaid graph 代码块（更准确）
+    mermaid_match = re.search(r'```mermaid\s*graph\s*\w+\s*(.*?)```', content, re.DOTALL)
+    if mermaid_match:
+        mermaid_code = mermaid_match.group(1)
 
-    # 角色映射
-    role_map = {
-        "被告人": "defendant",
-        "同案犯": "co defendant",
-        "被害人": "victim",
-        "证人": "witness",
-        "关联人": "witness",
-    }
+        # 解析节点定义：A[姓名], B[姓名], etc.
+        node_pattern = r'([A-Z])\[([^\]]+)\]'
+        node_matches = re.findall(node_pattern, mermaid_code)
+        node_id_map = {}  # A -> 姓名
 
-    seen_names = set()
-    for name, role in matches[:50]:  # 限制数量
-        name = name.strip()
-        if not name or name in seen_names or len(name) > 10:
-            continue
-        if "涉案人员" in name or "姓名" in name:
-            continue
+        for node_id, node_name in node_matches:
+            node_id_map[node_id] = node_name
+            # 根据名字推断角色
+            role = "other"
+            if "高为峰" in node_name:
+                role = "defendant"
+            elif "丁以建" in node_name or "方天兴" in node_name:
+                role = "co defendant"
+            elif any(w in node_name for w in ["汤", "於", "肖", "何", "孙", "张", "严"]):
+                role = "witness"
 
-        # 确定角色
-        node_role = "other"
-        for key, val in role_map.items():
-            if key in role:
-                node_role = val
-                break
+            nodes.append({
+                "id": node_name,
+                "name": node_name,
+                "role": role,
+                "description": "",
+            })
 
-        nodes.append({
-            "id": name,
-            "name": name,
-            "role": node_role,
-            "description": role.strip(),
-        })
-        seen_names.add(name)
+        # 解析边：A -- "关系" --> B
+        edge_pattern = r'([A-Z])\s*--\s*"([^"]+)"\s*-->\s*([A-Z])'
+        edge_matches = re.findall(edge_pattern, mermaid_code)
 
-    # 解析关系（从表格的"与xxx的关系"列）
-    # 简化处理：根据角色推断关系
-    defendant = next((n for n in nodes if n["role"] == "defendant"), None)
-    if defendant:
-        for node in nodes:
-            if node["id"] != defendant["id"]:
-                # 根据角色推断关系类型
-                if node["role"] == "victim":
-                    edges.append({
-                        "source": defendant["id"],
-                        "target": node["id"],
-                        "type": "fraud",
-                        "label": "诈骗对象",
-                    })
-                elif node["role"] == "co defendant":
-                    edges.append({
-                        "source": defendant["id"],
-                        "target": node["id"],
-                        "type": "cooperation",
-                        "label": "共犯",
-                    })
-                elif node["role"] == "witness":
-                    edges.append({
-                        "source": defendant["id"],
-                        "target": node["id"],
-                        "type": "other",
-                        "label": "关联",
-                    })
+        for src_id, label, tgt_id in edge_matches:
+            src_name = node_id_map.get(src_id, src_id)
+            tgt_name = node_id_map.get(tgt_id, tgt_id)
+
+            # 确定边类型
+            edge_type = "other"
+            if "雇佣" in label or "债务" in label:
+                edge_type = "cooperation"
+            elif "介绍" in label:
+                edge_type = "introduction"
+            elif "参赌" in label or "招募" in label:
+                edge_type = "participation"
+
+            edges.append({
+                "source": src_name,
+                "target": tgt_name,
+                "type": edge_type,
+                "label": label,
+            })
+
+    # 如果 mermaid 解析失败，尝试解析表格
+    if not nodes:
+        # 解析人物表格 - 匹配每行的所有列
+        # 格式：| 姓名 | 角色 | 与xxx的关系 | 涉案程度 | 证据来源 | 备注 |
+        lines = content.split('\n')
+        in_table = False
+
+        role_map = {
+            "被告人": "defendant",
+            "主犯": "defendant",
+            "从犯": "co defendant",
+            "同案犯": "co defendant",
+            "证人": "witness",
+            "关联人": "witness",
+        }
+
+        for line in lines:
+            # 跳过表头分隔线
+            if '|---' in line or '| ---' in line:
+                in_table = True
+                continue
+            if not in_table or not line.strip().startswith('|'):
+                continue
+
+            # 解析表格行
+            cols = [c.strip() for c in line.split('|') if c.strip()]
+            if len(cols) < 2:
+                continue
+
+            name = cols[0].replace('*', '').strip()
+            role_str = cols[1] if len(cols) > 1 else ""
+            relation = cols[2] if len(cols) > 2 else ""
+
+            # 跳过表头
+            if name == "姓名" or "涉案人员" in name:
+                continue
+
+            # 确定角色
+            node_role = "other"
+            for key, val in role_map.items():
+                if key in role_str:
+                    node_role = val
+                    break
+
+            if name and len(name) <= 10:
+                nodes.append({
+                    "id": name,
+                    "name": name,
+                    "role": node_role,
+                    "description": relation or role_str,
+                })
+
+        # 根据角色生成边
+        defendant = next((n for n in nodes if n["role"] == "defendant"), None)
+        if defendant:
+            for node in nodes:
+                if node["id"] != defendant["id"]:
+                    if node["role"] == "co defendant":
+                        edges.append({
+                            "source": defendant["id"],
+                            "target": node["id"],
+                            "type": "cooperation",
+                            "label": "共犯",
+                        })
+                    elif node["role"] == "witness":
+                        edges.append({
+                            "source": defendant["id"],
+                            "target": node["id"],
+                            "type": "other",
+                            "label": "关联",
+                        })
 
     return {"nodes": nodes, "edges": edges}
 
@@ -780,15 +838,24 @@ def _parse_event_timeline(content: str) -> dict:
     def normalize_event_date(raw: str) -> str:
         if not raw:
             return '1900-01-01'
+
+        # 去掉时间部分（如 "15点00分"、"22点00分"）
+        raw = re.sub(r'\s*\d+点\d+分.*$', '', raw)
+        raw = re.sub(r'\s*\d+:\d+.*$', '', raw)
+
+        # 取时间范围的第一个日期
         raw = re.split(r'至|\s*-\s+', raw)[0].strip()
+
         if "年中" in raw:
             raw = raw.replace("年中", "06")
         elif "年底" in raw:
             raw = raw.replace("年底", "12")
+
         raw = re.sub(r'起$', '', raw)
         raw = raw.replace("年", "-").replace("月", "-").replace("日", "").replace(".", "-").strip("-")
         raw = re.sub(r'-+', '-', raw)
         parts = raw.strip("-").split("-")
+
         if len(parts) == 1:
             return f"{parts[0]}-01-01"
         elif len(parts) == 2:

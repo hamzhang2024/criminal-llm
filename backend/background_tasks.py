@@ -145,7 +145,7 @@ def start_convert_task(case_id: str, max_concurrent: int = 3):
                 from case_manager import find_case_path
                 from config_manager import get_config_value
 
-                # 获取配置的 PDF 引擎
+                # 获取配置的 PDF 引擎（与 config_manager 默认值一致）
                 pdf_engine = get_config_value("pdf_engine") or "mineru"
 
                 case_path = find_case_path(case_id)

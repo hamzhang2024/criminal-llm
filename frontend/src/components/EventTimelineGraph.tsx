@@ -69,14 +69,25 @@ export function EventTimelineGraph({ data, onEventClick }: Props) {
 
   // 解析日期为可比较的数值
   const parseDate = (dateStr: string): number => {
-    // 支持多种格式：2024-05-01, 2024年5月, 2024.05
-    const match = dateStr.match(/(\d{4})[-年.](\d{1,2})(?:[-月.](\d{1,2}))?/)
+    // 支持多种格式：2024-05-01, 2024年5月, 2024.05, 2025-10-25 15点00分
+    // 先提取日期部分（去掉时间）
+    const datePart = dateStr.split(/\s+/)[0] || dateStr
+
+    // 尝试匹配各种日期格式
+    const match = datePart.match(/(\d{4})[-年.](\d{1,2})(?:[-月.](\d{1,2}))?/)
     if (match) {
       const year = parseInt(match[1])
       const month = parseInt(match[2])
       const day = match[3] ? parseInt(match[3]) : 1
       return year * 10000 + month * 100 + day
     }
+
+    // 尝试匹配纯年月格式：2025年12月
+    const match2 = dateStr.match(/(\d{4})年(\d{1,2})月?/)
+    if (match2) {
+      return parseInt(match2[1]) * 10000 + parseInt(match2[2]) * 100 + 1
+    }
+
     // 无法解析的返回 0
     return 0
   }
@@ -93,49 +104,41 @@ export function EventTimelineGraph({ data, onEventClick }: Props) {
     // 按日期排序
     const sortedEvents = [...data.events].sort((a, b) => parseDate(a.date) - parseDate(b.date))
 
-    // 计算时间范围
-    const dates = sortedEvents.map(e => parseDate(e.date))
+    // 过滤掉异常日期（如 1900 年）
+    const validEvents = sortedEvents.filter(e => parseDate(e.date) > 20000000)
+    if (!validEvents.length) return { positions: new Map(), axisWidth: 800, axisY: 200 }
+
+    // 计算时间范围（只考虑有效事件）
+    const dates = validEvents.map(e => parseDate(e.date))
     const minDate = Math.min(...dates)
     const maxDate = Math.max(...dates)
-    const dateRange = maxDate - minDate || 1
 
-    // 每个事件最小间距（确保密集事件不会被挤在一起）
-    const minGap = 120
-    // 基础轴宽
-    const baseAxisWidth = 800 + sortedEvents.length * 80
-    // 实际轴宽取两者较大值
-    const axisWidth = Math.max(baseAxisWidth, minGap * (sortedEvents.length - 1) + 200)
-    const axisY = 200
-    const padding = 100
+    // 简化布局：每个事件等间距排列，不按实际时间比例
+    // 这样可以避免时间跨度大导致的拥挤问题
+    const eventCount = validEvents.length
+    const eventGap = 140  // 固定间距
+    const padding = 80
+    const axisWidth = Math.max(800, padding * 2 + eventGap * (eventCount - 1))
+    const axisY = 180
 
     const positions = new Map<string, { x: number; y: number; above: boolean }>()
 
     // 分配位置（交替上下避免重叠）
     let aboveToggle = true
-    sortedEvents.forEach((event, i) => {
-      const dateNum = parseDate(event.date)
-      // 按比例计算位置，但确保与前一个事件的最小间距
-      let x = padding + (dateNum - minDate) / dateRange * (axisWidth - 2 * padding)
-
-      // 与前一个事件的最小间距检查
-      if (i > 0) {
-        const prevPos = positions.get(sortedEvents[i - 1].id)
-        if (prevPos) {
-          x = Math.max(x, prevPos.x + minGap)
-        }
-      }
-
+    validEvents.forEach((event, i) => {
+      // 等间距排列
+      const x = padding + i * eventGap
       const above = aboveToggle
       aboveToggle = !aboveToggle
 
       positions.set(event.id, {
         x,
-        y: axisY + (above ? -60 : 60),
+        y: axisY + (above ? -50 : 50),
         above,
       })
     })
 
-    return { positions, axisWidth, axisY }
+    return { positions, axisWidth, axisY, validEvents }
   }, [data.events])
 
   const { positions, axisWidth, axisY } = getEventPositions()
@@ -210,72 +213,41 @@ export function EventTimelineGraph({ data, onEventClick }: Props) {
   const renderAxis = () => {
     if (!data.events.length) return null
 
-    // 计算时间刻度
-    const sortedEvents = [...data.events].sort((a, b) => parseDate(a.date) - parseDate(b.date))
-    const dates = sortedEvents.map(e => parseDate(e.date))
-    const minDate = Math.min(...dates)
-    const maxDate = Math.max(...dates)
-    const dateRange = maxDate - minDate || 1
-    const padding = 100
+    // 简化刻度：只显示事件对应的日期
+    const sortedEvents = [...data.events]
+      .filter(e => parseDate(e.date) > 20000000)
+      .sort((a, b) => parseDate(a.date) - parseDate(b.date))
 
-    // 生成刻度（按年/月）
-    const ticks: { x: number; label: string }[] = []
-    const startYear = Math.floor(minDate / 10000)
-    const endYear = Math.ceil(maxDate / 10000)
-
-    for (let year = startYear; year <= endYear; year++) {
-      const yearStart = year * 10000
-      const yearEnd = (year + 1) * 10000
-
-      // 如果跨度超过一年，只显示年份
-      if (endYear - startYear >= 2) {
-        const x = padding + (yearStart - minDate) / dateRange * (axisWidth - 2 * padding)
-        ticks.push({ x, label: `${year}年` })
-      } else {
-        // 显示月份刻度
-        for (let month = 1; month <= 12; month++) {
-          const monthDate = year * 10000 + month * 100
-          if (monthDate >= minDate && monthDate <= maxDate) {
-            const x = padding + (monthDate - minDate) / dateRange * (axisWidth - 2 * padding)
-            ticks.push({ x, label: `${month}月` })
-          }
-        }
-      }
-    }
+    if (!sortedEvents.length) return null
 
     return (
       <g>
         {/* 主轴线 */}
         <line
-          x1={50}
+          x1={30}
           y1={axisY}
-          x2={axisWidth - 50}
+          x2={axisWidth - 30}
           y2={axisY}
           stroke="#374151"
           strokeWidth={2}
         />
-        {/* 刻度 */}
-        {ticks.map((tick, i) => (
-          <g key={i}>
-            <line
-              x1={tick.x}
-              y1={axisY - 8}
-              x2={tick.x}
-              y2={axisY + 8}
-              stroke="#6b7280"
-              strokeWidth={1}
-            />
-            <text
-              x={tick.x}
-              y={axisY + 22}
-              textAnchor="middle"
-              fontSize="11"
-              fill="#6b7280"
-            >
-              {tick.label}
-            </text>
-          </g>
-        ))}
+        {/* 每个事件位置的小刻度 */}
+        {sortedEvents.map((event, i) => {
+          const pos = positions.get(event.id)
+          if (!pos) return null
+          return (
+            <g key={event.id}>
+              <line
+                x1={pos.x}
+                y1={axisY - 5}
+                x2={pos.x}
+                y2={axisY + 5}
+                stroke="#6b7280"
+                strokeWidth={1}
+              />
+            </g>
+          )
+        })}
       </g>
     )
   }
@@ -288,8 +260,8 @@ export function EventTimelineGraph({ data, onEventClick }: Props) {
     const color = EVENT_COLORS[event.type || 'other']
     const highlighted = hoveredEvent === event.id || selectedEvent === event.id
 
-    // 截断标题
-    const displayTitle = event.title.length > 15 ? event.title.slice(0, 15) + '...' : event.title
+    // 截断标题（增加到20字符）
+    const displayTitle = event.title.length > 20 ? event.title.slice(0, 20) + '...' : event.title
 
     return (
       <g
@@ -408,7 +380,7 @@ export function EventTimelineGraph({ data, onEventClick }: Props) {
         ref={svgRef}
         className="timeline-svg"
         onMouseDown={handleMouseDown}
-        viewBox={`0 0 ${axisWidth} 350`}
+        viewBox={`0 0 ${axisWidth} 280`}
         preserveAspectRatio="xMidYMid meet"
         style={{
           transform: `scale(${scale}) translateX(${offsetX}px)`,
@@ -418,7 +390,7 @@ export function EventTimelineGraph({ data, onEventClick }: Props) {
         }}
       >
         {/* 背景 */}
-        <rect x="0" y="0" width={axisWidth} height="350" fill="transparent" />
+        <rect x="0" y="0" width={axisWidth} height="280" fill="transparent" />
 
         {/* 时间轴 */}
         {renderAxis()}
@@ -465,7 +437,7 @@ export function EventTimelineGraph({ data, onEventClick }: Props) {
           position: relative;
           width: 100%;
           height: 100%;
-          min-height: 400px;
+          min-height: 280px;
           overflow: hidden;
           background: linear-gradient(180deg, #f8fafc 0%, #e2e8f0 100%);
           border-radius: 8px;
@@ -568,7 +540,7 @@ export function EventTimelineGraph({ data, onEventClick }: Props) {
         .timeline-svg {
           width: 100%;
           height: auto;
-          min-height: 350px;
+          min-height: 280px;
           cursor: grab;
         }
 
@@ -647,7 +619,7 @@ export function EventTimelineGraph({ data, onEventClick }: Props) {
           align-items: center;
           justify-content: center;
           height: 100%;
-          min-height: 300px;
+          min-height: 200px;
           color: #6b7280;
         }
       `}</style>

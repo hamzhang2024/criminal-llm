@@ -233,7 +233,12 @@ export async function getEvidenceChain(caseId: string): Promise<EvidenceChainDat
   if (!res.ok) {
     return { nodes: [], edges: [], groups: [], total_evidence: 0, total_relations: 0, error: '获取失败' }
   }
-  return res.json()
+  const data = await res.json()
+  // 处理后端错误格式 {"detail": "..."}
+  if (data.detail && !data.nodes) {
+    return { nodes: [], edges: [], groups: [], total_evidence: 0, total_relations: 0, error: data.detail }
+  }
+  return data
 }
 
 // ========== 人物关系图（SVG 可视化）==========

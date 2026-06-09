@@ -18,7 +18,7 @@ DEFAULTS = {
     "llm_model": "qwen3.5-plus",
     "evidence_concurrency": 3,
     # PDF 转 MD 引擎配置
-    "pdf_engine": "paddleocr",          # "paddleocr" | "mineru"
+    "pdf_engine": "mineru",          # "paddleocr" | "mineru"
     "paddleocr_token": "",            # PaddleOCR Token
 }
 

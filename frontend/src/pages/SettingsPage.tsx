@@ -187,7 +187,7 @@ export function SettingsPage() {
     llm_base_url: DEFAULT_LLM_BASE_URL,
     llm_model: DEFAULT_LLM_MODEL,
     evidence_concurrency: 3,
-    pdf_engine: 'paddleocr',
+    pdf_engine: 'mineru',
     paddleocr_token: '',
   })
   const [status, setStatus] = useState<ConfigStatus | null>(null)

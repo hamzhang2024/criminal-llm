@@ -1,0 +1,51 @@
+name: Test
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    name: Test
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install frontend deps
+        working-directory: frontend
+        run: npm install
+
+      - name: TypeScript type check
+        working-directory: frontend
+        run: npx tsc --noEmit
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+
+      - name: Install backend deps
+        run: pip install -r backend/requirements.txt
+
+      - name: Backend syntax check
+        run: |
+          cd backend
+          python3 -m py_compile *.py
+
+      - name: Backend import test
+        run: |
+          cd backend
+          python3 -c "import analysis_engine, stage_api, case_manager, llm_client"

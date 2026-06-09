@@ -1,0 +1,455 @@
+import React, { useState, useCallback, useEffect } from 'react'
+import { EvidenceChainData, EvidenceChainNode } from '../api/stages'
+
+interface Props {
+  data: EvidenceChainData
+  onNodeClick?: (node: EvidenceChainNode) => void
+}
+
+interface TreeNode {
+  id: string | number
+  name: string
+  type: 'root' | 'fact' | 'category' | 'evidence'
+  color?: string
+  children?: TreeNode[]
+  collapsed?: boolean
+  x?: number
+  y?: number
+  width?: number
+  height?: number
+  originalNode?: any
+}
+
+/**
+ * 证据链思维导图组件
+ *
+ * 布局：树形结构，可折叠展开
+ * - 根节点：案件证据链
+ * - 第一层：待证事实（三阶层）
+ * - 第二层：证据类别
+ * - 第三层：具体证据
+ */
+export function EvidenceChainMindmap({ data, onNodeClick }: Props) {
+  const { nodes, edges, total_evidence, total_relations, error, contradictions } = data as any
+
+  // 折叠状态
+  const [collapsedNodes, setCollapsedNodes] = useState<Set<string | number>>(new Set())
+
+  // 拖拽状态
+  const [scale, setScale] = useState(1)
+  const [pan, setPan] = useState({ x: 0, y: 0 })
+  const [isPanning, setIsPanning] = useState(false)
+  const [panStart, setPanStart] = useState({ x: 0, y: 0 })
+
+  // 构建树形结构
+  const buildTree = useCallback((): TreeNode => {
+    if (!nodes?.length) {
+      return { id: 'root', name: '证据链', type: 'root', children: [] }
+    }
+
+    const facts = nodes.filter((n: any) => n.type === 'fact' || n.category === 'fact')
+    const evidences = nodes.filter((n: any) => n.type !== 'fact' && n.category !== 'fact')
+
+    // 按类型分组证据
+    const categoryConfigs = [
+      { key: 'indictment', label: '指控文书', color: '#dc2626' },
+      { key: 'confession', label: '供述', color: '#2563eb' },
+      { key: 'witness', label: '证言', color: '#16a34a' },
+      { key: 'objective', label: '客观证据', color: '#9333ea' },
+    ]
+
+    // 为每个待证事实构建子树
+    const factNodes: TreeNode[] = facts.map((fact: any) => {
+      // 找出与该事实相关的证据（通过边关系）
+      const relatedEdges = edges.filter((e: any) => e.target === fact.id)
+      const relatedEvidenceIds = new Set(relatedEdges.map((e: any) => e.source))
+
+      // 按类别组织相关证据
+      const categoryNodes: TreeNode[] = categoryConfigs.map(cfg => {
+        const categoryEvidences = evidences.filter((ev: any) =>
+          ev.category === cfg.key && relatedEvidenceIds.has(ev.id)
+        )
+
+        if (categoryEvidences.length === 0) return null
+
+        return {
+          id: `${fact.id}_${cfg.key}`,
+          name: `${cfg.label} (${categoryEvidences.length})`,
+          type: 'category' as const,
+          color: cfg.color,
+          collapsed: collapsedNodes.has(`${fact.id}_${cfg.key}`),
+          children: categoryEvidences.map((ev: any) => ({
+            id: ev.id,
+            name: ev.name,
+            type: 'evidence' as const,
+            color: cfg.color,
+            originalNode: ev,
+          })),
+        }
+      }).filter(Boolean) as TreeNode[]
+
+      return {
+        id: fact.id,
+        name: fact.name,
+        type: 'fact' as const,
+        color: '#1f2937',
+        children: categoryNodes,
+        collapsed: collapsedNodes.has(fact.id),
+      }
+    })
+
+    // 未关联到任何事实的证据
+    const unassignedCategoryNodes: TreeNode[] = categoryConfigs.map(cfg => {
+      const assignedIds = new Set(edges.map((e: any) => e.source))
+      const unassigned = evidences.filter((ev: any) =>
+        ev.category === cfg.key && !assignedIds.has(ev.id)
+      )
+      if (unassigned.length === 0) return null
+      return {
+        id: `unassigned_${cfg.key}`,
+        name: `${cfg.label} (${unassigned.length})`,
+        type: 'category' as const,
+        color: cfg.color,
+        children: unassigned.map((ev: any) => ({
+          id: ev.id,
+          name: ev.name,
+          type: 'evidence' as const,
+          color: cfg.color,
+          originalNode: ev,
+        })),
+      }
+    }).filter(Boolean) as TreeNode[]
+
+    return {
+      id: 'root',
+      name: '案件证据链',
+      type: 'root',
+      children: [
+        ...factNodes,
+        ...(unassignedCategoryNodes.length > 0 ? [{
+          id: 'unassigned',
+          name: '其他证据',
+          type: 'fact' as const,
+          color: '#6b7280',
+          children: unassignedCategoryNodes,
+        }] : []),
+      ],
+    }
+  }, [nodes, edges, collapsedNodes])
+
+  // 计算布局
+  const calculateLayout = useCallback((tree: TreeNode) => {
+    const nodeWidth = 140
+    const nodeHeight = 36
+    const levelGapX = 180
+    const nodeGapY = 45
+
+    const positions = new Map<string | number, { x: number; y: number; width: number; height: number }>()
+
+    const layoutSubtree = (node: TreeNode, depth: number, startY: number): number => {
+      const x = 40 + depth * levelGapX
+      const height = node.collapsed ? nodeHeight : calculateSubtreeHeight(node)
+      positions.set(node.id, { x, y: startY, width: nodeWidth, height: nodeHeight })
+
+      if (node.collapsed || !node.children?.length) {
+        return startY + nodeGapY
+      }
+
+      let currentY = startY
+      node.children.forEach(child => {
+        currentY = layoutSubtree(child, depth + 1, currentY)
+      })
+
+      // 居中父节点
+      const firstChild = node.children[0]
+      const lastChild = node.children[node.children.length - 1]
+      const firstPos = positions.get(firstChild.id)
+      const lastPos = positions.get(lastChild.id)
+      if (firstPos && lastPos) {
+        const centerY = (firstPos.y + lastPos.y) / 2
+        positions.set(node.id, { x, y: centerY, width: nodeWidth, height: nodeHeight })
+      }
+
+      return currentY
+    }
+
+    const calculateSubtreeHeight = (node: TreeNode): number => {
+      if (!node.children?.length || node.collapsed) return nodeGapY
+      return node.children.reduce((sum, child) => sum + calculateSubtreeHeight(child), 0)
+    }
+
+    layoutSubtree(tree, 0, 40)
+    return positions
+  }, [])
+
+  const tree = buildTree()
+  const positions = calculateLayout(tree)
+
+  // 计算画布尺寸
+  const calculateCanvasSize = () => {
+    let maxX = 0, maxY = 0
+    positions.forEach(pos => {
+      maxX = Math.max(maxX, pos.x + pos.width)
+      maxY = Math.max(maxY, pos.y + pos.height)
+    })
+    return { width: Math.max(800, maxX + 100), height: Math.max(400, maxY + 100) }
+  }
+
+  const { width, height } = calculateCanvasSize()
+
+  // 切换折叠
+  const toggleCollapse = useCallback((id: string | number) => {
+    setCollapsedNodes(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
+
+  // 全部展开/折叠
+  const expandAll = useCallback(() => setCollapsedNodes(new Set()), [])
+  const collapseAll = useCallback(() => {
+    const allIds = new Set<string | number>()
+    const collect = (node: TreeNode) => {
+      if (node.type === 'fact' || node.type === 'category') {
+        allIds.add(node.id)
+      }
+      node.children?.forEach(collect)
+    }
+    collect(tree)
+    setCollapsedNodes(allIds)
+  }, [tree])
+
+  // 滚轮缩放
+  const handleWheel = useCallback((e: React.WheelEvent) => {
+    e.preventDefault()
+    const delta = e.deltaY > 0 ? 0.9 : 1.1
+    setScale(s => Math.min(Math.max(s * delta, 0.3), 2))
+  }, [])
+
+  // 平移
+  const handlePanStart = useCallback((e: React.MouseEvent) => {
+    setIsPanning(true)
+    setPanStart({ x: e.clientX - pan.x, y: e.clientY - pan.y })
+  }, [pan])
+
+  const handlePanMove = useCallback((e: React.MouseEvent) => {
+    if (!isPanning) return
+    setPan({ x: e.clientX - panStart.x, y: e.clientY - panStart.y })
+  }, [isPanning, panStart])
+
+  const handlePanEnd = useCallback(() => setIsPanning(false), [])
+
+  // 重置
+  const handleReset = useCallback(() => {
+    setScale(1)
+    setPan({ x: 0, y: 0 })
+  }, [])
+
+  if (error) {
+    return <div style={emptyStyle}>{error}</div>
+  }
+
+  if (!nodes?.length) {
+    return <div style={emptyStyle}>无证据数据</div>
+  }
+
+  // 渲染节点和连线
+  const renderTree = (node: TreeNode): React.ReactNode => {
+    const pos = positions.get(node.id)
+    if (!pos) return null
+
+    const isCollapsed = collapsedNodes.has(node.id)
+    const hasChildren = node.children && node.children.length > 0
+
+    // 节点样式
+    let bg = '#f3f4f6'
+    let textColor = '#374151'
+    let borderColor = '#e5e7eb'
+
+    if (node.type === 'root') {
+      bg = '#1f2937'
+      textColor = '#fff'
+    } else if (node.type === 'fact') {
+      bg = node.color || '#1f2937'
+      textColor = '#fff'
+    } else if (node.type === 'category') {
+      bg = node.color || '#3b82f6'
+      textColor = '#fff'
+    } else if (node.type === 'evidence') {
+      bg = '#fff'
+      borderColor = node.color || '#6b7280'
+    }
+
+    return (
+      <React.Fragment key={node.id}>
+        {/* 连线到子节点 */}
+        {!isCollapsed && node.children?.map(child => {
+          const childPos = positions.get(child.id)
+          if (!childPos) return null
+          return (
+            <path
+              key={`edge-${node.id}-${child.id}`}
+              d={`M ${pos.x + pos.width} ${pos.y + pos.height / 2}
+                  L ${pos.x + pos.width + 20} ${pos.y + pos.height / 2}
+                  L ${pos.x + pos.width + 20} ${childPos.y + childPos.height / 2}
+                  L ${childPos.x} ${childPos.y + childPos.height / 2}`}
+              fill="none"
+              stroke="#d1d5db"
+              strokeWidth={1.5}
+            />
+          )
+        })}
+
+        {/* 节点 */}
+        <g
+          transform={`translate(${pos.x}, ${pos.y})`}
+          onClick={() => {
+            if (node.type === 'fact' || node.type === 'category') {
+              toggleCollapse(node.id)
+            } else if (node.type === 'evidence' && node.originalNode) {
+              onNodeClick?.(node.originalNode)
+            }
+          }}
+          style={{ cursor: 'pointer' }}
+        >
+          <rect
+            x={0}
+            y={0}
+            width={pos.width}
+            height={pos.height}
+            rx={node.type === 'evidence' ? 4 : 6}
+            fill={bg}
+            stroke={borderColor}
+            strokeWidth={node.type === 'evidence' ? 2 : 0}
+          />
+          <text
+            x={node.type === 'root' ? pos.width / 2 : hasChildren ? 20 : pos.width / 2}
+            y={pos.height / 2}
+            textAnchor={node.type === 'root' ? 'middle' : hasChildren ? 'start' : 'middle'}
+            dominantBaseline="middle"
+            fill={textColor}
+            fontSize={node.type === 'root' ? 13 : 11}
+            fontWeight={node.type === 'evidence' ? 'normal' : '600'}
+          >
+            {node.name.length > 12 ? node.name.slice(0, 12) + '...' : node.name}
+          </text>
+          <title>{node.name}</title>
+
+          {/* 展开/折叠图标 */}
+          {hasChildren && (
+            <text
+              x={10}
+              y={pos.height / 2}
+              textAnchor="middle"
+              dominantBaseline="middle"
+              fill={textColor}
+              fontSize={14}
+            >
+              {isCollapsed ? '▶' : '▼'}
+            </text>
+          )}
+        </g>
+
+        {/* 递归渲染子节点 */}
+        {!isCollapsed && node.children?.map(child => renderTree(child))}
+      </React.Fragment>
+    )
+  }
+
+  return (
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+      {/* 工具栏 */}
+      <div style={toolbarStyle}>
+        <span style={{ fontSize: 12, color: '#6b7280' }}>
+          证据 <b>{total_evidence}</b> 份 | 证明关系 <b>{total_relations}</b> 个
+        </span>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <button onClick={expandAll} style={btnStyle}>全部展开</button>
+          <button onClick={collapseAll} style={btnStyle}>全部折叠</button>
+          <button onClick={() => setScale(s => Math.max(s - 0.1, 0.3))} style={btnStyle}>−</button>
+          <span style={{ fontSize: 12, width: 40, textAlign: 'center' }}>{Math.round(scale * 100)}%</span>
+          <button onClick={() => setScale(s => Math.min(s + 0.1, 2))} style={btnStyle}>+</button>
+          <button onClick={handleReset} style={btnStyle}>重置</button>
+        </div>
+      </div>
+
+      {/* 提示 */}
+      <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 4 }}>
+        点击节点展开/折叠 | 滚轮缩放 | 拖拽平移
+      </div>
+
+      {/* SVG */}
+      <div style={{ flex: 1, overflow: 'hidden', border: '1px solid #e5e7eb', borderRadius: 6, background: '#fafafa' }}>
+        <svg
+          width="100%"
+          height="100%"
+          style={{ cursor: isPanning ? 'grabbing' : 'grab' }}
+          onWheel={handleWheel}
+          onMouseDown={handlePanStart}
+          onMouseMove={handlePanMove}
+          onMouseUp={handlePanEnd}
+          onMouseLeave={handlePanEnd}
+        >
+          <g transform={`translate(${pan.x}, ${pan.y}) scale(${scale})`}>
+            {renderTree(tree)}
+          </g>
+        </svg>
+      </div>
+
+      {/* 图例 */}
+      <div style={{ marginTop: 4, display: 'flex', gap: 12, fontSize: 10, color: '#6b7280' }}>
+        <span><span style={{ width: 12, height: 12, background: '#1f2937', borderRadius: 2, display: 'inline-block' }} /> 待证事实</span>
+        <span><span style={{ width: 12, height: 12, background: '#dc2626', borderRadius: 2, display: 'inline-block' }} /> 指控文书</span>
+        <span><span style={{ width: 12, height: 12, background: '#2563eb', borderRadius: 2, display: 'inline-block' }} /> 供述</span>
+        <span><span style={{ width: 12, height: 12, background: '#16a34a', borderRadius: 2, display: 'inline-block' }} /> 证言</span>
+        <span><span style={{ width: 12, height: 12, background: '#9333ea', borderRadius: 2, display: 'inline-block' }} /> 客观证据</span>
+      </div>
+
+      {/* 矛盾问题 */}
+      {contradictions?.length > 0 && (
+        <div style={{ marginTop: 6, padding: '6px 10px', background: '#fef2f2', borderRadius: 4, border: '1px solid #fecaca', maxHeight: 60, overflow: 'auto' }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: '#991b1b' }}>
+            ⚠️ 证据问题 ({contradictions.length})
+          </div>
+          {contradictions.slice(0, 2).map((c: any, i: number) => (
+            <div key={i} style={{ fontSize: 10, color: '#7f1d1d' }}>
+              • {c.name?.slice(0, 20)}: {c.issues?.[0]?.slice(0, 30)}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+const emptyStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  height: '100%',
+  color: '#666',
+  fontSize: 14,
+}
+
+const toolbarStyle: React.CSSProperties = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+  marginBottom: 4,
+  padding: '6px 10px',
+  background: '#fff',
+  borderRadius: 4,
+  border: '1px solid #e5e7eb',
+}
+
+const btnStyle: React.CSSProperties = {
+  padding: '2px 8px',
+  border: '1px solid #e5e7eb',
+  borderRadius: 4,
+  background: '#fff',
+  cursor: 'pointer',
+  fontSize: 11,
+  color: '#374151',
+}

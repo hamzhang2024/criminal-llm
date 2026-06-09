@@ -18,6 +18,7 @@ import { PdfViewer } from '../components/PdfViewer'
 import { StickyNoteOverlay } from '../components/StickyNoteOverlay'
 import { ReportRenderer } from '../components/report/ReportRenderer'
 import { EvidenceChainGraph } from '../components/EvidenceChainGraph'
+import { EvidenceChainMindmap } from '../components/EvidenceChainMindmap'
 import { PersonRelationGraph } from '../components/PersonRelationGraph'
 import { EventTimelineGraph } from '../components/EventTimelineGraph'
 
@@ -43,21 +44,16 @@ const colors = {
   systemBubble: 'rgba(184,134,11,0.08)',
 }
 
-// 13 个文件卡标签 — 重新配色为沉稳的律师风格
+// 8 个精简标签 — 整合相关功能
 const TABS = [
   { key: 'stage_1', label: '指控要素', icon: FileBarChart, color: '#007AFF', bgColor: 'rgba(0,122,255,0.08)' },
   { key: 'stage_2', label: '人物关系', icon: Users, color: '#2d6a4f', bgColor: 'rgba(45,106,79,0.08)' },
   { key: 'stage_3', label: '事件拆解', icon: Clock, color: '#9c661b', bgColor: 'rgba(156,102,27,0.08)' },
-  { key: 'stage_4', label: '法律法规', icon: BookOpen, color: '#6b2765', bgColor: 'rgba(107,39,101,0.08)' },
-  { key: 'stage_51', label: '证据列表', icon: Eye, color: '#1a6b6a', bgColor: 'rgba(26,107,106,0.08)' },
+  { key: 'stage_4', label: '法律法规', icon: BookOpen, color: '#6b2765', bgColor: 'rgba(107,39,101,0.08)' }, // 含类案参考
+  { key: 'evidence_center', label: '证据中心', icon: Eye, color: '#1a6b6a', bgColor: 'rgba(26,107,106,0.08)' }, // 证据列表+三性审查+证据链+阅卷笔录
   { key: 'stage_52', label: '矛盾分析', icon: GitCompareArrows, color: '#991b1b', bgColor: 'rgba(153,27,27,0.08)' },
-  { key: 'evidence_chain', label: '证据链', icon: Network, color: '#0891b2', bgColor: 'rgba(8,145,178,0.08)' },
   { key: 'stage_6', label: '控辩对抗', icon: Swords, color: '#7c3aed', bgColor: 'rgba(124,58,237,0.08)' },
-  { key: 'stage_53', label: '三阶层分析', icon: Scale, color: '#831843', bgColor: 'rgba(131,24,67,0.08)' },
-  { key: 'similar_cases', label: '类案参考', icon: Search, color: '#059669', bgColor: 'rgba(5,150,105,0.08)' },
-  { key: 'full', label: '完整报告', icon: FileText, color: '#007AFF', bgColor: 'rgba(0,122,255,0.08)' },
-  { key: 'review_notes', label: '阅卷笔录', icon: StickyNote, color: '#4a5568', bgColor: 'rgba(74,85,104,0.08)' },
-  { key: 'cross_exam', label: '质证意见', icon: Gavel, color: '#b45309', bgColor: 'rgba(180,83,9,0.08)' },
+  { key: 'defense_opinion', label: '辩护意见', icon: Scale, color: '#831843', bgColor: 'rgba(131,24,67,0.08)' }, // 三阶层+质证意见+完整报告
 ]
 
 // 左侧证据项
@@ -185,6 +181,22 @@ export function ReportPage() {
   // 类案检索状态
   const [similarCasesData, setSimilarCasesData] = useState<SimilarCasesData | null>(null)
   const [similarCasesLoading, setSimilarCasesLoading] = useState(false)
+  const [showSimilarCases, setShowSimilarCases] = useState(false)
+
+  // 证据中心折叠面板状态
+  const [evidenceCenterPanels, setEvidenceCenterPanels] = useState({
+    evidenceList: true,
+    evidenceReview: false,
+    evidenceChain: false,
+    reviewNotes: false,
+  })
+
+  // 辩护意见折叠面板状态
+  const [defenseOpinionPanels, setDefenseOpinionPanels] = useState({
+    threeTier: true,
+    crossExam: false,
+    fullReport: false,
+  })
 
   // 加载分析阶段完成状态 + 主流水线状态
   const loadDefenseStages = useCallback(async () => {
@@ -244,19 +256,6 @@ export function ReportPage() {
     }, 3000)
     return () => clearInterval(interval)
   }, [caseId, loadDefenseStages])
-
-  // 标签对应的阶段映射
-  const tabStageMap: Record<string, string> = {
-    stage_1: '1',
-    stage_2: '2',
-    stage_3: '3',
-    stage_4: '4',
-    stage_51: '5a',
-    stage_52: '5b',
-    stage_6: '6',
-    stage_53: '5f',
-    full: 'final',
-  }
 
   // Panels
   const [leftCollapsed, setLeftCollapsed] = useState(false)
@@ -384,8 +383,19 @@ export function ReportPage() {
         content.full = fullReport.content || ''
       } catch { /* ignore */ }
 
+      // 为综合选项卡设置激活状态
+      // 证据中心：依赖 stage_51（证据列表）
+      if (content['stage_51']) {
+        content['evidence_center'] = 'active' // 标记为激活状态
+      }
+      // 辩护意见：依赖 stage_53（三阶层分析）
+      if (content['stage_53'] || content['full']) {
+        content['defense_opinion'] = 'active' // 标记为激活状态
+      }
+
       if (Object.keys(content).length > 0) {
         setStageContent(content)
+        // 找到第一个有内容的选项卡（包括综合选项卡）
         const availableTabs = TABS.filter(t => content[t.key])
         if (availableTabs.length > 0) {
           setActiveTab(availableTabs[0].key)
@@ -467,17 +477,13 @@ export function ReportPage() {
       // 加载 processed/ 目录下的 PDF 列表
       try {
         const pdfData = await api.getProcessedPdfs(caseId)
-        console.log('[loadData] getProcessedPdfs 返回:', pdfData)
         if (pdfData && pdfData.files && pdfData.files.length > 0) {
           const pdfNames = pdfData.files.map((f: any) => f.name)
           setProcessedPdfs(pdfNames)
           setSelectedPdf(pdfNames[0])
-          console.log('[loadData] 已设置 processedPdfs:', pdfNames.length, '个文件')
-        } else {
-          console.log('[loadData] PDF 列表为空或格式不正确')
         }
       } catch (e) {
-        console.error('[loadData] getProcessedPdfs 失败:', e)
+        // ignore
       }
 
       const savedChat = localStorage.getItem(`report-chat-${caseId}`)
@@ -528,9 +534,9 @@ export function ReportPage() {
     }
   }, [caseId, evidenceReviewLoading])
 
-  // 切换到证据列表 tab 时加载三性审查结果
+  // 切换到证据中心 tab 时加载三性审查结果
   useEffect(() => {
-    if (activeTab === 'stage_51' && caseId && !evidenceReview) {
+    if (activeTab === 'evidence_center' && caseId && !evidenceReview) {
       loadEvidenceReview()
     }
   }, [activeTab, caseId, evidenceReview, loadEvidenceReview])
@@ -565,13 +571,6 @@ export function ReportPage() {
     }
   }, [caseId, reviewNotesLoading])
 
-  // 切换到阅卷笔录 tab 时加载
-  useEffect(() => {
-    if (activeTab === 'review_notes' && caseId && !reviewNotes) {
-      loadReviewNotes()
-    }
-  }, [activeTab, caseId, reviewNotes, loadReviewNotes])
-
   // 加载质证意见
   const loadCrossExamination = useCallback(async () => {
     if (!caseId) return
@@ -582,6 +581,13 @@ export function ReportPage() {
       }
     } catch { /* ignore */ }
   }, [caseId])
+
+  // 切换到辩护意见 tab 时加载质证意见
+  useEffect(() => {
+    if (activeTab === 'defense_opinion' && caseId && !crossExamination) {
+      loadCrossExamination()
+    }
+  }, [activeTab, caseId, crossExamination, loadCrossExamination])
 
   // 生成质证意见
   const handleGenerateCrossExamination = useCallback(async () => {
@@ -642,12 +648,10 @@ export function ReportPage() {
     if (!caseId) return
     setPersonRelationLoading(true)
     try {
-      console.log('[DEBUG] getPersonRelation 请求:', caseId)
       const data = await getPersonRelation(caseId)
-      console.log('[DEBUG] getPersonRelation 响应:', JSON.stringify(data).slice(0, 300))
       setPersonRelationData(data)
     } catch (e) {
-      console.error('人物关系图加载失败:', e)
+      // ignore
     } finally {
       setPersonRelationLoading(false)
     }
@@ -655,9 +659,7 @@ export function ReportPage() {
 
   // 切换到人物关系 tab 时加载
   useEffect(() => {
-    console.log('[DEBUG] useEffect 人物关系:', { activeTab, caseId, hasData: !!personRelationData, loading: personRelationLoading })
     if (activeTab === 'stage_2' && caseId && !personRelationData) {
-      console.log('[DEBUG] 开始加载人物关系, caseId:', caseId)
       loadPersonRelation()
     }
   }, [activeTab, caseId, personRelationData, loadPersonRelation])
@@ -1154,6 +1156,18 @@ export function ReportPage() {
   })()
 
   const renderActiveTab = () => {
+    // 证据中心 tab - 综合面板
+    if (activeTab === 'evidence_center') {
+      // 由 renderEvidenceCenter() 处理
+      return null
+    }
+
+    // 辩护意见 tab - 综合面板
+    if (activeTab === 'defense_opinion') {
+      // 由 renderDefenseOpinion() 处理
+      return null
+    }
+
     // 人物关系图 tab - 使用 SVG 组件
     if (activeTab === 'stage_2') {
       return (
@@ -1178,7 +1192,7 @@ export function ReportPage() {
             ) : personRelationData ? (
               <PersonRelationGraph
                 data={personRelationData}
-                onNodeClick={(node) => console.log('点击人物:', node)}
+                onNodeClick={(node) => { /* 点击人物节点 */ }}
               />
             ) : (
               <div style={{
@@ -1252,7 +1266,7 @@ export function ReportPage() {
             ) : timelineData ? (
               <EventTimelineGraph
                 data={timelineData}
-                onEventClick={(event) => console.log('点击事件:', event)}
+                onEventClick={(event) => { /* 点击事件 */ }}
               />
             ) : (
               <div style={{
@@ -1476,11 +1490,10 @@ export function ReportPage() {
                   </div>
                   {renderActiveTab()}
                   {renderLegalKBPanel()}
-                  {renderEvidenceReviewPanel()}
-                  {renderReviewNotesPanel()}
-                  {renderCrossExaminationPanel()}
-                  {renderEvidenceChainPanel()}
-                  {renderSimilarCasesPanel()}
+                  {/* 证据中心综合面板 */}
+                  {renderEvidenceCenter()}
+                  {/* 辩护意见综合面板 */}
+                  {renderDefenseOpinion()}
                 </>
               ) : null}
             </div>
@@ -1648,6 +1661,75 @@ export function ReportPage() {
               </>
             )}
           </button>
+        </div>
+
+        {/* 类案参考（可折叠面板） */}
+        <div style={{
+          borderTop: `1px solid ${colors.border}`,
+          marginTop: '20px', paddingTop: '20px',
+        }}>
+          <div
+            onClick={() => setShowSimilarCases(v => !v)}
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '12px 16px', background: colors.surfaceAlt,
+              borderRadius: '8px', cursor: 'pointer',
+              border: `1px solid ${colors.border}`,
+            }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Search className="w-4 h-4" style={{ color: '#059669' }} />
+              <span style={{ fontSize: '13px', fontWeight: 600, color: colors.textPrimary }}>类案参考</span>
+            </div>
+            <svg
+              className="w-4 h-4"
+              style={{ transform: showSimilarCases ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}
+              fill="none" viewBox="0 0 24 24" stroke="currentColor"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </div>
+          {showSimilarCases && (
+            <div style={{ padding: '16px', marginTop: '8px', background: colors.surface, borderRadius: '8px', border: `1px solid ${colors.border}` }}>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '12px' }}>
+                <button onClick={handleSearchSimilarCases} disabled={similarCasesLoading}
+                  style={{
+                    padding: '6px 14px', fontSize: '12px', borderRadius: '6px',
+                    background: similarCasesLoading ? 'rgba(5,150,105,0.05)' : '#059669',
+                    color: similarCasesLoading ? colors.textTertiary : '#fff',
+                    border: 'none', cursor: similarCasesLoading ? 'default' : 'pointer', fontWeight: 500,
+                    display: 'flex', alignItems: 'center', gap: '4px',
+                  }}>
+                  {similarCasesLoading ? <><Loader2 className="w-3 h-3 animate-spin" /> 搜索中...</> : <><Search className="w-3 h-3" /> 搜索类案</>}
+                </button>
+              </div>
+              {similarCasesData ? (
+                similarCasesData.similar_cases.length > 0 ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '400px', overflow: 'auto' }}>
+                    {similarCasesData.similar_cases.map((c, i) => (
+                      <div key={i} style={{ padding: '10px', background: colors.surfaceAlt, borderRadius: '6px', border: `1px solid ${colors.border}` }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '6px' }}>
+                          <span style={{ fontSize: '12px', fontWeight: 600, color: colors.textPrimary, flex: 1 }}>{c.title}</span>
+                          {c.link && <a href={c.link} target="_blank" rel="noopener noreferrer" style={{ fontSize: '10px', color: colors.accent, textDecoration: 'none', marginLeft: '8px' }}>查看原文</a>}
+                        </div>
+                        <div style={{ fontSize: '11px', color: colors.textSecondary, marginBottom: '4px' }}>
+                          <span style={{ marginRight: '8px' }}>{c.court}</span>
+                          <span style={{ marginRight: '8px' }}>{c.crime_type}</span>
+                        </div>
+                        <div style={{ fontSize: '11px', color: colors.gold, fontWeight: 500, marginBottom: '4px' }}>判决：{c.result}</div>
+                        <div style={{ fontSize: '11px', color: colors.textSecondary, lineHeight: 1.5 }}>裁判要旨：{c.key_point}</div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ textAlign: 'center', padding: '20px', color: colors.textTertiary }}>{similarCasesData.error || '未找到相似案例'}</div>
+                )
+              ) : (
+                <div style={{ textAlign: 'center', padding: '20px', color: colors.textTertiary, border: `1px dashed ${colors.border}`, borderRadius: '6px' }}>
+                  点击"搜索类案"查找相似案例
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     )
@@ -1881,6 +1963,8 @@ export function ReportPage() {
   }
 
   // ===== 证据链面板 =====
+  const [evidenceChainMode, setEvidenceChainMode] = useState<'graph' | 'mindmap'>('mindmap')
+
   const renderEvidenceChainPanel = () => {
     if (activeTab !== 'evidence_chain') return null
 
@@ -1890,7 +1974,7 @@ export function ReportPage() {
         background: colors.surface,
         borderRadius: '8px',
         border: `1px solid ${colors.border}`,
-        height: '600px',
+        height: '800px',
         overflow: 'hidden',
       }}>
         <div style={{
@@ -1902,21 +1986,54 @@ export function ReportPage() {
           <h3 style={{ margin: 0, fontSize: '15px', color: colors.textPrimary }}>
             证据链关系图
           </h3>
-          <button
-            onClick={loadEvidenceChain}
-            disabled={evidenceChainLoading}
-            style={{
-              padding: '6px 12px',
-              fontSize: '12px',
-              background: evidenceChainLoading ? colors.textTertiary : '#0891b2',
-              color: '#fff',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: evidenceChainLoading ? 'default' : 'pointer',
-            }}
-          >
-            {evidenceChainLoading ? '加载中...' : '刷新'}
-          </button>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            {/* 布局切换 */}
+            <div style={{ display: 'flex', gap: 4, border: '1px solid #e5e7eb', borderRadius: 4, padding: 2 }}>
+              <button
+                onClick={() => setEvidenceChainMode('mindmap')}
+                style={{
+                  padding: '4px 10px',
+                  fontSize: '11px',
+                  background: evidenceChainMode === 'mindmap' ? '#3b82f6' : '#fff',
+                  color: evidenceChainMode === 'mindmap' ? '#fff' : '#6b7280',
+                  border: 'none',
+                  borderRadius: 3,
+                  cursor: 'pointer',
+                }}
+              >
+                思维导图
+              </button>
+              <button
+                onClick={() => setEvidenceChainMode('graph')}
+                style={{
+                  padding: '4px 10px',
+                  fontSize: '11px',
+                  background: evidenceChainMode === 'graph' ? '#3b82f6' : '#fff',
+                  color: evidenceChainMode === 'graph' ? '#fff' : '#6b7280',
+                  border: 'none',
+                  borderRadius: 3,
+                  cursor: 'pointer',
+                }}
+              >
+                网络图
+              </button>
+            </div>
+            <button
+              onClick={loadEvidenceChain}
+              disabled={evidenceChainLoading}
+              style={{
+                padding: '6px 12px',
+                fontSize: '12px',
+                background: evidenceChainLoading ? colors.textTertiary : '#0891b2',
+                color: '#fff',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: evidenceChainLoading ? 'default' : 'pointer',
+              }}
+            >
+              {evidenceChainLoading ? '加载中...' : '刷新'}
+            </button>
+          </div>
         </div>
 
         {evidenceChainLoading ? (
@@ -1924,27 +2041,35 @@ export function ReportPage() {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            height: '500px',
+            height: '700px',
             color: colors.textTertiary,
           }}>
             <Loader2 className="w-6 h-6 animate-spin" style={{ marginRight: '8px' }} />
             正在分析证据关系...
           </div>
         ) : evidenceChainData ? (
-          <EvidenceChainGraph
-            data={evidenceChainData}
-            onNodeClick={(node) => {
-              console.log('点击证据节点:', node)
-              // 可以跳转到证据详情或切换到证据列表 tab
-            }}
-          />
+          evidenceChainMode === 'mindmap' ? (
+            <EvidenceChainMindmap
+              data={evidenceChainData}
+              onNodeClick={(node) => {
+                // 可以跳转到证据详情或切换到证据列表 tab
+              }}
+            />
+          ) : (
+            <EvidenceChainGraph
+              data={evidenceChainData}
+              onNodeClick={(node) => {
+                // 可以跳转到证据详情或切换到证据列表 tab
+              }}
+            />
+          )
         ) : (
           <div style={{
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
             justifyContent: 'center',
-            height: '500px',
+            height: '700px',
             color: colors.textTertiary,
             gap: '12px',
           }}>
@@ -2119,6 +2244,355 @@ export function ReportPage() {
             </div>
           </div>
         )}
+      </div>
+    )
+  }
+
+  // ===== 证据中心综合面板（可折叠）=====
+  const renderEvidenceCenter = () => {
+    if (activeTab !== 'evidence_center') return null
+
+    const togglePanel = (key: keyof typeof evidenceCenterPanels) => {
+      setEvidenceCenterPanels(prev => ({ ...prev, [key]: !prev[key] }))
+    }
+
+    // 面板标题样式
+    const panelHeaderStyle = {
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      padding: '12px 16px', background: colors.surfaceAlt,
+      borderRadius: '8px', cursor: 'pointer', marginBottom: '2px',
+      border: `1px solid ${colors.border}`,
+    }
+
+    // 折叠图标
+    const ChevronIcon = ({ expanded }: { expanded: boolean }) => (
+      <svg
+        className="w-4 h-4"
+        style={{ transform: expanded ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}
+        fill="none" viewBox="0 0 24 24" stroke="currentColor"
+      >
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+      </svg>
+    )
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+        {/* 1. 证据列表（默认展开） */}
+        <div style={{ border: `1px solid ${colors.border}`, borderRadius: '8px', overflow: 'hidden' }}>
+          <div style={panelHeaderStyle} onClick={() => togglePanel('evidenceList')}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Eye className="w-4 h-4" style={{ color: '#1a6b6a' }} />
+              <span style={{ fontSize: '13px', fontWeight: 600, color: colors.textPrimary }}>证据列表</span>
+              <span style={{ fontSize: '11px', color: colors.textTertiary }}>{evidenceItems.length} 份</span>
+            </div>
+            <ChevronIcon expanded={evidenceCenterPanels.evidenceList} />
+          </div>
+          {evidenceCenterPanels.evidenceList && (
+            <div style={{ padding: '16px', background: colors.surface }}>
+              {/* 证据列表内容 - 使用原有的 stage_51 内容 */}
+              {stageContent['stage_51'] ? (
+                <ReportRenderer
+                  markdown={stageContent['stage_51']}
+                  evidenceItems={evidenceItems}
+                  onEvidenceClick={(mdFile) => {
+                    if (viewModeState !== 'md') viewModeDispatch('md')
+                    const item = evidenceItems.find(i => i.mdFile === mdFile)
+                    if (item) {
+                      setSelectedEvidenceId(item.id)
+                      loadEvidenceContent(item)
+                    }
+                  }}
+                />
+              ) : (
+                <div style={{ textAlign: 'center', padding: '20px', color: colors.textTertiary }}>
+                  证据列表尚未生成
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* 2. 证据三性审查（可折叠） */}
+        <div style={{ border: `1px solid ${colors.border}`, borderRadius: '8px', overflow: 'hidden' }}>
+          <div style={panelHeaderStyle} onClick={() => togglePanel('evidenceReview')}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Gavel className="w-4 h-4" style={{ color: '#0891b2' }} />
+              <span style={{ fontSize: '13px', fontWeight: 600, color: colors.textPrimary }}>证据三性审查</span>
+              {evidenceReview && (
+                <span style={{ fontSize: '11px', color: colors.textTertiary }}>{evidenceReview.reviews.length} 条已审查</span>
+              )}
+            </div>
+            <ChevronIcon expanded={evidenceCenterPanels.evidenceReview} />
+          </div>
+          {evidenceCenterPanels.evidenceReview && (
+            <div style={{ padding: '16px', background: colors.surface }}>
+              {/* 复用原有的三性审查渲染逻辑 */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '12px' }}>
+                <button onClick={handleRunEvidenceReview} disabled={evidenceReviewLoading}
+                  style={{
+                    padding: '6px 14px', fontSize: '12px', borderRadius: '6px',
+                    background: evidenceReviewLoading ? 'rgba(8,145,178,0.05)' : '#0891b2',
+                    color: evidenceReviewLoading ? colors.textTertiary : '#fff',
+                    border: 'none', cursor: evidenceReviewLoading ? 'default' : 'pointer', fontWeight: 500,
+                    display: 'flex', alignItems: 'center', gap: '4px',
+                  }}>
+                  {evidenceReviewLoading ? (
+                    <><Loader2 className="w-3 h-3 animate-spin" /> 审查中...</>
+                  ) : (
+                    <><RefreshCw className="w-3 h-3" /> {evidenceReview ? '重新审查' : '开始审查'}</>
+                  )}
+                </button>
+              </div>
+              {!evidenceReview ? (
+                <div style={{ textAlign: 'center', padding: '20px', color: colors.textTertiary, border: `1px dashed ${colors.border}`, borderRadius: '6px' }}>
+                  点击"开始审查"对证据进行三性（真实性、合法性、关联性）审查
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '400px', overflow: 'auto' }}>
+                  {evidenceReview.reviews.map((review, idx) => {
+                    // 兼容分数格式：0-100 或 0-1
+                    const normalizeScore = (score: number) => score > 1 ? score / 100 : score
+                    const authScore = normalizeScore(review.authenticity?.score || 0)
+                    const legScore = normalizeScore(review.legality?.score || 0)
+                    const relScore = normalizeScore(review.relevance?.score || 0)
+                    return (
+                    <div key={idx} style={{ background: colors.surfaceAlt, border: `1px solid ${colors.border}`, borderRadius: '6px', padding: '10px 12px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                        <span style={{ fontSize: '12px', fontWeight: 600, color: colors.textPrimary }}>{review.evidence_name}</span>
+                        <div style={{ display: 'flex', gap: '4px' }}>
+                          <span style={{ fontSize: '10px', padding: '2px 6px', borderRadius: '4px', background: authScore >= 0.8 ? 'rgba(22,163,74,0.1)' : authScore >= 0.5 ? 'rgba(202,138,4,0.1)' : 'rgba(220,38,38,0.1)', color: authScore >= 0.8 ? '#16a34a' : authScore >= 0.5 ? '#ca8a04' : '#dc2626' }}>真:{Math.round(authScore * 100)}%</span>
+                          <span style={{ fontSize: '10px', padding: '2px 6px', borderRadius: '4px', background: legScore >= 0.8 ? 'rgba(22,163,74,0.1)' : legScore >= 0.5 ? 'rgba(202,138,4,0.1)' : 'rgba(220,38,38,0.1)', color: legScore >= 0.8 ? '#16a34a' : legScore >= 0.5 ? '#ca8a04' : '#dc2626' }}>法:{Math.round(legScore * 100)}%</span>
+                          <span style={{ fontSize: '10px', padding: '2px 6px', borderRadius: '4px', background: relScore >= 0.8 ? 'rgba(22,163,74,0.1)' : relScore >= 0.5 ? 'rgba(202,138,4,0.1)' : 'rgba(220,38,38,0.1)', color: relScore >= 0.8 ? '#16a34a' : relScore >= 0.5 ? '#ca8a04' : '#dc2626' }}>关:{Math.round(relScore * 100)}%</span>
+                        </div>
+                      </div>
+                      {(review.legality?.issues?.length || 0) > 0 && (
+                        <div style={{ fontSize: '11px', color: '#991b1b' }}>
+                          {review.legality?.issues?.slice(0, 1).map((issue, i) => <div key={i}>• {issue}</div>)}
+                        </div>
+                      )}
+                    </div>
+                  )})}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* 3. 证据链可视化（可折叠） */}
+        <div style={{ border: `1px solid ${colors.border}`, borderRadius: '8px', overflow: 'hidden' }}>
+          <div style={panelHeaderStyle} onClick={() => togglePanel('evidenceChain')}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Network className="w-4 h-4" style={{ color: '#0891b2' }} />
+              <span style={{ fontSize: '13px', fontWeight: 600, color: colors.textPrimary }}>证据链可视化</span>
+            </div>
+            <ChevronIcon expanded={evidenceCenterPanels.evidenceChain} />
+          </div>
+          {evidenceCenterPanels.evidenceChain && (
+            <div style={{ padding: '16px', background: colors.surface, height: '600px' }}>
+              {evidenceChainLoading ? (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: colors.textTertiary }}>
+                  <Loader2 className="w-5 h-5 animate-spin" style={{ marginRight: '8px' }} /> 加载证据链...
+                </div>
+              ) : evidenceChainData?.error ? (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: '12px' }}>
+                  <AlertCircle className="w-8 h-8" style={{ color: '#dc2626', opacity: 0.6 }} />
+                  <span style={{ fontSize: '12px', color: colors.textTertiary }}>{evidenceChainData.error}</span>
+                  <button onClick={loadEvidenceChain} style={{ padding: '6px 16px', fontSize: '12px', background: '#0891b2', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>重试</button>
+                </div>
+              ) : evidenceChainData && evidenceChainData.nodes?.length > 0 ? (
+                <div style={{ height: '100%' }}>
+                  {/* 布局切换按钮 */}
+                  <div style={{ display: 'flex', gap: 4, marginBottom: 8, justifyContent: 'flex-end' }}>
+                    <button
+                      onClick={() => setEvidenceChainMode('mindmap')}
+                      style={{
+                        padding: '4px 10px',
+                        fontSize: '11px',
+                        background: evidenceChainMode === 'mindmap' ? '#3b82f6' : '#fff',
+                        color: evidenceChainMode === 'mindmap' ? '#fff' : '#6b7280',
+                        border: '1px solid #e5e7eb',
+                        borderRadius: 4,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      思维导图
+                    </button>
+                    <button
+                      onClick={() => setEvidenceChainMode('graph')}
+                      style={{
+                        padding: '4px 10px',
+                        fontSize: '11px',
+                        background: evidenceChainMode === 'graph' ? '#3b82f6' : '#fff',
+                        color: evidenceChainMode === 'graph' ? '#fff' : '#6b7280',
+                        border: '1px solid #e5e7eb',
+                        borderRadius: 4,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      网络图
+                    </button>
+                  </div>
+                  {evidenceChainMode === 'mindmap' ? (
+                    <EvidenceChainMindmap data={evidenceChainData} onNodeClick={() => { /* 点击证据节点 */ }} />
+                  ) : (
+                    <EvidenceChainGraph data={evidenceChainData} onNodeClick={() => { /* 点击证据节点 */ }} />
+                  )}
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: '12px' }}>
+                  <Network className="w-8 h-8" style={{ opacity: 0.3 }} />
+                  <button onClick={loadEvidenceChain} style={{ padding: '6px 16px', fontSize: '12px', background: '#0891b2', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>加载证据链</button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* 4. 阅卷笔录（可折叠） */}
+        <div style={{ border: `1px solid ${colors.border}`, borderRadius: '8px', overflow: 'hidden' }}>
+          <div style={panelHeaderStyle} onClick={() => togglePanel('reviewNotes')}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <StickyNote className="w-4 h-4" style={{ color: '#4a5568' }} />
+              <span style={{ fontSize: '13px', fontWeight: 600, color: colors.textPrimary }}>阅卷笔录</span>
+            </div>
+            <ChevronIcon expanded={evidenceCenterPanels.reviewNotes} />
+          </div>
+          {evidenceCenterPanels.reviewNotes && (
+            <div style={{ padding: '16px', background: colors.surface }}>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '12px' }}>
+                <button onClick={handleGenerateReviewNotes} disabled={reviewNotesLoading}
+                  style={{
+                    padding: '6px 14px', fontSize: '12px', borderRadius: '6px',
+                    background: reviewNotesLoading ? 'rgba(74,85,104,0.05)' : '#4a5568',
+                    color: reviewNotesLoading ? colors.textTertiary : '#fff',
+                    border: 'none', cursor: reviewNotesLoading ? 'default' : 'pointer', fontWeight: 500,
+                    display: 'flex', alignItems: 'center', gap: '4px',
+                  }}>
+                  {reviewNotesLoading ? <><Loader2 className="w-3 h-3 animate-spin" /> 生成中...</> : <><RefreshCw className="w-3 h-3" /> {reviewNotes ? '重新生成' : '生成阅卷笔录'}</>}
+                </button>
+              </div>
+              {!reviewNotes ? (
+                <div style={{ textAlign: 'center', padding: '20px', color: colors.textTertiary, border: `1px dashed ${colors.border}`, borderRadius: '6px' }}>
+                  点击"生成阅卷笔录"组合现有分析结果
+                </div>
+              ) : (
+                <div style={{ fontSize: '13px', lineHeight: '1.8', maxHeight: '400px', overflow: 'auto' }}
+                  dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(marked.parse(reviewNotes, { async: false }) as string) }}
+                />
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  // ===== 辩护意见综合面板 =====
+  const renderDefenseOpinion = () => {
+    if (activeTab !== 'defense_opinion') return null
+
+    const togglePanel = (key: keyof typeof defenseOpinionPanels) => {
+      setDefenseOpinionPanels(prev => ({ ...prev, [key]: !prev[key] }))
+    }
+
+    const panelHeaderStyle = {
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      padding: '12px 16px', background: colors.surfaceAlt,
+      borderRadius: '8px', cursor: 'pointer', marginBottom: '2px',
+      border: `1px solid ${colors.border}`,
+    }
+
+    const ChevronIcon = ({ expanded }: { expanded: boolean }) => (
+      <svg className="w-4 h-4" style={{ transform: expanded ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+      </svg>
+    )
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+        {/* 1. 三阶层分析（默认展开） */}
+        <div style={{ border: `1px solid ${colors.border}`, borderRadius: '8px', overflow: 'hidden' }}>
+          <div style={panelHeaderStyle} onClick={() => togglePanel('threeTier')}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Scale className="w-4 h-4" style={{ color: '#831843' }} />
+              <span style={{ fontSize: '13px', fontWeight: 600, color: colors.textPrimary }}>三阶层分析</span>
+            </div>
+            <ChevronIcon expanded={defenseOpinionPanels.threeTier} />
+          </div>
+          {defenseOpinionPanels.threeTier && (
+            <div style={{ padding: '16px', background: colors.surface }}>
+              {stageContent['stage_53'] ? (
+                <ReportRenderer
+                  markdown={stageContent['stage_53']}
+                  evidenceItems={evidenceItems}
+                  onEvidenceClick={(mdFile) => {
+                    if (viewModeState !== 'md') viewModeDispatch('md')
+                    const item = evidenceItems.find(i => i.mdFile === mdFile)
+                    if (item) { setSelectedEvidenceId(item.id); loadEvidenceContent(item) }
+                  }}
+                />
+              ) : (
+                <div style={{ textAlign: 'center', padding: '20px', color: colors.textTertiary }}>三阶层分析尚未生成</div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* 2. 质证意见（可折叠） */}
+        <div style={{ border: `1px solid ${colors.border}`, borderRadius: '8px', overflow: 'hidden' }}>
+          <div style={panelHeaderStyle} onClick={() => togglePanel('crossExam')}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Gavel className="w-4 h-4" style={{ color: '#b45309' }} />
+              <span style={{ fontSize: '13px', fontWeight: 600, color: colors.textPrimary }}>质证意见</span>
+            </div>
+            <ChevronIcon expanded={defenseOpinionPanels.crossExam} />
+          </div>
+          {defenseOpinionPanels.crossExam && (
+            <div style={{ padding: '16px', background: colors.surface }}>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '12px' }}>
+                <button onClick={handleGenerateCrossExamination} disabled={crossExaminationLoading}
+                  style={{ padding: '6px 14px', fontSize: '12px', borderRadius: '6px', background: crossExaminationLoading ? 'rgba(180,83,9,0.05)' : '#b45309', color: crossExaminationLoading ? colors.textTertiary : '#fff', border: 'none', cursor: crossExaminationLoading ? 'default' : 'pointer', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  {crossExaminationLoading ? <><Loader2 className="w-3 h-3 animate-spin" /> 生成中...</> : <><RefreshCw className="w-3 h-3" /> {crossExamination ? '重新生成' : '生成质证意见'}</>}
+                </button>
+              </div>
+              {!crossExamination ? (
+                <div style={{ textAlign: 'center', padding: '20px', color: colors.textTertiary, border: `1px dashed ${colors.border}`, borderRadius: '6px' }}>请先进行证据三性审查，再生成质证意见</div>
+              ) : (
+                <div style={{ fontSize: '13px', lineHeight: '1.8', maxHeight: '400px', overflow: 'auto' }}
+                  dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(marked.parse(crossExamination, { async: false }) as string) }}
+                />
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* 3. 完整报告（可折叠） */}
+        <div style={{ border: `1px solid ${colors.border}`, borderRadius: '8px', overflow: 'hidden' }}>
+          <div style={panelHeaderStyle} onClick={() => togglePanel('fullReport')}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <FileText className="w-4 h-4" style={{ color: '#007AFF' }} />
+              <span style={{ fontSize: '13px', fontWeight: 600, color: colors.textPrimary }}>完整报告</span>
+            </div>
+            <ChevronIcon expanded={defenseOpinionPanels.fullReport} />
+          </div>
+          {defenseOpinionPanels.fullReport && (
+            <div style={{ padding: '16px', background: colors.surface }}>
+              {stageContent['full'] ? (
+                <ReportRenderer
+                  markdown={stageContent['full']}
+                  evidenceItems={evidenceItems}
+                  onEvidenceClick={(mdFile) => {
+                    if (viewModeState !== 'md') viewModeDispatch('md')
+                    const item = evidenceItems.find(i => i.mdFile === mdFile)
+                    if (item) { setSelectedEvidenceId(item.id); loadEvidenceContent(item) }
+                  }}
+                />
+              ) : (
+                <div style={{ textAlign: 'center', padding: '20px', color: colors.textTertiary }}>完整报告尚未生成</div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     )
   }
