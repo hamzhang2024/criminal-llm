@@ -22,6 +22,7 @@ interface TreeNode {
   height?: number
   originalNode?: any
   summary?: string  // 证据摘要
+  factId?: string   // 该证据所属的待证事实ID（用于显示相关内容）
 }
 
 /**
@@ -90,14 +91,24 @@ export function EvidenceChainMindmap({ data, onNodeClick }: Props) {
           type: 'category' as const,
           color: cfg.color,
           collapsed: collapsedNodes.has(`${fact.id}_${cfg.key}`),
-          children: categoryEvidences.map((ev: any) => ({
-            id: ev.id,
-            name: ev.name,
-            type: 'evidence' as const,
-            color: cfg.color,
-            originalNode: ev,
-            summary: ev.summary || '',  // 传递摘要
-          })),
+          children: categoryEvidences.map((ev: any) => {
+            // 获取该证据针对当前待证事实的相关内容
+            const provesDetails = ev.proves_details || {}
+            const factRelatedContent = provesDetails[fact.id] || []
+            const relatedSummary = factRelatedContent.length > 0
+              ? factRelatedContent.join('；')
+              : ev.summary || ''
+
+            return {
+              id: ev.id,
+              name: ev.name,
+              type: 'evidence' as const,
+              color: cfg.color,
+              originalNode: ev,
+              summary: relatedSummary.slice(0, 100),  // 与该待证事实相关的内容
+              factId: fact.id,  // 标记所属待证事实
+            }
+          }),
         }
       }).filter(Boolean) as TreeNode[]
 
@@ -167,18 +178,22 @@ export function EvidenceChainMindmap({ data, onNodeClick }: Props) {
 
   // 计算布局
   const calculateLayout = useCallback((tree: TreeNode) => {
-    const nodeWidth = 140
-    const nodeHeight = 36
-    const factNodeHeight = 60  // 待证事实节点更高，显示描述
-    const levelGapX = 180
-    const nodeGapY = 45
+    const nodeWidth = 180  // 加宽节点
+    const nodeHeight = 32
+    const factNodeHeight = 72  // 待证事实节点更高，显示描述
+    const evidenceNodeHeight = 48  // 证据节点显示摘要
+    const levelGapX = 220  // 加大层级间距
+    const nodeGapY = 55  // 加大节点间距
 
     const positions = new Map<string | number, { x: number; y: number; width: number; height: number }>()
 
     const layoutSubtree = (node: TreeNode, depth: number, startY: number): number => {
       const x = 40 + depth * levelGapX
-      // 待证事实节点更高
-      const height = node.type === 'fact' ? factNodeHeight : nodeHeight
+      // 根据节点类型设置高度
+      let height = nodeHeight
+      if (node.type === 'fact') height = factNodeHeight
+      else if (node.type === 'evidence') height = evidenceNodeHeight
+
       positions.set(node.id, { x, y: startY, width: nodeWidth, height: height })
 
       if (node.collapsed || !node.children?.length) {
@@ -362,40 +377,55 @@ export function EvidenceChainMindmap({ data, onNodeClick }: Props) {
           />
           {/* 节点名称 */}
           <text
-            x={node.type === 'root' ? pos.width / 2 : hasChildren ? 20 : pos.width / 2}
-            y={node.type === 'fact' ? 16 : pos.height / 2}
+            x={node.type === 'root' ? pos.width / 2 : hasChildren ? 18 : pos.width / 2}
+            y={node.type === 'fact' ? 16 : node.type === 'evidence' ? 14 : pos.height / 2}
             textAnchor={node.type === 'root' ? 'middle' : hasChildren ? 'start' : 'middle'}
             dominantBaseline="middle"
             fill={textColor}
             fontSize={node.type === 'root' ? 13 : 11}
             fontWeight={node.type === 'evidence' ? 'normal' : '600'}
           >
-            {displayName.length > 12 ? displayName.slice(0, 12) + '...' : displayName}
+            {displayName.length > 14 ? displayName.slice(0, 14) + '...' : displayName}
           </text>
-          {/* 待证事实节点：显示具体描述 */}
+          {/* 待证事实节点：显示具体描述（两行） */}
           {node.type === 'fact' && node.description && (
-            <text
-              x={10}
-              y={32}
-              textAnchor="start"
-              dominantBaseline="middle"
-              fill="rgba(255,255,255,0.85)"
-              fontSize={9}
-            >
-              {node.description.length > 18 ? node.description.slice(0, 18) + '...' : node.description}
-            </text>
+            <>
+              <text
+                x={10}
+                y={32}
+                textAnchor="start"
+                dominantBaseline="middle"
+                fill="rgba(255,255,255,0.9)"
+                fontSize={9}
+              >
+                {node.description.length > 24 ? node.description.slice(0, 24) + '...' : node.description}
+              </text>
+              {/* 第二行描述（如果有） */}
+              {node.description.length > 24 && (
+                <text
+                  x={10}
+                  y={46}
+                  textAnchor="start"
+                  dominantBaseline="middle"
+                  fill="rgba(255,255,255,0.75)"
+                  fontSize={9}
+                >
+                  {node.description.length > 48 ? node.description.slice(24, 48) + '...' : node.description.slice(24)}
+                </text>
+              )}
+            </>
           )}
           {/* 证据节点：显示摘要 */}
           {node.type === 'evidence' && node.summary && (
             <text
               x={10}
-              y={24}
+              y={32}
               textAnchor="start"
               dominantBaseline="middle"
               fill="#6b7280"
               fontSize={8}
             >
-              {node.summary.length > 16 ? node.summary.slice(0, 16) + '...' : node.summary}
+              {node.summary.length > 28 ? node.summary.slice(0, 28) + '...' : node.summary}
             </text>
           )}
           <title>{node.name}{node.description ? `\n${node.description}` : ''}{node.summary ? `\n\n摘要：${node.summary}` : ''}</title>
@@ -403,12 +433,12 @@ export function EvidenceChainMindmap({ data, onNodeClick }: Props) {
           {/* 展开/折叠图标 */}
           {hasChildren && (
             <text
-              x={10}
-              y={node.type === 'fact' ? 48 : pos.height / 2}
+              x={8}
+              y={node.type === 'fact' ? 62 : pos.height / 2}
               textAnchor="middle"
               dominantBaseline="middle"
               fill={textColor}
-              fontSize={14}
+              fontSize={12}
             >
               {isCollapsed ? '▶' : '▼'}
             </text>

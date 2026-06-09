@@ -2014,6 +2014,7 @@ def generate_evidence_chain(case_path: Path) -> Dict[str, Any]:
         # 分析该证据能证明哪些待证事实
         proves_facts = []
         proves_strength = {}  # 记录每个事实的证明强度
+        proves_details = {}   # 记录每个事实的相关内容片段
         full_text = (ev_name + " " + ev_summary + " " + ev_content[:3000]).lower()
 
         # 如果 index.json 中没有 content，尝试读取 MD 文件
@@ -2026,14 +2027,26 @@ def generate_evidence_chain(case_path: Path) -> Dict[str, Any]:
                     pass
 
         for fact in facts_to_prove:
-            match_count = sum(1 for kw in fact["keywords"] if kw.lower() in full_text)
-            if match_count > 0:
+            # 查找匹配关键词在原文中的上下文
+            matched_contexts = []
+            fact_keywords = [kw.lower() for kw in fact["keywords"]]
+            sentences = full_text.replace('。', '。\n').replace('；', '；\n').split('\n')
+
+            for sentence in sentences:
+                if any(kw in sentence for kw in fact_keywords):
+                    # 提取包含关键词的句子作为相关内容
+                    matched_contexts.append(sentence.strip()[:100])
+
+            if matched_contexts:
                 proves_facts.append(fact["id"])
-                # 根据匹配关键词数量估算证明力
+                # 根据匹配数量估算证明力
+                match_count = len(matched_contexts)
                 if match_count >= 3:
                     proves_strength[fact["id"]] = "high"
                 elif match_count >= 1:
                     proves_strength[fact["id"]] = "medium"
+                # 存储相关内容片段（最多3条，用于显示）
+                proves_details[fact["id"]] = matched_contexts[:3]
 
         evidence_item = {
             "id": ev_id,
@@ -2043,6 +2056,7 @@ def generate_evidence_chain(case_path: Path) -> Dict[str, Any]:
             "color": evidence_types[cat]["color"],
             "proves": proves_facts,
             "proves_strength": proves_strength,
+            "proves_details": proves_details,  # 新增：针对每个事实的相关内容
             "summary": ev_summary[:150] if ev_summary else "",  # 证据摘要（前150字）
         }
 
