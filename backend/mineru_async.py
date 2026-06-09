@@ -23,6 +23,7 @@ import shutil
 import json
 import asyncio
 import re
+import ssl
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Tuple, Callable
 from dataclasses import dataclass, field
@@ -35,11 +36,27 @@ import logging
 # 配置日志（PyInstaller --noconsole 模式下 print() 不可见，必须用 logger）
 logger = logging.getLogger(__name__)
 
-# 打包后 certifi 证书路径可能失效，macOS 用系统证书
-if sys.platform == "darwin" and getattr(sys, "frozen", False):
-    _SSL_VERIFY = "/etc/ssl/cert.pem"
-else:
-    _SSL_VERIFY = True
+
+def _get_ssl_context():
+    """获取 SSL 上下文，兼容 aiohttp
+
+    aiohttp 的 ssl 参数需要 SSLContext 对象，不能是文件路径字符串。
+    macOS 打包后 certifi 证书可能失效，使用系统证书。
+    """
+    if sys.platform == "darwin" and getattr(sys, "frozen", False):
+        try:
+            ctx = ssl.create_default_context()
+            ctx.load_verify_locations('/etc/ssl/cert.pem')
+            logger.debug("[SSL] 使用 macOS 系统证书 /etc/ssl/cert.pem")
+            return ctx
+        except Exception as e:
+            logger.warning(f"[SSL] 加载系统证书失败: {e}，使用默认验证")
+            return True
+    return True  # 非打包环境使用默认验证
+
+
+# aiohttp 专用 SSL 配置
+_SSL_CONTEXT = _get_ssl_context()
 
 # ═══════════════════════════════════════════════════════════
 # 配置常量
@@ -622,7 +639,7 @@ class AsyncMinerUConverter:
                     "model_version": "vlm",
                 },
                 timeout=aiohttp.ClientTimeout(total=30),
-                ssl=_SSL_VERIFY if isinstance(_SSL_VERIFY, bool) else _SSL_VERIFY,
+                ssl=_SSL_CONTEXT,
             ) as resp:
                 # 先检查 HTTP 状态码
                 if resp.status == 401:
@@ -691,7 +708,7 @@ class AsyncMinerUConverter:
                 data=file_content,
                 headers={},  # 不发送任何额外头
                 timeout=aiohttp.ClientTimeout(total=upload_timeout),
-                ssl=_SSL_VERIFY if isinstance(_SSL_VERIFY, bool) else _SSL_VERIFY,
+                ssl=_SSL_CONTEXT,
                 skip_auto_headers=["User-Agent", "Accept", "Accept-Encoding", "Content-Type"],
             ) as resp:
                 if resp.status not in (200, 201, 203, 204):
@@ -721,7 +738,7 @@ class AsyncMinerUConverter:
                     f"{MINERU_API}/extract-results/batch/{batch_id}",
                     headers={"Authorization": f"Bearer {self.token}"},
                     timeout=aiohttp.ClientTimeout(total=30),
-                    ssl=_SSL_VERIFY if isinstance(_SSL_VERIFY, bool) else _SSL_VERIFY,
+                    ssl=_SSL_CONTEXT,
                 ) as resp:
                     # 先检查 HTTP 状态码
                     if resp.status == 401:
@@ -785,7 +802,7 @@ class AsyncMinerUConverter:
                 async with session.get(
                     zip_url,
                     timeout=aiohttp.ClientTimeout(total=120),
-                    ssl=_SSL_VERIFY if isinstance(_SSL_VERIFY, bool) else _SSL_VERIFY,
+                    ssl=_SSL_CONTEXT,
                     skip_auto_headers=["User-Agent", "Accept", "Accept-Encoding"],
                 ) as resp:
                     zip_data = await resp.read()

@@ -22,6 +22,7 @@ import time
 import shutil
 import asyncio
 import re
+import ssl
 from pathlib import Path
 from datetime import date
 from typing import Optional, List, Dict, Any, Tuple, Callable
@@ -32,11 +33,27 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# 打包后 certifi 证书路径可能失效，macOS 用系统证书
-if sys.platform == "darwin" and getattr(sys, "frozen", False):
-    _SSL_VERIFY = "/etc/ssl/cert.pem"
-else:
-    _SSL_VERIFY = True
+
+def _get_ssl_context():
+    """获取 SSL 上下文，兼容 aiohttp
+
+    aiohttp 的 ssl 参数需要 SSLContext 对象，不能是文件路径字符串。
+    macOS 打包后 certifi 证书可能失效，使用系统证书。
+    """
+    if sys.platform == "darwin" and getattr(sys, "frozen", False):
+        try:
+            ctx = ssl.create_default_context()
+            ctx.load_verify_locations('/etc/ssl/cert.pem')
+            logger.debug("[SSL] 使用 macOS 系统证书 /etc/ssl/cert.pem")
+            return ctx
+        except Exception as e:
+            logger.warning(f"[SSL] 加载系统证书失败: {e}，使用默认验证")
+            return True
+    return True  # 非打包环境使用默认验证
+
+
+# aiohttp 专用 SSL 配置
+_SSL_CONTEXT = _get_ssl_context()
 
 # ═══════════════════════════════════════════════════════════
 # 配置常量
@@ -612,7 +629,7 @@ class AsyncPaddleOCRConverter:
                 headers=headers,
                 data=data,
                 timeout=aiohttp.ClientTimeout(total=submit_timeout),
-                ssl=_SSL_VERIFY if isinstance(_SSL_VERIFY, bool) else _SSL_VERIFY,
+                ssl=_SSL_CONTEXT,
             ) as resp:
                 if resp.status == 429:
                     logger.warning(f"[PaddleOCR] API 返回 429 限频，请稍后重试")
@@ -652,7 +669,7 @@ class AsyncPaddleOCRConverter:
                     f"{PADDLEOCR_API_URL}/{job_id}",
                     headers=headers,
                     timeout=aiohttp.ClientTimeout(total=30),
-                    ssl=_SSL_VERIFY if isinstance(_SSL_VERIFY, bool) else _SSL_VERIFY,
+                    ssl=_SSL_CONTEXT,
                 ) as resp:
                     if resp.status != 200:
                         await asyncio.sleep(POLL_INTERVAL)
@@ -712,7 +729,7 @@ class AsyncPaddleOCRConverter:
             async with session.get(
                 jsonl_url,
                 timeout=aiohttp.ClientTimeout(total=60),
-                ssl=_SSL_VERIFY if isinstance(_SSL_VERIFY, bool) else _SSL_VERIFY,
+                ssl=_SSL_CONTEXT,
                 skip_auto_headers=["User-Agent", "Accept", "Accept-Encoding"],
             ) as resp:
                 raw_jsonl = await resp.text()
@@ -766,7 +783,7 @@ class AsyncPaddleOCRConverter:
                                     async with session.get(
                                         img_url,
                                         timeout=aiohttp.ClientTimeout(total=30),
-                                        ssl=_SSL_VERIFY if isinstance(_SSL_VERIFY, bool) else _SSL_VERIFY,
+                                        ssl=_SSL_CONTEXT,
                                         skip_auto_headers=["User-Agent", "Accept", "Accept-Encoding"],
                                     ) as img_resp:
                                         if img_resp.status == 200:
