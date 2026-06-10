@@ -1056,14 +1056,20 @@ async def _search_similar_cases_llm(stage1_content: str) -> dict:
 
     # 从 stage_1 提取罪名
     crime_type = ""
-    crime_match = re.search(r'罪名[：:]\s*([^\n]+)', stage1_content)
+    # 尝试匹配 Markdown 格式：- **罪名**：诈骗罪
+    crime_match = re.search(r'\*\*罪名\*\*[：:]\s*([^\n]+)', stage1_content)
     if crime_match:
         crime_type = crime_match.group(1).strip()
     else:
-        # 尝试从标题提取
-        crime_match2 = re.search(r'涉嫌(.{2,10}罪)', stage1_content)
+        # 尝试匹配普通格式：罪名：诈骗罪
+        crime_match2 = re.search(r'罪名[：:]\s*([^\n]+)', stage1_content)
         if crime_match2:
             crime_type = crime_match2.group(1).strip()
+        else:
+            # 尝试从标题提取
+            crime_match3 = re.search(r'涉嫌(.{2,10}罪)', stage1_content)
+            if crime_match3:
+                crime_type = crime_match3.group(1).strip()
 
     if not crime_type:
         return {
@@ -1073,14 +1079,22 @@ async def _search_similar_cases_llm(stage1_content: str) -> dict:
             "error": "未能识别罪名"
         }
 
-    # 提取关键事实（简化版：取前3个要点）
+    # 提取关键事实
     key_facts = []
-    facts_section = re.search(r'犯罪事实[：:]\s*(.+?)(?:\n\n|\n##|$)', stage1_content, re.DOTALL)
-    if facts_section:
-        facts_text = facts_section.group(1).strip()
-        # 提取前3个要点
-        bullet_points = re.findall(r'[•\-\*]\s*([^\n]+)', facts_text)
-        key_facts = [p.strip() for p in bullet_points[:3] if len(p.strip()) > 10]
+    # 尝试匹配"核心事实"部分
+    core_facts_match = re.search(r'\*\*核心事实\*\*[：:]\s*(.+?)(?=\n-|\n\n|\n##|$)', stage1_content, re.DOTALL)
+    if core_facts_match:
+        core_facts = core_facts_match.group(1).strip()
+        # 提取关键句子（按句号分割，取前3个）
+        sentences = re.split(r'[。！]', core_facts)
+        key_facts = [s.strip() + "。" for s in sentences[:3] if s.strip()]
+    else:
+        # 回退：从"指控事实"或"犯罪事实"部分提取
+        facts_section = re.search(r'(?:指控事实|犯罪事实)[：:]\s*(.+?)(?:\n\n|\n##|$)', stage1_content, re.DOTALL)
+        if facts_section:
+            facts_text = facts_section.group(1).strip()
+            bullet_points = re.findall(r'[•\-\*]\s*([^\n]+)', facts_text)
+            key_facts = [p.strip() for p in bullet_points[:3] if len(p.strip()) > 10]
 
     if not key_facts:
         # 回退：取 stage_1 前500字
