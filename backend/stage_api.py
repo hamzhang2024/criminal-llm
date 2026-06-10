@@ -728,7 +728,54 @@ def _parse_person_relation(content: str) -> dict:
     nodes = []
     edges = []
 
-    # 方法1：解析 mermaid graph 代码块（更准确）
+    # 先解析表格获取角色信息（表格中有明确的角色列）
+    name_role_map = {}  # 姓名 -> 角色
+    role_map = {
+        "被告人": "defendant",
+        "嫌疑人": "defendant",
+        "主犯": "defendant",
+        "从犯": "co defendant",
+        "同案犯": "co defendant",
+        "共犯": "co defendant",
+        "证人": "witness",
+        "关联人": "witness",
+        "关系人": "witness",
+        "被害人": "victim",
+        "受害人": "victim",
+        "介绍人": "witness",
+        "保证人": "witness",
+    }
+
+    lines = content.split('\n')
+    in_table = False
+    for line in lines:
+        if '|---' in line or '| ---' in line:
+            in_table = True
+            continue
+        if not in_table or not line.strip().startswith('|'):
+            continue
+
+        cols = [c.strip() for c in line.split('|') if c.strip()]
+        if len(cols) < 2:
+            continue
+
+        name = cols[0].replace('*', '').strip()
+        role_str = cols[1] if len(cols) > 1 else ""
+
+        if name == "姓名" or "涉案人员" in name:
+            continue
+
+        # 确定角色
+        node_role = "other"
+        for key, val in role_map.items():
+            if key in role_str:
+                node_role = val
+                break
+
+        if name and len(name) <= 10:
+            name_role_map[name] = node_role
+
+    # 方法1：解析 mermaid graph 代码块（获取关系边）
     mermaid_match = re.search(r'```mermaid\s*graph\s*\w+\s*(.*?)```', content, re.DOTALL)
     if mermaid_match:
         mermaid_code = mermaid_match.group(1)
@@ -739,15 +786,35 @@ def _parse_person_relation(content: str) -> dict:
         node_id_map = {}  # A -> 姓名
 
         for node_id, node_name in node_matches:
-            node_id_map[node_id] = node_name
-            # 根据名字推断角色
+            # 每个 ID 只取第一次出现的定义，避免 subgraph 中重复定义覆盖
+            if node_id not in node_id_map:
+                node_id_map[node_id] = node_name
+            # 从表格角色映射中获取角色，优先级最高
             role = "other"
-            if "高为峰" in node_name:
-                role = "defendant"
-            elif "丁以建" in node_name or "方天兴" in node_name:
-                role = "co defendant"
-            elif any(w in node_name for w in ["汤", "於", "肖", "何", "孙", "张", "严"]):
-                role = "witness"
+
+            # 精确匹配
+            if node_name in name_role_map:
+                role = name_role_map[node_name]
+            else:
+                # 前缀匹配：戴子佳(佳诚数码) -> 戴子佳
+                base_name = node_name.split('(')[0].strip() if '(' in node_name else node_name
+                if base_name in name_role_map:
+                    role = name_role_map[base_name]
+
+            # 如果表格中没有，尝试从名字推断
+            if role == "other":
+                if "被告" in node_name or "嫌疑人" in node_name or "犯罪" in node_name:
+                    role = "defendant"
+                elif "(" in node_name and ")" in node_name:
+                    desc = node_name[node_name.find("("):node_name.find(")")+1]
+                    if any(k in desc for k in ["被告", "嫌疑人", "主犯"]):
+                        role = "defendant"
+                    elif any(k in desc for k in ["从犯", "同案", "共犯"]):
+                        role = "co defendant"
+                    elif any(k in desc for k in ["证", "关联"]):
+                        role = "witness"
+                    elif any(k in desc for k in ["被害", "受害人"]):
+                        role = "victim"
 
             nodes.append({
                 "id": node_name,
