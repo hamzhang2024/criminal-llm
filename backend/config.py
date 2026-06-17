@@ -2,12 +2,11 @@
 配置管理
 """
 import os
-import sys
 import shutil
-from pathlib import Path
 from datetime import datetime, timedelta
-from dotenv import load_dotenv
+
 from _bootstrap import DATA_DIR
+from dotenv import load_dotenv
 
 # 加载环境变量
 load_dotenv(str(DATA_DIR / ".env"))

@@ -6,18 +6,22 @@ PDF 处理 API - 去水印 + OCR 三明治结构
 2. 处理 PDF：去水印 / OCR 三明治 / 两者组合
 3. 输出保存在同目录
 """
-from pathlib import Path
+import asyncio
+import logging
 import os
 import subprocess
-import json
-import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-import traceback
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Body
-from typing import List, Dict, Any, Optional
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+
+# 导入路径验证工具
+from utils.path_validator import sanitize_filename
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/process", tags=["PDF处理"])
 
@@ -80,29 +84,53 @@ def enhance_pdf_resolution(pdf_path: str, output_path: str, dpi: int = 300) -> D
     import tempfile
 
     try:
+        # 安全验证：检查文件名是否合法
+        input_name = Path(pdf_path).name
+        output_name = Path(output_path).name
+        try:
+            sanitize_filename(input_name)
+            sanitize_filename(output_name)
+        except HTTPException as e:
+            logger.warning(f"[安全] PDF文件名验证失败: input={input_name}, output={output_name}")
+            return {"success": False, "error": f"文件名不合法: {e.detail}"}
+
+        # 安全验证：路径必须是绝对路径（由调用者在案件目录内构建）
+        pdf_path_abs = Path(pdf_path).resolve()
+        output_path_abs = Path(output_path).resolve()
+
+        # 安全验证：禁止路径跳转
+        if ".." in str(pdf_path) or ".." in str(output_path):
+            logger.warning(f"[安全] PDF路径包含跳转: pdf={pdf_path}, output={output_path}")
+            return {"success": False, "error": "路径包含非法跳转"}
+
+        # 安全验证：必须是 PDF 文件
+        if not input_name.lower().endswith('.pdf') or not output_name.lower().endswith('.pdf'):
+            logger.warning(f"[安全] 文件扩展名不是 PDF: input={input_name}, output={output_name}")
+            return {"success": False, "error": "仅支持 PDF 文件"}
+
         # 如果输入输出路径相同，先写到临时文件
-        same_file = os.path.abspath(pdf_path) == os.path.abspath(output_path)
+        same_file = pdf_path_abs == output_path_abs
         if same_file:
-            tmp_fd, temp_path = tempfile.mkstemp(suffix='.pdf', dir=os.path.dirname(pdf_path))
+            tmp_fd, temp_path = tempfile.mkstemp(suffix='.pdf', dir=str(pdf_path_abs.parent))
             os.close(tmp_fd)
             gs_output = temp_path
         else:
-            gs_output = output_path
+            gs_output = str(output_path_abs)
 
         cmd = [
             "gs",
             "-dNOPAUSE",
             "-dBATCH",
             "-sDEVICE=pdfwrite",
-            f"-dPDFSETTINGS=/prepress",
-            f"-dDownsampleColorImages=false",
-            f"-dDownsampleGrayImages=false",
-            f"-dDownsampleMonoImages=false",
+            "-dPDFSETTINGS=/prepress",
+            "-dDownsampleColorImages=false",
+            "-dDownsampleGrayImages=false",
+            "-dDownsampleMonoImages=false",
             f"-dColorImageResolution={dpi}",
             f"-dGrayImageResolution={dpi}",
             f"-dMonoImageResolution={dpi}",
             f"-sOutputFile={gs_output}",
-            pdf_path,
+            str(pdf_path_abs),
         ]
 
         result = subprocess.run(
@@ -116,25 +144,25 @@ def enhance_pdf_resolution(pdf_path: str, output_path: str, dpi: int = 300) -> D
 
         if result.returncode != 0:
             error_msg = result.stderr or result.stdout or "Ghostscript 处理失败"
-            if same_file and os.path.exists(temp_path):
+            if same_file and 'temp_path' in dir() and os.path.exists(temp_path):
                 os.unlink(temp_path)
             return {"success": False, "error": error_msg[:500]}
 
         if not os.path.exists(gs_output):
-            if same_file and os.path.exists(temp_path):
+            if same_file and 'temp_path' in dir() and os.path.exists(temp_path):
                 os.unlink(temp_path)
             return {"success": False, "error": "输出文件未生成"}
 
         # 如果是同路径，替换原文件
         if same_file:
-            os.replace(gs_output, output_path)
+            os.replace(gs_output, str(output_path_abs))
 
-        original_size = Path(pdf_path).stat().st_size
-        output_size = Path(output_path).stat().st_size
+        original_size = pdf_path_abs.stat().st_size
+        output_size = output_path_abs.stat().st_size
 
         return {
             "success": True,
-            "output": output_path,
+            "output": str(output_path_abs),
             "original_size_human": f"{original_size / (1024*1024):.1f} MB" if original_size > 1024*1024 else f"{original_size / 1024:.0f} KB",
             "output_size_human": f"{output_size / (1024*1024):.1f} MB" if output_size > 1024*1024 else f"{output_size / 1024:.0f} KB"
         }
@@ -280,8 +308,12 @@ def process_single_file(
         return {"success": False, "error": f"文件不存在: {input_path}", "file": input_path}
 
     # ── 快速检测：是否需要处理 ──
-    import fitz
-    from watermark_remover import _open_pdf_with_repair, find_watermark_xobj, detect_rotation_watermark, auto_detect_repeating_text
+    from watermark_remover import (
+        _open_pdf_with_repair,
+        auto_detect_repeating_text,
+        detect_rotation_watermark,
+        find_watermark_xobj,
+    )
     try:
         doc = _open_pdf_with_repair(str(input_file), password)
         if doc is None:

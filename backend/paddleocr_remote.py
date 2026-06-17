@@ -11,19 +11,19 @@ API: https://paddleocr.aistudio-app.com/api/v2/ocr/jobs
     text, images_dir = paddleocr_convert(pdf_path, output_dir)
 """
 
-import os
 import json
-import time
-import shutil
-import tempfile
-from datetime import date
-from pathlib import Path
-from typing import Optional, Tuple, Callable
-
-import requests
+import os
 
 # 打包后 certifi 证书路径可能失效，macOS 用系统证书
 import sys
+import tempfile
+import time
+from datetime import date
+from pathlib import Path
+from typing import Callable, Optional
+
+import requests
+
 if sys.platform == "darwin" and getattr(sys, "frozen", False):
     _SSL_VERIFY = "/etc/ssl/cert.pem"
 else:
@@ -151,7 +151,7 @@ def _submit_job(pdf_path: Path, token: str) -> Optional[str]:
             )
 
         if resp.status_code == 429:
-            print(f"[PaddleOCR] API 返回 429 限频，请稍后重试")
+            print("[PaddleOCR] API 返回 429 限频，请稍后重试")
             return None
 
         if resp.status_code != 200:
@@ -213,7 +213,7 @@ def _poll_job(job_id: str, token: str, timeout: int = 3600, progress_cb: Optiona
                 json_url = job_data.get("resultUrl", {}).get("jsonUrl", "")
                 if json_url:
                     return json_url
-                print(f"[PaddleOCR] 未找到结果 URL")
+                print("[PaddleOCR] 未找到结果 URL")
                 return None
 
             elif state == "failed":
@@ -243,7 +243,7 @@ def _download_and_parse_jsonl(jsonl_url: str, output_dir: Path, stem: str) -> Op
 
     lines = resp.text.strip().split('\n')
     if not lines:
-        print(f"[PaddleOCR] 结果为空")
+        print("[PaddleOCR] 结果为空")
         return None
 
     # 保存 JSONL 原始结果到 _json 目录（保留 MinerU 风格的结构化产物）
@@ -319,7 +319,7 @@ def _download_and_parse_jsonl(jsonl_url: str, output_dir: Path, stem: str) -> Op
         print(f"[PaddleOCR] 图片下载完成：成功 {downloaded}，失败 {failed}")
 
     if not md_parts:
-        print(f"[PaddleOCR] 无有效 Markdown 内容")
+        print("[PaddleOCR] 无有效 Markdown 内容")
         return None
 
     full_text = "\n\n".join(md_parts)
@@ -467,9 +467,9 @@ def _apply_postprocessing(text: str) -> str:
     # 2. 通用 OCR 纠错 + VLM 幻觉检测
     try:
         from pdf_to_md import (
-            _protect_signatures_as_images,
             _fix_ocr_errors,
             _fold_consecutive_images,
+            _protect_signatures_as_images,
             _strip_hallucinated_tables,
         )
         text = _fix_ocr_errors(text)
@@ -481,8 +481,8 @@ def _apply_postprocessing(text: str) -> str:
     # 4. 签名保护 + 图片折叠
     try:
         from pdf_to_md import (
-            _protect_signatures_as_images,
             _fold_consecutive_images,
+            _protect_signatures_as_images,
         )
         text = _protect_signatures_as_images(text)
         text, _ = _fold_consecutive_images(text)

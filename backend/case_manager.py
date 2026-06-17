@@ -7,23 +7,27 @@
 3. 识别待导入文件夹（无 case.json 但有 PDF）
 4. 导入文件夹为合法案件
 """
-from pathlib import Path
-import re
 import logging
-from datetime import datetime
+import re
 import shutil
-from typing import List, Dict, Optional
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Optional
+
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
-from fastapi import APIRouter, UploadFile, File, HTTPException, Request
-from fastapi.responses import JSONResponse
-import json
-import uuid
-import os
-import glob
-import time
 import asyncio
+import glob
+import json
+import os
+import time
+import uuid
+
+from fastapi import APIRouter, File, HTTPException, UploadFile
+
+# 导入路径验证工具
+from utils.path_validator import sanitize_filename, validate_path
 
 router = APIRouter(prefix="/api/cases", tags=["案件管理"])
 
@@ -32,7 +36,7 @@ router = APIRouter(prefix="/api/cases", tags=["案件管理"])
 # 当提取失败时，额外记录 "error_detail" 字段，方便前端展示具体原因
 EXTRACT_TASKS: dict = {}
 
-from config import MAX_FILE_SIZE, DATA_DIR, UPLOAD_DIR as CONFIG_UPLOAD_DIR
+from config import DATA_DIR, MAX_FILE_SIZE
 
 # 案件存储根目录
 CASES_DIR = DATA_DIR / "cases"
@@ -145,7 +149,7 @@ def scan_cases(owner: Optional[str] = None) -> List[CaseInfo]:
 
                             cases.append(CaseInfo(**metadata))
                         except Exception as e:
-                            print(f"读取案件失败：{sub}: {e}")
+                            logger.warning(f"读取案件失败：{sub}: {e}")
 
     return sorted(cases, key=lambda x: x.created_at, reverse=True)
 
@@ -317,22 +321,39 @@ async def import_folder(folder_path: str, name: str, defendant: str) -> CaseInfo
     """导入文件夹为合法案件"""
     import urllib.parse
     folder_path = urllib.parse.unquote(folder_path)
-    folder = Path(folder_path)
-    
+
+    # 安全验证：检查路径是否合法
+    try:
+        folder = Path(folder_path)
+        # 验证路径是否在 CASES_DIR 范围内（防止路径遍历）
+        if folder.is_absolute():
+            # 绝对路径：验证是否在数据目录范围内
+            resolved_folder = folder.resolve()
+            resolved_cases = CASES_DIR.resolve()
+            if not str(resolved_folder).startswith(str(resolved_cases)):
+                logger.warning(f"[安全] 导入路径越界: {folder_path}")
+                return {"error": "路径越界，只能导入数据目录内的文件夹"}
+        else:
+            # 相对路径：基于 CASES_DIR 解析
+            folder = CASES_DIR / folder
+    except Exception as e:
+        logger.warning(f"[安全] 导入路径验证失败: {folder_path}, 错误: {e}")
+        return {"error": "路径格式无效"}
+
     if not folder.exists():
         return {"error": "文件夹不存在"}
-    
+
     if (folder / "case.json").exists():
         return {"error": "已经是合法案件"}
-    
+
     # 生成案件 ID
     case_id = f"case_{uuid.uuid4().hex[:8]}"
-    
+
     # 移动文件夹到案件目录
     case_path = CASES_DIR / case_id / folder.name
     if case_path.exists():
         shutil.rmtree(case_path)
-    
+
     # 复制文件夹
     shutil.copytree(folder, case_path)
     
@@ -370,10 +391,10 @@ async def import_folder(folder_path: str, name: str, defendant: str) -> CaseInfo
 @router.post("/{case_id}/upload")
 async def upload_files(case_id: str, files: list[UploadFile] = File(...)):
     """上传文件到案件 - 保持原始文件名"""
-    print(f"[upload] case_id={case_id}, file_count={len(files)}, file_names={[f.filename for f in files]}")
+    logger.info(f"[upload] case_id={case_id}, file_count={len(files)}, file_names={[f.filename for f in files]}")
     case_path = find_case_path(case_id)
     if not case_path:
-        print(f"[upload] case not found: {case_id}")
+        logger.warning(f"[upload] case not found: {case_id}")
         return {"success": False, "error": "案件不存在"}
 
     original_dir = case_path / "original"
@@ -386,11 +407,31 @@ async def upload_files(case_id: str, files: list[UploadFile] = File(...)):
         if len(file_content) > MAX_FILE_SIZE:
             raise HTTPException(
                 status_code=413,
-                detail=f"文件 {file.filename} 过大，最大支持 {MAX_FILE_SIZE // (1024*1024)}MB"
+                detail=f"文件过大，最大支持 {MAX_FILE_SIZE // (1024*1024)}MB"
             )
 
         # 保持原始文件名
         original_name = file.filename or "unknown.pdf"
+
+        # 安全验证：检查文件名是否合法（防止路径遍历和命令注入）
+        try:
+            sanitize_filename(original_name)
+        except HTTPException:
+            logger.warning(f"[安全] 文件名验证失败: {original_name}")
+            raise HTTPException(status_code=400, detail=f"文件名不合法: {original_name}")
+
+        # 安全验证：检查文件扩展名
+        if not original_name.lower().endswith('.pdf'):
+            raise HTTPException(status_code=400, detail=f"仅支持 PDF 文件: {original_name}")
+
+        # 安全验证：检查文件实际类型（MIME 类型）
+        # 前 8 字节足以识别 PDF 文件头
+        if len(file_content) >= 8:
+            pdf_header = file_content[:8]
+            if pdf_header != b'%PDF-1.' and not pdf_header.startswith(b'%PDF-'):
+                logger.warning(f"[安全] 文件类型不匹配: {original_name}, header={pdf_header[:20]}")
+                raise HTTPException(status_code=400, detail=f"文件内容不是有效的 PDF: {original_name}")
+
         file_path = original_dir / original_name
 
         # 如果文件已存在，添加后缀避免覆盖
@@ -399,12 +440,14 @@ async def upload_files(case_id: str, files: list[UploadFile] = File(...)):
             ext = Path(original_name).suffix
             counter = 1
             while file_path.exists():
-                file_path = original_dir / f"{base}_{counter}{ext}"
+                new_name = f"{base}_{counter}{ext}"
+                sanitize_filename(new_name)  # 验证新文件名
+                file_path = original_dir / new_name
                 counter += 1
 
         with open(file_path, "wb") as f:
             f.write(file_content)
-        
+
         uploaded_files.append({
             "id": f"file_{file_path.stem}",
             "name": file_path.name,
@@ -412,7 +455,7 @@ async def upload_files(case_id: str, files: list[UploadFile] = File(...)):
             "status": "pending",
             "path": str(file_path)
         })
-    
+
     # 更新案件状态
     metadata_file = case_path / "case.json"
     with open(metadata_file, 'r', encoding='utf-8') as f:
@@ -421,8 +464,8 @@ async def upload_files(case_id: str, files: list[UploadFile] = File(...)):
     metadata["file_count"] = len(list(original_dir.glob("*.pdf")))
     with open(metadata_file, 'w', encoding='utf-8') as f:
         json.dump(metadata, f, ensure_ascii=False, indent=2)
-    
-    print(f"[upload] success: {[f['name'] for f in uploaded_files]}")
+
+    logger.info(f"[upload] success: {[f['name'] for f in uploaded_files]}")
     return {"success": True, "files": uploaded_files}
 
 
@@ -436,14 +479,27 @@ async def delete_file(case_id: str, file_name: str):
     if not case_path:
         return {"success": False, "error": "案件不存在"}
 
+    # 安全验证：检查文件名是否合法
+    try:
+        sanitize_filename(file_name)
+    except HTTPException:
+        logger.warning(f"[安全] 删除文件名验证失败: {file_name}")
+        raise HTTPException(status_code=400, detail="文件名不合法")
+
     original_dir = case_path / "original"
-    file_path = original_dir / file_name
+    # 安全验证：使用 validate_path 确保路径在目录范围内
+    try:
+        file_path = validate_path(original_dir, file_name)
+    except HTTPException:
+        logger.warning(f"[安全] 文件路径验证失败: {file_name}")
+        raise HTTPException(status_code=400, detail="文件路径不合法")
+
     if not file_path.exists():
         return {"success": False, "error": f"文件不存在：{file_name}"}
 
     # 删除 original 文件
     file_path.unlink()
-    print(f"[delete] removed original: {file_path}")
+    logger.info(f"[delete] removed original: {file_path}")
 
     # 同步删除 processed/ 中的对应文件
     stem = file_path.stem
@@ -453,7 +509,7 @@ async def delete_file(case_id: str, file_name: str):
         for p in processed_dir.iterdir():
             if p.suffix == ".pdf" and p.stem == stem:
                 p.unlink()
-                print(f"[delete] removed processed: {p}")
+                logger.info(f"[delete] removed processed: {p}")
 
     # 同步删除 md/ 中的对应文件
     md_dir = case_path / "md"
@@ -461,7 +517,7 @@ async def delete_file(case_id: str, file_name: str):
         for p in md_dir.iterdir():
             if p.suffix == ".md" and p.stem == stem:
                 p.unlink()
-                print(f"[delete] removed md: {p}")
+                logger.info(f"[delete] removed md: {p}")
 
     return {"success": True, "message": f"已删除 {file_name}"}
 
@@ -476,15 +532,28 @@ async def delete_original_file_only(case_id: str, file_name: str):
     if not case_path:
         return {"success": False, "error": "案件不存在"}
 
+    # 安全验证：检查文件名是否合法
+    try:
+        sanitize_filename(file_name)
+    except HTTPException:
+        logger.warning(f"[安全] 删除文件名验证失败: {file_name}")
+        raise HTTPException(status_code=400, detail="文件名不合法")
+
     original_dir = case_path / "original"
-    file_path = original_dir / file_name
+    # 安全验证：使用 validate_path 确保路径在目录范围内
+    try:
+        file_path = validate_path(original_dir, file_name)
+    except HTTPException:
+        logger.warning(f"[安全] 文件路径验证失败: {file_name}")
+        raise HTTPException(status_code=400, detail="文件路径不合法")
+
     if not file_path.exists():
         # 文件已不存在，视为成功
-        return {"success": True, "message": f"原始文件已不存在"}
+        return {"success": True, "message": "原始文件已不存在"}
 
     # 仅删除 original 文件
     file_path.unlink()
-    print(f"[delete] removed original only: {file_path}")
+    logger.info(f"[delete] removed original only: {file_path}")
 
     return {"success": True, "message": f"已删除原始文件 {file_name}"}
 
@@ -662,6 +731,17 @@ def _do_batch_process(case_id: str, step: int, file_names: list, password: str =
         output_dir = case_path / "processed"
         output_dir.mkdir(exist_ok=True)
 
+        # 安全验证：检查所有文件名是否合法
+        validated_file_names = []
+        for fn in file_names:
+            try:
+                sanitize_filename(fn)
+                validated_file_names.append(fn)
+            except HTTPException:
+                logger.warning(f"[安全] 批量处理文件名验证失败: {fn}")
+                results.append({"file": fn, "success": False, "error": "文件名不合法"})
+        file_names = validated_file_names
+
         # 确定哪些选项被启用
         do_watermark = remove_watermark if remove_watermark is not None else False
         do_enhance = enhance_resolution if enhance_resolution is not None else False
@@ -836,7 +916,7 @@ async def _process_indictment_single(md_file: Path, md_text: str, evidence_dir: 
 不要概括、不要简化、不要对比其他证据，只做真实记录。"""},
         {"role": "user", "content": f"""## {doc_type}：{md_file.name}
 
-{md_text[:100000]}
+{md_text[:150000]}
 
 ---
 
@@ -887,7 +967,9 @@ async def _process_indictment_single(md_file: Path, md_text: str, evidence_dir: 
 
 
 # ── 证据提取系统提示词（提取为模块常量） ──
-_EVIDENCE_SYSTEM_PROMPT = """你是刑事案卷审查专家，正在逐份审查案卷材料。"""
+_EVIDENCE_SYSTEM_PROMPT = """你是刑事案卷审查专家，正在逐份审查案卷材料。
+你需要提取详尽的证据内容，为后续分析提供完整信息。
+"""
 
 # 固定的提取规则（作为 assistant 消息，构成稳定缓存前缀）
 _EVIDENCE_EXTRACTION_RULES = """
@@ -920,20 +1002,22 @@ _EVIDENCE_EXTRACTION_RULES = """
 
 一个 MD 文件中可能包含同一人的多次讯问笔录（如第一次、第二次、第三次），或不同人的讯问笔录。**必须逐份提取，每份作为独立证据。**
 
-### 讯问/询问笔录类提取要求
+### 讯问/询问笔录类提取要求（重要：保留完整原文）
 
 每份笔录必须包含以下信息：
 - **讯问/询问时间**：精确到年月日时分
 - **讯问/询问地点**：具体地址（如"江阴市公安局XX派出所XX讯问室"）
 - **讯问/询问人**：姓名及职务
 - **被讯问/被询问人**：姓名、身份证号、角色
-- **笔录全文要点**：保留关键问答原文摘录（问答形式），特别是：
-  - 关于案发时间、地点、参与人员的问答
-  - 关于犯罪经过、分工、获利的问答
-  - 关于主观明知、犯罪目的的问答
-  - 关于认罪态度的问答
-  - 前后供述有变化的问答
-- **涉及案件事实的详细内容**：时间、地点、人物、事件经过，必须完整记录，不得概括简化
+
+**关键：笔录摘要必须保留完整问答原文，不要概括简化！**
+- 保留问答形式（问：... 答：...）
+- 保留关于案发时间、地点、参与人员的完整问答
+- 保留关于犯罪经过、分工、获利的完整问答
+- 保留关于主观明知、犯罪目的的完整问答
+- 保留关于认罪态度的完整问答
+- 保留前后供述有变化的完整对比
+- summary 字段应至少 5000 字，包含完整的关键问答，尽可能保留原文细节
 
 **书证/金融类**必须保留具体金额、时间、账号等数据
 **鉴定意见**必须保留鉴定方法、检材来源、鉴定结论
@@ -955,35 +1039,42 @@ _EVIDENCE_EXTRACTION_RULES = """
 
 ---
 
-请对文件中的每份证据，按以下格式输出：
+**输出要求：你的回答必须只包含一个 JSON 数组，不要有任何其他文字、符号或格式。**
 
-### 证据N：[证据名称]
+JSON 数组格式：
+```json
+[
+  {
+    "name": "证据名称",
+    "type": "物证/书证/证人证言/被害人陈述/犯罪嫌疑人供述和辩解/鉴定意见/勘验检查辨认笔录/视听资料、电子数据/程序性文书",
+    "page_range": "页码范围",
+    "persons": "涉案人员",
+    "key_facts": "关键事实",
+    "summary": "详细摘要（至少5000字，保留完整问答原文和关键细节）",
+    "original_quotes": "原文摘录（重要段落完整复制）",
+    "contradiction_hints": "矛盾提示",
+    "related_entities": "关联信息",
+    "images": ["![](图片1.jpg)"]
+  }
+]
+```
 
-- **证据类型**：[物证/书证/证人证言/被害人陈述/犯罪嫌疑人供述和辩解/鉴定意见/勘验检查辨认笔录/视听资料、电子数据/程序性文书]
-- **来源文件**：[与案卷文件名一致]
-- **页码范围**：[如原文有标注]
-- **涉案人员**：[列出涉及的人员姓名及角色，区分主从犯/证人/被害人等]
-- **关键事实**：[按时间顺序列出关键事实，每条带"时间+主体+行为+结果"，保留具体金额、时间、地点等数据，不少于5条]
-- **详细摘要**：[尽可能详细的摘要。对讯问/询问笔录，用问答形式保留关键原文摘录（不少于5个问答对）；对书证，列明具体数据；对文书，概括核心内容]
-- **原文摘录**：[关键问答或关键原文的直接引用，不少于3-5段，标注页码或原文位置]
-- **矛盾提示**：[供述前后是否一致？有无自相矛盾之处？]
-- **关联信息**：[列出所有关键关联信息，见上方"关键关联信息提取"要求。如无则填"无"]
+**关键要求：**
+1. 你的回答必须只包含 JSON 数组，以 `[` 开始，以 `]` 结束
+2. 不要包含 ```json 或任何代码块标记
+3. 不要包含 Markdown 格式（如 ### 证据、- **类型** 等）
+4. 直接输出 JSON，不要有任何前缀或后缀文字
+5. **summary 字段必须详尽，至少 5000 字，讯问笔录要保留完整问答原文，其他证据要保留关键细节**
 
-**注意（起诉意见书/起诉书/多次供述专用）：**
-- 必须逐笔提取全部犯罪事实，每笔必须包含：**时间、地点（详细到门牌号/街道）、涉案人员及角色、行为方式、金额/结果、简要案情**
-- **地址必须从原文提取出来，不得写"不详"或"未提及"**
-- **多笔犯罪必须逐笔提取，不得合并概括。但多笔犯罪事实仍属于同一份证据记录，在"详细摘要"中逐笔列出即可，不需要拆分为多条证据**
+正确示例：`[{"name":"test","type":"书证","page_range":"1","persons":"","key_facts":"","summary":"","original_quotes":"","contradiction_hints":"","related_entities":"","images":[]}]`
 
-**注意（讯问/询问笔录专用）：**
-- **每次讯问/询问 = 一份独立证据，不得合并**
-- 每份笔录必须包含：**讯问时间、讯问地点、讯问人、被讯问人、关键问答、涉及案件事实的详细内容（时间+地点+人物+事件）**
+错误示例（禁止）：
+- `以下是 JSON：`
+- ```json
+- ### 证据1
+- - **类型**：
 
-注意：
-- 如果文件包含多份独立文书（如起诉意见书+告知书），分别提取为多份证据
-- **保持原文的关键细节，不要过度概括**
-- 页码引用必须准确
-- 金额、时间、人名等数据必须精确，不要用"约"、"左右"等模糊词
-- **关联信息是重点**：手机号、微信号、银行账号、车牌号等是证据互相关联印证的关键线索，务必逐一提取"""
+请只输出 JSON 数组。"""
 
 
 async def _extract_single_file(
@@ -997,29 +1088,60 @@ async def _extract_single_file(
     返回：(md_filename, evidence_list)
     evidence_list 中每项包含证据数据，文件保存在 temp_dir 中。
     """
-    from llm_client import get_llm_client, LLMRetryExhaustedError
+    from config_manager import load_config
+    from llm_client import get_llm_client, get_model_context_limit
     client = get_llm_client()
 
     # 无重试的直接调用，超时由调用方控制
     timeout_seconds = 600  # 10 分钟
 
-    # 截断超长文本（LLM 上下文限制）
-    max_chars = 100000
+    # 检查模型上下文限制（仅用于日志和警告）
+    config = load_config()
+    model = config.get("llm_model", "")
+    model_info = get_model_context_limit(model)
+
+    # 固定最大字符数（不再根据模型动态调整）
+    max_chars = 200_000  # 20万字符，足够处理大多数单份案卷
+
+    # 记录策略信息
+    logger.info(f"[证据提取] 模型 {model}: 上下文 {model_info['limit_k']}, 策略 {model_info['strategy']}")
+
+    # 大案件显示警告
+    if len(md_text) > model_info.get("small_case_limit", 0) and model_info.get("warning"):
+        logger.warning(f"[证据提取] {model_info['warning']}")
+
     if len(md_text) > max_chars:
-        logger.info(f"[证据提取] {md_file.name}: 文件过长（{len(md_text)} 字符），截断至 {max_chars} 字符，后续内容将被忽略")
-        md_text = md_text[:max_chars]
+        logger.info(f"[证据提取] {md_file.name}: 文件过长（{len(md_text)} 字符），截断至 {max_chars} 字符")
 
     result = await asyncio.wait_for(
         client.chat([
             # system 消息：角色定义 + 完整提取规则（合并为一条，避免 assistant role 兼容性问题）
             {"role": "system", "content": _EVIDENCE_SYSTEM_PROMPT + "\n\n" + _EVIDENCE_EXTRACTION_RULES},
             # user 消息：文件名 + 文件内容（变化的部分，放在最后）
-            {"role": "user", "content": f"## 案卷文件：{md_file.name}\n\n{md_text}"},
+            {"role": "user", "content": f"## 案卷文件：{md_file.name}\n\n{md_text[:max_chars]}"},
         ]),
         timeout=timeout_seconds,
     )
 
     evidence_blocks = _parse_evidence_blocks(result, md_file.name)
+
+    # 如果 LLM 没有按格式输出（整个文件作为一条证据），使用原始 MD 内容替代
+    if len(evidence_blocks) == 1 and evidence_blocks[0].get("type") == "其他证据":
+        logger.info(f"[证据提取] {md_file.name}: LLM 输出格式不正确，使用原始 MD 文件内容作为证据")
+        evidence_blocks = [{
+            "name": md_file.name.replace(".md", ""),
+            "type": "原始文件",
+            "source": md_file.name,
+            "page_range": "",
+            "persons": "",
+            "key_facts": "",
+            "summary": md_text[:2000] if len(md_text) > 2000 else md_text,
+            "original_quotes": "",
+            "contradiction_hints": "",
+            "related_entities": "",
+            "raw_text": md_text,
+        }]
+
     # 调试：将 LLM 原始响应保存到 debug 文件，方便排查解析失败
     debug_file = temp_dir / f"_debug_{md_file.stem}.txt"
     try:
@@ -1036,7 +1158,22 @@ async def _extract_single_file(
         temp_name = f"evid_{i:03d}_{safe_name}.md"
         ev_path = temp_dir / temp_name
 
-        ev_content = f"""# {ev_name}
+        # 如果是原始文件（LLM 提取失败），直接保存原始 MD 内容
+        if ev_block.get("type") == "原始文件":
+            ev_content = f"""# {ev_name}
+
+| 项目 | 内容 |
+|------|------|
+| **证据类型** | 原始文件（LLM 提取失败） |
+| **来源文件** | {ev_block['source']} |
+
+> **注意**：此证据为原始 MD 文件内容，因 LLM 无法正确提取证据格式而保留原文。
+
+---
+
+{ev_block['raw_text']}"""
+        else:
+            ev_content = f"""# {ev_name}
 
 | 项目 | 内容 |
 |------|------|
@@ -1079,6 +1216,7 @@ async def _extract_single_file(
             "page_range": ev_block.get("page_range", ""),
             "persons": ev_block.get("persons", ""),
             "related_entities": ev_block.get("related_entities", ""),
+            "key_facts": ev_block.get("key_facts", ""),
             "summary_preview": ev_block["summary"][:200],
             "has_quotes": bool(ev_block.get("original_quotes", "").strip()),
             "md_file": ev_path.name,
@@ -1109,7 +1247,7 @@ async def _extract_single_file_with_tracking(
                 result = await _extract_single_file(md_file, md_text, temp_dir)
                 return result
             except asyncio.TimeoutError:
-                last_error = f"LLM 调用超时（600s）"
+                last_error = "LLM 调用超时（600s）"
                 logger.info(f"[证据提取] {md_file.name}: 第 {attempt} 次尝试超时")
             except Exception as e:
                 last_error = str(e)
@@ -1230,7 +1368,7 @@ async def _do_extract_evidence(
         md_files = list(md_dir.glob("*.md"))
         logger.info(f"[证据提取] 找到 {len(md_files)} 个 MD 文件: {[f.name for f in md_files]}")
     else:
-        logger.info(f"[证据提取] MD 目录不存在！")
+        logger.info("[证据提取] MD 目录不存在！")
 
     # 读取已提取的证据索引（断点续传：跳过已提取的 MD 文件）
     index_file = evidence_dir / "index.json"
@@ -1252,7 +1390,7 @@ async def _do_extract_evidence(
     old_temp = evidence_dir / "_temp_extract"
     if old_temp.exists():
         shutil.rmtree(old_temp)
-        logger.info(f"[证据提取] 清理上次中断的临时目录")
+        logger.info("[证据提取] 清理上次中断的临时目录")
 
     # 使用电源管理器防止休眠
     from power_manager import PowerInhibitor
@@ -1260,7 +1398,7 @@ async def _do_extract_evidence(
     with PowerInhibitor(f"证据提取: {case_id}"):
         # 检查是否被取消
         if EXTRACT_TASKS.get(case_id) == "cancelled":
-            logger.info(f"[证据提取] 任务已被取消")
+            logger.info("[证据提取] 任务已被取消")
             EXTRACT_TASKS.pop(case_id, None)
             return {"success": False, "error": "用户已停止提取", "case_id": case_id}
 
@@ -1410,7 +1548,7 @@ async def _do_extract_evidence(
                     if gather_task and gather_task.done():
                         return  # gather 已完成，自动退出
                     if EXTRACT_TASKS.get(case_id) == "cancelled":
-                        logger.info(f"[证据提取] 检测到取消信号，停止并发提取")
+                        logger.info("[证据提取] 检测到取消信号，停止并发提取")
                         if gather_task and not gather_task.done():
                             gather_task.cancel()
                         return
@@ -1450,7 +1588,7 @@ async def _do_extract_evidence(
                 gather_results = await gather_task
 
             except asyncio.CancelledError:
-                logger.info(f"[证据提取] 并发提取被取消")
+                logger.info("[证据提取] 并发提取被取消")
                 EXTRACT_TASKS.pop(case_id, None)
                 return {"success": False, "error": "用户已停止提取", "case_id": case_id}
             finally:
@@ -1544,6 +1682,7 @@ async def _do_extract_evidence(
                         "page_range": ev_data.get("page_range", ""),
                         "persons": ev_data.get("persons", ""),
                         "related_entities": ev_data.get("related_entities", ""),
+                        "key_facts": ev_data.get("key_facts", ""),
                         "summary_preview": ev_data["summary_preview"],
                         "has_quotes": ev_data["has_quotes"],
                         "md_file": new_name,
@@ -1614,12 +1753,14 @@ async def _do_extract_evidence(
                 logger.info(f"[证据提取] {md_file.name} → {dest_name}（{classification['doc_name']}，直接复制）")
 
                 all_evidence.append({
+                    "id": next_id,
                     "name": md_file.stem,
                     "type": classification["doc_name"],
                     "source": md_file.name,
                     "page_range": "",
                     "persons": "",
                     "related_entities": "",
+                    "key_facts": "",
                     "summary_preview": f"{md_file.name}（待案卷分析时详细提取）",
                     "has_quotes": True,
                     "md_file": dest_name,
@@ -1633,12 +1774,14 @@ async def _do_extract_evidence(
 
                 ev_text = ev_path.read_text(encoding="utf-8")
                 all_evidence.append({
+                    "id": next_id,
                     "name": ev_path.stem.split("_", 1)[1] if "_" in ev_path.stem else ev_path.stem,
-                    "type": doc_type if doc_type != "混合文件" else "起诉意见书",
+                    "type": classification["doc_name"] if classification["doc_name"] != "混合文件" else "起诉意见书",
                     "source": md_file.name,
                     "page_range": "",
                     "persons": "",
                     "related_entities": "",
+                    "key_facts": "",
                     "summary_preview": ev_text[:200],
                     "has_quotes": True,
                     "md_file": ev_path.name,
@@ -1667,7 +1810,7 @@ async def _do_extract_evidence(
         old_temp = evidence_dir / "_temp_extract"
         if old_temp.exists():
             shutil.rmtree(old_temp)
-            logger.info(f"[证据提取] 临时目录已清理")
+            logger.info("[证据提取] 临时目录已清理")
 
         logger.info(f"[证据提取] 完成，共 {len(all_evidence)} 份证据")
 
@@ -1921,8 +2064,8 @@ def _parse_evidence_blocks(llm_output: str, source_file: str) -> list:
     优先尝试 JSON 数组解析（LLM 返回 JSON 格式），
     失败后回退到文本格式解析（兼容已有的输出格式）。
     """
-    import re
     import json
+    import re
     blocks = []
 
     # ── 第1优先：JSON 数组解析 ──
@@ -1941,6 +2084,14 @@ def _parse_evidence_blocks(llm_output: str, source_file: str) -> list:
             bracket_end = json_text.rfind(']')
             if bracket_end > 0:
                 json_text = json_text[:bracket_end + 1]
+
+            # JSON 清理：修复常见的 LLM 输出格式问题
+            import re as _re
+            # 1. 修复非法转义字符（\ 后跟非法字符）
+            json_text = _re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', json_text)
+            # 2. 移除控制字符（除了 \n \r \t）
+            json_text = _re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', json_text)
+
             data = json.loads(json_text)
             if isinstance(data, list) and len(data) > 0:
                 for item in data:
@@ -1956,6 +2107,7 @@ def _parse_evidence_blocks(llm_output: str, source_file: str) -> list:
                             "original_quotes": item.get("original_quotes", item.get("原文摘录", "")),
                             "contradiction_hints": item.get("contradiction_hints", item.get("矛盾提示", "无")),
                             "related_entities": item.get("related_entities", item.get("关联信息", "")),
+                            "images": item.get("images", []),
                             "raw_text": json.dumps(item, ensure_ascii=False, indent=2),
                         })
                 if blocks:
@@ -2042,6 +2194,12 @@ def _parse_evidence_blocks(llm_output: str, source_file: str) -> list:
         contradiction = _extract_field(content, "矛盾提示") or "无"
         related_entities = _extract_field(content, "关联信息") or ""
 
+        # 提取图片引用（从 Markdown 中匹配 ![]() 语法）
+        images = re.findall(r'!\[.*?\]\([^)]+\)', content)
+        if not images:
+            # 也尝试从关联信息中提取
+            images = re.findall(r'!\[.*?\]\([^)]+\)', related_entities)
+
         blocks.append({
             "name": name,
             "type": ev_type,
@@ -2053,6 +2211,7 @@ def _parse_evidence_blocks(llm_output: str, source_file: str) -> list:
             "original_quotes": original_quotes.strip(),
             "contradiction_hints": contradiction.strip(),
             "related_entities": related_entities.strip(),
+            "images": images,
             "raw_text": content.strip(),
         })
 
@@ -2088,9 +2247,9 @@ def _sanitize_filename(name: str) -> str:
 @router.post("/{case_id}/open-file")
 async def open_file_endpoint(case_id: str, file_path: str):
     """打开文件（跨平台）- 支持 glob 模式"""
-    import urllib.parse
     import subprocess
     import sys
+    import urllib.parse
     file_path = urllib.parse.unquote(file_path)
 
     case_root = find_case_path(case_id)
@@ -2099,15 +2258,35 @@ async def open_file_endpoint(case_id: str, file_path: str):
 
     case_root_resolved = str(Path(case_root).resolve())
 
+    # 安全验证：禁止绝对路径
+    if Path(file_path).is_absolute():
+        logger.warning(f"[安全] 拒绝绝对路径: {file_path}")
+        return {"success": False, "error": "拒绝访问：不允许绝对路径"}
+
+    # 安全验证：禁止路径跳转
+    if ".." in file_path:
+        logger.warning(f"[安全] 拒绝路径跳转: {file_path}")
+        return {"success": False, "error": "拒绝访问：不允许路径跳转"}
+
+    # 安全验证：glob 模式只允许安全字符（中文、字母、数字、下划线、横杠、点、星号、问号、方括号）
+    # 注意：星号(*)、问号(?)、方括号([]) 是 glob 通配符
+    if not re.match(r'^[\w\-\.\*\?\[\]一-龥/\\]+$', file_path):
+        logger.warning(f"[安全] glob 模式包含非法字符: {file_path}")
+        return {"success": False, "error": "拒绝访问：路径包含非法字符"}
+
+    # 构建安全的 glob 模式：基于案件目录
+    safe_pattern = str(Path(case_root) / file_path)
+
     # 尝试 glob 匹配
-    matched = glob.glob(file_path)
+    matched = glob.glob(safe_pattern)
     if not matched:
         return {"success": False, "error": f"文件不存在：{file_path}"}
 
     actual_path = str(Path(matched[0]).resolve())
 
-    # 安全验证：文件必须在案件目录内
+    # 安全验证：文件必须在案件目录内（双重检查）
     if not actual_path.startswith(case_root_resolved):
+        logger.warning(f"[安全] 文件路径越界: {actual_path} 不在 {case_root_resolved}")
         return {"success": False, "error": "拒绝访问：文件不在案件目录内"}
 
     try:
@@ -2132,8 +2311,9 @@ async def serve_file(case_id: str, file_path: str, dir: Optional[str] = None):
         dir: 指定子目录（original/processed/md），不指定则递归搜索
     """
     import urllib.parse
-    from fastapi.responses import FileResponse
+
     from fastapi import HTTPException
+    from fastapi.responses import FileResponse
 
     file_path = urllib.parse.unquote(file_path)
 
@@ -2280,8 +2460,9 @@ async def convert_to_md(case_id: str, request: ConvertRequest):
 async def serve_md_image(case_id: str, image_path: str):
     """提供 MD 文件关联的图片（从 md/*_images/ 目录）"""
     import urllib.parse
-    from fastapi.responses import FileResponse
+
     from fastapi import HTTPException
+    from fastapi.responses import FileResponse
 
     image_path = urllib.parse.unquote(image_path)
 

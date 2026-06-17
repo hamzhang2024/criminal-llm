@@ -4,20 +4,18 @@
 提供法律知识条目的 CRUD 操作，数据存储在 ~/.criminal-llm/legal_kb/
 """
 
-import json
 from typing import Optional
-from pydantic import BaseModel
 
 from fastapi import APIRouter, HTTPException
-
 from legal_search import (
-    list_legal_kb,
-    get_legal_kb_item,
     create_legal_kb_item,
-    update_legal_kb_item,
     delete_legal_kb_item,
+    get_legal_kb_item,
+    list_legal_kb,
     search_and_merge,
+    update_legal_kb_item,
 )
+from pydantic import BaseModel
 
 router = APIRouter(prefix="/api/legal-knowledge", tags=["法律知识库"])
 

@@ -10,19 +10,23 @@
 输出：每个阶段生成结构化 JSON + Markdown，保存到案件 analysis/ 目录
 """
 import json
-import time
 import logging
-from pathlib import Path
-from typing import Optional, Callable, Dict, Any, List
 from datetime import datetime
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
 try:
     from legal_knowledge import (
-        get_legal_knowledge, get_dynamic_legal_knowledge, THEORY_THREE_TIERS,
-        CONSTITUTIVE_ELEMENT_ANALYSIS, EVIDENCE_REVIEW_TEMPLATES,
-        LEGAL_BASIS_FOR_REVIEW, CROSS_EXAMINATION_STRATEGIES, CROSS_EXAMINATION_TEMPLATE
+        CONSTITUTIVE_ELEMENT_ANALYSIS,
+        CROSS_EXAMINATION_STRATEGIES,
+        CROSS_EXAMINATION_TEMPLATE,
+        EVIDENCE_REVIEW_TEMPLATES,
+        LEGAL_BASIS_FOR_REVIEW,
+        THEORY_THREE_TIERS,
+        get_dynamic_legal_knowledge,
+        get_legal_knowledge,
     )
 except ImportError:
     def get_legal_knowledge(): return ""
@@ -38,6 +42,31 @@ try:
     from pdf_to_md import get_evidence_text
 except ImportError:
     def get_evidence_text(path, prefer_md=True): return "", None
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 模型上下文能力检测（仅用于显示策略名称和警告）
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _get_analysis_strategy() -> Dict[str, Any]:
+    """
+    获取当前模型的上下文策略（仅用于显示信息）
+
+    返回:
+        {
+            "limit": int,
+            "limit_k": str,
+            "strategy": str,
+            "warning": str | None,
+            "small_case_limit": int,
+        }
+    """
+    from config_manager import load_config
+    from llm_client import get_model_context_limit
+
+    config = load_config()
+    model = config.get("llm_model", "")
+    return get_model_context_limit(model)
 
 try:
     ZHANG_CRIMINAL_DEFENSE_PATH = Path(__file__).parent.parent / "zhang-criminal-defense" / "criminal-defense.md"
@@ -273,6 +302,7 @@ class AnalysisEngine:
                                     "text": text,
                                     "source": ev.get("source", ""),
                                     "page_range": ev.get("page_range", ""),
+                                    "key_facts": ev.get("key_facts", ""),
                                     "evidence_ref": f"证据{ev_id:03d}" if not is_indictment else "",
                                     "md_file": ev["md_file"],
                                     "is_indictment": is_indictment,
@@ -378,7 +408,6 @@ class AnalysisEngine:
         查找起诉书/起诉意见书。
         优先级：用户手动指定 > 起诉书 > 起诉意见书；同类多份时取形成时间在后面的。
         """
-        import re
 
         # 如果用户手动指定了起诉书文件，直接使用
         if self.selected_indictment_file:
@@ -542,6 +571,9 @@ class AnalysisEngine:
         阶段 2：从全部证据中提取人物关系
         输出：人物关系图（表格形式）
         """
+        # 检查模型是否支持
+        strategy_info = _check_model_support()
+
         texts = self._load_evidence_texts()
         if progress_cb:
             progress_cb("正在分析人物关系...")
@@ -551,7 +583,9 @@ class AnalysisEngine:
 
         indictment_catalog, indictment_text, evidence_catalog_text, evidence_only = _split_indictment_and_evidence(texts)
 
-        all_text = _truncate_all(texts, max_total=150000)
+        # 固定最大字符数（分层分析每次处理的证据量）
+        MAX_ANALYSIS_CHARS = 300_000  # 30万字符，约 100k tokens
+        all_text = _truncate_all(texts, max_total=MAX_ANALYSIS_CHARS, strategy_info=strategy_info)
 
         system_prompt = """你是一位资深刑事辩护律师，正在梳理案中人物关系。
 请从全部案卷材料中识别涉案人员及其相互关系。
@@ -646,7 +680,6 @@ class AnalysisEngine:
 
         # 如果 JSON 提取失败（LLM 直接输出了 mermaid），回退到旧的后处理逻辑
         if '```mermaid' in md_output:
-            import re as _re
             md_output = _legacy_fix_mermaid(md_output)
 
         data = {
@@ -671,6 +704,9 @@ class AnalysisEngine:
         阶段 3：构建事件时间线 + 按事件归组证据
         每个事件下挂接全部相关证据
         """
+        # 检查模型是否支持
+        strategy_info = _check_model_support()
+
         texts = self._load_evidence_texts()
         if progress_cb:
             progress_cb("正在分析事件时间线和证据归组...")
@@ -680,7 +716,9 @@ class AnalysisEngine:
 
         indictment_catalog, indictment_text, evidence_catalog_text, evidence_only = _split_indictment_and_evidence(texts)
 
-        all_text = _truncate_all(texts, max_total=200000)
+        # 固定最大字符数（分层分析每次处理的证据量）
+        MAX_ANALYSIS_CHARS = 300_000  # 30万字符，约 100k tokens
+        all_text = _truncate_all(texts, max_total=MAX_ANALYSIS_CHARS, strategy_info=strategy_info)
 
         system_prompt = """你是一位资深刑事辩护律师，正在梳理案卷中的事件脉络。
 请按时间顺序识别案件中的所有关键事件，并将相关证据归组到对应事件下。
@@ -911,6 +949,9 @@ class AnalysisEngine:
         5B：矛盾分析 + 口供对比
         5C：三阶层辩护报告
         """
+        # 检查模型是否支持
+        strategy_info = _check_model_support()
+
         texts = self._load_evidence_texts()
 
         # 获取之前阶段的结果
@@ -951,7 +992,9 @@ class AnalysisEngine:
         from llm_client import get_llm_client
         client = get_llm_client()
 
-        all_text = _truncate_all(texts, max_total=200000)
+        # 固定最大字符数（分层分析每次处理的证据量）
+        MAX_ANALYSIS_CHARS = 300_000  # 30万字符，约 100k tokens
+        all_text = _truncate_all(texts, max_total=MAX_ANALYSIS_CHARS, strategy_info=strategy_info)
 
         contradiction_prompt = f"""## 辩护对象
 被告人：**{defendant}**
@@ -1497,7 +1540,7 @@ class AnalysisEngine:
             legality = rev.get("legality", {})
             leg_score = legality.get("score", 0)
             leg_conclusion = legality.get("conclusion", "存疑")
-            md += f"#### （一）合法性审查\n\n"
+            md += "#### （一）合法性审查\n\n"
             md += f"**审查结论**：{leg_conclusion}（{leg_score}分）\n\n"
 
             findings = legality.get("findings", [])
@@ -1526,7 +1569,7 @@ class AnalysisEngine:
             authenticity = rev.get("authenticity", {})
             auth_score = authenticity.get("score", 0)
             auth_conclusion = authenticity.get("conclusion", "存疑")
-            md += f"#### （二）真实性审查\n\n"
+            md += "#### （二）真实性审查\n\n"
             md += f"**审查结论**：{auth_conclusion}（{auth_score}分）\n\n"
 
             findings = authenticity.get("findings", [])
@@ -1555,7 +1598,7 @@ class AnalysisEngine:
             relevance = rev.get("relevance", {})
             rel_score = relevance.get("score", 0)
             rel_conclusion = relevance.get("conclusion", "存疑")
-            md += f"#### （三）关联性审查\n\n"
+            md += "#### （三）关联性审查\n\n"
             md += f"**审查结论**：{rel_conclusion}（{rel_score}分）\n\n"
 
             findings = relevance.get("findings", [])
@@ -1583,7 +1626,7 @@ class AnalysisEngine:
             # 综合结论
             final_conclusion = rev.get("final_conclusion", "存疑")
             summary = rev.get("cross_examination_summary", "")
-            md += f"#### （四）综合结论\n\n"
+            md += "#### （四）综合结论\n\n"
             md += f"**结论**：{final_conclusion}\n\n"
             if summary:
                 md += f"**综合质证意见**：{summary}\n\n"
@@ -2066,7 +2109,7 @@ def generate_evidence_chain(case_path: Path) -> Dict[str, Any]:
             if fact["id"] in inferred_facts:
                 proves_facts.append(fact["id"])
                 proves_strength[fact["id"]] = "low"  # 类型推断的证明力为 low
-                proves_details[fact["id"]] = [f"依据证据类型推断"]
+                proves_details[fact["id"]] = ["依据证据类型推断"]
 
         # 3. 用证据名称关键词补充（精确匹配）
         ev_name_lower = ev_name.lower()
@@ -2093,7 +2136,7 @@ def generate_evidence_chain(case_path: Path) -> Dict[str, Any]:
                 if any(kw in ev_name_lower for kw in strict_kws):
                     proves_facts.append(fact_id)
                     proves_strength[fact_id] = "high"
-                    proves_details[fact_id] = [f"证据名称精确匹配"]
+                    proves_details[fact_id] = ["证据名称精确匹配"]
 
         evidence_item = {
             "id": ev_id,
@@ -2259,7 +2302,7 @@ def generate_evidence_chain(case_path: Path) -> Dict[str, Any]:
             weak_points.append({
                 "fact_id": fact["id"],
                 "fact_name": fact["name"],
-                "issue": f"无直接证据证明",
+                "issue": "无直接证据证明",
                 "risk": "high",
             })
         elif fact["required"] and ev_count == 1:
@@ -2563,22 +2606,54 @@ def _split_indictment_and_evidence(texts: List[Dict[str, str]]):
     return indictment_catalog, indictment_text, evidence_catalog, evidences
 
 
-def _truncate_all(texts: List[Dict[str, str]], max_total: int) -> str:
-    """将所有证据文本合并，限制总长度"""
+def _truncate_all(texts: List[Dict[str, str]], max_total: int, strategy_info: Dict[str, Any] = None) -> str:
+    """
+    将所有证据文本合并，限制总长度
+
+    Args:
+        texts: 证据文本列表
+        max_total: 最大总字符数
+        strategy_info: 模型策略信息（可选，用于日志）
+
+    Returns:
+        合并后的文本
+    """
     total = sum(len(t["text"]) for t in texts)
+
+    # 记录策略信息
+    if strategy_info:
+        logger.info(f"[分析] 模型上下文 {strategy_info['limit_k']}, 策略 {strategy_info['strategy']}, 证据总量 {total} 字符")
+        if strategy_info.get("warning"):
+            logger.warning(f"[分析] {strategy_info['warning']}")
+
     if total <= max_total:
+        # 不需要截断
+        logger.info(f"[分析] 证据总量 {total} 字符 ≤ 限制 {max_total} 字符，无需截断")
         return "\n\n".join([
             f"### {t['filename']}（{t['type']}）\n{t['text']}"
             for t in texts
         ])
 
-    # 按比例缩减
+    # 需要截断，按比例缩减
     ratio = max_total / total
+    logger.info(f"[分析] 证据总量 {total} 字符 > 限制 {max_total} 字符，按比例 {ratio:.1%} 截断")
     parts = []
     for t in texts:
         truncated = t["text"][:int(len(t["text"]) * ratio)]
         parts.append(f"### {t['filename']}（{t['type']}）\n{truncated}")
     return "\n\n".join(parts)
+
+
+def _check_model_support() -> Dict[str, Any]:
+    """
+    获取模型策略信息（不再拒绝，所有模型都可以处理）
+
+    Returns:
+        策略信息字典
+    """
+    strategy_info = _get_analysis_strategy()
+    logger.info(f"[分析] 模型策略: {strategy_info['strategy']}, 上下文 {strategy_info['limit_k']}")
+    return strategy_info
 
 
 def _read_stage_md(analysis_dir: Path, stage: int) -> str:

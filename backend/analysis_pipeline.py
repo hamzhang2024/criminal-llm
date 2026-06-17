@@ -10,7 +10,6 @@
 """
 import json
 import re
-import asyncio
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -892,7 +891,7 @@ class AnalysisPipeline:
 
     def _search_legal_knowledge(self, crime_type: Optional[str]) -> dict:
         """从内置刑法中搜索相关法条"""
-        from legal_knowledge import CRIME_ARTICLE_MAP, load_criminal_law, load_criminal_procedure_law
+        from legal_knowledge import CRIME_ARTICLE_MAP, load_criminal_law
 
         result = {"articles": "", "interpretations": "", "cases": ""}
 
@@ -1669,7 +1668,7 @@ class AnalysisPipeline:
             raise ValueError("请先完成步骤 4（案件 Wiki 构建）")
 
         try:
-            from legal_knowledge import THEORY_THREE_TIERS, CONSTITUTIVE_ELEMENT_ANALYSIS
+            from legal_knowledge import CONSTITUTIVE_ELEMENT_ANALYSIS, THEORY_THREE_TIERS
             theory_text = THEORY_THREE_TIERS[:3000]
             element_text = CONSTITUTIVE_ELEMENT_ANALYSIS[:3000]
         except ImportError:

@@ -8,12 +8,11 @@
 """
 
 import json
-import os
 import sys
-import httpx
-from pathlib import Path
-from typing import Optional, List, Dict, Any
 from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+import httpx
 
 # 打包后 certifi 证书路径可能失效，macOS 用系统证书
 if sys.platform == "darwin" and getattr(sys, "frozen", False):
@@ -23,6 +22,7 @@ else:
 
 # 用户自定义法律知识库目录
 from config import DATA_DIR
+
 LEGAL_KB_DIR = DATA_DIR / "legal_kb"
 LEGAL_KB_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -65,8 +65,8 @@ def search_laws_by_llm(crime_type: str, timeout: int = 120) -> str:
         搜索到的法律法规条文文本，如果搜索失败则返回空字符串
     """
     # 每次搜索前读取最新配置
-    from llm_client import _get_bailian_config as llm_get_config
     from config_manager import load_config
+    from llm_client import _get_bailian_config as llm_get_config
     cfg = load_config()
     base_url, api_key, _ = llm_get_config()
     model = cfg.get("llm_model", "")

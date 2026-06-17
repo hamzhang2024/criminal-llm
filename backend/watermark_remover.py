@@ -7,13 +7,13 @@ PDF 水印移除工具 - 集成到后端，不再依赖外部脚本
 3. 直接文本水印（嵌入页面内容流）
 """
 
-import fitz
-import re
 import os
-import shutil
+import re
 import subprocess
 import tempfile
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional
+
+import fitz
 from pipeline_errors import PDFProcessingError
 
 
@@ -62,7 +62,7 @@ def _open_pdf_with_repair(input_path: str, password: Optional[str] = None) -> Op
             if fixed_path and os.path.exists(fixed_path):
                 try:
                     doc = fitz.open(fixed_path)
-                    print(f"[水印移除] 修复成功")
+                    print("[水印移除] 修复成功")
                     return doc
                 except Exception:
                     return None

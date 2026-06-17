@@ -13,18 +13,19 @@ PDF → Markdown 转换模块
     text, images_dir = get_evidence_text("/path/to/evidence.pdf")
 """
 
-import os
-import time
-import zipfile
-import shutil
 import json
-from pathlib import Path
-from typing import Optional, Tuple, List, Dict
-
-import requests
+import os
+import shutil
 
 # 打包后 certifi 证书路径可能失效，macOS 用系统证书
 import sys
+import time
+import zipfile
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
+import requests
+
 if sys.platform == "darwin" and getattr(sys, "frozen", False):
     _SSL_VERIFY = "/etc/ssl/cert.pem"
 else:
@@ -507,7 +508,7 @@ def llm_fix_ocr_sync(pdf_path: str, output_dir: str = None) -> Optional[str]:
         print(f"[LLM 纠错] 已保存 {out_md}")
         return corrected
 
-    print(f"[LLM 纠错] 无变化或失败")
+    print("[LLM 纠错] 无变化或失败")
     return None
 
 
@@ -1087,7 +1088,7 @@ def _convert_with_paddleocr(
     """
     # 先检查配额状态
     try:
-        from paddleocr_remote import paddleocr_convert, get_daily_quota_status
+        from paddleocr_remote import get_daily_quota_status, paddleocr_convert
         quota = get_daily_quota_status()
         if quota["exceeded"]:
             print(f"[PaddleOCR] 每日配额已用完（{quota['used_pages']}/{quota['total_limit']} 页），回退到 MinerU")
@@ -1102,10 +1103,10 @@ def _convert_with_paddleocr(
         if result and result[0]:
             return result
         # 转换失败（非配额原因），回退到 MinerU
-        print(f"[PaddleOCR] 转换返回空结果，回退到 MinerU")
+        print("[PaddleOCR] 转换返回空结果，回退到 MinerU")
         return _mineru_convert(pdf, out, progress_cb=progress_cb)
     except ImportError:
-        print(f"[PaddleOCR] 模块未找到，回退到 MinerU")
+        print("[PaddleOCR] 模块未找到，回退到 MinerU")
         return _mineru_convert(pdf, out, progress_cb=progress_cb)
     except Exception as e:
         print(f"[PaddleOCR] 转换异常: {e}，回退到 MinerU")

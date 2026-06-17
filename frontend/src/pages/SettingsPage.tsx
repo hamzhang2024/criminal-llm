@@ -149,6 +149,8 @@ function DataDirCard() {
 
 interface ConfigStatus {
   mineru_token: boolean
+  mineru_mode: 'cloud' | 'local'
+  mineru_local_url: string
   llm_api_key: boolean
   llm_base_url: boolean
   llm_model: boolean
@@ -162,16 +164,30 @@ interface ConfigStatus {
     remaining_pages: number
     exceeded: boolean
   } | null
+  yuandian_token: boolean
+  yuandian_token_value: string
+  // 模型上下文能力信息
+  model_context_limit: number
+  model_context_limit_k: string
+  model_strategy: string
+  model_warning: string
+  model_small_case_limit: number
+  model_is_estimated: boolean
+  user_context_limit: number | null
 }
 
 interface ConfigForm {
   mineru_token: string
+  mineru_mode: 'cloud' | 'local'
+  mineru_local_url: string
   llm_api_key: string
   llm_base_url: string
   llm_model: string
   evidence_concurrency: number
   pdf_engine: 'mineru' | 'paddleocr'
   paddleocr_token: string
+  yuandian_token: string
+  user_context_limit: number | null
 }
 
 // 默认 LLM 配置（阿里云百炼 Token Plan）
@@ -183,12 +199,16 @@ export function SettingsPage() {
   const [initialConfig, setInitialConfig] = useState<ConfigForm | null>(null)
   const [config, setConfig] = useState<ConfigForm>({
     mineru_token: '',
+    mineru_mode: 'cloud',
+    mineru_local_url: '',
     llm_api_key: '',
     llm_base_url: DEFAULT_LLM_BASE_URL,
     llm_model: DEFAULT_LLM_MODEL,
     evidence_concurrency: 3,
     pdf_engine: 'mineru',
     paddleocr_token: '',
+    yuandian_token: '',
+    user_context_limit: null,
   })
   const [status, setStatus] = useState<ConfigStatus | null>(null)
   const [saving, setSaving] = useState(false)
@@ -197,10 +217,12 @@ export function SettingsPage() {
     mineru_token: null,
     llm_api_key: null,
     paddleocr_token: null,
+    yuandian_token: null,
   })
   const [showToken, setShowToken] = useState(false)
   const [showApiKey, setShowApiKey] = useState(false)
   const [showPaddleocrToken, setShowPaddleocrToken] = useState(false)
+  const [showYuandianToken, setShowYuandianToken] = useState(false)
   const [appVersion, setAppVersion] = useState('')
   const [checkingUpdate, setCheckingUpdate] = useState(false)
 
@@ -210,11 +232,14 @@ export function SettingsPage() {
     return (
       config.pdf_engine !== initialConfig.pdf_engine ||
       config.mineru_token !== initialConfig.mineru_token ||
+      config.mineru_mode !== initialConfig.mineru_mode ||
+      config.mineru_local_url !== initialConfig.mineru_local_url ||
       config.paddleocr_token !== initialConfig.paddleocr_token ||
       config.llm_api_key !== initialConfig.llm_api_key ||
       config.llm_base_url !== initialConfig.llm_base_url ||
       config.llm_model !== initialConfig.llm_model ||
-      config.evidence_concurrency !== initialConfig.evidence_concurrency
+      config.evidence_concurrency !== initialConfig.evidence_concurrency ||
+      config.user_context_limit !== initialConfig.user_context_limit
     )
   }, [initialConfig, config])
 
@@ -248,11 +273,15 @@ export function SettingsPage() {
       const updates: Partial<ConfigForm> = {}
       if (data.pdf_engine) updates.pdf_engine = data.pdf_engine
       if (data.mineru_token_value) updates.mineru_token = data.mineru_token_value
+      if (data.mineru_mode) updates.mineru_mode = data.mineru_mode
+      if (data.mineru_local_url) updates.mineru_local_url = data.mineru_local_url
       if (data.paddleocr_token_value) updates.paddleocr_token = data.paddleocr_token_value
       if (data.llm_api_key_value) updates.llm_api_key = data.llm_api_key_value
       if (data.llm_base_url) updates.llm_base_url = data.llm_base_url
       if (data.llm_model) updates.llm_model = data.llm_model
       if (data.evidence_concurrency) updates.evidence_concurrency = data.evidence_concurrency
+      if (data.yuandian_token_value) updates.yuandian_token = data.yuandian_token_value
+      if (data.user_context_limit !== undefined) updates.user_context_limit = data.user_context_limit
       const loaded = { ...config, ...updates }
       setConfig(loaded)
       setInitialConfig(loaded)
@@ -268,9 +297,16 @@ export function SettingsPage() {
     }
 
     // 根据引擎选择验证对应 token
-    if (config.pdf_engine === 'mineru' && !config.mineru_token.trim()) {
-      showAlert({ title: '保存失败', message: 'MinerU Token 不能为空（当前选择 MinerU 引擎）', variant: 'danger' })
-      return
+    if (config.pdf_engine === 'mineru') {
+      // 本地模式不需要 token
+      if (config.mineru_mode === 'cloud' && !config.mineru_token.trim()) {
+        showAlert({ title: '保存失败', message: 'MinerU Token 不能为空（当前选择云端模式）', variant: 'danger' })
+        return
+      }
+      if (config.mineru_mode === 'local' && !config.mineru_local_url.trim()) {
+        showAlert({ title: '保存失败', message: '本地服务器地址不能为空（当前选择本地模式）', variant: 'danger' })
+        return
+      }
     }
     if (config.pdf_engine === 'paddleocr' && !config.paddleocr_token.trim()) {
       showAlert({ title: '保存失败', message: 'PaddleOCR Token 不能为空（当前选择 PaddleOCR 引擎）', variant: 'danger' })
@@ -286,11 +322,15 @@ export function SettingsPage() {
         body: JSON.stringify({
           pdf_engine: config.pdf_engine,
           mineru_token: config.mineru_token.trim(),
+          mineru_mode: config.mineru_mode,
+          mineru_local_url: config.mineru_local_url.trim(),
           paddleocr_token: config.paddleocr_token.trim(),
           llm_api_key: config.llm_api_key.trim(),
           llm_base_url: config.llm_base_url.trim(),
           llm_model: config.llm_model.trim(),
           evidence_concurrency: config.evidence_concurrency,
+          yuandian_token: config.yuandian_token.trim(),
+          model_context_limit: config.user_context_limit,
         }),
       })
       if (res.ok) {
@@ -324,9 +364,19 @@ export function SettingsPage() {
   }
 
   const testMineruToken = async () => {
-    if (!config.mineru_token.trim()) {
-      showAlert({ title: '验证失败', message: '请先输入 MinerU Token', variant: 'danger' })
-      return
+    // 根据模式验证不同内容
+    if (config.mineru_mode === 'local') {
+      // 本地模式：验证服务器地址
+      if (!config.mineru_local_url.trim()) {
+        showAlert({ title: '验证失败', message: '请先输入本地服务器地址', variant: 'danger' })
+        return
+      }
+    } else {
+      // 云端模式：验证 Token
+      if (!config.mineru_token.trim()) {
+        showAlert({ title: '验证失败', message: '请先输入 MinerU Token', variant: 'danger' })
+        return
+      }
     }
     setTesting('mineru')
     setTestResult(prev => ({ ...prev, mineru_token: null }))
@@ -348,7 +398,12 @@ export function SettingsPage() {
       const res = await fetch(`${API_BASE}/config/test`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'mineru', token: config.mineru_token.trim() }),
+        body: JSON.stringify({
+          type: 'mineru',
+          mode: config.mineru_mode,
+          token: config.mineru_token.trim(),
+          local_url: config.mineru_local_url.trim(),
+        }),
       })
 
       const responseText = await res.text()
@@ -540,6 +595,36 @@ export function SettingsPage() {
     }
   }
 
+  const testYuandianToken = async () => {
+    if (!config.yuandian_token.trim()) {
+      showAlert({ title: '验证失败', message: '请先输入元典 Token', variant: 'danger' })
+      return
+    }
+    setTesting('yuandian')
+    setTestResult(prev => ({ ...prev, yuandian_token: null }))
+    try {
+      const res = await fetch(`${API_BASE}/config/test`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'yuandian', token: config.yuandian_token.trim() }),
+      })
+      const data = await res.json()
+      if (data.success) {
+        setTestResult(prev => ({ ...prev, yuandian_token: 'ok' }))
+        showAlert({ title: '验证成功', message: data.message || '连接成功', variant: 'success' })
+      } else {
+        setTestResult(prev => ({ ...prev, yuandian_token: 'fail' }))
+        showAlert({ title: '验证失败', message: data.error || '连接失败', variant: 'danger' })
+      }
+    } catch (err) {
+      setTestResult(prev => ({ ...prev, yuandian_token: 'fail' }))
+      const msg = err instanceof Error ? err.message : String(err)
+      showAlert({ title: '验证失败', message: msg, variant: 'danger' })
+    } finally {
+      setTesting(null)
+    }
+  }
+
   const statusIcon = (configured: boolean, testState: 'ok' | 'fail' | null) => {
     if (testState === 'ok') return <Check className="w-4 h-4" color="#8b6914" />
     if (testState === 'fail') return <span style={{ fontSize: '11px', color: '#666666' }}>失败</span>
@@ -692,21 +777,106 @@ export function SettingsPage() {
             {/* MinerU 配置（仅在选择 MinerU 时显示） */}
             {config.pdf_engine === 'mineru' && (
               <div>
+                {/* 模式选择器 */}
                 <div style={{ marginBottom: '16px' }}>
-                  <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px', fontWeight: '500', marginBottom: '8px' }}>
-                    MinerU Token
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                      <a
-                        href="https://mineru.net"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        style={{ fontSize: '11px', color: 'var(--macos-accent)', textDecoration: 'none', cursor: 'pointer' }}
-                        onMouseEnter={e => e.currentTarget.style.textDecoration = 'underline'}
-                        onMouseLeave={e => e.currentTarget.style.textDecoration = 'none'}
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: '500', marginBottom: '8px' }}>
+                    MinerU 模式
+                  </label>
+                  <div style={{ display: 'flex', gap: '12px' }}>
+                    {(['cloud', 'local'] as const).map(mode => (
+                      <label
+                        key={mode}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: '8px',
+                          padding: '10px 16px', borderRadius: '8px',
+                          border: `1.5px solid ${config.mineru_mode === mode ? 'var(--macos-accent)' : 'var(--macos-border)'}`,
+                          background: config.mineru_mode === mode ? 'var(--macos-accent-surface)' : 'transparent',
+                          cursor: 'pointer', flex: 1,
+                        }}
                       >
-                        前往申请 →
-                      </a>
-                      {statusIcon(status?.mineru_token ?? false, testResult.mineru_token)}
+                        <input
+                          type="radio"
+                          name="mineru_mode"
+                          checked={config.mineru_mode === mode}
+                          onChange={() => setConfig(prev => ({ ...prev, mineru_mode: mode }))}
+                          style={{ accentColor: 'var(--macos-accent)' }}
+                        />
+                        <div>
+                          <div style={{ fontSize: '14px', fontWeight: 500, color: '#1d1d1f' }}>
+                            {mode === 'cloud' ? '云端服务' : '本地部署'}
+                          </div>
+                          <div style={{ fontSize: '11px', color: '#86868b' }}>
+                            {mode === 'cloud' ? '使用 mineru.net 云端服务' : '连接本地 MinerU 服务器'}
+                          </div>
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 云端模式：Token 输入 */}
+                {config.mineru_mode === 'cloud' && (
+                  <div style={{ marginBottom: '16px' }}>
+                    <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px', fontWeight: '500', marginBottom: '8px' }}>
+                      MinerU Token
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <a
+                          href="https://mineru.net"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{ fontSize: '11px', color: 'var(--macos-accent)', textDecoration: 'none', cursor: 'pointer' }}
+                          onMouseEnter={e => e.currentTarget.style.textDecoration = 'underline'}
+                          onMouseLeave={e => e.currentTarget.style.textDecoration = 'none'}
+                        >
+                          前往申请 →
+                        </a>
+                        {statusIcon(status?.mineru_token ?? false, testResult.mineru_token)}
+                        <button
+                          onClick={testMineruToken}
+                          disabled={testing === 'mineru'}
+                          style={{
+                            padding: '4px 10px', fontSize: '11px', borderRadius: '4px',
+                            border: '1px solid var(--macos-border)', background: 'transparent',
+                            cursor: testing === 'mineru' ? 'not-allowed' : 'pointer',
+                            color: testing === 'mineru' ? '#86868b' : 'var(--macos-accent)',
+                            opacity: testing === 'mineru' ? 0.6 : 1,
+                          }}
+                        >
+                          {testing === 'mineru' ? '验证中...' : '验证'}
+                        </button>
+                      </div>
+                    </label>
+                    <div style={{ position: 'relative' }}>
+                      <input
+                        type={showToken ? 'text' : 'password'}
+                        value={config.mineru_token}
+                        onChange={e => setConfig(prev => ({ ...prev, mineru_token: e.target.value }))}
+                        placeholder="输入 MinerU API Token"
+                        style={{
+                          width: '100%', padding: '10px 40px 10px 12px',
+                          border: '1px solid var(--macos-border)', borderRadius: '8px',
+                          fontSize: '14px', boxSizing: 'border-box',
+                        }}
+                      />
+                      <button
+                        onClick={() => setShowToken(!showToken)}
+                        style={{
+                          position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)',
+                          background: 'transparent', border: 'none', cursor: 'pointer', padding: '4px',
+                          display: 'flex', alignItems: 'center',
+                        }}
+                      >
+                        {showToken ? <EyeOff className="w-4 h-4" color="#86868b" /> : <Eye className="w-4 h-4" color="#86868b" />}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* 本地模式：服务器地址输入 */}
+                {config.mineru_mode === 'local' && (
+                  <div style={{ marginBottom: '16px' }}>
+                    <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px', fontWeight: '500', marginBottom: '8px' }}>
+                      本地服务器地址
                       <button
                         onClick={testMineruToken}
                         disabled={testing === 'mineru'}
@@ -718,34 +888,25 @@ export function SettingsPage() {
                           opacity: testing === 'mineru' ? 0.6 : 1,
                         }}
                       >
-                        {testing === 'mineru' ? '验证中...' : '验证'}
+                        {testing === 'mineru' ? '连接中...' : '测试连接'}
                       </button>
-                    </div>
-                  </label>
-                  <div style={{ position: 'relative' }}>
+                    </label>
                     <input
-                      type={showToken ? 'text' : 'password'}
-                      value={config.mineru_token}
-                      onChange={e => setConfig(prev => ({ ...prev, mineru_token: e.target.value }))}
-                      placeholder="输入 MinerU API Token"
+                      type="text"
+                      value={config.mineru_local_url}
+                      onChange={e => setConfig(prev => ({ ...prev, mineru_local_url: e.target.value }))}
+                      placeholder="如 http://192.168.1.100:3000"
                       style={{
-                        width: '100%', padding: '10px 40px 10px 12px',
+                        width: '100%', padding: '10px 12px',
                         border: '1px solid var(--macos-border)', borderRadius: '8px',
                         fontSize: '14px', boxSizing: 'border-box',
                       }}
                     />
-                    <button
-                      onClick={() => setShowToken(!showToken)}
-                      style={{
-                        position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)',
-                        background: 'transparent', border: 'none', cursor: 'pointer', padding: '4px',
-                        display: 'flex', alignItems: 'center',
-                      }}
-                    >
-                      {showToken ? <EyeOff className="w-4 h-4" color="#86868b" /> : <Eye className="w-4 h-4" color="#86868b" />}
-                    </button>
+                    <div style={{ fontSize: '11px', color: '#86868b', marginTop: '6px' }}>
+                      本地部署无需 Token，支持 VLM 模型进行高质量文档解析
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
             )}
 
@@ -852,8 +1013,50 @@ export function SettingsPage() {
           <MacOSCard style={{ marginTop: '16px' }}>
             <h2 style={{ fontSize: '15px', fontWeight: '600', color: '#1d1d1f', display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
               大模型配置
-              <span style={{ fontSize: '11px', color: '#8b6914', fontWeight: 500, background: 'rgba(139,105,20,0.1)', padding: '2px 8px', borderRadius: '4px' }}>推荐 ollama qwen3.6 35b-a3b</span>
             </h2>
+
+            {/* 模型上下文能力状态条 */}
+            {status && (
+              <div style={{
+                marginBottom: '16px', padding: '10px 12px', borderRadius: '8px',
+                background: status.model_context_limit >= 1000000
+                  ? 'rgba(52,199,89,0.08)'
+                  : status.model_context_limit >= 200000
+                    ? 'rgba(255,149,0,0.08)'
+                    : 'rgba(255,59,48,0.06)',
+                border: `1px solid ${status.model_context_limit >= 1000000
+                  ? 'rgba(52,199,89,0.2)'
+                  : status.model_context_limit >= 200000
+                    ? 'rgba(255,149,0,0.2)'
+                    : 'rgba(255,59,48,0.15)'}`,
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                  <span style={{ fontSize: '12px', fontWeight: 500, color: '#1d1d1f' }}>
+                    📊 模型上下文能力
+                  </span>
+                  <span style={{
+                    fontSize: '12px', fontWeight: 600,
+                    color: status.model_context_limit >= 1000000
+                      ? '#34c759'
+                      : status.model_context_limit >= 200000
+                        ? '#ff9500'
+                        : '#8b6914',
+                  }}>
+                    {status.model_context_limit_k} · {status.model_strategy}
+                  </span>
+                </div>
+                {status.model_warning && (
+                  <div style={{ fontSize: '11px', color: '#666', marginTop: '4px' }}>
+                    {status.model_warning}
+                  </div>
+                )}
+                {status.model_small_case_limit > 0 && (
+                  <div style={{ fontSize: '11px', color: '#86868b', marginTop: '4px' }}>
+                    💡 小案件（{Math.round(status.model_small_case_limit / 1000)}k 字符以下）可正常处理
+                  </div>
+                )}
+              </div>
+            )}
 
             <div style={{ marginBottom: '16px' }}>
               <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px', fontWeight: '500', marginBottom: '8px' }}>
@@ -880,7 +1083,7 @@ export function SettingsPage() {
                   type={showApiKey ? 'text' : 'password'}
                   value={config.llm_api_key}
                   onChange={e => setConfig(prev => ({ ...prev, llm_api_key: e.target.value }))}
-                  placeholder="输入阿里云百炼 API Key"
+                  placeholder="输入 API Key"
                   style={{
                     width: '100%', padding: '10px 40px 10px 12px',
                     border: '1px solid var(--macos-border)', borderRadius: '8px',
@@ -925,13 +1128,55 @@ export function SettingsPage() {
                 type="text"
                 value={config.llm_model}
                 onChange={e => setConfig(prev => ({ ...prev, llm_model: e.target.value }))}
-                placeholder="如 qwen-plus, qwen-max, qwen-long"
+                placeholder="如 qwen-plus, qwen-max, gemini-1.5-pro, deepseek-v3"
                 style={{
                   width: '100%', padding: '10px 12px',
                   border: '1px solid var(--macos-border)', borderRadius: '8px',
                   fontSize: '14px', boxSizing: 'border-box',
                 }}
               />
+            </div>
+
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px', fontWeight: '500', marginBottom: '8px' }}>
+                模型上下文限制（可选）
+                {config.user_context_limit && (
+                  <span style={{ fontSize: '11px', color: '#34c759', fontWeight: 500 }}>
+                    ✓ 已手动指定
+                  </span>
+                )}
+              </label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <input
+                  type="number"
+                  min={1}
+                  step={10}
+                  value={config.user_context_limit ? Math.round(config.user_context_limit / 1000) : ''}
+                  onChange={e => {
+                    const v = e.target.value
+                    if (v === '') {
+                      setConfig(prev => ({ ...prev, user_context_limit: null }))
+                    } else {
+                      const num = parseInt(v, 10)
+                      if (!isNaN(num) && num >= 1) {
+                        setConfig(prev => ({ ...prev, user_context_limit: num * 1000 }))
+                      }
+                    }
+                  }}
+                  placeholder="自动检测"
+                  style={{
+                    width: '100px', padding: '10px 12px',
+                    border: '1px solid var(--macos-border)', borderRadius: '8px',
+                    fontSize: '14px', boxSizing: 'border-box',
+                  }}
+                />
+                <span style={{ fontSize: '13px', color: '#1d1d1f', fontWeight: 500 }}>
+                  k tokens
+                </span>
+              </div>
+              <div style={{ fontSize: '11px', color: '#86868b', marginTop: '6px' }}>
+                💡 如 200k = 填入 200。留空则自动检测模型上下文能力
+              </div>
             </div>
 
             <div style={{ marginBottom: '20px' }}>
@@ -960,6 +1205,80 @@ export function SettingsPage() {
                   范围 1-50，默认 3。过高可能导致 API 限流，建议 1-5
                 </span>
               </div>
+            </div>
+          </MacOSCard>
+
+          {/* 元典案例搜索配置 */}
+          <MacOSCard style={{ marginTop: '16px' }}>
+            <h2 style={{ fontSize: '15px', fontWeight: '600', color: '#1d1d1f', display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
+              类案检索配置
+              <span style={{ fontSize: '11px', color: '#8b6914', fontWeight: 500, background: 'rgba(139,105,20,0.1)', padding: '2px 8px', borderRadius: '4px' }}>使用元典 API 检索真实案例</span>
+            </h2>
+
+            <div style={{ marginBottom: '16px' }}>
+              <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px', fontWeight: '500', marginBottom: '8px' }}>
+                元典 API Token
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <a
+                    href="https://open.chineselaw.com"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ fontSize: '11px', color: 'var(--macos-accent)', textDecoration: 'none', cursor: 'pointer' }}
+                    onMouseEnter={e => e.currentTarget.style.textDecoration = 'underline'}
+                    onMouseLeave={e => e.currentTarget.style.textDecoration = 'none'}
+                  >
+                    获取 Token →
+                  </a>
+                  {statusIcon(status?.yuandian_token ?? false, testResult.yuandian_token)}
+                  <button
+                    onClick={testYuandianToken}
+                    disabled={testing === 'yuandian'}
+                    style={{
+                      padding: '4px 10px', fontSize: '11px', borderRadius: '4px',
+                      border: '1px solid var(--macos-border)', background: 'transparent',
+                      cursor: testing === 'yuandian' ? 'not-allowed' : 'pointer',
+                      color: testing === 'yuandian' ? '#86868b' : 'var(--macos-accent)',
+                      opacity: testing === 'yuandian' ? 0.6 : 1,
+                    }}
+                  >
+                    {testing === 'yuandian' ? '验证中...' : '验证'}
+                  </button>
+                </div>
+              </label>
+              <div style={{ position: 'relative' }}>
+                <input
+                  type={showYuandianToken ? 'text' : 'password'}
+                  value={config.yuandian_token}
+                  onChange={e => setConfig(prev => ({ ...prev, yuandian_token: e.target.value }))}
+                  placeholder="输入元典 API Token 用于类案检索"
+                  style={{
+                    width: '100%', padding: '10px 40px 10px 12px',
+                    border: '1px solid var(--macos-border)', borderRadius: '8px',
+                    fontSize: '14px', boxSizing: 'border-box',
+                  }}
+                />
+                <button
+                  onClick={() => setShowYuandianToken(!showYuandianToken)}
+                  style={{
+                    position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)',
+                    background: 'transparent', border: 'none', cursor: 'pointer', padding: '4px',
+                    display: 'flex', alignItems: 'center',
+                  }}
+                >
+                  {showYuandianToken ? <EyeOff className="w-4 h-4" color="#86868b" /> : <Eye className="w-4 h-4" color="#86868b" />}
+                </button>
+              </div>
+            </div>
+
+            <div style={{
+              padding: '10px 12px', borderRadius: '8px',
+              background: 'var(--macos-accent-surface)',
+              fontSize: '12px', color: '#6e6e73', lineHeight: '1.6',
+            }}>
+              <strong>类案检索：</strong>使用元典法律智能平台 API 进行真实案例搜索。
+              <br />
+              配置 Token 后，类案检索将返回最高人民法院指导性案例、公报案例等权威案例。
+              如未配置，将使用大模型训练数据进行检索（可能不够准确）。
             </div>
           </MacOSCard>
 

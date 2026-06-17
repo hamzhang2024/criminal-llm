@@ -9,16 +9,15 @@ PDF 转 MD 等长时间运行的操作在后台线程中执行，不阻塞 FastA
 - 支持批量提交多个 PDF 到 MinerU
 - 并发轮询任务状态，减少等待时间
 """
+import asyncio
 import json
+import logging
 import shutil
 import threading
-import time
-import asyncio
-import logging
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Dict, Any, List
+from typing import Any, Dict, List, Optional
 
 from config import DATA_DIR
 
@@ -190,10 +189,10 @@ def start_convert_task(case_id: str, max_concurrent: int = 3):
                     logger.info(f"[后台任务] {case_id}: 检查 PDF '{pdf.name}' -> MD '{md_path.name}', exists={md_path.exists()}, size={md_path.stat().st_size if md_path.exists() else 0}")
                     if md_path.exists() and md_path.stat().st_size > 100:  # 至少 100 字节才算有效
                         skipped_files.append(pdf.name)
-                        logger.info(f"  -> 跳过（已有 MD）")
+                        logger.info("  -> 跳过（已有 MD）")
                     else:
                         pending_files.append(pdf)
-                        logger.info(f"  -> 待转换")
+                        logger.info("  -> 待转换")
 
                 # 全部已转换完成
                 if not pending_files:
@@ -381,7 +380,7 @@ def list_all_tasks() -> Dict[str, Any]:
 # ═══════════════════════════════════════════════════════════
 # API 路由
 # ═══════════════════════════════════════════════════════════
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 
 router = APIRouter(prefix="/api/tasks", tags=["后台任务"])
 

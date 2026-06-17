@@ -9,15 +9,13 @@
 5. 辩护意见生成
 """
 import json
-import time
 import shutil
-from pathlib import Path
+import time
 from typing import Optional
-
-from fastapi import APIRouter, Body, HTTPException, UploadFile, File
 
 from analysis_pipeline import AnalysisPipeline, _contains_indictment_title
 from case_manager import find_case_path
+from fastapi import APIRouter, Body, File, HTTPException, UploadFile
 
 router = APIRouter(prefix="/api/pipeline", tags=["案卷分析流水线"])
 
@@ -472,6 +470,11 @@ async def get_defense_stage(case_id: str, stage_name: str):
         raise HTTPException(status_code=404, detail="案件不存在")
 
     defense_dir = case_path / "analysis" / "05-辩护意见"
+
+    # 自动补全 .md 扩展名
+    if not stage_name.endswith('.md'):
+        stage_name = stage_name + '.md'
+
     stage_file = defense_dir / stage_name
     if not stage_file.exists():
         raise HTTPException(status_code=404, detail=f"辩护阶段文件不存在: {stage_name}")

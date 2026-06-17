@@ -4,8 +4,8 @@ macOS 电源管理模块
 在长时间操作（PDF 转换、证据提取）期间防止系统休眠。
 """
 import subprocess
-import threading
 import sys
+import threading
 
 
 class PowerInhibitor:

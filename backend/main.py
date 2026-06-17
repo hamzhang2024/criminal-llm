@@ -6,6 +6,7 @@
 """
 # 初始化环境：加载 DATA_DIR/.env（必须在所有 import 之前）
 import os
+
 from _bootstrap import DATA_DIR
 
 # 加载 .env 文件（此时不能 import config，避免循环依赖）
@@ -38,27 +39,28 @@ logging.basicConfig(
 )
 del _handlers  # _log_path 保留供 /api/logs/backend 端点使用
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, Body
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse
-from typing import List, Optional, Dict, Any
-import uvicorn
 from pathlib import Path
+from typing import Any, Dict
 
-from config import HOST, PORT, DEBUG, CACHE_DIR, UPLOAD_DIR, OUTPUT_DIR, cleanup_old_files
-from config_manager import load_config, save_config, get_config_status
-from case_manager import cleanup_trash
-from pdf_processor import create_job, get_processor, PDFProcessor
-from llm_client import close_llm_client
+import uvicorn
 from analyzer_api import router as analyzer_router
-from process_api import router as process_router
-from case_manager import router as case_router
-from stage_api import router as stage_router
-from pipeline_api import router as pipeline_router
-from legal_kb_api import router as legal_kb_router
 from background_tasks import router as bg_task_router
+from case_manager import cleanup_trash
+from case_manager import router as case_router
+from config_manager import get_config_status, load_config, save_config
 from data_dir_api import router as data_dir_router
+from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from legal_kb_api import router as legal_kb_router
+from llm_client import close_llm_client
+from pdf_processor import create_job, get_processor
+from pipeline_api import router as pipeline_router
+from process_api import router as process_router
+from stage_api import router as stage_router
+
+from config import CACHE_DIR, DEBUG, HOST, OUTPUT_DIR, PORT, UPLOAD_DIR, cleanup_old_files
 
 # 创建 FastAPI 应用
 app = FastAPI(
@@ -67,12 +69,21 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# CORS 配置（桌面应用，允许所有来源，安全因为仅监听 localhost）
+# CORS 配置（桌面应用，仅允许 localhost 来源）
+# 生产环境应限制为前端实际地址
+ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:8080",
+    "http://127.0.0.1:8080",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=ALLOWED_ORIGINS,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
+    allow_credentials=True,
 )
 
 # 静态文件服务（缩略图）
@@ -136,9 +147,9 @@ async def update_config(body: Dict[str, Any]):
         from llm_client import get_llm_client
         client = get_llm_client()
         client.reload_config()
-        print(f"[配置保存] LLM 客户端已重载: baseUrl={client.base_url}, model={client.model}")
+        logging.info(f"[配置保存] LLM 客户端已重载: baseUrl={client.base_url}, model={client.model}")
     except Exception as e:
-        print(f"[配置保存] LLM 客户端重载失败: {e}")
+        logging.warning(f"[配置保存] LLM 客户端重载失败: {e}")
     return {"success": True, "message": "配置已保存"}
 
 
@@ -154,6 +165,33 @@ async def test_config(body: Dict[str, Any]):
     config_type = body.get("type")
 
     if config_type == "mineru":
+        # 支持本地模式
+        mode = body.get("mode", "cloud")
+        local_url = body.get("local_url", "").strip()
+        if local_url.endswith("/"):
+            local_url = local_url[:-1]
+
+        if mode == "local":
+            # 本地模式：检查服务器是否可访问
+            if not local_url:
+                return {"success": False, "error": "本地服务器地址不能为空"}
+            try:
+                async with httpx.AsyncClient(timeout=10) as client:
+                    # 尝试访问根路径或 API 端点
+                    resp = await client.get(f"{local_url}/")
+                if resp.status_code < 500:
+                    return {"success": True, "message": f"本地服务器连接成功 ({local_url})"}
+                else:
+                    return {"success": False, "error": f"本地服务器返回 HTTP {resp.status_code}"}
+            except httpx.ConnectError:
+                return {"success": False, "error": f"无法连接到 {local_url}，请检查服务器是否运行"}
+            except httpx.TimeoutException:
+                return {"success": False, "error": "连接超时，请检查服务器地址"}
+            except Exception as e:
+                logging.error(f"[MinerU-Local验证] 异常: {type(e).__name__}: {e}")
+                return {"success": False, "error": f"连接失败: {str(e)[:50]}"}
+
+        # 云端模式
         token = body.get("token", "")
         if not token:
             return {"success": False, "error": "Token 不能为空"}
@@ -164,25 +202,25 @@ async def test_config(body: Dict[str, Any]):
                 ssl_verify = "/etc/ssl/cert.pem"
             else:
                 ssl_verify = True
-            print(f"[MinerU验证] token长度={len(token)}, token前20字符={token[:20]}...")
+            logging.info(f"[MinerU验证] token长度={len(token)}")
             async with httpx.AsyncClient(timeout=15, verify=ssl_verify) as client:
                 resp = await client.post(
                     "https://mineru.net/api/v4/file-urls/batch",
                     headers={"Authorization": f"Bearer {token}"},
                     json={"files": [{"name": "test.pdf", "data_id": "test"}]},
                 )
-            print(f"[MinerU验证] 响应状态: {resp.status_code}, 响应体: {resp.text[:300]}")
+            logging.debug(f"[MinerU验证] 响应状态: {resp.status_code}, 响应体: {resp.text[:300]}")
             if resp.status_code == 200:
                 return {"success": True, "message": "Token 验证成功"}
             else:
                 msg = resp.json().get("msg", f"HTTP {resp.status_code}")
                 return {"success": False, "error": msg}
         except httpx.RequestError as e:
-            print(f"[MinerU验证] 网络请求异常: {type(e).__name__}: {e}")
-            return {"success": False, "error": f"网络请求失败: {type(e).__name__} - {e}"}
+            logging.error(f"[MinerU验证] 网络请求异常: {type(e).__name__}: {e}")
+            return {"success": False, "error": "网络请求失败，请检查网络连接"}
         except Exception as e:
-            print(f"[MinerU验证] 未知异常: {type(e).__name__}: {e}")
-            return {"success": False, "error": f"验证异常: {type(e).__name__} - {e}"}
+            logging.error(f"[MinerU验证] 未知异常: {type(e).__name__}: {e}")
+            return {"success": False, "error": "验证失败，请稍后重试"}
 
     elif config_type == "llm":
         api_key = body.get("api_key", "")
@@ -214,7 +252,8 @@ async def test_config(body: Dict[str, Any]):
                 msg = err_body.get("error", {}).get("message", err_body.get("message", f"HTTP {resp.status_code}"))
                 return {"success": False, "error": msg}
         except Exception as e:
-            return {"success": False, "error": f"网络错误: {e}"}
+            logging.error(f"[LLM验证] 异常: {type(e).__name__}: {e}")
+            return {"success": False, "error": "网络请求失败，请检查网络连接"}
 
     elif config_type == "paddleocr":
         token = body.get("token", "")
@@ -225,7 +264,43 @@ async def test_config(body: Dict[str, Any]):
             ok, msg = test_connection(token)
             return {"success": ok, "message": msg}
         except Exception as e:
-            return {"success": False, "error": f"验证异常: {e}"}
+            logging.error(f"[PaddleOCR验证] 异常: {type(e).__name__}: {e}")
+            return {"success": False, "error": "验证失败，请稍后重试"}
+
+    elif config_type == "yuandian":
+        token = body.get("token", "")
+        if not token:
+            return {"success": False, "error": "Token 不能为空"}
+        try:
+            import sys
+            if sys.platform == "darwin" and getattr(sys, "frozen", False):
+                ssl_verify = "/etc/ssl/cert.pem"
+            else:
+                ssl_verify = True
+            async with httpx.AsyncClient(timeout=15, verify=ssl_verify) as client:
+                resp = await client.post(
+                    "https://open.chineselaw.com/open/rh_ptal_search",
+                    headers={
+                        "X-API-Key": token,
+                        "Accept": "application/json",
+                        "Content-Type": "application/json; charset=utf-8",
+                    },
+                    json={"ay": ["盗窃罪"], "top_k": 1},
+                )
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("status") == "success":
+                    return {"success": True, "message": "Token 验证成功"}
+                else:
+                    return {"success": False, "error": data.get("message", "验证失败")}
+            else:
+                return {"success": False, "error": f"HTTP {resp.status_code}"}
+        except httpx.RequestError as e:
+            logging.error(f"[元典验证] 网络请求异常: {type(e).__name__}: {e}")
+            return {"success": False, "error": "网络请求失败，请检查网络连接"}
+        except Exception as e:
+            logging.error(f"[元典验证] 异常: {type(e).__name__}: {e}")
+            return {"success": False, "error": "验证失败，请稍后重试"}
 
     return {"success": False, "error": f"未知的测试类型: {config_type}"}
 
@@ -267,7 +342,7 @@ async def upload_pdf(file: UploadFile = File(...)):
     except RuntimeError as e:
         # poppler 未安装，返回空的缩略图列表
         thumbnails = []
-        print(f"警告: {e}")
+        logging.warning(f"poppler 未安装: {e}")
 
     return {
         "job_id": job_id,
@@ -416,26 +491,26 @@ async def startup():
             cfg = load_config()
             logging.info(f"[CONFIG] llm_base_url={cfg.get('llm_base_url', '(未设置)')}, llm_model={cfg.get('llm_model', '(未设置)')}")
         else:
-            logging.info(f"[CONFIG] 配置文件不存在，使用默认值")
+            logging.info("[CONFIG] 配置文件不存在，使用默认值")
     except Exception as e:
         logging.error(f"[CONFIG] 读取配置失败: {e}")
 
     from background_tasks import init_tasks
     init_tasks()
 
-    logging.info(f"[CLEANUP] 检查并清理超过 7 天的文件...")
+    logging.info("[CLEANUP] 检查并清理超过 7 天的文件...")
     stats = cleanup_old_files()
     if stats["deleted_files"] > 0:
         logging.info(f"   已清理 {stats['deleted_files']} 个任务，释放 {stats['freed_size']}")
     else:
-        logging.info(f"   无需清理")
+        logging.info("   无需清理")
 
-    logging.info(f"[TRASH] 检查回收站...")
+    logging.info("[TRASH] 检查回收站...")
     cleaned = cleanup_trash()
     if cleaned:
         logging.info(f"   已彻底删除 {len(cleaned)} 个过期案件")
     else:
-        logging.info(f"   回收站无需清理")
+        logging.info("   回收站无需清理")
 
 
 @app.on_event("shutdown")

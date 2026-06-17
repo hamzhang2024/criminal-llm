@@ -362,6 +362,8 @@ export interface SimilarCase {
   amount?: string
   result: string
   key_point: string
+  fact_summary?: string
+  priority_note?: string
   link?: string
 }
 

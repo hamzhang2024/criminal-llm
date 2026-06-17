@@ -202,8 +202,8 @@ export function ReportPage() {
         for (const [key, status] of Object.entries(data.stages)) {
           if (status === 'done') {
             done.add(key)
-            // 将 defense stage 内容加载到 stageContent 中（使用 defense_ 前缀避免与旧 stage 冲突）
-            const contentKey = `defense_${key}`
+            // 将 defense stage 内容加载到 stageContent 中（使用 defense_ 前缀 + .md 后缀）
+            const contentKey = `defense_${key}.md`
             if (!stageContentRef.current[contentKey]) {
               try {
                 const stageData = await api.getDefenseStageContent(caseId, key)
@@ -229,7 +229,7 @@ export function ReportPage() {
   // 轮询分析状态
   useEffect(() => {
     if (!caseId) return
-    loadDefenseStages()
+    loadDefenseStages().catch(() => { /* ignore */ })
     const interval = setInterval(() => {
       loadDefenseStages().then(() => {
         // 如果所有阶段都完成，停止轮询
@@ -245,7 +245,7 @@ export function ReportPage() {
           }
           return prev
         })
-      })
+      }).catch(() => { /* ignore */ })
     }, 3000)
     return () => clearInterval(interval)
   }, [caseId, loadDefenseStages])
@@ -381,8 +381,9 @@ export function ReportPage() {
       if (content['stage_51']) {
         content['evidence_center'] = 'active' // 标记为激活状态
       }
-      // 辩护意见：依赖 stage_53（三阶层分析）
-      if (content['stage_53'] || content['full']) {
+      // 辩护意见：依赖 stage_53（三阶层分析）或 defense stages
+      const hasDefenseStages = Object.keys(content).some(k => k.startsWith('defense_'))
+      if (content['stage_53'] || content['full'] || hasDefenseStages) {
         content['defense_opinion'] = 'active' // 标记为激活状态
       }
 
@@ -1085,8 +1086,8 @@ export function ReportPage() {
       return directContent
     }
 
-    // 综合结论 tab（stage_53）：组合已完成的 defense stages
-    if (activeTab === 'stage_53') {
+    // 综合结论 tab（stage_53）或辩护意见 tab：组合已完成的 defense stages
+    if (activeTab === 'stage_53' || activeTab === 'defense_opinion') {
       const defenseKeys = [
         'defense_01-案件概述.md',
         'defense_02-证据评估.md',
@@ -1111,7 +1112,7 @@ export function ReportPage() {
 
   // 综合结论 tab 的进度信息
   const defenseProgress = (() => {
-    if (activeTab !== 'stage_53') return null
+    if (activeTab !== 'stage_53' && activeTab !== 'defense_opinion') return null
     const allDefenseKeys = [
       'defense_01-案件概述.md',
       'defense_02-证据评估.md',
@@ -1146,12 +1147,12 @@ export function ReportPage() {
         <div style={{ padding: '16px' }}>
           {/* SVG 关系图 */}
           <div style={{
-            height: '550px',
+            height: '750px',
             background: colors.surface,
             borderRadius: '8px',
             border: `1px solid ${colors.border}`,
             marginBottom: '16px',
-            overflow: 'hidden',
+            overflow: 'visible',
           }}>
             {personRelationLoading ? (
               <div style={{
@@ -1681,7 +1682,7 @@ export function ReportPage() {
                       <div key={i} style={{ padding: '10px', background: colors.surfaceAlt, borderRadius: '6px', border: `1px solid ${colors.border}` }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '6px' }}>
                           <span style={{ fontSize: '12px', fontWeight: 600, color: colors.textPrimary, flex: 1 }}>{c.title}</span>
-                          {c.link && <a href={c.link} target="_blank" rel="noopener noreferrer" style={{ fontSize: '10px', color: colors.accent, textDecoration: 'none', marginLeft: '8px' }}>查看原文</a>}
+                          {c.link && !c.link.startsWith('基于') && !c.link.startsWith('类似') && c.link.includes('http') && <a href={c.link} target="_blank" rel="noopener noreferrer" style={{ fontSize: '10px', color: colors.accent, textDecoration: 'none', marginLeft: '8px' }}>查看原文</a>}
                         </div>
                         <div style={{ fontSize: '11px', color: colors.textSecondary, marginBottom: '4px' }}>
                           <span style={{ marginRight: '8px' }}>{c.court}</span>
@@ -1689,6 +1690,7 @@ export function ReportPage() {
                         </div>
                         <div style={{ fontSize: '11px', color: colors.gold, fontWeight: 500, marginBottom: '4px' }}>判决：{c.result}</div>
                         <div style={{ fontSize: '11px', color: colors.textSecondary, lineHeight: 1.5 }}>裁判要旨：{c.key_point}</div>
+                        {c.fact_summary && <div style={{ fontSize: '11px', color: '#3b82f6', lineHeight: 1.5, marginTop: '4px' }}>事实摘要：{c.fact_summary}</div>}
                       </div>
                     ))}
                   </div>
@@ -2446,6 +2448,18 @@ export function ReportPage() {
                         {c.key_point}
                       </div>
                     )}
+                    {c.fact_summary && (
+                      <div style={{
+                        marginTop: '8px',
+                        padding: '10px 12px',
+                        background: colors.surfaceAlt,
+                        borderRadius: '6px',
+                        borderLeft: '3px solid #3b82f6',
+                      }}>
+                        <span style={{ fontWeight: 500, color: colors.textPrimary }}>事实摘要：</span>
+                        {c.fact_summary}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -2814,9 +2828,9 @@ export function ReportPage() {
           </div>
           {defenseOpinionPanels.threeTier && (
             <div style={{ padding: '16px', background: colors.surface }}>
-              {stageContent['stage_53'] ? (
+              {stageContent['stage_53'] || activeContent ? (
                 <ReportRenderer
-                  markdown={stageContent['stage_53']}
+                  markdown={stageContent['stage_53'] || activeContent || ''}
                   evidenceItems={evidenceItems}
                   onEvidenceClick={(mdFile) => {
                     if (viewModeState !== 'md') viewModeDispatch('md')

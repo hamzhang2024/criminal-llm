@@ -4,14 +4,13 @@
 允许用户查看、更改和迁移数据存储位置。
 """
 import json
-import os
 import shutil
 import sys
 from pathlib import Path
-from typing import Optional
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+
 from _bootstrap import DATA_DIR as CURRENT_DATA_DIR
+from fastapi import APIRouter
+from pydantic import BaseModel
 
 router = APIRouter(prefix="/api/data-dir", tags=["数据目录管理"])
 

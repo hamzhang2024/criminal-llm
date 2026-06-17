@@ -12,7 +12,7 @@ MD 质量验证模块
 """
 import re
 from pathlib import Path
-from typing import Dict, Tuple, Optional
+from typing import Dict
 
 
 def check_md_quality(md_path: str, min_quality: float = 0.8) -> Dict:
@@ -176,12 +176,12 @@ if __name__ == "__main__":
     else:
         # 批量检查
         result = batch_check_quality(sys.argv[1:])
-        print(f"批量检查结果：")
+        print("批量检查结果：")
         print(f"总数：{result['total']}")
         print(f"通过：{result['passed']}")
         print(f"失败：{result['failed']}")
         print(f"平均质量：{result['avg_quality']:.0%}")
         if result['need_ocr_files']:
-            print(f"\n需要 OCR 的文件：")
+            print("\n需要 OCR 的文件：")
             for f in result['need_ocr_files']:
                 print(f"  - {f}")

@@ -1,10 +1,30 @@
 import { useMemo, useRef, useEffect } from 'react'
 import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 import { EvidenceContrastTable } from './EvidenceContrastTable'
 import { ThreeTierCard } from './ThreeTierCard'
 import { MermaidRenderer } from '../MermaidRenderer'
 
 marked.setOptions({ async: false })
+
+// DOMPurify 配置：允许安全的 HTML 标签和属性
+const DOMPURIFY_CONFIG = {
+  ALLOWED_TAGS: [
+    'p', 'br', 'span', 'div',
+    'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+    'table', 'thead', 'tbody', 'tr', 'th', 'td',
+    'ul', 'ol', 'li',
+    'blockquote', 'pre', 'code',
+    'a', 'strong', 'em', 'b', 'i', 'u', 's',
+    'hr', 'img',
+  ],
+  ALLOWED_ATTR: [
+    'href', 'src', 'alt', 'title', 'class', 'id',
+    'data-mdfile', 'data-evidence-id',
+    'style',  // 保留内联样式（Markdown 渲染需要）
+  ],
+  ALLOW_DATA_ATTR: true,  // 允许 data-* 属性
+}
 
 interface ReportRendererProps {
   markdown: string
@@ -264,11 +284,13 @@ export function ReportRenderer({ markdown, evidenceItems, onEvidenceClick }: Rep
         if (!segment.content.trim()) return null
         const html = marked.parse(segment.content, { async: false }) as string
         const processed = processEvidenceLinks(html, evidenceItems || [])
+        // 安全处理：使用 DOMPurify 消毒 HTML，防止 XSS
+        const sanitized = DOMPurify.sanitize(processed, DOMPURIFY_CONFIG)
 
         return (
           <div
             key={`text-${i}`}
-            dangerouslySetInnerHTML={{ __html: processed }}
+            dangerouslySetInnerHTML={{ __html: sanitized }}
           />
         )
       })}

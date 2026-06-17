@@ -148,9 +148,9 @@ export function PersonRelationGraph({ data, onNodeClick }: Props) {
         maxX = Math.max(maxX, pos.x)
         maxY = Math.max(maxY, pos.y)
       }
-      const padding = 100
-      const vbX = Math.max(0, minX - padding)
-      const vbY = Math.max(0, minY - padding)
+      const padding = 150
+      const vbX = minX - padding
+      const vbY = minY - padding
       const vbW = maxX - minX + padding * 2
       const vbH = maxY - minY + padding * 2
       setViewBox(`${vbX} ${vbY} ${vbW} ${vbH}`)
@@ -392,11 +392,29 @@ export function PersonRelationGraph({ data, onNodeClick }: Props) {
     )
   }
 
+  // 关系类型中文映射
+  const RELATION_LABELS: Record<string, string> = {
+    cooperation: '合作',
+    fraud: '诈骗',
+    friend: '朋友',
+    family: '家人',
+    business: '商业',
+    debt: '债务',
+    other: '其他',
+  }
+
   // 统计各角色人数
   const roleStats = new Map<string, number>()
   for (const node of data.nodes) {
     const role = node.role || 'other'
     roleStats.set(role, (roleStats.get(role) || 0) + 1)
+  }
+
+  // 统计各关系类型出现次数（动态生成图例）
+  const relationStats = new Map<string, number>()
+  for (const edge of data.edges) {
+    const type = edge.type || 'other'
+    relationStats.set(type, (relationStats.get(type) || 0) + 1)
   }
 
   return (
@@ -430,29 +448,20 @@ export function PersonRelationGraph({ data, onNodeClick }: Props) {
           ))}
       </div>
 
-      {/* 关系类型图例 */}
-      <div className="relation-type-legend">
-        <div className="relation-type-item">
-          <span className="relation-type-color" style={{ background: RELATION_COLORS.fraud }} />
-          <span>诈骗</span>
+      {/* 关系类型图例（动态生成，只显示数据中实际存在的关系类型） */}
+      {relationStats.size > 0 && (
+        <div className="relation-type-legend">
+          {Array.from(relationStats.entries())
+            .sort((a, b) => b[1] - a[1]) // 按出现次数降序排列
+            .map(([type, count]) => (
+              <div key={type} className="relation-type-item">
+                <span className="relation-type-color" style={{ background: RELATION_COLORS[type] || RELATION_COLORS.other }} />
+                <span>{RELATION_LABELS[type] || type}</span>
+                <span className="relation-count">{count}</span>
+              </div>
+            ))}
         </div>
-        <div className="relation-type-item">
-          <span className="relation-type-color" style={{ background: RELATION_COLORS.cooperation }} />
-          <span>合作</span>
-        </div>
-        <div className="relation-type-item">
-          <span className="relation-type-color" style={{ background: RELATION_COLORS.family }} />
-          <span>家人</span>
-        </div>
-        <div className="relation-type-item">
-          <span className="relation-type-color" style={{ background: RELATION_COLORS.friend }} />
-          <span>朋友</span>
-        </div>
-        <div className="relation-type-item">
-          <span className="relation-type-color" style={{ background: RELATION_COLORS.business }} />
-          <span>商业</span>
-        </div>
-      </div>
+      )}
 
       {/* SVG 画布 */}
       <svg
@@ -531,7 +540,7 @@ export function PersonRelationGraph({ data, onNodeClick }: Props) {
           width: 100%;
           height: 100%;
           min-height: 500px;
-          overflow: hidden;
+          overflow: visible;
           background: linear-gradient(135deg, #fafafa 0%, #f0f4f8 100%);
           border-radius: 8px;
           user-select: none;
@@ -643,6 +652,11 @@ export function PersonRelationGraph({ data, onNodeClick }: Props) {
           width: 12px;
           height: 3px;
           border-radius: 1px;
+        }
+
+        .relation-count {
+          color: #9ca3af;
+          font-size: 10px;
         }
 
         .relation-graph-svg {

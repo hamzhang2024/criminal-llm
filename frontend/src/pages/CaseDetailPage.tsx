@@ -31,6 +31,16 @@ export function CaseDetailPage() {
   const extractPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const [analysisCompleted, setAnalysisCompleted] = useState(false)
 
+  // 安全获取 caseId 的辅助函数
+  const requireCaseId = useCallback(() => {
+    if (!caseId) {
+      setError('案件 ID 无效')
+      navigate('/')
+      return null
+    }
+    return caseId
+  }, [caseId, navigate])
+
   // 子 hooks
   const {
     files, previewFile, uploading,
@@ -159,13 +169,14 @@ export function CaseDetailPage() {
 
   // === 分析进度轮询 ===
   const pollAnalysisProgress = useCallback(() => {
+    if (!caseId) return () => {}
     let pc = 0
     const pi = setInterval(async () => {
       pc++; if (pc > 600) { clearInterval(pi); setProcessing(false); setProgress(''); setError('分析耗时过长'); return }
       try {
-        const pr = await api.getStageProgress(caseId!)
+        const pr = await api.getStageProgress(caseId)
         if (pr.running) { setProgress(pr.message || ''); return }
-        const st = await api.getStageStatus(caseId!)
+        const st = await api.getStageStatus(caseId)
         if (st?.task?.status === 'completed') {
           clearInterval(pi); setAnalysisCompleted(true); setProgress('6 阶段分析全部完成！'); setProcessing(false)
           setTimeout(() => navigate(`/case/${caseId}/report`), 1500)
@@ -183,6 +194,7 @@ export function CaseDetailPage() {
   // === 业务操作 ===
 
   const handleConvertAllToMd = useCallback(async () => {
+    if (!caseId) { setError('案件 ID 无效'); return }
     setProcessing(true); setError(null); setProgress('正在转换...')
     try {
       const res = await fetch(`${API_BASE}/tasks/${caseId}/convert-all-to-md`, { method: 'POST' })
@@ -196,7 +208,7 @@ export function CaseDetailPage() {
             clearInterval(convertPollRef.current!); convertPollRef.current = null
             const sc = sd.results?.filter((r: any) => r.success).length || 0
             setProgress(`已转换 ${sc}/${sd.total || 0} 个文件，请点击「提取证据」继续`); setProcessing(false)
-            const fd = await api.getStepFiles(caseId!, 2)
+            const fd = await api.getStepFiles(caseId, 2)
             if (Array.isArray(fd)) refreshFiles()
           } else if (sd.status === 'failed' || sd.status === 'cancelled') {
             clearInterval(convertPollRef.current!); convertPollRef.current = null
@@ -213,11 +225,37 @@ export function CaseDetailPage() {
     } catch (err) { setError(err instanceof Error ? err.message : '转换失败'); setProgress(''); setProcessing(false) }
   }, [caseId])
 
+  // 检查模型是否支持证据提取/分析（仅显示警告，不阻止操作）
+  const checkModelSupport = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/config`)
+      const config = await res.json()
+      // 显示警告信息（如果有）
+      if (config.model_warning) {
+        const proceed = await showConfirm({
+          title: '模型能力提示',
+          message: `${config.model_warning}\n\n是否继续？`,
+          confirmText: '继续',
+          cancelText: '取消',
+          variant: 'warning',
+        })
+        if (!proceed) return false
+      }
+      return true
+    } catch {
+      return true // 无法检测时允许继续
+    }
+  }, [])
+
   const handleExtractEvidence = useCallback(async () => {
+    if (!caseId) { setError('案件 ID 无效'); return }
+    // 检查模型能力
+    if (!(await checkModelSupport())) return
+
     extractUserStoppedRef.current = false; extractPollFailuresRef.current = 0
     stopExtractPolling()
     try {
-      const sf = await api.getStepFiles(caseId!, 2)
+      const sf = await api.getStepFiles(caseId, 2)
       if (!Array.isArray(sf) || sf.length === 0) {
         const ok = await showConfirm({ title: '需要先进行文件转换', message: '还没有 MD 文件，是否开始转换？', confirmText: '开始转换', cancelText: '取消', variant: 'info' })
         if (ok) handleConvertAllToMd()
@@ -226,7 +264,7 @@ export function CaseDetailPage() {
     } catch { }
     setProcessing(true); setError(null); setProgress('正在提取证据...')
     try {
-      await api.extractEvidence(caseId!)
+      await api.extractEvidence(caseId)
       startExtractPoll()
     } catch (err) {
       const msg = err instanceof Error ? err.message : '提取失败'
@@ -236,28 +274,29 @@ export function CaseDetailPage() {
         if (ok) handleConvertAllToMd()
       } else { setError(msg); setProgress(''); setProcessing(false) }
     }
-  }, [caseId, handleConvertAllToMd])
+  }, [caseId, handleConvertAllToMd, checkModelSupport])
 
   const extractUserStoppedRef = useRef(false)
   const extractPollFailuresRef = useRef(0)
   const startExtractPoll = useCallback(() => {
+    if (!caseId) return
     extractUserStoppedRef.current = false; extractPollFailuresRef.current = 0
     if (extractPollRef.current) clearInterval(extractPollRef.current)
     extractPollRef.current = setInterval(async () => {
       if (extractUserStoppedRef.current) { if (extractPollRef.current) { clearInterval(extractPollRef.current); extractPollRef.current = null } return }
       try {
-        const st = await api.getExtractStatus(caseId!)
+        const st = await api.getExtractStatus(caseId)
         extractPollFailuresRef.current = 0
         if (st.status !== 'running') {
           if (extractPollRef.current) { clearInterval(extractPollRef.current); extractPollRef.current = null }
-          const data = await api.getEvidenceIndex(caseId!)
+          const data = await api.getEvidenceIndex(caseId)
           if (data.total_evidence > 0) { setEvidenceList(data.evidence || []); setEvidenceExtracted(true); setProgress(`已提取 ${data.total_evidence} 份证据`) }
           else { setError(data.error_hint || '提取未成功'); setProgress('') }
           setProcessing(false)
         } else {
           const tf = st.total_files || 0, pf = st.processed_files || 0
           setProgress(`正在提取证据... ${pf}/${tf} (${tf > 0 ? Math.round(pf/tf*100) : 0}%)`)
-          try { const d = await api.getEvidenceIndex(caseId!); if (d.total_evidence > 0) setEvidenceList(d.evidence || []) } catch {}
+          try { const d = await api.getEvidenceIndex(caseId); if (d.total_evidence > 0) setEvidenceList(d.evidence || []) } catch {}
         }
       } catch { extractPollFailuresRef.current++; if (extractPollFailuresRef.current >= 3) { if (extractPollRef.current) { clearInterval(extractPollRef.current); extractPollRef.current = null } setProcessing(false); setError('提取过程出错'); setProgress('') } }
     }, 3000)
@@ -265,6 +304,10 @@ export function CaseDetailPage() {
   }, [caseId])
 
   const handleConvertAndExtract = useCallback(async () => {
+    if (!caseId) { setError('案件 ID 无效'); return }
+    // 检查模型能力
+    if (!(await checkModelSupport())) return
+
     setProcessing(true); setError(null); setProgress('正在转换并提取证据...')
     try {
       const cr = await fetch(`${API_BASE}/tasks/${caseId}/convert-all-to-md`, { method: 'POST' })
@@ -284,13 +327,13 @@ export function CaseDetailPage() {
         setTimeout(() => { clearInterval(pi); reject(new Error('转换超时')) }, 900000)
       })
       setProgress('正在转换并提取证据（第 2/2 步：提取证据）...')
-      await api.extractEvidence(caseId!)
+      await api.extractEvidence(caseId)
       await new Promise<void>((resolve, reject) => {
         const pi = setInterval(async () => {
           try {
-            const st = await api.getExtractStatus(caseId!)
+            const st = await api.getExtractStatus(caseId)
             if (st.status !== 'running') {
-              clearInterval(pi); const d = await api.getEvidenceIndex(caseId!)
+              clearInterval(pi); const d = await api.getEvidenceIndex(caseId)
               if (d.total_evidence > 0) { setEvidenceList(d.evidence || []); setEvidenceExtracted(true) }
               resolve()
             }
@@ -300,26 +343,31 @@ export function CaseDetailPage() {
       })
       setCurrentStep(2); setProcessing(false)
     } catch (err) { setError(err instanceof Error ? err.message : '操作失败'); setProgress(''); setProcessing(false) }
-  }, [caseId])
+  }, [caseId, checkModelSupport])
 
   const handleRunAnalysis = useCallback(async () => {
+    if (!caseId) { setError('案件 ID 无效'); return }
+    // 检查模型能力
+    if (!(await checkModelSupport())) return
+
     if (!defendant.trim()) { showAlert({ title: '提示', message: '缺少被告人信息', variant: 'warning' }); return }
     setError(null); setProgress('正在触发分析...'); setProcessing(true)
     try {
-      const r = await api.runAllStages(caseId!, defendant, crimeType || undefined)
+      const r = await api.runAllStages(caseId, defendant, crimeType || undefined)
       if (!r.success) throw new Error(r.detail || '触发失败')
       setProgress('分析已启动'); pollAnalysisProgress()
     } catch (err) { setError(err instanceof Error ? err.message : '触发失败'); setProgress(''); setProcessing(false) }
-  }, [caseId, defendant, crimeType])
+  }, [caseId, defendant, crimeType, checkModelSupport])
 
   const handleStart = useCallback(async () => {
+    if (!caseId) { setError('案件 ID 无效'); return }
     if (currentStep === 0) {
       if (files.length === 0) return
       const needProcess = optDecrypt || optWatermark
       if (!needProcess) {
         setProcessing(true); setProgress('准备文件...')
         try {
-          await api.batchProcess(caseId!, 1, files.filter(f => f.status === 'pending').map(f => f.name), { delete_original: optDeleteOriginal })
+          await api.batchProcess(caseId, 1, files.filter(f => f.status === 'pending').map(f => f.name), { delete_original: optDeleteOriginal })
           setCurrentStep(1)
         } catch (err) { setError(err instanceof Error ? err.message : '失败'); setProgress('') }
         finally { setProcessing(false) }
@@ -327,7 +375,7 @@ export function CaseDetailPage() {
       }
       setProcessing(true); setProgress('正在处理...')
       try {
-        const r = await api.batchProcess(caseId!, 1, files.filter(f => f.status === 'pending').map(f => f.name), { password: password || undefined, remove_watermark: optWatermark, delete_original: optDeleteOriginal })
+        const r = await api.batchProcess(caseId, 1, files.filter(f => f.status === 'pending').map(f => f.name), { password: password || undefined, remove_watermark: optWatermark, delete_original: optDeleteOriginal })
         if (r.results?.every((x: any) => x.success)) { setCurrentStep(1) }
         else { setError(r.results?.find((x: any) => !x.success)?.error || '处理失败'); setProgress('') }
       } catch (err) { setError(err instanceof Error ? err.message : '处理失败'); setProgress('') }
@@ -430,8 +478,8 @@ export function CaseDetailPage() {
                 onClear={handleClearEvidence} onRefreshEvidence={handleRefreshEvidence} />
             )}
 
-            {currentStep === 2 && (
-              <Step2Analyze caseId={caseId!} defendant={defendant} crimeType={crimeType} setCrimeType={setCrimeType}
+            {currentStep === 2 && caseId && (
+              <Step2Analyze caseId={caseId} defendant={defendant} crimeType={crimeType} setCrimeType={setCrimeType}
                 evidenceList={evidenceList} evidenceExtracted={evidenceExtracted}
                 stageStatus={stageStatus} runningStage={runningStage} stageMessages={stageMessages} stageErrors={stageErrors}
                 onRunStage={handleRunStage} onRunAll={handleRunAllAnalysis} onStopStage={handleStopStage}

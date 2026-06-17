@@ -3,18 +3,18 @@
 
 提供案卷分析、证据对话、报告生成等 API
 """
-import os
 import json
+import os
 import re
-import uuid
-from pathlib import Path
-from typing import List, Optional, Dict, Any
-from datetime import datetime
-
-from fastapi import APIRouter, HTTPException, Body, UploadFile, File
-from fastapi.responses import StreamingResponse, FileResponse
-from pydantic import BaseModel
 import shutil
+import uuid
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from fastapi import APIRouter, Body, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
 
 # 创建路由器
 router = APIRouter(prefix="/api/analyze-case", tags=["analyze"])
@@ -77,8 +77,7 @@ async def list_cases():
 
 # LLM 客户端
 from llm_client import get_llm_client
-from pdf_to_md import get_evidence_text, _read_cached_md  # PDF → MD 转换模块
-
+from pdf_to_md import get_evidence_text  # PDF → MD 转换模块
 
 # ========== 数据模型 ==========
 
@@ -1031,13 +1030,13 @@ async def chat(
             if evidence_ids:
                 # 只使用指定的证据
                 selected_evidence = [
-                    e for e in case_info["evidence_list"] 
+                    e for e in case_info["evidence_list"]
                     if e["id"] in evidence_ids
                 ]
             else:
                 # 使用全部选中的证据
                 selected_evidence = [
-                    e for e in case_info["evidence_list"] 
+                    e for e in case_info["evidence_list"]
                     if e.get("selected", True)
                 ]
             
@@ -1077,7 +1076,7 @@ async def chat(
         # 返回提示词，由前端调用
         # 构建证据上下文（不引用报告）
         selected_evidence = [
-            e for e in case_info["evidence_list"] 
+            e for e in case_info["evidence_list"]
             if e.get("selected", True)
         ]
         evidence_texts = []
@@ -1147,7 +1146,7 @@ async def update_report(
         try:
             # 获取选中的证据
             selected_evidence = [
-                e for e in case_info["evidence_list"] 
+                e for e in case_info["evidence_list"]
                 if e.get("selected", True)
             ]
             
@@ -1174,8 +1173,8 @@ async def update_report(
             # 调用增量更新
             client = get_llm_client()
             update_result = await client.update_report_section(
-                instruction, 
-                original_markdown, 
+                instruction,
+                original_markdown,
                 evidence_context
             )
             
@@ -1224,7 +1223,6 @@ def apply_report_update(original_markdown: str, update_result: Dict[str, Any]) -
     Returns:
         更新后的 Markdown
     """
-    import re
     
     result = original_markdown
     updates = update_result.get("updates", [])
@@ -1393,7 +1391,6 @@ def parse_report(markdown_text: str) -> Dict[str, Any]:
     Returns:
         结构化的报告数据
     """
-    import re
     
     report = {
         "indictment_summary": {},

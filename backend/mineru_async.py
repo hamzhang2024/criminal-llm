@@ -15,26 +15,26 @@ MinerU 异步批量转换模块
     results = await converter.convert_batch([pdf1, pdf2, pdf3])
 """
 
-import os
-import sys
-import time
-import zipfile
-import shutil
-import json
 import asyncio
+import logging
+import os
 import re
+import shutil
 import ssl
-from pathlib import Path
-from typing import Optional, List, Dict, Any, Tuple, Callable
+import sys
+import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import aiohttp
 import fitz
-import logging
 
 # 配置日志（PyInstaller --noconsole 模式下 print() 不可见，必须用 logger）
 logger = logging.getLogger(__name__)
+# 临时启用 DEBUG 级别以诊断 MinerU 问题
+logger.setLevel(logging.DEBUG)
 
 
 def _get_ssl_context():
@@ -70,9 +70,34 @@ POLL_INTERVAL = 5  # 轮询间隔 5 秒
 
 # MinerU 并发建议：
 # - API 无明确并发数限制，但高频请求会触发 429 限频
-# - VLM 模式处理时间较长
+# - VLM 模式处理时间较长，GPU 资源有限时串行处理更稳定
 # - 遇到 429 或 -60009 错误时自动退避重试
-DEFAULT_MAX_CONCURRENT = 10
+DEFAULT_MAX_CONCURRENT = 1  # 本地 GPU 串行处理，避免资源争抢
+
+
+def _get_mineru_mode() -> str:
+    """获取 MinerU 模式：cloud 或 local"""
+    try:
+        from config_manager import get_config_value
+        mode = get_config_value("mineru_mode")
+        if mode in ("cloud", "local"):
+            return mode
+    except Exception:
+        pass
+    return "cloud"
+
+
+def _get_mineru_local_url() -> str:
+    """获取本地 MinerU 服务器地址"""
+    try:
+        from config_manager import get_config_value
+        url = get_config_value("mineru_local_url", "").strip()
+        # 移除末尾斜杠
+        if url.endswith("/"):
+            url = url[:-1]
+        return url
+    except Exception:
+        return ""
 
 
 @dataclass
@@ -101,7 +126,7 @@ def _get_mineru_token() -> str:
     # 环境变量优先
     token = os.environ.get("MINERU_TOKEN", "")
     if token:
-        logger.debug(f"[MinerU] Token 来源: 环境变量 MINERU_TOKEN")
+        logger.debug("[MinerU] Token 来源: 环境变量 MINERU_TOKEN")
         return token
 
     # 应用配置
@@ -109,7 +134,7 @@ def _get_mineru_token() -> str:
         from config_manager import get_config_value
         token = get_config_value("mineru_token")
         if token:
-            logger.debug(f"[MinerU] Token 来源: 配置文件 criminal-llm-config.json")
+            logger.debug("[MinerU] Token 来源: 配置文件 criminal-llm-config.json")
             return token
     except ImportError:
         pass
@@ -125,7 +150,7 @@ def _get_mineru_token() -> str:
                 break
 
     if not token:
-        logger.warning(f"[MinerU] 未找到 Token（已检查环境变量、配置文件、.env）")
+        logger.warning("[MinerU] 未找到 Token（已检查环境变量、配置文件、.env）")
     return token
 
 
@@ -291,6 +316,7 @@ class AsyncMinerUConverter:
     - 批量轮询任务状态
     - 自动处理超大文件分段
     - 支持进度回调
+    - 支持本地部署模式
 
     用法：
         converter = AsyncMinerUConverter()
@@ -302,12 +328,21 @@ class AsyncMinerUConverter:
     """
 
     def __init__(self, token: Optional[str] = None):
-        self.token = token or _get_mineru_token()
-        if not self.token:
-            raise ValueError("MinerU Token 未配置，请设置 MINERU_TOKEN 环境变量或在设置中配置")
-        # 调试日志：显示 token 来源和前几位（不泄露完整 token）
-        source = "参数传入" if token else "配置文件/环境变量"
-        logger.info(f"[MinerU] 初始化: token来源={source}, token前20字符={self.token[:20]}...")
+        self.mode = _get_mineru_mode()
+        self.local_url = _get_mineru_local_url()
+
+        if self.mode == "local":
+            if not self.local_url:
+                raise ValueError("MinerU 本地模式需配置 mineru_local_url，请在设置中配置")
+            logger.info(f"[MinerU] 初始化: 模式=本地, 地址={self.local_url}")
+            self.token = ""
+        else:
+            self.token = token or _get_mineru_token()
+            if not self.token:
+                raise ValueError("MinerU Token 未配置，请设置 MINERU_TOKEN 环境变量或在设置中配置")
+            # 调试日志：显示 token 来源和前几位（不泄露完整 token）
+            source = "参数传入" if token else "配置文件/环境变量"
+            logger.info(f"[MinerU] 初始化: 模式=云端, token来源={source}, token前20字符={self.token[:20]}...")
 
     async def convert_single(
         self,
@@ -327,7 +362,11 @@ class AsyncMinerUConverter:
         Returns:
             ConvertResult 对象
         """
-        # 检查是否需要分段（捕获异常）
+        # 本地模式：直接调用本地 API，无需分段
+        if self.mode == "local":
+            return await self._convert_single_file_local(pdf_path, output_dir, timeout, progress_cb)
+
+        # 云端模式：检查是否需要分段
         try:
             chunks = _split_pdf_pages(pdf_path)
         except RuntimeError as e:
@@ -509,6 +548,226 @@ class AsyncMinerUConverter:
 
         except Exception as e:
             logger.error(f"[MinerU] 异常: {pdf_path.name}, {e}")
+            return ConvertResult(
+                file_name=pdf_path.name,
+                success=False,
+                error=str(e)[:200]
+            )
+
+    async def _convert_single_file_local(
+        self,
+        pdf_path: Path,
+        output_dir: Path,
+        timeout: int,
+        progress_cb: Optional[Callable[[str, str], None]] = None,
+    ) -> ConvertResult:
+        """本地模式：调用本地 MinerU API（异步任务模式）
+
+        本地 API 流程：
+        1. POST /tasks 提交异步任务，获取 task_id
+        2. GET /tasks/{task_id} 轮询任务状态
+        3. GET /tasks/{task_id}/result 获取结果
+        """
+        logger.debug(f"[MinerU-Local] _convert_single_file_local 入口: 文件={pdf_path.name}, timeout={timeout}秒")
+        stem = pdf_path.stem
+
+        try:
+            if progress_cb:
+                progress_cb("uploading", "正在发送到本地服务器...")
+
+            file_size = pdf_path.stat().st_size
+            upload_timeout = max(300, file_size // (1024 * 1024) * 30)
+
+            with open(pdf_path, "rb") as f:
+                file_content = f.read()
+
+            ssl_ctx = _SSL_CONTEXT if self.local_url.startswith("https") else False
+
+            # 调试日志：显示请求详情
+            logger.debug(f"[MinerU-Local] 准备提交: 文件={pdf_path.name}, 大小={len(file_content)} 字节, URL={self.local_url}/tasks")
+
+            async with aiohttp.ClientSession() as session:
+                # 1. 提交异步任务
+                form_data = aiohttp.FormData()
+                form_data.add_field(
+                    'files',
+                    file_content,
+                    filename=pdf_path.name,
+                    content_type='application/pdf'
+                )
+                # 使用 pipeline 后端，速度快，适合大批量处理打印体案卷
+                form_data.add_field('backend', 'pipeline')
+                # 中文案卷，使用 ch_server 语言包
+                form_data.add_field('lang_list', 'ch_server')
+                # 案卷通常无复杂数学公式，禁用以加速处理
+                form_data.add_field('formula_enable', 'false')
+                # 案卷有表格，保持启用
+                form_data.add_field('table_enable', 'true')
+
+                if progress_cb:
+                    progress_cb("submitting", "正在提交解析任务...")
+
+                logger.debug(f"[MinerU-Local] 发送 POST 请求到 {self.local_url}/tasks")
+                async with session.post(
+                    f"{self.local_url}/tasks",
+                    data=form_data,
+                    timeout=aiohttp.ClientTimeout(total=60),
+                    ssl=ssl_ctx,
+                ) as resp:
+                    logger.debug(f"[MinerU-Local] 响应状态: {resp.status}")
+                    if resp.status not in (200, 201, 202):
+                        text = await resp.text()
+                        err_msg = f"本地 MinerU 提交失败 HTTP {resp.status}: {text[:200]}"
+                        logger.error(f"[MinerU-Local] {err_msg}")
+                        return ConvertResult(
+                            file_name=pdf_path.name,
+                            success=False,
+                            error=err_msg
+                        )
+
+                    task_info = await resp.json()
+                    task_id = task_info.get("task_id")
+                    if not task_id:
+                        err_msg = f"本地 MinerU 未返回 task_id: {task_info}"
+                        logger.error(f"[MinerU-Local] {err_msg}")
+                        return ConvertResult(
+                            file_name=pdf_path.name,
+                            success=False,
+                            error=err_msg
+                        )
+
+                    logger.info(f"[MinerU-Local] 任务已提交: {pdf_path.name}, task_id={task_id}")
+
+                # 2. 轮询任务状态
+                if progress_cb:
+                    progress_cb("processing", "正在识别文本内容...")
+
+                waited = 0
+                poll_interval = 5
+                logger.debug(f"[MinerU-Local] 开始轮询任务状态: task_id={task_id}, timeout={timeout}秒")
+                while waited < timeout:
+                    logger.debug(f"[MinerU-Local] 轮询中: waited={waited}秒, task_id={task_id}")
+                    async with session.get(
+                        f"{self.local_url}/tasks/{task_id}",
+                        timeout=aiohttp.ClientTimeout(total=30),
+                        ssl=ssl_ctx,
+                    ) as resp:
+                        logger.debug(f"[MinerU-Local] 轮询响应状态: {resp.status}")
+                        if resp.status != 200:
+                            await asyncio.sleep(poll_interval)
+                            waited += poll_interval
+                            continue
+
+                        status_info = await resp.json()
+                        status = status_info.get("status", "")
+                        logger.debug(f"[MinerU-Local] 任务状态: {status}")
+
+                        if status == "completed":
+                            logger.info(f"[MinerU-Local] 任务完成: {task_id}")
+                            break
+                        elif status == "failed":
+                            err_msg = status_info.get("error") or "任务执行失败"
+                            logger.error(f"[MinerU-Local] 任务失败: {task_id}, {err_msg}")
+                            return ConvertResult(
+                                file_name=pdf_path.name,
+                                success=False,
+                                error=f"本地 MinerU 任务失败: {err_msg}"
+                            )
+
+                        await asyncio.sleep(poll_interval)
+                        waited += poll_interval
+
+                        if progress_cb and waited % 30 == 0:
+                            progress_cb("processing", f"正在处理...（已等待 {waited} 秒）")
+                else:
+                    # while...else: 仅当循环正常结束（非 break）时执行
+                    logger.error(f"[MinerU-Local] 轮询超时: waited={waited}秒, timeout={timeout}秒, task_id={task_id}")
+                    return ConvertResult(
+                        file_name=pdf_path.name,
+                        success=False,
+                        error=f"本地 MinerU 超时（{timeout}秒）"
+                    )
+
+                # 3. 获取结果
+                async with session.get(
+                    f"{self.local_url}/tasks/{task_id}/result",
+                    timeout=aiohttp.ClientTimeout(total=120),
+                    ssl=ssl_ctx,
+                ) as resp:
+                    if resp.status != 200:
+                        text = await resp.text()
+                        err_msg = f"获取结果失败 HTTP {resp.status}: {text[:200]}"
+                        logger.error(f"[MinerU-Local] {err_msg}")
+                        return ConvertResult(
+                            file_name=pdf_path.name,
+                            success=False,
+                            error=err_msg
+                        )
+
+                    result = await resp.json()
+
+            # 解析结果 - pipeline 后端返回格式: {"results": {"文件名": {"md_content": "..."}}}
+            content = ""
+            if "results" in result:
+                # pipeline/hybrid 后端格式
+                for file_name, file_result in result["results"].items():
+                    content = file_result.get("md_content", "") or file_result.get("markdown", "")
+                    if content:
+                        break
+            if not content:
+                # 兼容其他格式
+                content = result.get("markdown", "") or result.get("content", "") or result.get("md_content", "")
+
+            if not content or len(content) < 100:
+                logger.error(f"[MinerU-Local] 结果内容为空: {pdf_path.name}, result keys: {list(result.keys())}")
+                return ConvertResult(
+                    file_name=pdf_path.name,
+                    success=False,
+                    error="结果内容为空"
+                )
+
+            # 后处理
+            text = content
+            text = _protect_signatures_as_images(text)
+            text = _fix_ocr_errors(text)
+            text, _ = _fold_consecutive_images(text)
+
+            # 处理图片路径
+            images_dir = None
+            if "images/" in text:
+                images_dir = output_dir / f"{stem}_images"
+                images_dir.mkdir(parents=True, exist_ok=True)
+                text = text.replace("images/", f"./{stem}_images/")
+                text = text.replace('src="images/', f'src="./{stem}_images/')
+
+            # 保存 MD
+            target_md = output_dir / f"{stem}.md"
+            target_md.write_text(text, encoding="utf-8")
+
+            logger.info(f"[MinerU-Local] 转换成功: {pdf_path.name}, {len(text)} 字符")
+            return ConvertResult(
+                file_name=pdf_path.name,
+                success=True,
+                text=text,
+                images_dir=images_dir
+            )
+
+        except asyncio.TimeoutError:
+            logger.error(f"[MinerU-Local] 超时: {pdf_path.name}")
+            return ConvertResult(
+                file_name=pdf_path.name,
+                success=False,
+                error="本地 MinerU 超时"
+            )
+        except aiohttp.ClientError as e:
+            logger.error(f"[MinerU-Local] 网络错误: {e}")
+            return ConvertResult(
+                file_name=pdf_path.name,
+                success=False,
+                error=f"本地 MinerU 网络错误: {str(e)[:100]}"
+            )
+        except Exception as e:
+            logger.error(f"[MinerU-Local] 异常: {pdf_path.name}, {e}")
             return ConvertResult(
                 file_name=pdf_path.name,
                 success=False,
@@ -742,7 +1001,7 @@ class AsyncMinerUConverter:
                 ) as resp:
                     # 先检查 HTTP 状态码
                     if resp.status == 401:
-                        logger.error(f"[MinerU] 轮询认证失败 (401): Token 无效或已过期")
+                        logger.error("[MinerU] 轮询认证失败 (401): Token 无效或已过期")
                         return None
 
                     result = await resp.json()
@@ -788,7 +1047,7 @@ class AsyncMinerUConverter:
         """下载并解析转换结果"""
         zip_url = result_data.get("full_zip_url", "")
         if not zip_url:
-            logger.error(f"[MinerU] 未找到 full_zip_url")
+            logger.error("[MinerU] 未找到 full_zip_url")
             return None, None
 
         # 创建临时目录
@@ -897,7 +1156,7 @@ if __name__ == "__main__":
     result = asyncio.run(convert_pdf_async(pdf_path, output_dir, progress))
 
     if result.success:
-        print(f"\\n转换成功！")
+        print("\\n转换成功！")
         print(f"  文本长度: {len(result.text)} 字符")
         print(f"  图片目录: {result.images_dir}")
     else:

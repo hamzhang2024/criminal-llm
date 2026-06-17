@@ -5,21 +5,16 @@ PDF 处理模块
 使用 PyMuPDF + pdf2image 替代 pypdf
 """
 import json
-import uuid
-import shutil
 import subprocess
-from pathlib import Path
-from typing import Optional, List, Dict, Any
+import uuid
 from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 import fitz
 from pdf2image import convert_from_path
-from PIL import Image
 
-from config import (
-    UPLOAD_DIR, OUTPUT_DIR, CACHE_DIR,
-    THUMBNAIL_WIDTH, THUMBNAIL_DPI
-)
+from config import CACHE_DIR, OUTPUT_DIR, THUMBNAIL_DPI, THUMBNAIL_WIDTH, UPLOAD_DIR
 
 
 def check_poppler():

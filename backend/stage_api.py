@@ -15,11 +15,10 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Body, HTTPException
-
 from analysis_engine import AnalysisEngine
 from analysis_pipeline import AnalysisPipeline, _contains_indictment_title
 from case_manager import find_case_path
+from fastapi import APIRouter, Body, HTTPException
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +95,7 @@ async def _run_sub_stage(engine, sub_stage_type: str, defendant: str, crime_type
         stage51 = _read_stage_md(engine.analysis_dir, 51)
         stage52 = _read_stage_md(engine.analysis_dir, 52)
 
-        from legal_knowledge import THEORY_THREE_TIERS, CONSTITUTIVE_ELEMENT_ANALYSIS
+        from legal_knowledge import THEORY_THREE_TIERS
         try:
             from legal_knowledge import get_dynamic_legal_knowledge
             crime_specific = get_dynamic_legal_knowledge(crime_type) if crime_type else ""
@@ -115,7 +114,6 @@ async def _run_sub_stage(engine, sub_stage_type: str, defendant: str, crime_type
 
 def _read_stage_md(analysis_dir, stage: int) -> str:
     """读取指定阶段的 Markdown 输出"""
-    from pathlib import Path
     stage_file = analysis_dir / f"stage_{stage}" / "output.md"
     if stage_file.exists():
         return stage_file.read_text(encoding="utf-8")
@@ -255,7 +253,6 @@ async def run_all_stages(
     ANALYSIS_TASKS[case_id] = {"status": "running", "started_at": time.time()}
 
     # 后台执行，不阻塞
-    import asyncio
     asyncio.create_task(_execute_all_stages(case_id, defendant, crime_type, indictment_file=indictment_file))
 
     return {
@@ -1040,19 +1037,35 @@ async def search_similar_cases(case_id: str):
     stage1_content = stage1_file.read_text(encoding="utf-8")
 
     try:
-        result = await _search_similar_cases_llm(stage1_content)
+        result = await _search_similar_cases_llm(stage1_content, case_path)
         return result
     except Exception as e:
         logger.error(f"[类案检索] {case_id}: 搜索失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-async def _search_similar_cases_llm(stage1_content: str) -> dict:
-    """使用 LLM 联网搜索类案"""
+async def _search_similar_cases_llm(stage1_content: str, case_path: Path = None) -> dict:
+    """使用 元典 API 或 LLM 搜索类案"""
     import re
+
+    import httpx
+    from config_manager import get_config_value
     from llm_client import get_llm_client
 
     client = get_llm_client()
+    
+    # 如果传入了 case_path，尝试读取保存的结果
+    if case_path:
+        saved_file = case_path / "analysis" / "similar_cases.json"
+        if saved_file.exists():
+            try:
+                import json as json_load
+                with open(saved_file, 'r', encoding='utf-8') as f:
+                    saved_data = json_load.load(f)
+                logger.info(f"[类案检索] 加载已保存的结果，共 {len(saved_data.get('similar_cases', []))} 个案例")
+                return saved_data
+            except Exception as load_err:
+                logger.warning(f"[类案检索] 加载保存结果失败: {load_err}")
 
     # 从 stage_1 提取罪名
     crime_type = ""
@@ -1100,28 +1113,195 @@ async def _search_similar_cases_llm(stage1_content: str) -> dict:
         # 回退：取 stage_1 前500字
         key_facts = [stage1_content[:500].replace("\n", " ").strip()]
 
-    # 构建搜索提示
-    search_prompt = f"""请搜索与以下罪名和事实相似的已判决案例：
+    # ========== 优先使用元典 API ==========
+    yuandian_token = get_config_value("yuandian_token", "")
+    if yuandian_token:
+        try:
+            import sys
+            if sys.platform == "darwin" and getattr(sys, "frozen", False):
+                ssl_verify = "/etc/ssl/cert.pem"
+            else:
+                ssl_verify = True
+
+            all_cases = []
+            seen_titles = set()
+
+            async with httpx.AsyncClient(timeout=45, verify=ssl_verify) as http_client:
+                # 直接搜索罪名，获取更多案例
+                search_payload = {
+                    "ay": [crime_type],
+                    "top_k": 30,
+                    "wszl": ["判决书"],
+                }
+
+                resp = await http_client.post(
+                    "https://open.chineselaw.com/open/rh_ptal_search",
+                    headers={
+                        "X-API-Key": yuandian_token,
+                        "Accept": "application/json",
+                        "Content-Type": "application/json; charset=utf-8",
+                    },
+                    json=search_payload,
+                )
+
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data.get("status") == "success" and data.get("data", {}).get("lst"):
+                        for case in data["data"]["lst"]:
+                            title = case.get("title", "")
+                            if title and title not in seen_titles:
+                                seen_titles.add(title)
+
+                                # 获取更丰富的内容
+                                content = case.get("content", "")
+                                if not content:
+                                    content = case.get("fxgc", "")
+
+                                # 判断法院级别
+                                court = case.get("jbdw", "")
+                                priority = "普通案例"
+                                if "最高" in court:
+                                    priority = "最高人民法院"
+                                elif "高级" in court:
+                                    priority = "高级人民法院"
+                                elif "中级" in court:
+                                    priority = "中级人民法院"
+
+                                all_cases.append({
+                                    "title": title,
+                                    "court": court,
+                                    "priority": priority,
+                                    "crime_type": case.get("ay", [crime_type])[0] if case.get("ay") else crime_type,
+                                    "amount": "",
+                                    "result": "",
+                                    "key_point": content[:500] if content else "",  # 扩展内容
+                                    "link": case.get("url", "") if case.get("url", "").startswith("http") else ("https://wenshu.court.gov.cn" + case.get("url", "") if case.get("url") else ""),
+                                })
+
+            # 使用 LLM 对案例进行重要性和说理补充
+            if all_cases:
+                try:
+                    logger.info(f"[类案检索] 开始 LLM 增强，共 {len(all_cases)} 个案例")
+                    
+                    # 提取案例标题列表
+                    case_list = "\n".join([f"{i+1}. {c['title']}" for i, c in enumerate(all_cases[:15])])
+                    
+                    # 构建案例内容列表给 LLM 分析
+                    case_contents = "\n\n".join([
+                        f"案例{i+1}：{c['title']}\n法院：{c['court']}\n内容：{c.get('key_point', '')[:500]}"
+                        for i, c in enumerate(all_cases[:10])  # 最多10个案例，每个截取500字
+                    ])
+                    
+                    enhance_prompt = f"""你是资深刑事法官，请根据以下{crime_type}案例的判决书内容，为每个案例提取：
+1. 事实摘要：谁、做了什么、涉案金额、判决结果
+2. 裁判要旨：法院定罪和量刑的核心理由
+3. 重要性：法院级别和案例影响力
+
+案例内容：
+{case_contents}
+
+返回JSON数组（每项对应一个案例，保持顺序）：
+[{{"title":"案件名","fact_summary":"事实摘要","key_point":"裁判要旨","priority_note":"重要性"}}]"""
+                    
+                    response = await client.chat(
+                        messages=[
+                            {"role": "system", "content": "你是资深刑事法官。只返回JSON数组。"},
+                            {"role": "user", "content": enhance_prompt},
+                        ]
+                    )
+                    
+                    logger.info(f"[类案检索] LLM响应: {response[:200]}")
+                    
+                    import json as json_lib
+                    import re as re_mod
+                    try:
+                        json_match = re_mod.search(r'\[.*\]', response, re_mod.DOTALL)
+                        if json_match:
+                            enhanced = json_lib.loads(json_match.group(0))
+                            if isinstance(enhanced, list):
+                                logger.info(f"[类案检索] LLM返回{len(enhanced)}条增强数据")
+                                logger.info(f"[类案检索] 匹配示例: all_cases[0]={all_cases[0].get('title','')}[:30], enhanced[0]={enhanced[0].get('title','')}[:30] if enhanced else 'no enhanced'")
+                                matched = 0
+                                for e in enhanced:
+                                    for c in all_cases:
+                                        # 更宽松的匹配：忽略"一审刑事判决书"后缀
+                                        title1 = e.get("title", "").replace("一审刑事判决书", "").replace("二审", "").strip()
+                                        title2 = c.get("title", "").replace("一审刑事判决书", "").replace("二审", "").strip()
+                                        if title1 and title2 and (title1 in title2 or title2 in title1):
+                                            if e.get("key_point"):
+                                                c["key_point"] = e["key_point"]
+                                            if e.get("fact_summary"):
+                                                c["fact_summary"] = e["fact_summary"]
+                                            if e.get("priority_note"):
+                                                c["priority_note"] = e["priority_note"]
+                                            matched += 1
+                                            break
+                                logger.info(f"[类案检索] 成功匹配 {matched} 个案例")
+                    except Exception as perr:
+                        logger.warning(f"[类案检索] JSON解析失败: {perr}")
+                except Exception as llm_err:
+                    logger.warning(f"[类案检索] LLM增强失败: {llm_err}")
+                
+                # 按优先级排序
+                priority_order = {"指导性案例": 0, "公报案例": 1, "典型案例": 2, "普通案例": 3}
+                all_cases.sort(key=lambda x: priority_order.get(x.get("priority_note", ""), 4))
+
+                logger.info(f"[类案检索] 元典 API 成功返回 {len(all_cases)} 个案例")
+                
+                # 保存到文件
+                try:
+                    save_path = case_path / "analysis" / "similar_cases.json"
+                    save_path.parent.mkdir(parents=True, exist_ok=True)
+                    import json as json_save
+                    with open(save_path, 'w', encoding='utf-8') as f:
+                        json_save.dump({
+                            "crime_type": crime_type,
+                            "key_facts": key_facts,
+                            "similar_cases": all_cases[:30]
+                        }, f, ensure_ascii=False, indent=2)
+                    logger.info(f"[类案检索] 已保存到 {save_path}")
+                except Exception as save_err:
+                    logger.warning(f"[类案检索] 保存失败: {save_err}")
+                
+                return {
+                    "crime_type": crime_type,
+                    "key_facts": key_facts,
+                    "similar_cases": all_cases[:30],
+                }
+        except Exception as e:
+            logger.warning(f"[类案检索] 元典 API 调用失败，回退到 LLM: {e}")
+    else:
+        logger.info("[类案检索] 未配置元典 Token，回退到 LLM")
+
+    # ========== 回退：使用 LLM ==========
+    search_prompt = f"""请搜索与以下罪名和事实相似的已判决案例。
 
 **罪名**：{crime_type}
 
 **关键事实**：
 {chr(10).join(f"- {f}" for f in key_facts)}
 
-请搜索中国裁判文书网、最高法院指导性案例等公开来源，找出3-5个相似的已判决案例。
+请严格按照以下优先顺序搜索案例：
+1. 最高人民法院指导性案例
+2. 最高人民检察院指导性案例
+3. 最高人民法院公报案例
+4. 各省高级人民法院发布的典型案例
+5. 如无上述案例，可提供其他参考案例
+
+请搜索并返回20-30个案例。
 
 **输出格式**（JSON）：
 ```json
 [
-  {
-    "title": "案件标题（如：张三诈骗案）",
+  {{
+    "title": "案件标题",
     "court": "审理法院",
     "crime_type": "认定罪名",
     "amount": "涉案金额（如有）",
     "result": "判决结果（刑期/罚金）",
     "key_point": "裁判要旨（100字以内）",
-    "link": "来源链接（如有）"
-  }
+    "link": "来源链接（必须是中国裁判文书网wenshu.court.gov.cn或无讼案例wangwang.cn的链接，如无则为空字符串）"
+  }}
 ]
 ```
 
@@ -1132,29 +1312,50 @@ async def _search_similar_cases_llm(stage1_content: str) -> dict:
 """
 
     try:
-        # 使用 enable_search 启用联网搜索
-        response = client.chat(
-            messages=[
-                {"role": "system", "content": "你是法律检索专家，擅长搜索和分析类案。请返回严格的 JSON 格式。"},
-                {"role": "user", "content": search_prompt},
-            ],
-            extra_body={"enable_search": True},
-        )
+        # 先尝试联网搜索，如果失败则使用本地知识
+        try:
+            response = await client.chat(
+                messages=[
+                    {"role": "system", "content": "你是法律检索专家，擅长搜索和分析类案。请返回严格的 JSON 格式。"},
+                    {"role": "user", "content": search_prompt},
+                ]
+            )
+        except Exception as search_err:
+            logger.warning(f"[类案检索] 搜索失败，回退本地模式: {search_err}")
+            # 回退：使用本地知识
+            response = await client.chat(
+                messages=[
+                    {"role": "system", "content": "你是资深刑事律师，精通最高人民法院指导性案例、最高人民检察院指导性案例、公报案例等。请优先提供这类权威案例，并返回严格的 JSON 格式。"},
+                    {"role": "user", "content": search_prompt + "\n\n请优先提供最高人民法院指导性案例、最高人民检察院指导性案例、公报案例等权威案例。如果没有这类案例，请提供其他参考案例，但需注明来源。"},
+                ]
+            )
 
-        # 解析 JSON
-        content = response.get("content", "")
-        # 提取 JSON 数组
-        json_match = re.search(r'\[\s*\{.*\}\s*\]', content, re.DOTALL)
-        if json_match:
-            import json
-            similar_cases = json.loads(json_match.group(0))
-        else:
+        # 解析 JSON - chat() 直接返回字符串
+        content = response  # 不再是 dict，直接是字符串
+        # 提取 JSON 数组 - 支持多种格式
+        import json
+        try:
+            # 尝试直接解析整个响应
+            similar_cases = json.loads(content)
+        except json.JSONDecodeError:
+            # 尝试提取 JSON 数组
+            json_match = re.search(r'\[\s*[\[{].*}[\]]\s*\]', content, re.DOTALL)
+            if json_match:
+                try:
+                    similar_cases = json.loads(json_match.group(0))
+                except json.JSONDecodeError:
+                    similar_cases = []
+            else:
+                similar_cases = []
+
+        # 确保是列表
+        if not isinstance(similar_cases, list):
             similar_cases = []
 
         return {
             "crime_type": crime_type,
             "key_facts": key_facts,
-            "similar_cases": similar_cases[:5],
+            "similar_cases": similar_cases[:30],
         }
 
     except Exception as e:

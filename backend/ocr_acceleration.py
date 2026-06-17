@@ -7,7 +7,7 @@ OCR 加速模块
 - 其他: CPU
 """
 import platform
-from typing import Dict, Any
+from typing import Any, Dict
 
 
 def detect_gpu_device() -> str:
@@ -49,7 +49,7 @@ def init_rapidocr_with_acceleration(device: str = None):
     Returns:
         RapidOCR 实例
     """
-    from rapidocr import RapidOCR, EngineType, LangRec
+    from rapidocr import EngineType, LangRec, RapidOCR
 
     if device is None:
         device = detect_gpu_device()

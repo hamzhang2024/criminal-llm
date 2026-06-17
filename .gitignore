@@ -8,6 +8,14 @@ __pycache__/
 .env
 .DS_Store
 
+# Test artifacts
+frontend/test-results/
+frontend/playwright-report/
+backend/.ruff_cache/
+backend/.pytest_cache/
+.pytest_cache/
+.ruff_cache/
+
 # TypeScript build info
 *.tsbuildinfo
 

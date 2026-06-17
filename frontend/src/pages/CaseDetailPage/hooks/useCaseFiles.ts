@@ -245,6 +245,12 @@ export function useCaseFiles(caseId: string | undefined, currentStep: number) {
 
   // 预览文件
   const handleOpenFile = useCallback((file: CaseFile) => {
+    // 如果传入的 file.path 已经包含完整 URL（如证据预览），直接使用
+    if (file.path && (file.path.includes('/serve-file') || file.path.startsWith('http') || file.path.startsWith('/api'))) {
+      setPreviewFile({ ...file, path: file.path })  // 确保 path 存在
+      return
+    }
+
     if (file.name.endsWith('.md')) {
       const serveUrl = serveFileUrl(caseId!, file.name, 'md')
       setPreviewFile({ ...file, path: serveUrl })

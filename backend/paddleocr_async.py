@@ -15,21 +15,20 @@ PaddleOCR-VL 异步批量转换模块
     results = await converter.convert_batch([pdf1, pdf2, pdf3])
 """
 
-import os
-import sys
-import json
-import time
-import shutil
 import asyncio
+import json
+import logging
+import os
 import re
+import shutil
 import ssl
-from pathlib import Path
-from datetime import date
-from typing import Optional, List, Dict, Any, Tuple, Callable
+import sys
 from dataclasses import dataclass, field
+from datetime import date
+from pathlib import Path
+from typing import Callable, List, Optional, Tuple
 
 import aiohttp
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -197,7 +196,7 @@ def _split_pdf_pages(pdf_path: Path, chunk_size: int = PADDLEOCR_MAX_PAGES) -> L
     try:
         import fitz
     except ImportError:
-        logger.error(f"[PaddleOCR] fitz 模块未安装，无法分段 PDF")
+        logger.error("[PaddleOCR] fitz 模块未安装，无法分段 PDF")
         raise RuntimeError("fitz 模块未安装")
 
     try:
@@ -302,9 +301,9 @@ def _apply_postprocessing(text: str) -> str:
     text = _clean_latex_markup(text)
     try:
         from pdf_to_md import (
-            _protect_signatures_as_images,
             _fix_ocr_errors,
             _fold_consecutive_images,
+            _protect_signatures_as_images,
             _strip_hallucinated_tables,
         )
         text = _fix_ocr_errors(text)
@@ -632,7 +631,7 @@ class AsyncPaddleOCRConverter:
                 ssl=_SSL_CONTEXT,
             ) as resp:
                 if resp.status == 429:
-                    logger.warning(f"[PaddleOCR] API 返回 429 限频，请稍后重试")
+                    logger.warning("[PaddleOCR] API 返回 429 限频，请稍后重试")
                     return None
 
                 if resp.status != 200:

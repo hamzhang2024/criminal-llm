@@ -10,12 +10,12 @@
 
 参考：criminal-pdf-splitter 技能
 """
+import base64
 import json
 import re
-import base64
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Any, Optional, Tuple, Callable
-from dataclasses import dataclass, field
+from typing import Callable, Dict, List, Optional, Tuple
 
 # 配置文件路径
 CONFIG_PATH = Path(__file__).parent.parent / "config" / "doc_types.json"
