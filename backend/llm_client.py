@@ -448,7 +448,7 @@ class LLMClient:
             except (httpx.ReadTimeout, httpx.ConnectTimeout) as e:
                 last_error = e
                 wait = 5 * (attempt + 1)  # 5s, 10s, 15s
-                print(f"[LLM 超时] 第 {attempt+1}/3 次重试，等待 {wait}s...")
+                logger.info(f"[LLM 超时] 第 {attempt+1}/3 次重试，等待 {wait}s...")
                 await asyncio.sleep(wait)
             except httpx.HTTPStatusError as e:
                 error_body = e.response.text[:500] if e.response else "无响应内容"
@@ -485,7 +485,7 @@ class LLMClient:
         if crime_type:
             crime_specific_knowledge = get_dynamic_legal_knowledge(crime_type)
             if crime_specific_knowledge:
-                print(f"[LLM 客户端] 已加载 {crime_type} 相关知识")
+                logger.info(f"[LLM 客户端] 已加载 {crime_type} 相关知识")
         
         # 使用三阶层理论 + 法条拆解分析法 + zhang-criminal-defense 提示词库
         system_prompt = f"""你是一位资深的刑事辩护律师，精通刑法学界通行的三阶层犯罪论体系。

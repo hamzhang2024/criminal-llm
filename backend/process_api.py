@@ -260,7 +260,7 @@ async def scan_directory(request: ScanRequest):
             files_info.append(info.model_dump())
             total_size += info.size
         except Exception as e:
-            print(f"[WARN] 无法读取文件 {pdf}: {e}")
+            logger.warning(f"[WARN] 无法读取文件 {pdf}: {e}")
     
     # 格式化总大小
     if total_size > 1024 * 1024 * 1024:
@@ -298,11 +298,11 @@ def process_single_file(
 
     input_file = Path(input_path)
 
-    print(f"\n{'='*60}")
-    print(f"处理文件: {input_path}")
-    print(f"密码: '{password}'")
-    print(f"水印文字: '{watermark_text}'")
-    print(f"{'='*60}")
+    logger.info(f"\n{'='*60}")
+    logger.info(f"处理文件: {input_path}")
+    logger.info(f"密码: '{password}'")
+    logger.info(f"水印文字: '{watermark_text}'")
+    logger.info(f"{'='*60}")
 
     if not input_file.exists():
         return {"success": False, "error": f"文件不存在: {input_path}", "file": input_path}
@@ -341,7 +341,7 @@ def process_single_file(
                 import shutil
                 shutil.copy2(str(input_file), str(output_file))
                 out_size = output_file.stat().st_size
-                print(f"[快速检测] 无密码、无水印，直接复制 → {output_file.name}")
+                logger.info(f"[快速检测] 无密码、无水印，直接复制 → {output_file.name}")
                 return {
                     "success": True,
                     "file": input_path,
@@ -351,7 +351,7 @@ def process_single_file(
                     "quick_copy": True,
                 }
     except Exception as e:
-        print(f"[快速检测] 检测失败，走常规去水印流程: {e}")
+        logger.error(f"[快速检测] 检测失败，走常规去水印流程: {e}")
         # 检测失败，走正常流程
 
     # 输出文件名
@@ -456,7 +456,7 @@ async def start_process(request: ProcessRequest):
         except Exception as e:
             # 记录异常，标记任务为失败
             import traceback
-            print(f"[ERROR] 任务 {task_id} 异常: {e}\n{traceback.format_exc()}")
+            logger.error(f"[ERROR] 任务 {task_id} 异常: {e}\n{traceback.format_exc()}")
             tasks[task_id]["status"] = "failed"
             tasks[task_id]["error"] = str(e)[:500]
             tasks[task_id]["completed_at"] = datetime.now().isoformat()

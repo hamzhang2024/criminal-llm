@@ -8,6 +8,9 @@ OCR 加速模块
 """
 import platform
 from typing import Any, Dict
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def detect_gpu_device() -> str:
@@ -63,12 +66,12 @@ def init_rapidocr_with_acceleration(device: str = None):
 
     if device == "coreml":
         params["Inference.use_coreml"] = True
-        print("[OCR] 启用 CoreML 加速 (Apple Silicon)")
+        logger.info("[OCR] 启用 CoreML 加速 (Apple Silicon)")
     elif device == "cuda":
         params["Inference.use_cuda"] = True
-        print("[OCR] 启用 CUDA 加速 (NVIDIA)")
+        logger.info("[OCR] 启用 CUDA 加速 (NVIDIA)")
     else:
-        print("[OCR] 使用 CPU 推理")
+        logger.info("[OCR] 使用 CPU 推理")
 
     return RapidOCR(params=params)
 

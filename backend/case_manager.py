@@ -839,7 +839,7 @@ def _do_batch_process(case_id: str, step: int, file_names: list, password: str =
                     original_file = input_dir / r["file"]
                     if original_file.exists():
                         original_file.unlink()
-                        print(f"[DELETE] 已删除原始文件: {r['file']}")
+                        logger.warning(f"[DELETE] 已删除原始文件: {r['file']}")
 
     return {"results": results}
 

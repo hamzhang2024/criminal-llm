@@ -23,6 +23,9 @@ from pathlib import Path
 from typing import Callable, Optional
 
 import requests
+import logging
+
+logger = logging.getLogger(__name__)
 
 if sys.platform == "darwin" and getattr(sys, "frozen", False):
     _SSL_VERIFY = "/etc/ssl/cert.pem"
@@ -151,17 +154,17 @@ def _submit_job(pdf_path: Path, token: str) -> Optional[str]:
             )
 
         if resp.status_code == 429:
-            print("[PaddleOCR] API 返回 429 限频，请稍后重试")
+            logger.info("[PaddleOCR] API 返回 429 限频，请稍后重试")
             return None
 
         if resp.status_code != 200:
-            print(f"[PaddleOCR] 提交任务失败: HTTP {resp.status_code}, {resp.text[:300]}")
+            logger.error(f"[PaddleOCR] 提交任务失败: HTTP {resp.status_code}, {resp.text[:300]}")
             return None
 
         job_id = resp.json()["data"]["jobId"]
         return job_id
     except Exception as e:
-        print(f"[PaddleOCR] 提交任务异常: {e}")
+        logger.error(f"[PaddleOCR] 提交任务异常: {e}")
         return None
 
 
@@ -180,7 +183,7 @@ def _poll_job(job_id: str, token: str, timeout: int = 3600, progress_cb: Optiona
                 verify=_SSL_VERIFY,
             )
             if resp.status_code != 200:
-                print(f"[PaddleOCR] 查询任务失败: HTTP {resp.status_code}")
+                logger.error(f"[PaddleOCR] 查询任务失败: HTTP {resp.status_code}")
                 time.sleep(poll_interval)
                 waited += poll_interval
                 continue
@@ -191,7 +194,7 @@ def _poll_job(job_id: str, token: str, timeout: int = 3600, progress_cb: Optiona
             if state == "pending":
                 if progress_cb:
                     progress_cb("processing", f"正在排队中...（已等待 {waited}s）")
-                print(f"[PaddleOCR] 任务排队中...（已等待 {waited}s）")
+                logger.info(f"[PaddleOCR] 任务排队中...（已等待 {waited}s）")
 
             elif state == "running":
                 try:
@@ -204,30 +207,30 @@ def _poll_job(job_id: str, token: str, timeout: int = 3600, progress_cb: Optiona
 
                 if progress_cb:
                     progress_cb("processing", msg)
-                print(f"[PaddleOCR] {msg}")
+                logger.info(f"[PaddleOCR] {msg}")
 
             elif state == "done":
                 prog = job_data.get("extractProgress", {})
                 pages = prog.get("extractedPages", "?")
-                print(f"[PaddleOCR] 任务完成，共 {pages} 页")
+                logger.info(f"[PaddleOCR] 任务完成，共 {pages} 页")
                 json_url = job_data.get("resultUrl", {}).get("jsonUrl", "")
                 if json_url:
                     return json_url
-                print("[PaddleOCR] 未找到结果 URL")
+                logger.info("[PaddleOCR] 未找到结果 URL")
                 return None
 
             elif state == "failed":
                 err = job_data.get("errorMsg", "未知错误")
-                print(f"[PaddleOCR] 任务失败: {err}")
+                logger.error(f"[PaddleOCR] 任务失败: {err}")
                 return None
 
         except Exception as e:
-            print(f"[PaddleOCR] 轮询异常: {e}")
+            logger.error(f"[PaddleOCR] 轮询异常: {e}")
 
         time.sleep(poll_interval)
         waited += poll_interval
 
-    print(f"[PaddleOCR] 轮询超时（{timeout}s）")
+    logger.info(f"[PaddleOCR] 轮询超时（{timeout}s）")
     return None
 
 
@@ -238,12 +241,12 @@ def _download_and_parse_jsonl(jsonl_url: str, output_dir: Path, stem: str) -> Op
         resp.raise_for_status()
         raw_jsonl = resp.text
     except Exception as e:
-        print(f"[PaddleOCR] 下载结果失败: {e}")
+        logger.error(f"[PaddleOCR] 下载结果失败: {e}")
         return None
 
     lines = resp.text.strip().split('\n')
     if not lines:
-        print("[PaddleOCR] 结果为空")
+        logger.info("[PaddleOCR] 结果为空")
         return None
 
     # 保存 JSONL 原始结果到 _json 目录（保留 MinerU 风格的结构化产物）
@@ -297,10 +300,10 @@ def _download_and_parse_jsonl(jsonl_url: str, output_dir: Path, stem: str) -> Op
                                     downloaded += 1
                                 else:
                                     failed += 1
-                                    print(f"[PaddleOCR] 图片下载失败 HTTP {ir.status_code}: {img_name}")
+                                    logger.error(f"[PaddleOCR] 图片下载失败 HTTP {ir.status_code}: {img_name}")
                             except Exception as ie:
                                 failed += 1
-                                print(f"[PaddleOCR] 图片下载异常 {img_name}: {ie}")
+                                logger.error(f"[PaddleOCR] 图片下载异常 {img_name}: {ie}")
                         # 改写 markdown 文本中的引用
                         text = text.replace(f'src="{img_path}"', f'src="./{stem}_images/{img_name}"')
                         text = text.replace(f"src='{img_path}'", f"src='./{stem}_images/{img_name}'")
@@ -312,14 +315,14 @@ def _download_and_parse_jsonl(jsonl_url: str, output_dir: Path, stem: str) -> Op
                     global_page += 1
 
         except Exception as e:
-            print(f"[PaddleOCR] 解析第 {line_num} 行失败: {e}")
+            logger.error(f"[PaddleOCR] 解析第 {line_num} 行失败: {e}")
             continue
 
     if downloaded or failed:
-        print(f"[PaddleOCR] 图片下载完成：成功 {downloaded}，失败 {failed}")
+        logger.error(f"[PaddleOCR] 图片下载完成：成功 {downloaded}，失败 {failed}")
 
     if not md_parts:
-        print("[PaddleOCR] 无有效 Markdown 内容")
+        logger.info("[PaddleOCR] 无有效 Markdown 内容")
         return None
 
     full_text = "\n\n".join(md_parts)
@@ -515,7 +518,7 @@ def paddleocr_convert(
     """
     token = _get_paddleocr_token()
     if not token:
-        print(f"[PaddleOCR] Token 未配置，跳过 {pdf_path.name}")
+        logger.info(f"[PaddleOCR] Token 未配置，跳过 {pdf_path.name}")
         return None, None
 
     stem = pdf_path.stem
@@ -527,11 +530,11 @@ def paddleocr_convert(
         total_pages = len(doc)
         doc.close()
     except Exception as e:
-        print(f"[PaddleOCR] 无法打开 PDF: {e}")
+        logger.info(f"[PaddleOCR] 无法打开 PDF: {e}")
         return None, None
 
     if total_pages == 0:
-        print(f"[PaddleOCR] PDF 无页面: {pdf_path.name}")
+        logger.info(f"[PaddleOCR] PDF 无页面: {pdf_path.name}")
         return None, None
 
     if progress_cb:
@@ -542,7 +545,7 @@ def paddleocr_convert(
     if not job_id:
         return None, None
 
-    print(f"[PaddleOCR] 任务已提交: {pdf_path.name}, job_id={job_id}")
+    logger.info(f"[PaddleOCR] 任务已提交: {pdf_path.name}, job_id={job_id}")
 
     # 2. 轮询结果
     if progress_cb:
@@ -556,7 +559,7 @@ def paddleocr_convert(
         progress_cb("downloading", "正在下载结果...")
     full_text = _download_and_parse_jsonl(jsonl_url, output_dir, stem)
     if not full_text or len(full_text) < 50:
-        print(f"[PaddleOCR] 结果内容过少，跳过: {pdf_path.name}")
+        logger.info(f"[PaddleOCR] 结果内容过少，跳过: {pdf_path.name}")
         return None, None
 
     # 4. 后处理
@@ -577,7 +580,7 @@ def paddleocr_convert(
     # 6. 写入 MD 文件
     target_md = output_dir / f"{stem}.md"
     target_md.write_text(full_text, encoding="utf-8")
-    print(f"[PaddleOCR] 转换完成 {pdf_path.name}: {len(full_text)} 字符, {total_pages} 页")
+    logger.info(f"[PaddleOCR] 转换完成 {pdf_path.name}: {len(full_text)} 字符, {total_pages} 页")
 
     return full_text, images_dir
 

@@ -15,6 +15,9 @@ from pathlib import Path
 from typing import Optional
 
 from llm_client import get_llm_client
+import logging
+
+logger = logging.getLogger(__name__)
 
 # 默认分析状态结构
 DEFAULT_STATE = {
@@ -607,7 +610,7 @@ class AnalysisPipeline:
                     else:
                         # 不一致：优先用文件名的（更可靠），但记录正文提取结果
                         person = name_from_file
-                        print(f"[步骤 1] 人名不一致: {f['filename']} -> 文件名={name_from_file}, 正文={name_from_content}，采用文件名结果")
+                        logger.info(f"[步骤 1] 人名不一致: {f['filename']} -> 文件名={name_from_file}, 正文={name_from_content}，采用文件名结果")
                 elif name_from_file:
                     person = name_from_file
                 elif name_from_content:
@@ -712,13 +715,13 @@ class AnalysisPipeline:
             existing_summary = self._load_summary_file(etype, f"{person}_共{session_count}次_总结.md")
             if existing_summary:
                 summary_results.append({"person": person, "type": etype, "session_count": session_count, "status": "skipped"})
-                print(f"[步骤 2] 跳过 {person}（已存在总结）")
+                logger.info(f"[步骤 2] 跳过 {person}（已存在总结）")
                 continue
 
             preprocess_path = self.analysis_dir / "preprocess" / etype / filename
             if not preprocess_path.exists():
                 failed.append({"person": person, "type": etype, "status": "failed", "error": f"预处理文件不存在: {preprocess_path}"})
-                print(f"[步骤 2] 失败 {person}（预处理文件不存在）")
+                logger.error(f"[步骤 2] 失败 {person}（预处理文件不存在）")
                 continue
 
             content = preprocess_path.read_text(encoding="utf-8")
@@ -727,7 +730,7 @@ class AnalysisPipeline:
 
             for i, session in enumerate(sessions, 1):
                 try:
-                    print(f"[步骤 2] 总结 {person} 第{i}/{len(sessions)} 次笔录...")
+                    logger.info(f"[步骤 2] 总结 {person} 第{i}/{len(sessions)} 次笔录...")
                     if progress_cb:
                         progress_cb(completed, total_sessions, f"正在总结：{person} 第{i}/{len(sessions)} 次笔录")
                     summary = await self.llm.chat([
@@ -770,7 +773,7 @@ class AnalysisPipeline:
 
             self._save_summary_file(etype, f"{person}_共{session_count}次_总结.md", summary_md)
             summary_results.append({"person": person, "type": etype, "session_count": len(session_summaries), "status": "done"})
-            print(f"[步骤 2] 完成 {person} 总结")
+            logger.info(f"[步骤 2] 完成 {person} 总结")
 
         if progress_cb:
             progress_cb(total_sessions, total_sessions, f"完成！共总结 {total_sessions} 次笔录")
@@ -804,7 +807,7 @@ class AnalysisPipeline:
             existing = self._load_contradiction_file(f"{person}_矛盾分析.md")
             if existing:
                 contradiction_results.append({"person": person, "type": etype, "session_count": session_count, "status": "skipped"})
-                print(f"[步骤 3] 跳过 {person}（已存在矛盾分析）")
+                logger.info(f"[步骤 3] 跳过 {person}（已存在矛盾分析）")
                 if progress_cb:
                     progress_cb(idx, total, f"正在分析：{person}（{idx}/{total}）")
                 continue
@@ -812,7 +815,7 @@ class AnalysisPipeline:
             summary_path = self.analysis_dir / "summaries" / etype / f"{person}_共{session_count}次_总结.md"
             if not summary_path.exists():
                 contradiction_results.append({"person": person, "type": etype, "status": "failed", "error": f"总结文件不存在: {summary_path}"})
-                print(f"[步骤 3] 失败 {person}（总结文件不存在）")
+                logger.error(f"[步骤 3] 失败 {person}（总结文件不存在）")
                 if progress_cb:
                     progress_cb(idx, total, f"正在分析：{person}（{idx}/{total}）")
                 continue
@@ -820,7 +823,7 @@ class AnalysisPipeline:
             summary_text = summary_path.read_text(encoding="utf-8")
 
             try:
-                print(f"[步骤 3] 分析 {person} 的矛盾...")
+                logger.info(f"[步骤 3] 分析 {person} 的矛盾...")
                 if progress_cb:
                     progress_cb(idx - 1, total, f"正在分析：{person}（{idx}/{total}）")
                 analysis = await self.llm.chat([
@@ -839,7 +842,7 @@ class AnalysisPipeline:
                 ])
             except Exception as e:
                 contradiction_results.append({"person": person, "type": etype, "status": "failed", "error": str(e)})
-                print(f"[步骤 3] {person} 分析失败: {e}")
+                logger.error(f"[步骤 3] {person} 分析失败: {e}")
                 if progress_cb:
                     progress_cb(idx, total, f"正在分析：{person}（{idx}/{total}）")
                 continue
@@ -849,7 +852,7 @@ class AnalysisPipeline:
             md_content += analysis
             self._save_contradiction_file(f"{person}_共{session_count}次_矛盾分析.md", md_content)
             contradiction_results.append({"person": person, "type": etype, "session_count": session_count, "status": "done"})
-            print(f"[步骤 3] 完成 {person} 矛盾分析")
+            logger.info(f"[步骤 3] 完成 {person} 矛盾分析")
             if progress_cb:
                 progress_cb(idx, total, f"正在分析：{person}（{idx}/{total}）")
 
@@ -915,7 +918,7 @@ class AnalysisPipeline:
                                 break
                             result["articles"] += next_line + "\n"
             except Exception as e:
-                print(f"[法律知识库] 加载内置刑法失败: {e}")
+                logger.error(f"[法律知识库] 加载内置刑法失败: {e}")
 
         return result
 
@@ -976,7 +979,7 @@ class AnalysisPipeline:
             indictment_text, indictment_type = await self._find_indictment_in_md_files()
 
             if indictment_text:
-                print(f"[步骤 4a] 分析{indictment_type}...")
+                logger.info(f"[步骤 4a] 分析{indictment_type}...")
                 try:
                     analysis = await self.llm.chat([
                         {"role": "system", "content": f"你是刑事律师，详细分析{indictment_type}的指控逻辑。"},
@@ -995,7 +998,7 @@ class AnalysisPipeline:
                     ])
                     self._save_wiki_page("", "01-指控要素.md", analysis)
                     results_log["sub_steps"].append({"step": "4a", "name": "指控要素分析", "status": "done"})
-                    print("[步骤 4a] 完成指控要素分析")
+                    logger.info("[步骤 4a] 完成指控要素分析")
                 except Exception as e:
                     self._save_wiki_page("", "01-指控要素.md", f"分析失败：{e}")
                     results_log["sub_steps"].append({"step": "4a", "name": "指控要素分析", "status": "failed", "error": str(e)})
@@ -1030,7 +1033,7 @@ class AnalysisPipeline:
         # 读取已分析的证据列表（用于交叉引用）
         analyzed_evidence = []
 
-        print(f"[步骤 4b] 开始逐人证据摄入（{len(evidence_list)} 份证据，串行）...")
+        logger.info(f"[步骤 4b] 开始逐人证据摄入（{len(evidence_list)} 份证据，串行）...")
         for ev in evidence_list:
             person = ev["person"]
             etype = ev["type"]
@@ -1054,7 +1057,7 @@ class AnalysisPipeline:
                     summary_text = other_index_path.read_text(encoding="utf-8")[:30000]
 
             if not summary_text:
-                print(f"[步骤 4b] 跳过 {person}（无总结文件）")
+                logger.info(f"[步骤 4b] 跳过 {person}（无总结文件）")
                 continue
 
             # 读取矛盾分析
@@ -1078,7 +1081,7 @@ class AnalysisPipeline:
                         ae_content = self._load_wiki_page("03-证据分析", ae_filename)
                         analyzed_summary += f"\n### {ae}\n{ae_content[:1500]}\n"
 
-            print(f"[步骤 4b] 摄入 {person}（{etype}）...")
+            logger.info(f"[步骤 4b] 摄入 {person}（{etype}）...")
             try:
                 analysis = await self.llm.chat([
                     {"role": "system", "content": "你是刑事律师，正在进行案件证据分析。请基于证据材料，逐项分析该证据的证明力和证明内容。"},
@@ -1106,11 +1109,11 @@ class AnalysisPipeline:
                 self._save_wiki_page("03-证据分析", wiki_filename, analysis)
                 analyzed_evidence.append(f"{person}（{etype}）")
                 results_log["sub_steps"].append({"step": "4b", "name": f"{person}（{etype}）", "status": "done"})
-                print(f"[步骤 4b] 完成 {person} 证据摄入")
+                logger.info(f"[步骤 4b] 完成 {person} 证据摄入")
             except Exception as e:
                 self._save_wiki_page("03-证据分析", wiki_filename, f"分析失败：{e}")
                 results_log["sub_steps"].append({"step": "4b", "name": f"{person}（{etype}）", "status": "failed", "error": str(e)})
-                print(f"[步骤 4b] {person} 分析失败: {e}")
+                logger.error(f"[步骤 4b] {person} 分析失败: {e}")
 
         sub_done = 2
         if progress_cb:
@@ -1118,7 +1121,7 @@ class AnalysisPipeline:
 
         # ===== 4c: 法律依据检索 =====
         if not self._wiki_page_exists("04-法律依据", "适用法条.md"):
-            print("[步骤 4c] 检索法律依据...")
+            logger.info("[步骤 4c] 检索法律依据...")
             legal = self._search_legal_knowledge(crime_type)
 
             # 读取用户提供的参考材料
@@ -1158,7 +1161,7 @@ class AnalysisPipeline:
                 ])
                 self._save_wiki_page("04-法律依据", "适用法条.md", legal_analysis)
                 results_log["sub_steps"].append({"step": "4c", "name": "法律依据检索", "status": "done"})
-                print("[步骤 4c] 完成法律依据分析")
+                logger.info("[步骤 4c] 完成法律依据分析")
             except Exception as e:
                 self._save_wiki_page("04-法律依据", "适用法条.md", f"分析失败：{e}")
                 results_log["sub_steps"].append({"step": "4c", "name": "法律依据检索", "status": "failed", "error": str(e)})
@@ -1171,7 +1174,7 @@ class AnalysisPipeline:
 
         # ===== 4d: 综合结论 =====
         if not self._wiki_page_exists("", "06-综合结论.md"):
-            print("[步骤 4d] 生成综合结论...")
+            logger.info("[步骤 4d] 生成综合结论...")
             # 收集所有证据分析
             all_evidence_analysis = ""
             for f in self._list_wiki_pages("03-证据分析"):
@@ -1209,7 +1212,7 @@ class AnalysisPipeline:
                 ])
                 self._save_wiki_page("", "06-综合结论.md", conclusion)
                 results_log["sub_steps"].append({"step": "4d", "name": "综合结论", "status": "done"})
-                print("[步骤 4d] 完成综合结论")
+                logger.info("[步骤 4d] 完成综合结论")
             except Exception as e:
                 self._save_wiki_page("", "06-综合结论.md", f"分析失败：{e}")
                 results_log["sub_steps"].append({"step": "4d", "name": "综合结论", "status": "failed", "error": str(e)})
@@ -1319,7 +1322,7 @@ class AnalysisPipeline:
 
         # ===== 45a: 控方沙箱（独立构建最强指控） =====
         if not self._debate_file_exists("01-控方指控.md"):
-            print("[步骤 4.5a] 控方沙箱：构建最强指控...")
+            logger.info("[步骤 4.5a] 控方沙箱：构建最强指控...")
             if progress_cb:
                 progress_cb(sub_done, sub_total, "步骤 4.5：控方构建指控")
             try:
@@ -1356,7 +1359,7 @@ class AnalysisPipeline:
                 self._save_debate_file("01-控方指控.md", red_argument)
                 results_log["sub_steps"].append({"step": "45a", "name": "控方沙箱", "status": "done"})
                 self._mark_substep_done("4.5", "45a", "done")
-                print("[步骤 4.5a] 完成控方指控")
+                logger.info("[步骤 4.5a] 完成控方指控")
             except Exception as e:
                 self._save_debate_file("01-控方指控.md", f"分析失败：{e}")
                 results_log["sub_steps"].append({"step": "45a", "name": "控方沙箱", "status": "failed", "error": str(e)})
@@ -1370,7 +1373,7 @@ class AnalysisPipeline:
 
         # ===== 45b: 辩方沙箱（独立构建多路径辩护，不读取控方论点） =====
         if not self._debate_file_exists("02-辩方辩护.md"):
-            print("[步骤 4.5b] 辩方沙箱：独立构建多路径辩护...")
+            logger.info("[步骤 4.5b] 辩方沙箱：独立构建多路径辩护...")
             if progress_cb:
                 progress_cb(sub_done, sub_total, "步骤 4.5：辩方构建辩护")
             try:
@@ -1416,7 +1419,7 @@ class AnalysisPipeline:
                 self._save_debate_file("02-辩方辩护.md", blue_defense)
                 results_log["sub_steps"].append({"step": "45b", "name": "辩方沙箱", "status": "done"})
                 self._mark_substep_done("4.5", "45b", "done")
-                print("[步骤 4.5b] 完成辩方辩护")
+                logger.info("[步骤 4.5b] 完成辩方辩护")
             except Exception as e:
                 self._save_debate_file("02-辩方辩护.md", f"分析失败：{e}")
                 results_log["sub_steps"].append({"step": "45b", "name": "辩方沙箱", "status": "failed", "error": str(e)})
@@ -1430,7 +1433,7 @@ class AnalysisPipeline:
 
         # ===== 45c: 交叉对决（双方论点正面碰撞） =====
         if not self._debate_file_exists("03-交叉对决.md"):
-            print("[步骤 4.5c] 交叉对决：双方论点正面碰撞...")
+            logger.info("[步骤 4.5c] 交叉对决：双方论点正面碰撞...")
             if progress_cb:
                 progress_cb(sub_done, sub_total, "步骤 4.5：交叉对决")
             try:
@@ -1484,7 +1487,7 @@ class AnalysisPipeline:
                 self._save_debate_file("03-交叉对决.md", clash_analysis)
                 results_log["sub_steps"].append({"step": "45c", "name": "交叉对决", "status": "done"})
                 self._mark_substep_done("4.5", "45c", "done")
-                print("[步骤 4.5c] 完成交叉对决")
+                logger.info("[步骤 4.5c] 完成交叉对决")
             except Exception as e:
                 self._save_debate_file("03-交叉对决.md", f"分析失败：{e}")
                 results_log["sub_steps"].append({"step": "45c", "name": "交叉对决", "status": "failed", "error": str(e)})
@@ -1497,7 +1500,7 @@ class AnalysisPipeline:
         # ===== 45d: 法官裁决（独立评价） =====
         clash_analysis = self._load_debate_file("03-交叉对决.md")
         if not self._debate_file_exists("对抗分析.md"):
-            print("[步骤 4.5d] 法官裁决...")
+            logger.info("[步骤 4.5d] 法官裁决...")
             if progress_cb:
                 progress_cb(sub_done, sub_total, "步骤 4.5：法官裁决")
             try:
@@ -1575,7 +1578,7 @@ class AnalysisPipeline:
                 self._save_debate_file("对抗分析.md", judge_verdict)
                 results_log["sub_steps"].append({"step": "45d", "name": "法官裁决", "status": "done"})
                 self._mark_substep_done("4.5", "45d", "done")
-                print("[步骤 4.5d] 完成法官裁决")
+                logger.info("[步骤 4.5d] 完成法官裁决")
             except Exception as e:
                 self._save_debate_file("对抗分析.md", f"分析失败：{e}")
                 results_log["sub_steps"].append({"step": "45d", "name": "法官裁决", "status": "failed", "error": str(e)})
@@ -1759,7 +1762,7 @@ class AnalysisPipeline:
                     progress_cb(sub_done, sub_total, f"步骤 5：{stage_name}（已存在）")
                 continue
 
-            print(f"[步骤 5-{stage_key}] 生成 {stage_name}...")
+            logger.info(f"[步骤 5-{stage_key}] 生成 {stage_name}...")
             if progress_cb:
                 progress_cb(sub_done, sub_total, f"步骤 5：正在生成 {stage_name}")
 
@@ -1770,11 +1773,11 @@ class AnalysisPipeline:
                 ])
                 self._save_defense_section(filename, section_content)
                 results_log["sub_steps"].append({"step": stage_key, "name": stage_name, "status": "done"})
-                print(f"[步骤 5-{stage_key}] 完成 {stage_name}")
+                logger.info(f"[步骤 5-{stage_key}] 完成 {stage_name}")
             except Exception as e:
                 self._save_defense_section(filename, f"分析失败：{e}")
                 results_log["sub_steps"].append({"step": stage_key, "name": stage_name, "status": "failed", "error": str(e)})
-                print(f"[步骤 5-{stage_key}] {stage_name} 生成失败: {e}")
+                logger.error(f"[步骤 5-{stage_key}] {stage_name} 生成失败: {e}")
 
             sub_done += 1
             self._mark_substep_done("5", stage_key, results_log["sub_steps"][-1]["status"])

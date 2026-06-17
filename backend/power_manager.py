@@ -6,6 +6,9 @@ macOS 电源管理模块
 import subprocess
 import sys
 import threading
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class PowerInhibitor:
@@ -31,7 +34,7 @@ class PowerInhibitor:
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                 )
-                print(f"[电源管理] 已阻止系统休眠: {self.reason}")
+                logger.info(f"[电源管理] 已阻止系统休眠: {self.reason}")
         return self
 
     def __exit__(self, *args):
@@ -47,4 +50,4 @@ class PowerInhibitor:
                 except subprocess.TimeoutExpired:
                     self._process.kill()
                 self._process = None
-                print("[电源管理] 已恢复系统休眠")
+                logger.info("[电源管理] 已恢复系统休眠")

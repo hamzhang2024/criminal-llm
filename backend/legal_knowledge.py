@@ -7,6 +7,9 @@
 
 from pathlib import Path
 from typing import Optional
+import logging
+
+logger = logging.getLogger(__name__)
 
 # ── 内置法律文件目录 ──
 LEGAL_DB_DIR = Path(__file__).parent / "legal_db"
@@ -15,7 +18,7 @@ def _load_builtin_law(filename: str) -> str:
     """从 legal_db/ 加载内置法律文件"""
     law_path = LEGAL_DB_DIR / filename
     if not law_path.exists():
-        print(f"[法律知识库] 内置法律文件不存在: {filename}")
+        logger.info(f"[法律知识库] 内置法律文件不存在: {filename}")
         return ""
     with open(law_path, "r", encoding="utf-8") as f:
         return f.read()
@@ -42,7 +45,7 @@ def load_all_builtin_laws() -> str:
                 content = fh.read()
                 parts.append(content)
         except Exception as e:
-            print(f"[法律知识库] 加载 {f.name} 失败: {e}")
+            logger.error(f"[法律知识库] 加载 {f.name} 失败: {e}")
     return "\n\n".join(parts)
 
 

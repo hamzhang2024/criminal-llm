@@ -16,6 +16,9 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
+import logging
+
+logger = logging.getLogger(__name__)
 
 # 配置文件路径
 CONFIG_PATH = Path(__file__).parent.parent / "config" / "doc_types.json"
@@ -239,7 +242,7 @@ class CriminalCaseSplitter:
             return "其他文书", ""
 
         except Exception as e:
-            print(f"[拆分器] 多模态分类失败: {e}")
+            logger.error(f"[拆分器] 多模态分类失败: {e}")
             return "其他文书", ""
 
     # ============================================================
@@ -375,7 +378,7 @@ class CriminalCaseSplitter:
                 results = [r for r in results if r.get("doc_type") != "__need_vision__"]
 
             except Exception as e:
-                print(f"[拆分器] 多模态 fallback 失败: {e}")
+                logger.error(f"[拆分器] 多模态 fallback 失败: {e}")
 
         return results
 

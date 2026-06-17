@@ -15,6 +15,9 @@ from typing import Any, Dict, Optional
 
 import fitz
 from pipeline_errors import PDFProcessingError
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def _try_fix_with_qpdf(input_path: str) -> Optional[str]:
@@ -22,7 +25,7 @@ def _try_fix_with_qpdf(input_path: str) -> Optional[str]:
     try:
         result = subprocess.run(["which", "qpdf"], capture_output=True)
         if result.returncode != 0:
-            print("[水印移除] qpdf 未安装，无法修复")
+            logger.info("[水印移除] qpdf 未安装，无法修复")
             return None
 
         fd, output_path = tempfile.mkstemp(suffix='.pdf')
@@ -40,12 +43,12 @@ def _try_fix_with_qpdf(input_path: str) -> Optional[str]:
         if result.returncode == 0 and os.path.exists(output_path):
             return output_path
         else:
-            print(f"[水印移除] qpdf 修复失败: {result.stderr.decode()}")
+            logger.error(f"[水印移除] qpdf 修复失败: {result.stderr.decode()}")
             if os.path.exists(output_path):
                 os.remove(output_path)
             return None
     except Exception as e:
-        print(f"[水印移除] 修复异常: {e}")
+        logger.error(f"[水印移除] 修复异常: {e}")
         return None
 
 
@@ -57,12 +60,12 @@ def _open_pdf_with_repair(input_path: str, password: Optional[str] = None) -> Op
     except Exception as e:
         error_msg = str(e).lower()
         if "decompress" in error_msg or "header check" in error_msg or "incorrect header" in error_msg:
-            print(f"[水印移除] PDF 流损坏，尝试修复: {os.path.basename(input_path)}")
+            logger.info(f"[水印移除] PDF 流损坏，尝试修复: {os.path.basename(input_path)}")
             fixed_path = _try_fix_with_qpdf(input_path)
             if fixed_path and os.path.exists(fixed_path):
                 try:
                     doc = fitz.open(fixed_path)
-                    print("[水印移除] 修复成功")
+                    logger.info("[水印移除] 修复成功")
                     return doc
                 except Exception:
                     return None

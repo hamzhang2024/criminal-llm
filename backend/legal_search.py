@@ -13,6 +13,9 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import httpx
+import logging
+
+logger = logging.getLogger(__name__)
 
 # 打包后 certifi 证书路径可能失效，macOS 用系统证书
 if sys.platform == "darwin" and getattr(sys, "frozen", False):
@@ -71,7 +74,7 @@ def search_laws_by_llm(crime_type: str, timeout: int = 120) -> str:
     base_url, api_key, _ = llm_get_config()
     model = cfg.get("llm_model", "")
     if not api_key:
-        print("[法律搜索] 百炼 API Key 未配置，跳过网络搜索")
+        logger.info("[法律搜索] 百炼 API Key 未配置，跳过网络搜索")
         return ""
 
     # 获取搜索关键词
@@ -117,7 +120,7 @@ def search_laws_by_llm(crime_type: str, timeout: int = 120) -> str:
     }
 
     try:
-        print(f"[法律搜索] 正在搜索: {keyword}")
+        logger.info(f"[法律搜索] 正在搜索: {keyword}")
         with httpx.Client(timeout=timeout, verify=_SSL_VERIFY) as client:
             resp = client.post(url, json=payload, headers=headers)
             resp.raise_for_status()
@@ -125,13 +128,13 @@ def search_laws_by_llm(crime_type: str, timeout: int = 120) -> str:
 
             if "choices" in data and len(data["choices"]) > 0:
                 result = data["choices"][0]["message"]["content"]
-                print(f"[法律搜索] 成功获取 {len(result)} 字")
+                logger.info(f"[法律搜索] 成功获取 {len(result)} 字")
                 return result
             else:
-                print(f"[法律搜索] 返回异常: {data}")
+                logger.error(f"[法律搜索] 返回异常: {data}")
                 return ""
     except Exception as e:
-        print(f"[法律搜索] 搜索失败: {e}")
+        logger.error(f"[法律搜索] 搜索失败: {e}")
         return ""
 
 

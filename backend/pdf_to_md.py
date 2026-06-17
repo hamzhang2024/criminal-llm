@@ -25,6 +25,9 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import requests
+import logging
+
+logger = logging.getLogger(__name__)
 
 if sys.platform == "darwin" and getattr(sys, "frozen", False):
     _SSL_VERIFY = "/etc/ssl/cert.pem"
@@ -80,7 +83,7 @@ def _split_pdf_pages(pdf_path: Path, chunk_size: int = MINERU_MAX_PAGES) -> list
         # 检查实际文件大小，fitz.save 可能与预期不同
         actual_size = tmp_path.stat().st_size
         if actual_size > MINERU_MAX_FILE_SIZE * 0.95:
-            print(f"[分段转换] chunk {start+1}-{end} 实际 {actual_size//1024//1024}MB 超限，减半重新拆分")
+            logger.info(f"[分段转换] chunk {start+1}-{end} 实际 {actual_size//1024//1024}MB 超限，减半重新拆分")
             tmp_path.unlink(missing_ok=True)
             # 用减半后的 chunk_size 重新拆分这段范围
             sub_size = max(chunk_size // 2, 10)
@@ -358,7 +361,7 @@ def _strip_hallucinated_tables(text: str) -> str:
         # 如果某个非数字单元格重复 ≥5 次，判定为幻觉
         for content, count in cell_counts.items():
             if count >= 5 and len(content) < 20:
-                print(f"[幻觉检测] 表格中「{content}」重复 {count} 次，移除幻觉表格")
+                logger.info(f"[幻觉检测] 表格中「{content}」重复 {count} 次，移除幻觉表格")
                 return f'\n<!-- 幻觉表格已移除：行名「{content}」重复 {count} 次 -->\n'
 
         return table_html
@@ -466,7 +469,7 @@ async def _correct_chunk(text: str) -> str:
         ], model=model_name)
         return result.strip()
     except Exception as e:
-        print(f"[LLM OCR 纠错] 失败: {e}")
+        logger.error(f"[LLM OCR 纠错] 失败: {e}")
         return text
 
 
@@ -489,11 +492,11 @@ def llm_fix_ocr_sync(pdf_path: str, output_dir: str = None) -> Optional[str]:
     pdf = Path(pdf_path)
     md_path = pdf.with_suffix(".md")
     if not md_path.exists():
-        print(f"[LLM 纠错] MD 文件不存在: {md_path}")
+        logger.info(f"[LLM 纠错] MD 文件不存在: {md_path}")
         return None
 
     text = md_path.read_text(encoding="utf-8")
-    print(f"[LLM 纠错] 开始处理 {md_path.name} ({len(text)} 字)...")
+    logger.info(f"[LLM 纠错] 开始处理 {md_path.name} ({len(text)} 字)...")
 
     loop = asyncio.new_event_loop()
     try:
@@ -505,10 +508,10 @@ def llm_fix_ocr_sync(pdf_path: str, output_dir: str = None) -> Optional[str]:
         out_dir = Path(output_dir) if output_dir else pdf.parent
         out_md = out_dir / f"{pdf.stem}.md"
         out_md.write_text(corrected, encoding="utf-8")
-        print(f"[LLM 纠错] 已保存 {out_md}")
+        logger.info(f"[LLM 纠错] 已保存 {out_md}")
         return corrected
 
-    print("[LLM 纠错] 无变化或失败")
+    logger.error("[LLM 纠错] 无变化或失败")
     return None
 
 
@@ -703,30 +706,30 @@ def _mineru_convert(
 
             # 使用文件名 stem 作为前缀，确保并发转换时互不干扰
             temp_prefix = f"_temp_{pdf_path.stem}"
-            print(f"[分段转换] {pdf_path.name}: 共 {len(chunks)} 个 chunk")
+            logger.info(f"[分段转换] {pdf_path.name}: 共 {len(chunks)} 个 chunk")
             for chunk_path in chunks:
                 chunk_output = output_dir / f"{temp_prefix}_{chunk_index}"
                 chunk_output.mkdir(parents=True, exist_ok=True)
-                print(f"[分段转换] 开始处理 chunk {chunk_index}: {chunk_path.name}")
+                logger.info(f"[分段转换] 开始处理 chunk {chunk_index}: {chunk_path.name}")
 
                 # 失败重试一次，避免偶尔的网络/API错误丢失整段
                 result = _mineru_convert_single(chunk_path, chunk_output, timeout, progress_cb)
                 if not result or not result[0]:
-                    print(f"[分段转换] chunk {chunk_index} 首次失败，15s 后重试...")
+                    logger.error(f"[分段转换] chunk {chunk_index} 首次失败，15s 后重试...")
                     time.sleep(15)
                     result = _mineru_convert_single(chunk_path, chunk_output, timeout, progress_cb)
 
                 chunk_path.unlink(missing_ok=True)  # 清理临时分段文件
                 if result and result[0]:
-                    print(f"[分段转换] chunk {chunk_index} 成功: {len(result[0])} 字符")
+                    logger.info(f"[分段转换] chunk {chunk_index} 成功: {len(result[0])} 字符")
                     chunk_results.append(result[0])
                     if result[1]:
                         all_images_dirs.append(result[1])
                 else:
-                    print(f"[分段转换] chunk {chunk_index} 重试后仍失败，跳过（已丢失对应页）")
+                    logger.error(f"[分段转换] chunk {chunk_index} 重试后仍失败，跳过（已丢失对应页）")
                 chunk_index += 1
 
-            print(f"[分段转换] 完成 {pdf_path.name}: {len(chunk_results)}/{len(chunks)} 个 chunk 成功")
+            logger.info(f"[分段转换] 完成 {pdf_path.name}: {len(chunk_results)}/{len(chunks)} 个 chunk 成功")
 
             if not chunk_results:
                 return None, None
@@ -792,11 +795,11 @@ def _mineru_convert_single(
             return result
         if attempt < max_retries:
             delay = 15 * attempt  # 15s, 30s
-            print(f"[MinerU] 第 {attempt} 次尝试失败，{delay}s 后重试 ({attempt + 1}/{max_retries}): {pdf_path.name}")
+            logger.error(f"[MinerU] 第 {attempt} 次尝试失败，{delay}s 后重试 ({attempt + 1}/{max_retries}): {pdf_path.name}")
             if progress_cb:
                 progress_cb("retrying", f"第 {attempt} 次失败，{delay}s 后自动重试...")
             time.sleep(delay)
-    print(f"[MinerU] 已重试 {max_retries} 次，仍失败: {pdf_path.name}")
+    logger.error(f"[MinerU] 已重试 {max_retries} 次，仍失败: {pdf_path.name}")
     return None, None
 
 
@@ -809,7 +812,7 @@ def _do_mineru_convert(
     """执行一次 MinerU 转换调用（单次，不含重试）"""
     token = _get_mineru_token()
     if not token:
-        print(f"[MinerU] Token 未配置，跳过 {pdf_path.name}")
+        logger.info(f"[MinerU] Token 未配置，跳过 {pdf_path.name}")
         return None, None
 
     stem = pdf_path.stem
@@ -842,15 +845,15 @@ def _do_mineru_convert(
             err_code = result.get("code")
             # 频率限制/配额限制：等待后重试
             if err_code in (429, 10020, 10021) or "limit" in err_msg.lower() or "频率" in err_msg:
-                print(f"[MinerU] API 频率限制，60s 后重试: {pdf_path.name}")
+                logger.info(f"[MinerU] API 频率限制，60s 后重试: {pdf_path.name}")
                 time.sleep(60)
                 return None, None  # 返回让上层重试
-            print(f"[MinerU] 获取上传链接失败: {pdf_path.name}, code={err_code}, msg={err_msg}")
+            logger.error(f"[MinerU] 获取上传链接失败: {pdf_path.name}, code={err_code}, msg={err_msg}")
             return None, None
 
         batch_id = result["data"]["batch_id"]
         upload_url = result["data"]["file_urls"][0]
-        print(f"[MinerU] 开始上传 {pdf_path.name} (batch_id={batch_id})")
+        logger.info(f"[MinerU] 开始上传 {pdf_path.name} (batch_id={batch_id})")
 
         # 2. 发送文件到 OSS 预签名 URL
         # 注意：OSS 签名只覆盖 PUT/Host/Date 这类基础头，requests 自动加的
@@ -859,19 +862,19 @@ def _do_mineru_convert(
         if progress_cb:
             progress_cb("uploading", "正在发送文件...")
         file_size = pdf_path.stat().st_size
-        print(f"[MinerU] 上传文件大小: {file_size // 1024 // 1024}MB")
+        logger.info(f"[MinerU] 上传文件大小: {file_size // 1024 // 1024}MB")
         try:
             with open(pdf_path, "rb") as f:
                 upload_timeout = max(300, file_size // (1024 * 1024) * 20)
                 r = requests.put(upload_url, data=f, timeout=upload_timeout, verify=_SSL_VERIFY)
         except Exception as upload_err:
-            print(f"[MinerU] 上传异常: {pdf_path.name}, {type(upload_err).__name__}: {upload_err}")
+            logger.error(f"[MinerU] 上传异常: {pdf_path.name}, {type(upload_err).__name__}: {upload_err}")
             return None, None
         if r.status_code not in (200, 201, 203, 204):
             body = r.text[:300] if r.text else ""
-            print(f"[MinerU] 上传失败: {pdf_path.name}, HTTP {r.status_code}, 响应: {body}")
+            logger.error(f"[MinerU] 上传失败: {pdf_path.name}, HTTP {r.status_code}, 响应: {body}")
             return None, None
-        print(f"[MinerU] 上传成功: {pdf_path.name}")
+        logger.info(f"[MinerU] 上传成功: {pdf_path.name}")
 
         # 3. 等待云端处理
         if progress_cb:
@@ -889,7 +892,7 @@ def _do_mineru_convert(
                 resp_json = r.json()
                 # 调试日志：打印完整响应（仅首次）
                 if waited == 0:
-                    print(f"[MinerU] 轮询响应: {json.dumps(resp_json, ensure_ascii=False)[:500]}")
+                    logger.info(f"[MinerU] 轮询响应: {json.dumps(resp_json, ensure_ascii=False)[:500]}")
                 data = resp_json.get("data", {})
                 results = data.get("extract_result", [])
                 if not results:
@@ -900,7 +903,7 @@ def _do_mineru_convert(
 
                 state = results[0].get("state")
                 if state == "done":
-                    print(f"[MinerU] 转换完成 {pdf_path.name}，下载结果中...")
+                    logger.info(f"[MinerU] 转换完成 {pdf_path.name}，下载结果中...")
                     if progress_cb:
                         progress_cb("processing", "正在识别文本内容...")
 
@@ -912,7 +915,7 @@ def _do_mineru_convert(
                     zip_path = temp_dir / f"{stem}.zip"
                     zip_url = results[0].get("full_zip_url", "")
                     if not zip_url:
-                        print(f"[MinerU] 未找到 full_zip_url，响应: {json.dumps(results[0], ensure_ascii=False)[:300]}")
+                        logger.info(f"[MinerU] 未找到 full_zip_url，响应: {json.dumps(results[0], ensure_ascii=False)[:300]}")
                         shutil.rmtree(temp_dir, ignore_errors=True)
                         return None, None
                     zip_resp = requests.get(zip_url, timeout=120, verify=_SSL_VERIFY)
@@ -972,25 +975,25 @@ def _do_mineru_convert(
                         target_md = output_dir / f"{stem}.md"
                         target_md.write_text(text, encoding="utf-8")
                         return text, target_images_dir
-                    print(f"[MinerU] 结果文件过小或缺失: {pdf_path.name}")
+                    logger.info(f"[MinerU] 结果文件过小或缺失: {pdf_path.name}")
                     return None, None
                 elif state == "failed":
                     err_info = results[0].get("err_msg") or results[0].get("task_status_msg") or "未知错误"
-                    print(f"[MinerU] 云端转换失败: {pdf_path.name}, {err_info}")
+                    logger.error(f"[MinerU] 云端转换失败: {pdf_path.name}, {err_info}")
                     return None, None
 
                 time.sleep(poll_interval); waited += poll_interval
 
             except Exception as inner_e:
-                print(f"[MinerU] 轮询异常: {inner_e}")
+                logger.error(f"[MinerU] 轮询异常: {inner_e}")
                 time.sleep(poll_interval); waited += poll_interval
                 continue
 
-        print(f"[MinerU] 转换超时: {pdf_path.name}")
+        logger.info(f"[MinerU] 转换超时: {pdf_path.name}")
         return None, None
 
     except Exception as e:
-        print(f"[MinerU] 异常: {pdf_path.name}, {e}")
+        logger.error(f"[MinerU] 异常: {pdf_path.name}, {e}")
         return None, None
 
 
@@ -1073,7 +1076,7 @@ def get_evidence_text(
         return text, None
 
     # 3. 转换失败
-    print(f"[转换失败] 所有引擎均失败: {pdf.name}")
+    logger.error(f"[转换失败] 所有引擎均失败: {pdf.name}")
     return None, None
 
 
@@ -1091,7 +1094,7 @@ def _convert_with_paddleocr(
         from paddleocr_remote import get_daily_quota_status, paddleocr_convert
         quota = get_daily_quota_status()
         if quota["exceeded"]:
-            print(f"[PaddleOCR] 每日配额已用完（{quota['used_pages']}/{quota['total_limit']} 页），回退到 MinerU")
+            logger.info(f"[PaddleOCR] 每日配额已用完（{quota['used_pages']}/{quota['total_limit']} 页），回退到 MinerU")
             return _mineru_convert(pdf, out, progress_cb=progress_cb)
     except ImportError:
         pass
@@ -1103,13 +1106,13 @@ def _convert_with_paddleocr(
         if result and result[0]:
             return result
         # 转换失败（非配额原因），回退到 MinerU
-        print("[PaddleOCR] 转换返回空结果，回退到 MinerU")
+        logger.info("[PaddleOCR] 转换返回空结果，回退到 MinerU")
         return _mineru_convert(pdf, out, progress_cb=progress_cb)
     except ImportError:
-        print("[PaddleOCR] 模块未找到，回退到 MinerU")
+        logger.info("[PaddleOCR] 模块未找到，回退到 MinerU")
         return _mineru_convert(pdf, out, progress_cb=progress_cb)
     except Exception as e:
-        print(f"[PaddleOCR] 转换异常: {e}，回退到 MinerU")
+        logger.error(f"[PaddleOCR] 转换异常: {e}，回退到 MinerU")
         try:
             return _mineru_convert(pdf, out, progress_cb=progress_cb)
         except Exception:
