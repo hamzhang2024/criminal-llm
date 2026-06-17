@@ -129,13 +129,12 @@ def validate_path(base_dir: Path, user_input: str) -> Path:
     resolved_base = base_dir.resolve()
     resolved_target = (base_dir / user_path).resolve()
 
-    # 使用字符串比较检查是否越界
-    # 注意：resolve() 可能改变路径表示形式（如大小写），需要规范化
-    base_str = str(resolved_base)
-    target_str = str(resolved_target)
-
-    if not target_str.startswith(base_str):
-        logger.warning(f"[安全] 路径越界尝试: 基准={base_str}, 目标={target_str}")
+    # 使用 is_relative_to 做路径边界检查（Py3.9+），避免字符串前缀匹配的边界 bug
+    # （如 base=/safe/dir 会错误放行 /safe/dir-backdoor）
+    try:
+        resolved_target.relative_to(resolved_base)
+    except ValueError:
+        logger.warning(f"[安全] 路径越界尝试: 基准={resolved_base}, 目标={resolved_target}")
         raise HTTPException(status_code=400, detail="路径越界，不允许访问基准目录以外的文件")
 
     return resolved_target
@@ -168,9 +167,9 @@ def validate_case_path(case_id: str) -> Path:
     if not cases_dir.exists():
         raise HTTPException(status_code=404, detail="案件目录不存在")
 
-    # 查找匹配的案件文件夹
+    # 查找匹配的案件文件夹（严格匹配 case_id，防止 case_abc 匹配到 case_abcdef）
     for case_folder in cases_dir.iterdir():
-        if case_folder.is_dir() and case_folder.name.startswith(case_id):
+        if case_folder.is_dir() and case_folder.name == case_id:
             return case_folder
 
     raise HTTPException(status_code=404, detail="案件不存在")

@@ -15,13 +15,35 @@ import pytest
 
 
 def _reload_data_modules():
-    """重载数据目录相关模块，使新的 CRIMINAL_LLM_DATA_DIR 环境变量生效"""
-    import _bootstrap
-    importlib.reload(_bootstrap)
-    import config
-    importlib.reload(config)
-    import case_manager
-    importlib.reload(case_manager)
+    """重载数据目录相关模块，使新的 CRIMINAL_LLM_DATA_DIR 环境变量生效
+
+    递归重载所有在导入时捕获 DATA_DIR/CASES_DIR 的模块，
+    避免某些模块仍指向旧路径导致测试隔离失败。
+    """
+    # 按依赖顺序重载：先底层（_bootstrap/config），再上层
+    reload_order = [
+        '_bootstrap',
+        'config',
+        'config_manager',
+        'case_manager',
+        'case_manager_helpers',
+        'analyzer_api',
+        'analyzer_api_helpers',
+        'stage_api',
+        'stage_api_parsers',
+        'pipeline_api',
+        'process_api',
+        'data_dir_api',
+        'llm_client',
+        'llm_client_config',
+    ]
+    for mod_name in reload_order:
+        if mod_name in sys.modules:
+            try:
+                importlib.reload(sys.modules[mod_name])
+            except Exception:
+                # 某些模块可能因循环依赖重载失败，跳过
+                pass
 
 
 @pytest.fixture

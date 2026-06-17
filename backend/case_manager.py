@@ -402,13 +402,28 @@ async def upload_files(case_id: str, files: list[UploadFile] = File(...)):
 
     uploaded_files = []
     for file in files:
-        # 检查文件大小
-        file_content = await file.read()
-        if len(file_content) > MAX_FILE_SIZE:
+        # 先通过 Content-Length 头快速校验大小，避免超大文件载入内存导致 OOM
+        declared_size = file.size
+        if declared_size is not None and declared_size > MAX_FILE_SIZE:
             raise HTTPException(
                 status_code=413,
                 detail=f"文件过大，最大支持 {MAX_FILE_SIZE // (1024*1024)}MB"
             )
+
+        # 流式读取并累加，超出阈值立即中止
+        file_content = bytearray()
+        chunk_size = 1024 * 1024  # 1MB
+        while True:
+            chunk = await file.read(chunk_size)
+            if not chunk:
+                break
+            file_content.extend(chunk)
+            if len(file_content) > MAX_FILE_SIZE:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"文件过大，最大支持 {MAX_FILE_SIZE // (1024*1024)}MB"
+                )
+        file_content = bytes(file_content)
 
         # 保持原始文件名
         original_name = file.filename or "unknown.pdf"
@@ -424,12 +439,10 @@ async def upload_files(case_id: str, files: list[UploadFile] = File(...)):
         if not original_name.lower().endswith('.pdf'):
             raise HTTPException(status_code=400, detail=f"仅支持 PDF 文件: {original_name}")
 
-        # 安全验证：检查文件实际类型（MIME 类型）
-        # 前 8 字节足以识别 PDF 文件头
-        if len(file_content) >= 8:
-            pdf_header = file_content[:8]
-            if pdf_header != b'%PDF-1.' and not pdf_header.startswith(b'%PDF-'):
-                logger.warning(f"[安全] 文件类型不匹配: {original_name}, header={pdf_header[:20]}")
+        # 安全验证：检查文件实际类型（PDF 文件头）
+        if len(file_content) >= 5:
+            if not file_content.startswith(b'%PDF-'):
+                logger.warning(f"[安全] 文件类型不匹配: {original_name}, header={file_content[:20]}")
                 raise HTTPException(status_code=400, detail=f"文件内容不是有效的 PDF: {original_name}")
 
         file_path = original_dir / original_name

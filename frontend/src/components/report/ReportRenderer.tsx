@@ -21,7 +21,6 @@ const DOMPURIFY_CONFIG = {
   ALLOWED_ATTR: [
     'href', 'src', 'alt', 'title', 'class', 'id',
     'data-mdfile', 'data-evidence-id',
-    'style',  // 保留内联样式（Markdown 渲染需要）
   ],
   ALLOW_DATA_ATTR: true,  // 允许 data-* 属性
 }
