@@ -221,7 +221,7 @@ export function CaseDetailPage() {
           // pending 或 idle 状态继续等待
         } catch (e) { clearInterval(convertPollRef.current!); convertPollRef.current = null; setProcessing(false); setError(e instanceof Error ? e.message : '转换失败') }
       }, 2000)
-      setTimeout(() => { if (convertPollRef.current) { clearInterval(convertPollRef.current); convertPollRef.current = null; setProcessing(false); setProgress('⚠️ 转换超时，请稍后刷新') } }, 900000)
+      setTimeout(() => { if (convertPollRef.current) { clearInterval(convertPollRef.current); convertPollRef.current = null; setProcessing(false); setProgress('⚠️ 转换超时（2小时），后端可能仍在运行，请稍后刷新查看结果') } }, 7200000)
     } catch (err) { setError(err instanceof Error ? err.message : '转换失败'); setProgress(''); setProcessing(false) }
   }, [caseId])
 
@@ -349,7 +349,7 @@ export function CaseDetailPage() {
         }
       } catch { extractPollFailuresRef.current++; if (extractPollFailuresRef.current >= 3) { if (extractPollRef.current) { clearInterval(extractPollRef.current); extractPollRef.current = null } setProcessing(false); setError('提取过程出错（连续 3 次轮询失败）'); setProgress('') } }
     }, 3000)
-    setTimeout(() => { if (extractPollRef.current) { clearInterval(extractPollRef.current); extractPollRef.current = null; setProcessing(false); setProgress('⚠️ 提取超时') } }, 900000)
+    setTimeout(() => { if (extractPollRef.current) { clearInterval(extractPollRef.current); extractPollRef.current = null; setProcessing(false); setProgress('⚠️ 提取超时（2小时），后端可能仍在运行，请稍后刷新查看结果') } }, 7200000)
   }, [caseId])
 
   const handleConvertAndExtract = useCallback(async () => {
@@ -396,7 +396,7 @@ export function CaseDetailPage() {
             // pending 或 idle 状态继续等待
           } catch (e) { clearInterval(pi); reject(e) }
         }, 2000)
-        setTimeout(() => { clearInterval(pi); reject(new Error('转换超时')) }, 900000)
+        setTimeout(() => { clearInterval(pi); reject(new Error('转换超时（2小时），后端可能仍在运行')) }, 7200000)
       })
       setProgress('正在转换并提取证据（第 2/2 步：提取证据）...')
       await api.extractEvidence(caseId)
@@ -411,7 +411,7 @@ export function CaseDetailPage() {
             }
           } catch { }
         }, 3000)
-        setTimeout(() => { clearInterval(pi); reject(new Error('提取超时')) }, 900000)
+        setTimeout(() => { clearInterval(pi); reject(new Error('提取超时（2小时），后端可能仍在运行')) }, 7200000)
       })
       setCurrentStep(2); setProcessing(false)
     } catch (err) { setError(err instanceof Error ? err.message : '操作失败'); setProgress(''); setProcessing(false) }

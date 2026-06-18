@@ -1624,7 +1624,10 @@ async def _do_extract_evidence(
 
             # 卡死检测监视器：如果超过 N 秒没有任何文件完成，发出警告
             last_progress_time = time.time()
-            stall_threshold = 600  # 10 分钟无进展视为可能卡死（大文件 LLM 可能需要 5-8 分钟）
+            # 阈值需大于单文件 LLM 超时（600s），大案卷 LLM 可能 8-10 分钟，
+            # 设 1200s（20 分钟）避免误杀正常长耗时任务。心跳每 30s 更新本时间戳，
+            # 只要 LLM 在正常等待就不会触发；仅当心跳也卡住（event loop 阻塞等异常）才触发。
+            stall_threshold = 1200
 
             async def stall_detector():
                 """检测长时间无进展，自动取消任务"""
@@ -1643,7 +1646,7 @@ async def _do_extract_evidence(
                             task["error_details"] = [{
                                 "type": "stall_cancelled",
                                 "reason": "stall_detected",
-                                "message": f"超过 {stall_threshold // 60} 分钟无进展自动取消（可能是 LLM 响应卡住或大文件处理超时）",
+                                "message": f"超过 {stall_threshold // 60} 分钟无进展自动取消（可能是 LLM 响应卡住、event loop 阻塞或大文件处理超时）",
                                 "hint": "建议检查 LLM 服务状态，或降低 evidence_concurrency 并发数后重试",
                                 "recoverable": True,
                             }]

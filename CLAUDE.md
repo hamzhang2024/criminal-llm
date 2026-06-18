@@ -374,7 +374,7 @@ python3 -m uvicorn main:app --host 0.0.0.0 --port 8000
 - **LLM 请求结构**：采用 system（角色 + 完整提取规则合并为一条）+ user（文件名 + 文件内容）两层结构。合并是为兼容部分模型的 assistant role 问题；变化的文件内容放在 user 消息最后以利于 prompt cache 命中。
 - **重试分层**：`llm_client` 负责网络层重试（3 次，5s→10s→15s），`_extract_single_file_with_tracking` 负责业务层重试（2 次，10s→20s），两者不重叠。网络层重试耗尽后抛出 `LLMRetryExhaustedError`，上层识别后不再重复重试
 - **信号量释放**：重试等待在信号量之外执行，其他文件不阻塞
-- **卡死检测**：10 分钟无进展自动取消（stall_threshold=600），10 秒轮询，LLM 调用成功后立即更新心跳
+- **卡死检测**：20 分钟无进展自动取消（stall_threshold=1200，大于单文件 LLM 600s 超时避免误杀），10 秒轮询，心跳每 30s 更新时间戳
 
 ### 后台任务
 - PDF 转 MD 使用 `background_tasks.py` 的 `ThreadPoolExecutor(max_workers=10)` 异步并发执行
@@ -413,7 +413,7 @@ python3 -m uvicorn main:app --host 0.0.0.0 --port 8000
 
 1. **MinerU 配额** — 每日 1000 页免费，超额后需排队；转换超时设为 1 小时（3600 秒）
 2. **DMG 打包** — `bundle_dmg.sh` 对中文文件名有兼容问题，需用 `hdiutil create` 手动创建
-3. ~~**证据提取卡死**~~ — 已修复：600s 超时保护 + 2 次重试 + 10 分钟无进展自动取消（stall_threshold=600）
+3. ~~**证据提取卡死**~~ — 已修复：600s 超时保护 + 2 次重试 + 20 分钟无进展自动取消（stall_threshold=1200）
 4. **PaddleOCR 配额** — 每日 1000 页免费，通过 `/api/config` 返回 `paddleocr_quota` 状态
 
 ---
