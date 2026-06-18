@@ -214,31 +214,44 @@ def _parse_person_relation(content: str) -> dict:
 def _detect_edge_type(label: str) -> str:
     """根据边标签推断关系类型
 
+    基于关键词匹配，按优先级检查。LLM 输出多样，关键词尽量覆盖同义表述，
+    无法覆盖的归为 other（前端用灰色显示，不影响图谱结构）。
+
     检查顺序：participation（纠集/指使）优先于 cooperation（同事/雇佣），
     因为"纠集同事"这类标签中行为动词比关系性质更重要。
     """
     if not label:
         return "other"
-    # 纠集/指使/共犯关系（优先检查，因为"纠集同事"含"同事"但本质是纠集行为）
-    if any(k in label for k in ["纠集", "指使", "安排", "召集", "招募", "共犯", "同案"]):
+    # 纠集/指使/共犯关系（优先检查，行为动词优先）
+    if any(k in label for k in [
+        "纠集", "指使", "指派", "安排", "召集", "招募", "共犯", "同案",
+        "下达", "分配", "分派", "派遣", "授意", "主使", "参赌", "参股",
+    ]):
         return "participation"
     # 合作/雇佣/业务关系
-    if any(k in label for k in ["雇佣", "雇用", "老板", "上级", "下属", "同事", "合伙", "合作", "业务"]):
+    if any(k in label for k in [
+        "雇佣", "雇用", "老板", "上级", "下属", "同事", "合伙", "合作", "业务",
+        "协作", "对接", "统筹", "共管", "协调", "配合", "联络", "代理", "接口",
+    ]):
         return "cooperation"
-    # 亲属/家庭关系
-    if any(k in label for k in ["夫妻", "兄弟", "姐妹", "父子", "母女", "亲属", "家人", "父亲", "母亲", "儿子", "女儿", "妻子", "丈夫"]):
+    # 亲属/家庭关系（扩充亲属称谓）
+    if any(k in label for k in [
+        "夫妻", "兄弟", "姐妹", "父子", "母女", "亲属", "家人", "父亲", "母亲",
+        "儿子", "女儿", "妻子", "丈夫", "舅", "甥", "叔", "侄", "婆", "翁",
+        "岳", "婶", "姨", "表", "堂",
+    ]):
         return "family"
     # 朋友/社交关系
-    if any(k in label for k in ["朋友", "好友", "认识", "邻里", "邻居"]):
+    if any(k in label for k in ["朋友", "好友", "认识", "邻里", "邻居", "旧识", "相识"]):
         return "friendship"
     # 冲突/侵害关系
-    if any(k in label for k in ["冲突", "侵害", "殴打", "伤害", "纠纷", "对抗", "被害"]):
+    if any(k in label for k in ["冲突", "侵害", "殴打", "伤害", "纠纷", "对抗", "被害", "打架", "斗殴"]):
         return "conflict"
     # 介绍关系
-    if "介绍" in label:
+    if "介绍" in label or "引荐" in label:
         return "introduction"
-    # 债务/金钱关系
-    if any(k in label for k in ["债务", "借款", "欠款", "转账", "金钱"]):
+    # 债务/金钱关系（扩充交易/分润等）
+    if any(k in label for k in ["债务", "借款", "欠款", "转账", "金钱", "交易", "换钱", "分润", "分成", "薪资", "工资", "报酬", "费用"]):
         return "financial"
     return "other"
 
