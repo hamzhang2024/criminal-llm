@@ -5,6 +5,7 @@
 生成 Mermaid 图谱（人物节点 + 共现/矛盾/引用边）。
 供 stage_2 人物关系分析复用。
 """
+import hashlib
 import json
 import logging
 import re
@@ -76,28 +77,36 @@ def generate_evidence_graph(evidence_dir: Path, case_id: str = "") -> Dict[str, 
                 pair = tuple(sorted([names_in_ev[i], names_in_ev[j]]))
                 co_occurrence[pair] = co_occurrence.get(pair, 0) + 1
 
-    # ── 第3步：构建矛盾边（contradiction_hints 非空的证据之间） ──
+    # ── 第3步：构建矛盾边（contradiction_hints 中提到的人物之间） ──
+    # 矛盾边为人物↔人物（hint 中提到的两人之间），避免引用未定义的证据节点
     contradiction_edges: List[dict] = []
     for ev in evidence_list:
         hint = (ev.get("contradiction_hints") or "").strip()
         if not hint or hint == "无":
             continue
-        ev_id = ev.get("id", 0)
-        # 从 hint 中提取提到的人名，建立矛盾自环或与相关人物的边
         mentioned = [p for p in all_persons if p in hint]
-        for p in mentioned:
-            contradiction_edges.append({
-                "from": p, "to": f"ev{ev_id}", "type": "contradiction", "label": "矛盾提示"
-            })
+        # 两两组合建立矛盾边
+        for i in range(len(mentioned)):
+            for j in range(i + 1, len(mentioned)):
+                contradiction_edges.append({
+                    "from": mentioned[i], "to": mentioned[j], "type": "contradiction", "label": "矛盾提示"
+                })
 
-    # ── 第4步：构建同人多笔关联边 ──
+    # ── 第4步：构建同人多笔关联边（人物节点之间的关联） ──
+    # 关联边的两端都是该被讯问人，渲染为人物节点的自指标注
     relation_edges: List[dict] = []
     for ev in evidence_list:
         related = ev.get("related_evidence_ids", []) or []
-        ev_id = ev.get("id", 0)
-        for other_id in related:
+        if not related:
+            continue
+        persons_raw = ev.get("persons", "") or ""
+        if not persons_raw.strip():
+            continue
+        first_person = persons_raw.replace("，", ",").split(",")[0].strip()
+        if first_person and first_person in all_persons:
             relation_edges.append({
-                "from": f"ev{ev_id}", "to": f"ev{other_id}", "type": "related", "label": "同人多笔"
+                "from": first_person, "to": first_person, "type": "related",
+                "label": f"多笔笔录({len(related)+1}份)"
             })
 
     # ── 第5步：生成 Mermaid 图谱 ──
@@ -105,14 +114,19 @@ def generate_evidence_graph(evidence_dir: Path, case_id: str = "") -> Dict[str, 
     top_persons = sorted(frequent_persons.items(), key=lambda x: -len(x[1]))[:30]
     top_person_names = [p[0] for p in top_persons]
 
+    def _escape_label(s: str) -> str:
+        """转义 Mermaid label 中的特殊字符"""
+        return s.replace('"', '&quot;').replace(']', '&#93;').replace('[', '&#91;')
+
     mermaid_lines = ["graph TD"]
-    # 人物节点
+    # 人物节点（label 转义）
     for name in top_person_names:
         safe_id = _safe_id(name)
         ev_count = len(frequent_persons[name])
-        mermaid_lines.append(f'    {safe_id}["{name}<br/><small>{ev_count}份证据</small>"]')
+        escaped = _escape_label(name)
+        mermaid_lines.append(f'    {safe_id}["{escaped}<br/><small>{ev_count}份证据</small>"]')
 
-    # 共现边（只画共现 >=2 次的）
+    # 共现边（只画共现 >=2 次的，且两端都在 top_person_names）
     mermaid_lines.append("")
     mermaid_lines.append("    %% 共现关系")
     co_edges_added = 0
@@ -126,12 +140,28 @@ def generate_evidence_graph(evidence_dir: Path, case_id: str = "") -> Dict[str, 
         if co_edges_added >= 50:  # 限制边数量
             break
 
-    # 矛盾边
-    if contradiction_edges:
-        mermaid_lines.append("")
-        mermaid_lines.append("    %% 矛盾提示")
-        for e in contradiction_edges[:20]:
-            mermaid_lines.append(f'    {_safe_id(e["from"])} -.->|矛盾| {e["to"]}')
+    # 矛盾边（人物↔人物，过滤到 top_person_names）
+    contradiction_rendered = 0
+    for e in contradiction_edges:
+        if e["from"] not in top_person_names or e["to"] not in top_person_names:
+            continue
+        mermaid_lines.append(f'    {_safe_id(e["from"])} -.->|矛盾| {_safe_id(e["to"])}')
+        contradiction_rendered += 1
+        if contradiction_rendered >= 20:
+            break
+
+    # 关联边（同人多笔，渲染为自指虚线标注）
+    relation_rendered = 0
+    for e in relation_edges:
+        if e["from"] not in top_person_names:
+            continue
+        escaped_label = _escape_label(e["label"])
+        from_id = _safe_id(e["from"])
+        to_id = _safe_id(e["to"])
+        mermaid_lines.append(f'    {from_id} -.->|{escaped_label}| {to_id}')
+        relation_rendered += 1
+        if relation_rendered >= 20:
+            break
 
     mermaid = "\n".join(mermaid_lines)
 
@@ -140,8 +170,8 @@ def generate_evidence_graph(evidence_dir: Path, case_id: str = "") -> Dict[str, 
         "persons_extracted": len(person_to_evidence),
         "frequent_persons": len(frequent_persons),
         "co_occurrence_edges": co_edges_added,
-        "contradiction_edges": len(contradiction_edges),
-        "relation_edges": len(relation_edges),
+        "contradiction_edges": contradiction_rendered,
+        "relation_edges": relation_rendered,
     }
 
     logger.info(f"[证据图谱] case={case_id} 人物={len(frequent_persons)} 共现边={co_edges_added} 矛盾边={len(contradiction_edges)}")
@@ -150,8 +180,10 @@ def generate_evidence_graph(evidence_dir: Path, case_id: str = "") -> Dict[str, 
         "case_id": case_id,
         "mermaid": mermaid,
         "nodes": [{"id": _safe_id(n), "label": n, "evidence_count": len(frequent_persons[n])} for n in top_person_names],
+        # edges 仅返回 top_person_names 之间的共现边，与 Mermaid 渲染一致
         "edges": [{"from": _safe_id(a), "to": _safe_id(b), "type": "co_occurrence", "weight": c}
-                  for (a, b), c in co_occurrence.items() if c >= 2][:50],
+                  for (a, b), c in co_occurrence.items()
+                  if c >= 2 and a in top_person_names and b in top_person_names][:50],
         "stats": stats,
     }
 
@@ -159,5 +191,4 @@ def generate_evidence_graph(evidence_dir: Path, case_id: str = "") -> Dict[str, 
 def _safe_id(name: str) -> str:
     """将人名转为安全的 Mermaid 节点 ID"""
     # 用 hash 保证唯一且安全
-    import hashlib
     return "p" + hashlib.md5(name.encode("utf-8")).hexdigest()[:8]

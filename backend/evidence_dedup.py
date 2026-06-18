@@ -37,11 +37,19 @@ def _normalize_name(name: str) -> str:
 
 
 def _dedup_key(ev: Dict[str, Any]) -> str:
-    """生成去重哈希键（name 规范化 + type + page_range）"""
+    """生成去重哈希键
+
+    当 page_range 为空时，加入 key_facts 前 50 字符避免同名同类型不同内容的证据被误判为重复。
+    """
     name = _normalize_name(ev.get("name", ""))
     ev_type = (ev.get("type") or "").strip()
     page_range = (ev.get("page_range") or "").strip()
-    raw = f"{name}|{ev_type}|{page_range}"
+    # page_range 为空时用 key_facts 前缀增强区分
+    if not page_range:
+        key_facts_prefix = (ev.get("key_facts") or "").strip()[:50]
+        raw = f"{name}|{ev_type}|{key_facts_prefix}"
+    else:
+        raw = f"{name}|{ev_type}|{page_range}"
     return hashlib.md5(raw.encode("utf-8")).hexdigest()
 
 
@@ -61,8 +69,11 @@ def _extract_interrogatee_and_date(name: str, persons: str) -> tuple:
     m = re.search(r'[（(]([^）)]+)[）)]', name or "")
     if m and not interrogatee:
         candidate = m.group(1).strip()
+        # 过滤日期、次数等非人名内容
         if candidate and len(candidate) <= 20 and "次" not in candidate:
-            interrogatee = candidate
+            # 排除纯日期/数字内容（如 2024.10.29、20241029）
+            if not re.search(r'\d{4}', candidate):
+                interrogatee = candidate
 
     # 日期：从 page_range 或名称中找日期模式
     date_str = ""

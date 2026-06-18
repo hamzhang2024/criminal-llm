@@ -12,7 +12,7 @@ import re
 import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel
 
@@ -2005,13 +2005,41 @@ async def get_evidence_index(case_id: str):
     return json.loads(index_file.read_text(encoding="utf-8"))
 
 
+class EvidenceReviewRequest(BaseModel):
+    """证据校对请求体（带字段长度限制，防止滥用）"""
+    name: Optional[str] = None
+    type: Optional[str] = None
+    persons: Optional[str] = None
+    key_facts: Optional[str] = None
+    contradiction_hints: Optional[str] = None
+
+    # 字段长度约束
+    @classmethod
+    def validate_lengths(cls, values: dict) -> dict:
+        if values.get("name") and len(values["name"]) > 100:
+            raise HTTPException(status_code=400, detail="证据名称过长（最大 100 字符）")
+        if values.get("type") and len(values["type"]) > 50:
+            raise HTTPException(status_code=400, detail="证据类型过长（最大 50 字符）")
+        if values.get("persons") and len(values["persons"]) > 500:
+            raise HTTPException(status_code=400, detail="涉案人员过长（最大 500 字符）")
+        if values.get("key_facts") and len(values["key_facts"]) > 2000:
+            raise HTTPException(status_code=400, detail="关键事实过长（最大 2000 字符）")
+        if values.get("contradiction_hints") and len(values["contradiction_hints"]) > 2000:
+            raise HTTPException(status_code=400, detail="矛盾提示过长（最大 2000 字符）")
+        return values
+
+
 @router.put("/{case_id}/evidence/{evidence_id}/review")
-async def review_evidence(case_id: str, evidence_id: int, body: Dict[str, Any]):
+async def review_evidence(case_id: str, evidence_id: int, body: EvidenceReviewRequest):
     """人工校对单条证据
 
     允许编辑 name/type/persons/key_facts/contradiction_hints 字段，
     同步更新 index.json 和证据 MD 文件的头部表格。
     """
+    # 转为 dict 并校验长度
+    body_dict = body.model_dump(exclude_none=True)
+    body_dict = EvidenceReviewRequest.validate_lengths(body_dict)
+
     case_path = find_case_path(case_id)
     if not case_path:
         raise HTTPException(status_code=404, detail="案件不存在")
@@ -2036,9 +2064,9 @@ async def review_evidence(case_id: str, evidence_id: int, body: Dict[str, Any]):
     if not target_ev:
         raise HTTPException(status_code=404, detail=f"证据 {evidence_id} 不存在")
 
-    # 可编辑字段白名单
+    # 可编辑字段白名单（Pydantic 模型已限制，这里二次过滤防注入）
     editable_fields = {"name", "type", "persons", "key_facts", "contradiction_hints"}
-    updates = {k: v for k, v in body.items() if k in editable_fields}
+    updates = {k: v for k, v in body_dict.items() if k in editable_fields}
 
     if not updates:
         raise HTTPException(status_code=400, detail="无可更新字段（允许：name/type/persons/key_facts/contradiction_hints）")
@@ -2051,33 +2079,45 @@ async def review_evidence(case_id: str, evidence_id: int, body: Dict[str, Any]):
 
     # 重写证据 MD 文件的头部表格（保持下游解析稳定）
     md_file_name = target_ev.get("md_file", "")
-    if md_file_name:
-        md_path = evidence_dir / md_file_name
-        if md_path.exists():
-            try:
-                md_text = md_path.read_text(encoding="utf-8")
-                # 重写头部：# 名称 + 表格 + 后续内容（保留 ## 关联信息 之后的原文）
-                new_name = target_ev.get("name", "")
-                new_type = target_ev.get("type", "")
-                new_source = target_ev.get("source", "")
-                new_page = target_ev.get("page_range", "")
-                new_persons = target_ev.get("persons", "")
-                new_key_facts = target_ev.get("key_facts", "")
-                new_hints = target_ev.get("contradiction_hints", "")
+    # 路径安全校验：md_file_name 必须是纯文件名，不能含路径分隔符或跳转
+    md_path = None
+    if md_file_name and "/" not in md_file_name and "\\" not in md_file_name and ".." not in md_file_name:
+        candidate = evidence_dir / md_file_name
+        # 二次校验：解析后路径必须在 evidence_dir 内
+        try:
+            candidate.resolve().relative_to(evidence_dir.resolve())
+            if candidate.exists():
+                md_path = candidate
+        except ValueError:
+            logger.warning(f"[证据校对] 路径越界: {md_file_name}")
+    elif md_file_name:
+        logger.warning(f"[证据校对] 非法 md_file 路径: {md_file_name}")
 
-                # 保留原文从"## 关联信息"开始的内容
-                preserved = ""
-                marker = "## 关联信息"
-                marker_idx = md_text.find(marker)
-                if marker_idx >= 0:
-                    preserved = md_text[marker_idx:]
-                else:
-                    # 没有标准标记，保留"---"之后的内容（LLM 原始输出）
-                    sep_idx = md_text.find("\n---\n")
-                    if sep_idx >= 0:
-                        preserved = md_text[sep_idx:]
+    if md_path:
+        try:
+            md_text = md_path.read_text(encoding="utf-8")
+            new_name = target_ev.get("name", "")
+            new_type = target_ev.get("type", "")
+            new_source = target_ev.get("source", "")
+            new_page = target_ev.get("page_range", "")
+            new_persons = target_ev.get("persons", "")
+            new_key_facts = target_ev.get("key_facts", "")
+            new_hints = target_ev.get("contradiction_hints", "")
 
-                new_md = f"""# {new_name}
+            # 保留原文从"## 关联信息"开始的内容（含后续所有段落）
+            preserved = ""
+            marker = "## 关联信息"
+            marker_idx = md_text.find(marker)
+            if marker_idx >= 0:
+                preserved = md_text[marker_idx:]
+            else:
+                # 降级格式（原始文件）：保留"---"之后的内容
+                sep_idx = md_text.find("\n---\n")
+                if sep_idx >= 0:
+                    preserved = md_text[sep_idx:]
+
+            # 组装新 MD：标题 + 表格 + 保留段落
+            new_md = f"""# {new_name}
 
 | 项目 | 内容 |
 |------|------|
@@ -2087,20 +2127,29 @@ async def review_evidence(case_id: str, evidence_id: int, body: Dict[str, Any]):
 | **涉案人员** | {new_persons or '未识别'} |
 
 {preserved}"""
-                # 如果保留部分没有关键事实/矛盾提示段落，补充校对后的内容
-                if "## 关键事实" not in new_md and new_key_facts:
-                    # 在关联信息段后插入
-                    insert_pos = new_md.find("## 关联信息")
-                    if insert_pos >= 0:
-                        line_end = new_md.find("\n", insert_pos)
-                        # 找到关联信息段落后的空行
-                        next_section = new_md.find("\n## ", line_end)
-                        if next_section >= 0:
-                            new_md = new_md[:next_section] + f"\n\n## 关键事实（已校对）\n\n{new_key_facts}" + new_md[next_section:]
 
-                md_path.write_text(new_md, encoding="utf-8")
-            except Exception as e:
-                logger.warning(f"[证据校对] 重写 MD 文件失败 {md_file_name}: {e}")
+            # 替换"## 关键事实"/"## 矛盾提示"段落内容（按段落标记定位）
+            def _replace_section(text: str, header: str, new_content: str) -> str:
+                """替换 Markdown 中指定 ## 段落的内容"""
+                idx = text.find(header)
+                if idx < 0:
+                    return text  # 段落不存在，不处理
+                line_end = text.find("\n", idx)
+                if line_end < 0:
+                    line_end = len(text)
+                next_section = text.find("\n## ", line_end)
+                if next_section < 0:
+                    next_section = len(text)
+                return text[:line_end] + f"\n\n{new_content}" + text[next_section:]
+
+            if new_key_facts:
+                new_md = _replace_section(new_md, "## 关键事实", new_key_facts)
+            if new_hints:
+                new_md = _replace_section(new_md, "## 矛盾提示", new_hints)
+
+            md_path.write_text(new_md, encoding="utf-8")
+        except Exception as e:
+            logger.warning(f"[证据校对] 重写 MD 文件失败 {md_file_name}: {e}")
 
     # 写回 index.json
     index_file.write_text(json.dumps(index_data, ensure_ascii=False, indent=2), encoding="utf-8")
