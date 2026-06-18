@@ -270,17 +270,16 @@ export function SettingsPage() {
       const res = await fetch(`${API_BASE}/config`)
       const data = await res.json()
       setStatus(data)
+      // 后端出于安全考虑不返回敏感字段（token/api_key）明文，仅返回布尔值。
+      // 这里只回填非敏感字段；敏感字段通过 status 的布尔值显示已配置状态（绿勾），
+      // 用户如需修改才在 input 中输入，留空表示保持后端原值。
       const updates: Partial<ConfigForm> = {}
       if (data.pdf_engine) updates.pdf_engine = data.pdf_engine
-      if (data.mineru_token_value) updates.mineru_token = data.mineru_token_value
       if (data.mineru_mode) updates.mineru_mode = data.mineru_mode
       if (data.mineru_local_url) updates.mineru_local_url = data.mineru_local_url
-      if (data.paddleocr_token_value) updates.paddleocr_token = data.paddleocr_token_value
-      if (data.llm_api_key_value) updates.llm_api_key = data.llm_api_key_value
       if (data.llm_base_url) updates.llm_base_url = data.llm_base_url
       if (data.llm_model) updates.llm_model = data.llm_model
       if (data.evidence_concurrency) updates.evidence_concurrency = data.evidence_concurrency
-      if (data.yuandian_token_value) updates.yuandian_token = data.yuandian_token_value
       if (data.user_context_limit !== undefined) updates.user_context_limit = data.user_context_limit
       const loaded = { ...config, ...updates }
       setConfig(loaded)
@@ -290,8 +289,20 @@ export function SettingsPage() {
     }
   }
 
+  /** 仅刷新 status（用于保存后更新绿勾，不覆盖用户在表单中已输入的值） */
+  const refreshStatus = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/config`)
+      const data = await res.json()
+      setStatus(data)
+    } catch (err) {
+      console.error('刷新配置状态失败:', err)
+    }
+  }
+
   const handleSave = async () => {
-    if (!config.llm_api_key.trim()) {
+    // 敏感字段（API Key / Token）：留空时若后端已配置则保持原值，未配置才报错
+    if (!config.llm_api_key.trim() && !status?.llm_api_key) {
       showAlert({ title: '保存失败', message: 'API Key 不能为空', variant: 'danger' })
       return
     }
@@ -299,7 +310,7 @@ export function SettingsPage() {
     // 根据引擎选择验证对应 token
     if (config.pdf_engine === 'mineru') {
       // 本地模式不需要 token
-      if (config.mineru_mode === 'cloud' && !config.mineru_token.trim()) {
+      if (config.mineru_mode === 'cloud' && !config.mineru_token.trim() && !status?.mineru_token) {
         showAlert({ title: '保存失败', message: 'MinerU Token 不能为空（当前选择云端模式）', variant: 'danger' })
         return
       }
@@ -308,33 +319,39 @@ export function SettingsPage() {
         return
       }
     }
-    if (config.pdf_engine === 'paddleocr' && !config.paddleocr_token.trim()) {
+    if (config.pdf_engine === 'paddleocr' && !config.paddleocr_token.trim() && !status?.paddleocr_token) {
       showAlert({ title: '保存失败', message: 'PaddleOCR Token 不能为空（当前选择 PaddleOCR 引擎）', variant: 'danger' })
       return
     }
 
     setSaving(true)
     try {
-      // 先保存主配置
+      // 构建保存 body：非敏感字段始终发送；
+      // 敏感字段（token/api_key）仅在用户输入了新值时才发送，留空则不发送以保持后端原值
+      const body: Record<string, unknown> = {
+        pdf_engine: config.pdf_engine,
+        mineru_mode: config.mineru_mode,
+        mineru_local_url: config.mineru_local_url.trim(),
+        llm_base_url: config.llm_base_url.trim(),
+        llm_model: config.llm_model.trim(),
+        evidence_concurrency: config.evidence_concurrency,
+        model_context_limit: config.user_context_limit,
+      }
+      if (config.mineru_token.trim()) body.mineru_token = config.mineru_token.trim()
+      if (config.paddleocr_token.trim()) body.paddleocr_token = config.paddleocr_token.trim()
+      if (config.llm_api_key.trim()) body.llm_api_key = config.llm_api_key.trim()
+      if (config.yuandian_token.trim()) body.yuandian_token = config.yuandian_token.trim()
+
       const res = await fetch(`${API_BASE}/config`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          pdf_engine: config.pdf_engine,
-          mineru_token: config.mineru_token.trim(),
-          mineru_mode: config.mineru_mode,
-          mineru_local_url: config.mineru_local_url.trim(),
-          paddleocr_token: config.paddleocr_token.trim(),
-          llm_api_key: config.llm_api_key.trim(),
-          llm_base_url: config.llm_base_url.trim(),
-          llm_model: config.llm_model.trim(),
-          evidence_concurrency: config.evidence_concurrency,
-          yuandian_token: config.yuandian_token.trim(),
-          model_context_limit: config.user_context_limit,
-        }),
+        body: JSON.stringify(body),
       })
       if (res.ok) {
-        await loadConfigStatus()
+        // 标记当前表单为已保存状态（避免 hasUnsavedChanges 误报），
+        // 仅刷新 status 显示绿勾，不清空用户在敏感字段中已输入的值
+        setInitialConfig(config)
+        await refreshStatus()
         showAlert({ title: '保存成功', message: '配置已保存', variant: 'success' })
       } else {
         showAlert({ title: '保存失败', message: '保存配置时出错', variant: 'danger' })
@@ -458,7 +475,7 @@ export function SettingsPage() {
 
   const testLlmKey = async () => {
     if (!config.llm_api_key.trim()) {
-      showAlert({ title: '验证失败', message: '请先输入 API Key', variant: 'danger' })
+      showAlert({ title: '验证失败', message: status?.llm_api_key ? '请先在输入框中填入 API Key 后再验证（验证需要明文 Key）' : '请先输入 API Key', variant: 'danger' })
       return
     }
     setTesting('llm')
@@ -851,7 +868,7 @@ export function SettingsPage() {
                         type={showToken ? 'text' : 'password'}
                         value={config.mineru_token}
                         onChange={e => setConfig(prev => ({ ...prev, mineru_token: e.target.value }))}
-                        placeholder="输入 MinerU API Token"
+                        placeholder={status?.mineru_token ? '已配置，留空保持不变' : '输入 MinerU API Token'}
                         style={{
                           width: '100%', padding: '10px 40px 10px 12px',
                           border: '1px solid var(--macos-border)', borderRadius: '8px',
@@ -948,7 +965,7 @@ export function SettingsPage() {
                       type={showPaddleocrToken ? 'text' : 'password'}
                       value={config.paddleocr_token}
                       onChange={e => setConfig(prev => ({ ...prev, paddleocr_token: e.target.value }))}
-                      placeholder="输入 PaddleOCR API Token"
+                      placeholder={status?.paddleocr_token ? '已配置，留空保持不变' : '输入 PaddleOCR API Token'}
                       style={{
                         width: '100%', padding: '10px 40px 10px 12px',
                         border: '1px solid var(--macos-border)', borderRadius: '8px',
@@ -1083,7 +1100,7 @@ export function SettingsPage() {
                   type={showApiKey ? 'text' : 'password'}
                   value={config.llm_api_key}
                   onChange={e => setConfig(prev => ({ ...prev, llm_api_key: e.target.value }))}
-                  placeholder="输入 API Key"
+                  placeholder={status?.llm_api_key ? '已配置，留空保持不变' : '输入 API Key'}
                   style={{
                     width: '100%', padding: '10px 40px 10px 12px',
                     border: '1px solid var(--macos-border)', borderRadius: '8px',
@@ -1250,7 +1267,7 @@ export function SettingsPage() {
                   type={showYuandianToken ? 'text' : 'password'}
                   value={config.yuandian_token}
                   onChange={e => setConfig(prev => ({ ...prev, yuandian_token: e.target.value }))}
-                  placeholder="输入元典 API Token 用于类案检索"
+                  placeholder={status?.yuandian_token ? '已配置，留空保持不变' : '输入元典 API Token 用于类案检索'}
                   style={{
                     width: '100%', padding: '10px 40px 10px 12px',
                     border: '1px solid var(--macos-border)', borderRadius: '8px',
