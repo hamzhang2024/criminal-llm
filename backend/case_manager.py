@@ -1918,17 +1918,30 @@ async def _do_extract_evidence(
         all_evidence = filtered_evidence
 
         # ── 跨文件去重与关联（仅关联不合并，避免误删）──
+        dedup_status = "ok"
         try:
             from evidence_dedup import dedup_and_link
             all_evidence = dedup_and_link(all_evidence)
         except Exception as de:
-            logger.warning(f"[证据提取] 去重关联失败（不影响提取结果）: {de}")
+            import traceback
+            dedup_status = f"failed: {str(de)[:200]}"
+            logger.error(f"[证据提取] 去重关联失败: {de}\n{traceback.format_exc()}")
+
+        # ── 证据分组（组合质证的前提）──
+        evidence_groups = []
+        try:
+            from evidence_dedup import group_evidence_by_chain
+            evidence_groups = group_evidence_by_chain(all_evidence)
+        except Exception as ge:
+            logger.warning(f"[证据提取] 证据分组失败: {ge}")
 
         # ── 最终保存 ──
         index_data = {
             "case_id": case_id,
             "total_evidence": len(all_evidence),
             "evidence": all_evidence,
+            "evidence_groups": evidence_groups,
+            "dedup_status": dedup_status,
             "generated_at": datetime.now().isoformat(),
         }
         # 如果提取结果为 0，记录可能的原因供前端展示
@@ -2296,6 +2309,68 @@ async def stop_extract(case_id: str):
     EXTRACT_TASKS[case_id] = "cancelled"
     logger.info(f"[停止提取] 已取消 {case_id} 的提取任务，保留已提取的证据")
     return {"success": True, "message": "提取任务已取消"}
+
+
+@router.post("/{case_id}/rebuild-evidence-links")
+async def rebuild_evidence_links(case_id: str):
+    """重建证据关联与分组（不重新提取证据）
+
+    旧案件（index.json 缺 related_evidence_ids/evidence_groups）一键补关联。
+    读取现有 index.json，重跑 dedup_and_link + group_evidence_by_chain，写回。
+    """
+    case_path = find_case_path(case_id)
+    if not case_path:
+        raise HTTPException(status_code=404, detail="案件不存在")
+
+    evidence_dir = case_path / "evidence"
+    index_file = evidence_dir / "index.json"
+    if not index_file.exists():
+        raise HTTPException(status_code=404, detail="证据清单不存在，请先提取证据")
+
+    try:
+        index_data = json.loads(index_file.read_text(encoding="utf-8"))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"证据清单读取失败: {e}")
+
+    evidence_list = index_data.get("evidence", [])
+    if not evidence_list:
+        raise HTTPException(status_code=400, detail="证据列表为空，无法重建关联")
+
+    # 清除旧的关联字段
+    for ev in evidence_list:
+        ev.pop("related_evidence_ids", None)
+        ev.pop("dedup_note", None)
+        ev.pop("duplicate_of", None)
+
+    # 重跑去重关联
+    dedup_status = "ok"
+    try:
+        from evidence_dedup import dedup_and_link, group_evidence_by_chain
+        evidence_list = dedup_and_link(evidence_list)
+        evidence_groups = group_evidence_by_chain(evidence_list)
+    except Exception as de:
+        import traceback
+        dedup_status = f"failed: {str(de)[:200]}"
+        evidence_groups = []
+        logger.error(f"[重建关联] 失败: {de}\n{traceback.format_exc()}")
+
+    index_data["evidence"] = evidence_list
+    index_data["evidence_groups"] = evidence_groups
+    index_data["dedup_status"] = dedup_status
+    index_data["links_rebuilt_at"] = datetime.now().isoformat()
+    index_file.write_text(json.dumps(index_data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    related_count = sum(1 for e in evidence_list if e.get("related_evidence_ids"))
+    logger.info(f"[重建关联] case={case_id} 关联证据 {related_count} 份，分组 {len(evidence_groups)} 个")
+
+    return {
+        "success": True,
+        "case_id": case_id,
+        "dedup_status": dedup_status,
+        "related_evidence_count": related_count,
+        "evidence_groups_count": len(evidence_groups),
+        "groups": [{"group_id": g["group_id"], "group_label": g["group_label"], "member_count": len(g["member_refs"])} for g in evidence_groups],
+    }
 
 
 @router.post("/{case_id}/clear-evidence")

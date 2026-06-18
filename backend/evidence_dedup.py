@@ -20,7 +20,7 @@ def _normalize_name(name: str) -> str:
 
     - 去除首尾空白
     - 去除编号前缀（如"001_"）
-    - 去除括号内的日期/编号（如"(2024.10.29)"、"(第一次)"）
+    - 去除括号内的日期/次数（如"(2024.10.29)"、"(第一次)"），保留人名（如"(王作通)"）
     - 统一全角括号为半角
     - 转小写
     """
@@ -29,8 +29,14 @@ def _normalize_name(name: str) -> str:
     s = name.strip()
     # 去除数字前缀
     s = re.sub(r'^\d+[_\s]*', '', s)
-    # 去除括号内容（日期、次数等）
-    s = re.sub(r'[（(][^）)]*[）)]', '', s)
+    # 去除括号内的日期和次数，保留人名
+    # 日期：2024.10.29 / 2024-10-29 / 2024年10月29日 / 20241029
+    s = re.sub(r'[（(]\s*\d{4}[\.\-/年]\d{1,2}[\.\-/月]\d{1,2}[）)]', '', s)
+    s = re.sub(r'[（(]\s*\d{8}[）)]', '', s)
+    # 次数：第一次/第1次（保留人名，仅去掉次数标记）
+    s = re.sub(r'第\s*\d+\s*次', '', s)
+    # 清理空括号
+    s = re.sub(r'[（(]\s*[）)]', '', s)
     # 统一空白
     s = re.sub(r'\s+', '', s)
     return s.lower()
@@ -53,15 +59,16 @@ def _dedup_key(ev: Dict[str, Any]) -> str:
     return hashlib.md5(raw.encode("utf-8")).hexdigest()
 
 
-def _extract_interrogatee_and_date(name: str, persons: str) -> tuple:
-    """从讯问笔录证据中提取被讯问人和日期
+def _extract_interrogatee_and_date(name: str, persons: str, page_range: str = "") -> tuple:
+    """从讯问笔录证据中提取被讯问人、日期、次数
 
-    返回 (被讯问人, 日期字符串)，无法提取则返回 ("", "")
+    返回 (被讯问人, 日期字符串, 次数int)，无法提取则对应位置为 ("", "", 0)
+
+    次数用于同人多笔的排序（第一次/第二次...），日期从 name 和 page_range 提取。
     """
     # 被讯问人：优先从 persons 字段取第一个，或从名称括号内取
     interrogatee = ""
     if persons:
-        # persons 是逗号分隔的人员列表，第一个通常是被讯问人
         first = persons.replace("，", ",").split(",")[0].strip()
         if first and len(first) <= 20:
             interrogatee = first
@@ -69,22 +76,32 @@ def _extract_interrogatee_and_date(name: str, persons: str) -> tuple:
     m = re.search(r'[（(]([^）)]+)[）)]', name or "")
     if m and not interrogatee:
         candidate = m.group(1).strip()
-        # 过滤日期、次数等非人名内容
-        if candidate and len(candidate) <= 20 and "次" not in candidate:
+        if candidate and len(candidate) <= 20:
             # 排除纯日期/数字内容（如 2024.10.29、20241029）
             if not re.search(r'\d{4}', candidate):
-                interrogatee = candidate
+                # 排除纯"第N次"形式（但保留含人名的"张三第一次"）
+                if not re.fullmatch(r'第\s*\d+\s*次.*', candidate):
+                    interrogatee = candidate
 
-    # 日期：从 page_range 或名称中找日期模式
+    # 次数：从 name 提取"第N次"作为排序键
+    sequence = 0
+    seq_match = re.search(r'第\s*(\d+)\s*次', name or "")
+    if seq_match:
+        sequence = int(seq_match.group(1))
+
+    # 日期：从 name 和 page_range 中找日期模式
     date_str = ""
-    # page_range 可能含日期
-    for pattern in [r'(\d{4}[\.\-/年]\d{1,2}[\.\-/月]\d{1,2})', r'(\d{4}\d{2}\d{2})']:
-        m = re.search(pattern, name or "")
-        if m:
-            date_str = m.group(1)
+    date_patterns = [r'(\d{4}[\.\-/年]\d{1,2}[\.\-/月]\d{1,2})', r'(\d{4}\d{2}\d{2})']
+    for source_text in [name or "", page_range or ""]:
+        for pattern in date_patterns:
+            m = re.search(pattern, source_text)
+            if m:
+                date_str = m.group(1)
+                break
+        if date_str:
             break
 
-    return (interrogatee, date_str)
+    return (interrogatee, date_str, sequence)
 
 
 def dedup_and_link(evidence_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -125,40 +142,139 @@ def dedup_and_link(evidence_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         else:
             key_to_first_id[key] = ev.get("id")
 
-    # ── 第2步：同人多份讯问笔录关联 ──
-    # 按 (被讯问人, 日期) 分组，同组的证据互相关联
-    # 仅对"供述/证言"类证据生效
-    interrogation_types = {"犯罪嫌疑人供述和辩解", "证人证言", "被害人陈述"}
-    groups: Dict[tuple, List[int]] = {}
+    # ── 第2步：同人多份讯问笔录关联（含程序文书附属成员）──
+    # 锚点类型：供述/证言类（作为分组主体）
+    anchor_types = {"犯罪嫌疑人供述和辩解", "证人证言", "被害人陈述"}
+    # 附属类型：程序文书（提讯证/告知书等，按 persons[0] 匹配并入同组）
+    auxiliary_keywords = ["提讯", "提解", "权利义务告知", "讯问通知", "诉讼权利"]
+
+    def _is_auxiliary(ev_type: str, name: str) -> bool:
+        """判断是否为讯问组的附属程序文书"""
+        if "程序性文书" not in ev_type and "书证" not in ev_type:
+            return False
+        name_lower = name or ""
+        return any(kw in name_lower for kw in auxiliary_keywords)
+
+    # 按 (被讯问人,) 分组，同人多份合并到同一组
+    groups: Dict[str, List[Dict[str, Any]]] = {}
     for ev in evidence_list:
         ev_type = (ev.get("type") or "").strip()
-        if ev_type not in interrogation_types:
-            continue
+        name = ev.get("name", "")
         # 跳过重复证据（只关联源证据）
         if ev.get("duplicate_of") is not None:
             continue
-        interrogatee, date_str = _extract_interrogatee_and_date(
-            ev.get("name", ""), ev.get("persons", "")
+
+        is_anchor = ev_type in anchor_types
+        is_aux = _is_auxiliary(ev_type, name)
+        if not is_anchor and not is_aux:
+            continue
+
+        interrogatee, date_str, sequence = _extract_interrogatee_and_date(
+            name, ev.get("persons", ""), ev.get("page_range", "")
         )
         if not interrogatee:
             continue
-        group_key = (interrogatee, date_str) if date_str else (interrogatee, "")
-        groups.setdefault(group_key, []).append(ev.get("id"))
+        groups.setdefault(interrogatee, []).append({
+            "id": ev.get("id"),
+            "date_str": date_str,
+            "sequence": sequence,
+            "is_anchor": is_anchor,
+            "is_aux": is_aux,
+        })
 
-    # 写入关联关系
+    # 写入关联关系：只有当组内至少有 1 个锚点 + 总成员 >= 2 时才建立关联
     link_count = 0
-    for group_key, ev_ids in groups.items():
-        if len(ev_ids) < 2:
+    for interrogatee, members in groups.items():
+        anchor_count = sum(1 for m in members if m["is_anchor"])
+        if anchor_count < 1 or len(members) < 2:
             continue
-        interrogatee = group_key[0]
+        # 组内按 (date_str, sequence) 排序，锚点优先
+        members.sort(key=lambda m: (m["date_str"] or "", m["sequence"], not m["is_anchor"]))
+        ev_ids = [m["id"] for m in members]
         for ev in evidence_list:
             if ev.get("id") in ev_ids:
                 others = [i for i in ev_ids if i != ev.get("id")]
                 ev["related_evidence_ids"] = others
-                ev["dedup_note"] = (ev.get("dedup_note") or "") + f"; 同人({interrogatee})多笔关联: {others}"
+                ev["dedup_note"] = (ev.get("dedup_note") or "") + f"; 同人({interrogatee})组合关联: {others}"
                 link_count += 1
 
     if dup_count > 0 or link_count > 0:
         logger.info(f"[去重关联] 标记重复 {dup_count} 份，建立关联 {link_count} 处")
 
     return evidence_list
+
+
+def group_evidence_by_chain(evidence_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """对证据列表按程序链条分组（供组合质证使用）
+
+    首期只做讯问笔录组（interrogation）：
+    - 以 related_evidence_ids 非空的讯问笔录为锚
+    - 合并同组提讯证/告知书（按 persons[0] 精确匹配）
+    - 至少 2 个成员才成组
+
+    Returns:
+        evidence_groups 数组，每组：
+        {group_id, group_type, group_label, member_refs, anchor_evidence_id}
+    """
+    groups: List[Dict[str, Any]] = []
+    anchor_types = {"犯罪嫌疑人供述和辩解", "证人证言", "被害人陈述"}
+
+    # 收集有 related_evidence_ids 的锚点证据，按 interrogatee 聚合
+    # related_evidence_ids 已包含同组所有成员 id（含附属文书）
+    processed_ids = set()
+    group_counter = 0
+
+    for ev in evidence_list:
+        ev_id = ev.get("id")
+        related = ev.get("related_evidence_ids") or []
+        ev_type = (ev.get("type") or "").strip()
+
+        # 只以供述/证言类锚点为起点，且尚未处理过
+        if ev_type not in anchor_types or ev_id in processed_ids or not related:
+            continue
+
+        # 收集本组所有成员（锚点 + related）
+        member_ids = [ev_id] + [i for i in related if i != ev_id]
+        # 去重并保持顺序
+        seen = set()
+        ordered_members = []
+        for mid in member_ids:
+            if mid not in seen:
+                seen.add(mid)
+                ordered_members.append(mid)
+
+        if len(ordered_members) < 2:
+            continue
+
+        # 标记已处理
+        for mid in ordered_members:
+            processed_ids.add(mid)
+
+        # 构造组标签
+        interrogatee = (ev.get("persons") or "").replace("，", ",").split(",")[0].strip()
+        anchor_count = sum(1 for mid in ordered_members
+                           if any(e.get("id") == mid and (e.get("type") or "").strip() in anchor_types
+                                  for e in evidence_list))
+        aux_count = len(ordered_members) - anchor_count
+        label_parts = [f"{interrogatee}讯问组"]
+        detail_parts = []
+        if anchor_count:
+            detail_parts.append(f"{anchor_count}笔录")
+        if aux_count:
+            detail_parts.append(f"{aux_count}程序文书")
+        if detail_parts:
+            label_parts.append(f"({'+'.join(detail_parts)})")
+        group_label = "".join(label_parts)
+
+        group_counter += 1
+        groups.append({
+            "group_id": f"G{group_counter:03d}",
+            "group_type": "interrogation",
+            "group_label": group_label,
+            "member_refs": ordered_members,
+            "anchor_evidence_id": ev_id,
+        })
+
+    if groups:
+        logger.info(f"[证据分组] 生成 {len(groups)} 个组合（讯问笔录组）")
+    return groups
