@@ -27,6 +27,10 @@ router = APIRouter(prefix="/api/stage-analysis", tags=["5阶段案卷分析"])
 # 实时进度状态
 STAGE_PROGRESS: dict = {}
 
+# 证据审查/质证/阅卷笔录的后台任务状态（case_id -> task dict）
+# 避免长耗时 LLM 操作阻塞前端，切页面后可轮询恢复
+REVIEW_TASKS: dict = {}
+
 # 起诉意见书匹配模式
 _OPINION_PATTERNS = ["起诉意见书", "呈请起诉", "起诉报告"]
 
@@ -513,32 +517,92 @@ async def save_full_report(
 async def review_evidence(case_id: str):
     """对全部证据进行质证意见生成（合并三性审查）
 
+    改为异步任务模式：立即返回任务状态，后台执行 LLM 审查。
+    前端通过 GET /review-evidence-status 轮询进度，GET /evidence-review 获取最终结果。
+    避免长耗时操作阻塞前端，切页面后可恢复。
+
     审查内容包括：
     - 合法性审查：取证主体资格、取证程序、证据形式、非法证据排除
     - 真实性审查：来源可靠性、内容客观性、保管链条、同一性确认
     - 关联性审查：与待证事实的关系、证明价值、证据间印证
-
-    审查结果包含：
-    - 审查结论（采信/不采信/存疑）
-    - 法律依据（具体法条引用）
-    - 质证意见（可当庭陈述的质证理由）
-    - 质证策略（申请/请求/主张）
-
-    输出保存到：
-    - evidence/evidence_review.json（结构化数据）
-    - analysis/cross_examination.md（质证意见文档）
     """
     case_path = find_case_path(case_id)
     if not case_path:
         raise HTTPException(status_code=404, detail="案件不存在")
 
-    engine = AnalysisEngine(case_id, case_path)
+    # 若已有任务在运行，直接返回当前状态
+    existing = REVIEW_TASKS.get(case_id)
+    if existing and isinstance(existing, dict) and existing.get("status") == "running":
+        return {"case_id": case_id, "status": "running", "message": "审查任务已在运行中", "total_evidence": existing.get("total_evidence", 0), "processed": existing.get("processed", 0)}
 
-    try:
-        result = await engine.review_evidence_triple_property()
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    import asyncio
+    import time
+
+    # 初始化任务状态
+    REVIEW_TASKS[case_id] = {
+        "status": "running",
+        "started_at": time.time(),
+        "total_evidence": 0,
+        "processed": 0,
+        "current_evidence": "",
+        "error": None,
+    }
+
+    async def _run_review_bg():
+        """后台执行证据审查"""
+        try:
+            engine = AnalysisEngine(case_id, case_path)
+            # 预估总数（用于进度展示）
+            texts = engine._load_evidence_texts()
+            evidence_texts = [t for t in texts if not t.get("is_indictment")]
+            task = REVIEW_TASKS.get(case_id)
+            if isinstance(task, dict):
+                task["total_evidence"] = len(evidence_texts)
+
+            result = await engine.review_evidence_triple_property()
+            task = REVIEW_TASKS.get(case_id)
+            if isinstance(task, dict):
+                if result.get("error"):
+                    task["status"] = "error"
+                    task["error"] = result["error"]
+                else:
+                    task["status"] = "completed"
+                    task["processed"] = result.get("total_evidence", 0)
+        except Exception as e:
+            logger.exception(f"[证据审查] 后台任务失败: {e}")
+            task = REVIEW_TASKS.get(case_id)
+            if isinstance(task, dict):
+                task["status"] = "error"
+                task["error"] = str(e)[:500]
+
+    asyncio.create_task(_run_review_bg())
+
+    return {"case_id": case_id, "status": "running", "message": "审查任务已启动，请轮询状态"}
+
+
+@router.get("/{case_id}/review-evidence-status")
+async def get_review_evidence_status(case_id: str):
+    """获取证据审查任务状态（供前端轮询）"""
+    task = REVIEW_TASKS.get(case_id)
+    if not task:
+        # 检查结果文件是否已存在（历史已完成任务）
+        case_path = find_case_path(case_id)
+        if case_path and (case_path / "evidence" / "evidence_review.json").exists():
+            return {"case_id": case_id, "status": "completed", "total_evidence": 0, "processed": 0}
+        return {"case_id": case_id, "status": "idle"}
+    if isinstance(task, dict):
+        import time
+        elapsed = time.time() - task.get("started_at", time.time()) if task.get("started_at") else 0
+        return {
+            "case_id": case_id,
+            "status": task.get("status", "idle"),
+            "total_evidence": task.get("total_evidence", 0),
+            "processed": task.get("processed", 0),
+            "current_evidence": task.get("current_evidence", ""),
+            "elapsed_seconds": round(elapsed),
+            "error": task.get("error"),
+        }
+    return {"case_id": case_id, "status": "idle"}
 
 
 @router.get("/{case_id}/evidence-review")
@@ -565,7 +629,7 @@ async def get_evidence_review(case_id: str):
 
 @router.post("/{case_id}/review-notes")
 async def generate_review_notes(case_id: str):
-    """生成阅卷笔录
+    """生成阅卷笔录（异步任务模式）
 
     阅卷笔录是律师阅卷工作的核心文档，包含：
     - 案件基本信息
@@ -575,19 +639,47 @@ async def generate_review_notes(case_id: str):
     - 事实认定
     - 法律分析
     - 辩护要点
+
+    立即返回任务状态，后台执行。前端轮询 /review-evidence-status（task_type=review_notes）。
     """
     case_path = find_case_path(case_id)
     if not case_path:
         raise HTTPException(status_code=404, detail="案件不存在")
 
-    engine = AnalysisEngine(case_id, case_path)
+    existing = REVIEW_TASKS.get(case_id)
+    if existing and isinstance(existing, dict) and existing.get("status") == "running":
+        return {"case_id": case_id, "status": "running", "task_type": "review_notes", "message": "任务已在运行中"}
 
-    try:
-        result = await engine.generate_review_notes()
-        return result
-    except Exception as e:
-        logger.error(f"[阅卷笔录] {case_id}: 生成失败: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    import asyncio
+    import time
+
+    REVIEW_TASKS[case_id] = {
+        "status": "running",
+        "task_type": "review_notes",
+        "started_at": time.time(),
+        "error": None,
+    }
+
+    async def _run_bg():
+        try:
+            engine = AnalysisEngine(case_id, case_path)
+            result = await engine.generate_review_notes()
+            task = REVIEW_TASKS.get(case_id)
+            if isinstance(task, dict):
+                if result.get("error"):
+                    task["status"] = "error"
+                    task["error"] = result["error"]
+                else:
+                    task["status"] = "completed"
+        except Exception as e:
+            logger.exception(f"[阅卷笔录] 后台任务失败: {e}")
+            task = REVIEW_TASKS.get(case_id)
+            if isinstance(task, dict):
+                task["status"] = "error"
+                task["error"] = str(e)[:500]
+
+    asyncio.create_task(_run_bg())
+    return {"case_id": case_id, "status": "running", "task_type": "review_notes", "message": "阅卷笔录生成已启动"}
 
 
 @router.get("/{case_id}/review-notes")
@@ -609,28 +701,51 @@ async def get_review_notes(case_id: str):
 
 @router.post("/{case_id}/cross-examination")
 async def generate_cross_examination(case_id: str):
-    """生成或获取质证意见文档
+    """生成或获取质证意见文档（异步任务模式）
 
     注意：此功能已合并到证据审查中。如果已进行证据审查，直接返回结果；
     如果未审查，会自动执行质证意见生成（包含三性审查）。
 
-    质证意见格式：
-    - 审查概览
-    - 问题证据清单
-    - 详细质证意见（每份证据的三性审查+质证策略）
+    立即返回任务状态，后台执行。前端轮询 /review-evidence-status（task_type=cross_examination）。
     """
     case_path = find_case_path(case_id)
     if not case_path:
         raise HTTPException(status_code=404, detail="案件不存在")
 
-    engine = AnalysisEngine(case_id, case_path)
+    existing = REVIEW_TASKS.get(case_id)
+    if existing and isinstance(existing, dict) and existing.get("status") == "running":
+        return {"case_id": case_id, "status": "running", "task_type": "cross_examination", "message": "任务已在运行中"}
 
-    try:
-        result = await engine.generate_cross_examination()
-        return result
-    except Exception as e:
-        logger.error(f"[质证意见] {case_id}: 生成失败: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    import asyncio
+    import time
+
+    REVIEW_TASKS[case_id] = {
+        "status": "running",
+        "task_type": "cross_examination",
+        "started_at": time.time(),
+        "error": None,
+    }
+
+    async def _run_bg():
+        try:
+            engine = AnalysisEngine(case_id, case_path)
+            result = await engine.generate_cross_examination()
+            task = REVIEW_TASKS.get(case_id)
+            if isinstance(task, dict):
+                if result.get("error"):
+                    task["status"] = "error"
+                    task["error"] = result["error"]
+                else:
+                    task["status"] = "completed"
+        except Exception as e:
+            logger.exception(f"[质证意见] 后台任务失败: {e}")
+            task = REVIEW_TASKS.get(case_id)
+            if isinstance(task, dict):
+                task["status"] = "error"
+                task["error"] = str(e)[:500]
+
+    asyncio.create_task(_run_bg())
+    return {"case_id": case_id, "status": "running", "task_type": "cross_examination", "message": "质证意见生成已启动"}
 
 
 @router.get("/{case_id}/cross-examination")

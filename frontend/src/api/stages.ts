@@ -123,13 +123,30 @@ export interface EvidenceReviewResult {
   error?: string
 }
 
-/** 对全部证据进行三性审查 */
-export async function reviewEvidence(caseId: string): Promise<EvidenceReviewResult> {
+/** 对全部证据进行三性审查（触发异步任务，立即返回状态） */
+export async function reviewEvidence(caseId: string): Promise<{ status: string; message?: string }> {
   const res = await fetch(`${API_BASE}/stage-analysis/${caseId}/review-evidence`, {
     method: 'POST',
   })
   if (!res.ok) {
     throw new Error('证据审查失败')
+  }
+  return res.json()
+}
+
+/** 获取证据审查/质证/阅卷笔录任务状态（供轮询） */
+export async function getReviewTaskStatus(caseId: string): Promise<{
+  status: string
+  task_type?: string
+  total_evidence?: number
+  processed?: number
+  current_evidence?: string
+  elapsed_seconds?: number
+  error?: string | null
+}> {
+  const res = await fetch(`${API_BASE}/stage-analysis/${caseId}/review-evidence-status`)
+  if (!res.ok) {
+    throw new Error('获取任务状态失败')
   }
   return res.json()
 }
