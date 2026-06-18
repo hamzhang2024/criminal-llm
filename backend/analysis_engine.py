@@ -1995,6 +1995,7 @@ def generate_evidence_chain(case_path: Path) -> Dict[str, Any]:
         # 2.5 key_facts 关键词细筛（基于提取阶段的结构化关键事实）
         # 当类型推断已关联某些事实时，用 key_facts 关键词提升证明强度或补充关联
         if ev_key_facts:
+            # 注：关键词以中文为主，.lower() 仅对可能的英文关键词（如 intent/knowing）生效
             keyfact_lower = ev_key_facts.lower()
             # key_facts 关键词到待证事实的映射（用于细筛和强度提升）
             keyfact_mapping = {

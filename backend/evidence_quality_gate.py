@@ -62,7 +62,11 @@ def run_quality_gate(evidence_dir: Path, case_id: str = "") -> Dict[str, Any]:
     reviewed_count = sum(1 for e in evidence_list if e.get("reviewed"))
     empty_summary_count = sum(1 for e in evidence_list if not (e.get("summary_preview") or "").strip())
     empty_key_facts_count = sum(1 for e in evidence_list if not (e.get("key_facts") or "").strip())
-    empty_hints_count = sum(1 for e in evidence_list if not (e.get("contradiction_hints") or "").strip() or (e.get("contradiction_hints") or "").strip() == "无")
+    # contradiction_hints 为空或填"无"都视为未提取到矛盾提示
+    empty_hints_count = sum(
+        1 for e in evidence_list
+        if not (hint := (e.get("contradiction_hints") or "").strip()) or hint == "无"
+    )
     type_distribution: Dict[str, int] = {}
     for e in evidence_list:
         t = e.get("type", "其他证据")
