@@ -293,7 +293,7 @@ export async function getEvidenceChain(caseId: string): Promise<EvidenceChainDat
 export interface PersonNode {
   id: string
   name: string
-  role: 'defendant' | 'co defendant' | 'victim' | 'witness' | 'other'
+  role: 'defendant' | 'co_defendant' | 'victim' | 'witness' | 'other'
   description?: string
   evidenceRefs?: string[]
 }
@@ -301,7 +301,7 @@ export interface PersonNode {
 export interface RelationEdge {
   source: string
   target: string
-  type: 'cooperation' | 'fraud' | 'friend' | 'family' | 'business' | 'debt' | 'other'
+  type: 'participation' | 'cooperation' | 'family' | 'friendship' | 'conflict' | 'introduction' | 'financial' | 'other'
   label: string
 }
 

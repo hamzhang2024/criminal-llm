@@ -15,7 +15,7 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 export interface PersonNode {
   id: string
   name: string
-  role: 'defendant' | 'co defendant' | 'victim' | 'witness' | 'other'
+  role: 'defendant' | 'co_defendant' | 'victim' | 'witness' | 'other'
   description?: string
   evidenceRefs?: string[]
 }
@@ -24,7 +24,7 @@ export interface PersonNode {
 export interface RelationEdge {
   source: string
   target: string
-  type: 'cooperation' | 'fraud' | 'friend' | 'family' | 'business' | 'debt' | 'other'
+  type: 'participation' | 'cooperation' | 'family' | 'friendship' | 'conflict' | 'introduction' | 'financial' | 'other'
   label: string
 }
 
@@ -42,17 +42,17 @@ interface Props {
 
 // 角色颜色映射
 const ROLE_COLORS: Record<string, string> = {
-  defendant: '#ef4444',      // 红 - 被告人
-  'co defendant': '#f97316', // 橙 - 同案犯
-  victim: '#3b82f6',         // 蓝 - 被害人
-  witness: '#10b981',        // 绿 - 证人
-  other: '#6b7280',          // 灰 - 其他
+  defendant: '#ef4444',       // 红 - 被告人
+  co_defendant: '#f97316',    // 橙 - 同案犯
+  victim: '#3b82f6',          // 蓝 - 被害人
+  witness: '#10b981',         // 绿 - 证人
+  other: '#6b7280',           // 灰 - 其他
 }
 
 // 角色中文映射
 const ROLE_LABELS: Record<string, string> = {
   defendant: '被告人',
-  'co defendant': '同案犯',
+  co_defendant: '同案犯',
   victim: '被害人',
   witness: '证人',
   other: '其他',
@@ -60,13 +60,26 @@ const ROLE_LABELS: Record<string, string> = {
 
 // 关系类型颜色映射
 const RELATION_COLORS: Record<string, string> = {
-  cooperation: '#3b82f6',  // 蓝 - 合作
-  fraud: '#ef4444',        // 红 - 诈骗
-  friend: '#10b981',       // 绿 - 朋友
-  family: '#8b5cf6',       // 紫 - 家人
-  business: '#f59e0b',     // 橙 - 商业
-  debt: '#dc2626',         // 深红 - 债务
-  other: '#6b7280',        // 灰 - 其他
+  participation: '#dc2626',   // 深红 - 纠集/指使
+  cooperation: '#3b82f6',     // 蓝 - 合作/同事
+  family: '#8b5cf6',          // 紫 - 家人
+  friendship: '#10b981',      // 绿 - 朋友
+  conflict: '#ef4444',        // 红 - 冲突
+  introduction: '#06b6d4',    // 青 - 介绍
+  financial: '#f59e0b',       // 橙 - 金钱
+  other: '#6b7280',           // 灰 - 其他
+}
+
+// 关系类型中文映射
+const RELATION_LABELS: Record<string, string> = {
+  participation: '纠集/指使',
+  cooperation: '合作/同事',
+  family: '亲属',
+  friendship: '朋友',
+  conflict: '冲突',
+  introduction: '介绍',
+  financial: '金钱',
+  other: '其他',
 }
 
 export function PersonRelationGraph({ data, onNodeClick }: Props) {
@@ -113,22 +126,38 @@ export function PersonRelationGraph({ data, onNodeClick }: Props) {
     }
 
     // 每个角色组占一个扇形区域
-    const roleOrder = ['defendant', 'co defendant', 'victim', 'witness', 'other']
+    const roleOrder = ['defendant', 'co_defendant', 'victim', 'witness', 'other']
     const presentRoles = roleOrder.filter(r => roleGroups.has(r))
     const groupCount = presentRoles.length
 
     presentRoles.forEach((role, groupIndex) => {
       const nodes = roleGroups.get(role) || []
       const isCenter = role === 'defendant'
-      const groupCenterX = isCenter ? centerX : centerX + Math.cos((groupIndex / groupCount) * 2 * Math.PI - Math.PI / 2) * 250
-      const groupCenterY = isCenter ? centerY : centerY + Math.sin((groupIndex / groupCount) * 2 * Math.PI - Math.PI / 2) * 250
+      // 非中心组按扇形分布在外围，角度均分
+      const sectorAngle = (2 * Math.PI) / Math.max(groupCount, 1)
+      const groupAngle = groupIndex * sectorAngle - Math.PI / 2
+      const groupDistance = 280
+      const groupCenterX = isCenter ? centerX : centerX + Math.cos(groupAngle) * groupDistance
+      const groupCenterY = isCenter ? centerY : centerY + Math.sin(groupAngle) * groupDistance
 
       nodes.forEach((node, i) => {
         if (isCenter && nodes.length === 1) {
+          // 唯一被告放正中心
           positions.set(node.id, { x: groupCenterX, y: groupCenterY })
-        } else {
+        } else if (isCenter) {
+          // 多个被告：围绕中心小圈
           const nodeAngle = (i / nodes.length) * 2 * Math.PI
-          const nodeRadius = isCenter ? 50 : 40 + nodes.length * 5
+          const nodeRadius = 60
+          positions.set(node.id, {
+            x: groupCenterX + Math.cos(nodeAngle) * nodeRadius,
+            y: groupCenterY + Math.sin(nodeAngle) * nodeRadius,
+          })
+        } else {
+          // 其他角色：在各自扇形区域内圆形分布
+          // 半径随节点数增大，避免重叠（每个节点至少 70px 间距）
+          const minRadius = 50
+          const nodeRadius = Math.max(minRadius, Math.ceil(nodes.length / 8) * 70 + 30)
+          const nodeAngle = (i / nodes.length) * 2 * Math.PI
           positions.set(node.id, {
             x: groupCenterX + Math.cos(nodeAngle) * nodeRadius,
             y: groupCenterY + Math.sin(nodeAngle) * nodeRadius,
@@ -392,17 +421,6 @@ export function PersonRelationGraph({ data, onNodeClick }: Props) {
     )
   }
 
-  // 关系类型中文映射
-  const RELATION_LABELS: Record<string, string> = {
-    cooperation: '合作',
-    fraud: '诈骗',
-    friend: '朋友',
-    family: '家人',
-    business: '商业',
-    debt: '债务',
-    other: '其他',
-  }
-
   // 统计各角色人数
   const roleStats = new Map<string, number>()
   for (const node of data.nodes) {
@@ -437,7 +455,7 @@ export function PersonRelationGraph({ data, onNodeClick }: Props) {
 
       {/* 角色图例 */}
       <div className="role-legend">
-        {['defendant', 'co defendant', 'victim', 'witness', 'other']
+        {['defendant', 'co_defendant', 'victim', 'witness', 'other']
           .filter(r => roleStats.has(r))
           .map(role => (
             <div key={role} className="role-item">
