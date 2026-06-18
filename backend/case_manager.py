@@ -12,7 +12,7 @@ import re
 import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
@@ -1914,6 +1914,13 @@ async def _do_extract_evidence(
 
         all_evidence = filtered_evidence
 
+        # ── 跨文件去重与关联（仅关联不合并，避免误删）──
+        try:
+            from evidence_dedup import dedup_and_link
+            all_evidence = dedup_and_link(all_evidence)
+        except Exception as de:
+            logger.warning(f"[证据提取] 去重关联失败（不影响提取结果）: {de}")
+
         # ── 最终保存 ──
         index_data = {
             "case_id": case_id,
@@ -1925,6 +1932,13 @@ async def _do_extract_evidence(
         if len(all_evidence) == 0:
             index_data["error_hint"] = "LLM 提取全部失败（详见后端日志），可能原因：API Key 无效、Base URL 不可达、模型名称错误、或所有 MD 文件解析失败"
         index_file.write_text(json.dumps(index_data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        # 运行质量门禁检查，生成 quality_report.json
+        try:
+            from evidence_quality_gate import run_quality_gate
+            run_quality_gate(evidence_dir, case_id)
+        except Exception as qe:
+            logger.warning(f"[证据提取] 质量门禁检查失败: {qe}")
 
         # 清理临时文件（无论走哪个分支都清理）
         old_temp = evidence_dir / "_temp_extract"
@@ -1989,6 +2003,171 @@ async def get_evidence_index(case_id: str):
         return {"total_evidence": 0, "evidence": []}
 
     return json.loads(index_file.read_text(encoding="utf-8"))
+
+
+@router.put("/{case_id}/evidence/{evidence_id}/review")
+async def review_evidence(case_id: str, evidence_id: int, body: Dict[str, Any]):
+    """人工校对单条证据
+
+    允许编辑 name/type/persons/key_facts/contradiction_hints 字段，
+    同步更新 index.json 和证据 MD 文件的头部表格。
+    """
+    case_path = find_case_path(case_id)
+    if not case_path:
+        raise HTTPException(status_code=404, detail="案件不存在")
+
+    evidence_dir = case_path / "evidence"
+    index_file = evidence_dir / "index.json"
+    if not index_file.exists():
+        raise HTTPException(status_code=404, detail="证据清单不存在")
+
+    try:
+        index_data = json.loads(index_file.read_text(encoding="utf-8"))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"证据清单读取失败: {e}")
+
+    # 查找目标证据
+    target_ev = None
+    for ev in index_data.get("evidence", []):
+        if ev.get("id") == evidence_id:
+            target_ev = ev
+            break
+
+    if not target_ev:
+        raise HTTPException(status_code=404, detail=f"证据 {evidence_id} 不存在")
+
+    # 可编辑字段白名单
+    editable_fields = {"name", "type", "persons", "key_facts", "contradiction_hints"}
+    updates = {k: v for k, v in body.items() if k in editable_fields}
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="无可更新字段（允许：name/type/persons/key_facts/contradiction_hints）")
+
+    # 更新 index.json 中的字段
+    for k, v in updates.items():
+        target_ev[k] = v
+    target_ev["reviewed"] = True
+    target_ev["reviewed_at"] = datetime.now().isoformat()
+
+    # 重写证据 MD 文件的头部表格（保持下游解析稳定）
+    md_file_name = target_ev.get("md_file", "")
+    if md_file_name:
+        md_path = evidence_dir / md_file_name
+        if md_path.exists():
+            try:
+                md_text = md_path.read_text(encoding="utf-8")
+                # 重写头部：# 名称 + 表格 + 后续内容（保留 ## 关联信息 之后的原文）
+                new_name = target_ev.get("name", "")
+                new_type = target_ev.get("type", "")
+                new_source = target_ev.get("source", "")
+                new_page = target_ev.get("page_range", "")
+                new_persons = target_ev.get("persons", "")
+                new_key_facts = target_ev.get("key_facts", "")
+                new_hints = target_ev.get("contradiction_hints", "")
+
+                # 保留原文从"## 关联信息"开始的内容
+                preserved = ""
+                marker = "## 关联信息"
+                marker_idx = md_text.find(marker)
+                if marker_idx >= 0:
+                    preserved = md_text[marker_idx:]
+                else:
+                    # 没有标准标记，保留"---"之后的内容（LLM 原始输出）
+                    sep_idx = md_text.find("\n---\n")
+                    if sep_idx >= 0:
+                        preserved = md_text[sep_idx:]
+
+                new_md = f"""# {new_name}
+
+| 项目 | 内容 |
+|------|------|
+| **证据类型** | {new_type} |
+| **来源文件** | {new_source} |
+| **页码范围** | {new_page or '未标注'} |
+| **涉案人员** | {new_persons or '未识别'} |
+
+{preserved}"""
+                # 如果保留部分没有关键事实/矛盾提示段落，补充校对后的内容
+                if "## 关键事实" not in new_md and new_key_facts:
+                    # 在关联信息段后插入
+                    insert_pos = new_md.find("## 关联信息")
+                    if insert_pos >= 0:
+                        line_end = new_md.find("\n", insert_pos)
+                        # 找到关联信息段落后的空行
+                        next_section = new_md.find("\n## ", line_end)
+                        if next_section >= 0:
+                            new_md = new_md[:next_section] + f"\n\n## 关键事实（已校对）\n\n{new_key_facts}" + new_md[next_section:]
+
+                md_path.write_text(new_md, encoding="utf-8")
+            except Exception as e:
+                logger.warning(f"[证据校对] 重写 MD 文件失败 {md_file_name}: {e}")
+
+    # 写回 index.json
+    index_file.write_text(json.dumps(index_data, ensure_ascii=False, indent=2), encoding="utf-8")
+    logger.info(f"[证据校对] case={case_id} evidence={evidence_id} 已校对字段: {list(updates.keys())}")
+
+    return {"success": True, "evidence_id": evidence_id, "updated_fields": list(updates.keys())}
+
+
+@router.get("/{case_id}/evidence/{evidence_id}/review-status")
+async def get_review_status(case_id: str, evidence_id: int):
+    """获取单条证据的校对状态"""
+    case_path = find_case_path(case_id)
+    if not case_path:
+        raise HTTPException(status_code=404, detail="案件不存在")
+
+    index_file = case_path / "evidence" / "index.json"
+    if not index_file.exists():
+        raise HTTPException(status_code=404, detail="证据清单不存在")
+
+    try:
+        index_data = json.loads(index_file.read_text(encoding="utf-8"))
+    except Exception:
+        raise HTTPException(status_code=500, detail="证据清单读取失败")
+
+    for ev in index_data.get("evidence", []):
+        if ev.get("id") == evidence_id:
+            return {
+                "evidence_id": evidence_id,
+                "reviewed": ev.get("reviewed", False),
+                "reviewed_at": ev.get("reviewed_at"),
+                "needs_review": ev.get("needs_review", False),
+            }
+    raise HTTPException(status_code=404, detail=f"证据 {evidence_id} 不存在")
+
+
+@router.get("/{case_id}/evidence-quality-report")
+async def get_evidence_quality_report(case_id: str):
+    """获取证据提取质量门禁报告"""
+    case_path = find_case_path(case_id)
+    if not case_path:
+        raise HTTPException(status_code=404, detail="案件不存在")
+
+    report_file = case_path / "evidence" / "quality_report.json"
+    if not report_file.exists():
+        return {"case_id": case_id, "overall_status": "not_run", "alerts": [], "stats": {}, "message": "质量门禁尚未运行"}
+    try:
+        return json.loads(report_file.read_text(encoding="utf-8"))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"质量报告读取失败: {e}")
+
+
+@router.get("/{case_id}/evidence-graph")
+async def get_evidence_graph(case_id: str):
+    """获取证据关联图谱（基于 persons/contradiction_hints 生成 Mermaid）"""
+    case_path = find_case_path(case_id)
+    if not case_path:
+        raise HTTPException(status_code=404, detail="案件不存在")
+
+    evidence_dir = case_path / "evidence"
+    if not evidence_dir.exists():
+        raise HTTPException(status_code=404, detail="证据目录不存在")
+
+    try:
+        from evidence_graph import generate_evidence_graph
+        return generate_evidence_graph(evidence_dir, case_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"图谱生成失败: {e}")
 
 
 @router.get("/{case_id}/extract-status")

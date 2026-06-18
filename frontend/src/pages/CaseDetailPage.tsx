@@ -545,7 +545,7 @@ export function CaseDetailPage() {
             )}
 
             {currentStep === 1 && (
-              <Step1Extract files={files} evidenceList={evidenceList} evidenceExtracted={evidenceExtracted}
+              <Step1Extract caseId={caseId || undefined} files={files} evidenceList={evidenceList} evidenceExtracted={evidenceExtracted}
                 processing={extracting} stopping={stopping} onExtract={handleExtractEvidence} onStop={handleStopExtract}
                 onClear={handleClearEvidence} onRefreshEvidence={handleRefreshEvidence} />
             )}

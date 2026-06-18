@@ -1,7 +1,8 @@
 // 步骤 1：证据提取卡片
 
-import React from 'react'
+import React, { useState } from 'react'
 import { MacOSCard, MacOSButton } from '../../../components/MacOSLayout'
+import { EvidenceReviewPanel } from './EvidenceReviewPanel'
 
 interface EvidenceItem {
   id: number | string
@@ -9,9 +10,15 @@ interface EvidenceItem {
   type?: string
   source?: string
   page_range?: string
+  persons?: string
+  key_facts?: string
+  contradiction_hints?: string
+  needs_review?: boolean
+  reviewed?: boolean
 }
 
 interface Step1ExtractProps {
+  caseId?: string
   files: Array<{ status: string }>
   evidenceList: EvidenceItem[]
   evidenceExtracted: boolean
@@ -24,10 +31,11 @@ interface Step1ExtractProps {
 }
 
 export function Step1Extract({
-  files, evidenceList, evidenceExtracted, processing, stopping,
-  onExtract, onStop, onClear,
+  caseId, files, evidenceList, evidenceExtracted, processing, stopping,
+  onExtract, onStop, onClear, onRefreshEvidence,
 }: Step1ExtractProps) {
   const mdConversionComplete = files.length > 0 && files.every(f => f.status === 'done')
+  const [reviewingEv, setReviewingEv] = useState<EvidenceItem | null>(null)
 
   return (
     <MacOSCard style={{ marginTop: 12 }}>
@@ -61,7 +69,7 @@ export function Step1Extract({
               padding: '10px 12px',
               background: 'var(--macos-bg-secondary)',
               borderRadius: '8px',
-              border: '1px solid var(--macos-border)'
+              border: `1px solid ${ev.needs_review ? 'rgba(255,149,0,0.3)' : 'var(--macos-border)'}`
             }}>
               <div style={{
                 width: '28px', height: '28px', borderRadius: '6px',
@@ -70,16 +78,43 @@ export function Step1Extract({
                 fontSize: '12px', fontWeight: '600', color: 'var(--macos-accent)'
               }}>{ev.id}</div>
               <div style={{ flex: 1, overflow: 'hidden' }}>
-                <div style={{ fontSize: '13px', fontWeight: '500', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <div style={{ fontSize: '13px', fontWeight: '500', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '6px' }}>
                   {ev.name}
+                  {ev.needs_review && (
+                    <span style={{ fontSize: '10px', color: '#ff9500', background: 'rgba(255,149,0,0.1)', padding: '1px 5px', borderRadius: '3px', flexShrink: 0 }}>需复核</span>
+                  )}
+                  {ev.reviewed && (
+                    <span style={{ fontSize: '10px', color: '#34c759', background: 'rgba(52,199,89,0.1)', padding: '1px 5px', borderRadius: '3px', flexShrink: 0 }}>已校对</span>
+                  )}
                 </div>
                 <div style={{ fontSize: '11px', color: 'var(--macos-text-secondary)' }}>
                   {ev.type} · {ev.source}{ev.page_range ? ' · ' + ev.page_range : ''}
                 </div>
               </div>
+              {caseId && (
+                <button
+                  onClick={() => setReviewingEv(ev)}
+                  style={{
+                    padding: '4px 10px', borderRadius: '5px',
+                    border: '1px solid var(--macos-border)', background: 'transparent',
+                    color: 'var(--macos-accent)', fontSize: '11px', cursor: 'pointer',
+                    flexShrink: 0,
+                  }}
+                >
+                  校对
+                </button>
+              )}
             </div>
           ))}
         </div>
+      )}
+      {reviewingEv && caseId && (
+        <EvidenceReviewPanel
+          caseId={caseId}
+          evidence={reviewingEv}
+          onClose={() => setReviewingEv(null)}
+          onSaved={onRefreshEvidence}
+        />
       )}
       {!evidenceExtracted && !mdConversionComplete && (
         <div style={{ fontSize: '12px', color: 'var(--macos-text-tertiary)', padding: '12px 0' }}>

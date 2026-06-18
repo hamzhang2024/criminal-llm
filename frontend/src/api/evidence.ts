@@ -73,3 +73,25 @@ export async function getProcessedPdfs(caseId: string): Promise<any> {
   const res = await fetch(`${API_BASE}/cases/${caseId}/processed-pdfs`)
   return res.json()
 }
+
+export interface EvidenceReviewPayload {
+  name?: string
+  type?: string
+  persons?: string
+  key_facts?: string
+  contradiction_hints?: string
+}
+
+/** 人工校对单条证据（编辑 name/type/persons/key_facts/contradiction_hints） */
+export async function reviewEvidenceItem(caseId: string, evidenceId: number, payload: EvidenceReviewPayload): Promise<any> {
+  const res = await safeFetch(`${API_BASE}/cases/${caseId}/evidence/${evidenceId}/review`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json()
+  if (!res.ok) {
+    throw new Error(data.detail || '校对失败')
+  }
+  return data
+}
