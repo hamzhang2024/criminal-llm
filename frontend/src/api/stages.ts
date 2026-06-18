@@ -107,17 +107,34 @@ export interface EvidenceReviewItem {
   evidence_name: string
   evidence_ref?: string
   evidence_type?: string
-  authenticity: PropertyReview
-  legality: PropertyReview
-  relevance: PropertyReview
+  authenticity?: PropertyReview
+  legality?: PropertyReview
+  relevance?: PropertyReview
   review_summary?: string
   final_conclusion?: '采信' | '存疑' | '不采信'
   cross_examination_summary?: string
+  // 组合质证字段（组合审查时存在，独立审查时为空）
+  group_id?: string
+  group_label?: string
+  group_type?: string
+  member_refs?: number[]
+  group_findings?: Array<{
+    finding_type: string
+    issue: string
+    legal_basis: string
+    details: string
+    evidence_refs?: string[]
+  }>
+  per_member_notes?: Record<string, { cross_opinion: string; strategy: string[] }>
+  group_cross_summary?: string
+  repeated_statement_exclusion?: boolean
+  error?: string
 }
 
 export interface EvidenceReviewResult {
   case_id: string
   total_evidence: number
+  total_groups?: number
   reviews: EvidenceReviewItem[]
   generated_at?: string
   error?: string

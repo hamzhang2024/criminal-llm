@@ -559,7 +559,23 @@ async def review_evidence(case_id: str):
             if isinstance(task, dict):
                 task["total_evidence"] = len(evidence_texts)
 
-            result = await engine.review_evidence_triple_property()
+            # 检查是否有证据分组：有则走组合质证，无则走逐份质证
+            import json as _json
+            index_file = case_path / "evidence" / "index.json"
+            has_groups = False
+            if index_file.exists():
+                try:
+                    idx = _json.loads(index_file.read_text(encoding="utf-8"))
+                    has_groups = bool(idx.get("evidence_groups"))
+                except Exception:
+                    pass
+
+            if has_groups:
+                logger.info("[证据审查] 检测到证据分组，启用组合质证模式")
+                result = await engine.generate_grouped_cross_examination_opinion()
+            else:
+                result = await engine.review_evidence_triple_property()
+
             task = REVIEW_TASKS.get(case_id)
             if isinstance(task, dict):
                 if result.get("error"):

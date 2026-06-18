@@ -2028,6 +2028,97 @@ export function ReportPage() {
             )}
 
             {evidenceReview.reviews.map((review, idx) => {
+              // 组合质证卡片（有 group_id 的渲染为组合卡片）
+              if (review.group_id) {
+                return (
+                  <div key={review.group_id} style={{
+                    background: review.repeated_statement_exclusion ? 'rgba(220,38,38,0.04)' : 'rgba(59,89,152,0.04)',
+                    border: `1px solid ${review.repeated_statement_exclusion ? 'rgba(220,38,38,0.3)' : 'rgba(59,89,152,0.2)'}`,
+                    borderRadius: '8px',
+                    padding: '12px 14px',
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: '12px', fontWeight: 700, color: colors.textPrimary, marginBottom: '2px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span style={{ fontSize: '10px', background: 'rgba(59,89,152,0.15)', color: '#3b5998', padding: '1px 6px', borderRadius: '3px' }}>组合质证</span>
+                          {review.group_label}
+                        </div>
+                        <div style={{ fontSize: '10px', color: colors.textTertiary }}>
+                          组内证据：{(review.member_refs || []).length} 份 · {review.group_type === 'interrogation' ? '讯问笔录组合' : review.group_type}
+                        </div>
+                      </div>
+                      {review.repeated_statement_exclusion && (
+                        <span style={{ fontSize: '10px', fontWeight: 600, color: '#dc2626', background: 'rgba(220,38,38,0.1)', padding: '2px 8px', borderRadius: '4px' }}>
+                          建议重复性供述排除
+                        </span>
+                      )}
+                    </div>
+
+                    {/* 组合审查发现 */}
+                    {review.group_findings && review.group_findings.length > 0 && (
+                      <div style={{ marginBottom: '10px' }}>
+                        <div style={{ fontSize: '10px', fontWeight: 600, color: '#991b1b', marginBottom: '6px' }}>组合审查发现：</div>
+                        {review.group_findings.slice(0, 4).map((f, i) => (
+                          <div key={i} style={{ fontSize: '11px', marginBottom: '6px', paddingLeft: '8px', borderLeft: '2px solid rgba(220,38,38,0.2)' }}>
+                            <div style={{ fontWeight: 500 }}>
+                              <span style={{ fontSize: '9px', color: '#991b1b', background: 'rgba(220,38,38,0.08)', padding: '0 4px', borderRadius: '2px', marginRight: '4px' }}>{f.finding_type}</span>
+                              {f.issue}
+                            </div>
+                            <div style={{ color: colors.textSecondary, marginTop: '2px' }}>{f.details}</div>
+                            {f.legal_basis && <div style={{ color: '#6b7280', fontSize: '10px', marginTop: '2px' }}>依据：{f.legal_basis}</div>}
+                            {f.evidence_refs && f.evidence_refs.length > 0 && (
+                              <div style={{ color: '#3b5998', fontSize: '10px', marginTop: '2px' }}>涉及：{f.evidence_refs.join('、')}</div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* 综合结论 */}
+                    {review.final_conclusion && (
+                      <div style={{
+                        fontSize: '11px', fontWeight: 600,
+                        color: getConclusionColor(review.final_conclusion),
+                        marginBottom: '8px', padding: '4px 8px',
+                        background: review.final_conclusion === '采信' ? 'rgba(22,163,74,0.1)' :
+                                   review.final_conclusion === '存疑' ? 'rgba(202,138,4,0.1)' : 'rgba(220,38,38,0.1)',
+                        borderRadius: '4px', display: 'inline-block',
+                      }}>
+                        组合结论：{review.final_conclusion}
+                      </div>
+                    )}
+
+                    {/* 组合质证意见 */}
+                    {review.group_cross_summary && (
+                      <div style={{ fontSize: '11px', color: colors.textPrimary, background: colors.surfaceElevated, padding: '8px 10px', borderRadius: '6px', marginBottom: '8px' }}>
+                        {review.group_cross_summary}
+                      </div>
+                    )}
+
+                    {/* 组内各证据要点（折叠） */}
+                    {review.per_member_notes && Object.keys(review.per_member_notes).length > 0 && (
+                      <details style={{ marginTop: '4px' }}>
+                        <summary style={{ fontSize: '10px', color: colors.textTertiary, cursor: 'pointer' }}>
+                          组内各证据质证要点（{Object.keys(review.per_member_notes).length} 份）
+                        </summary>
+                        <div style={{ marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                          {Object.entries(review.per_member_notes).map(([ref, note]) => (
+                            <div key={ref} style={{ fontSize: '11px', padding: '6px 8px', background: colors.surfaceElevated, borderRadius: '4px' }}>
+                              <div style={{ fontWeight: 500, color: '#3b5998', marginBottom: '2px' }}>{ref}</div>
+                              <div style={{ color: colors.textSecondary }}>{note.cross_opinion}</div>
+                              {note.strategy && note.strategy.length > 0 && (
+                                <div style={{ color: colors.textTertiary, fontSize: '10px', marginTop: '2px' }}>策略：{note.strategy.join('；')}</div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    )}
+                  </div>
+                )
+              }
+
+              // 独立质证卡片（原逻辑）
               const hasIssues = (review.legality?.score || 100) < 70 ||
                                (review.authenticity?.score || 100) < 70 ||
                                (review.relevance?.score || 100) < 70

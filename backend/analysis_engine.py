@@ -22,6 +22,7 @@ try:
         CONSTITUTIVE_ELEMENT_ANALYSIS,
         CROSS_EXAMINATION_STRATEGIES,
         CROSS_EXAMINATION_TEMPLATE,
+        EVIDENCE_GROUP_TEMPLATES,
         EVIDENCE_REVIEW_TEMPLATES,
         LEGAL_BASIS_FOR_REVIEW,
         THEORY_THREE_TIERS,
@@ -34,6 +35,7 @@ except ImportError:
     THEORY_THREE_TIERS = ""
     CONSTITUTIVE_ELEMENT_ANALYSIS = ""
     EVIDENCE_REVIEW_TEMPLATES = {}
+    EVIDENCE_GROUP_TEMPLATES = {}
     LEGAL_BASIS_FOR_REVIEW = ""
     CROSS_EXAMINATION_STRATEGIES = {}
     CROSS_EXAMINATION_TEMPLATE = ""
@@ -1352,6 +1354,279 @@ class AnalysisEngine:
         cross_file.write_text(cross_md, encoding="utf-8")
 
         return result
+
+    async def generate_grouped_cross_examination_opinion(self) -> Dict[str, Any]:
+        """组合证据质证（对证据组单次 LLM 调用，做跨证据一致性审查）
+
+        流程：
+        1. 读取 index.json 的 evidence_groups
+        2. 对每个组单次 LLM 调用，prompt 含组内所有证据 + 组合审查模板
+        3. 未分组的证据走原逐份质证逻辑
+        4. 合并结果写入 evidence_review.json
+        """
+        from llm_client import LLMClient
+        llm = LLMClient()
+
+        texts = self._load_evidence_texts()
+        # 证据 id -> text 字典
+        ev_by_id = {t.get("evidence_ref", "").replace("证据", ""): t for t in texts}
+
+        # 读取 index.json 获取 evidence_groups
+        index_file = self.case_dir / "evidence" / "index.json"
+        evidence_groups = []
+        all_evidence_meta = []
+        if index_file.exists():
+            try:
+                idx = json.loads(index_file.read_text(encoding="utf-8"))
+                evidence_groups = idx.get("evidence_groups", [])
+                all_evidence_meta = idx.get("evidence", [])
+            except Exception:
+                pass
+
+        # 证据 id -> meta 字典
+        meta_by_id = {e.get("id"): e for e in all_evidence_meta}
+
+        # 已分组的证据 id 集合
+        grouped_ids = set()
+        for g in evidence_groups:
+            for mid in g.get("member_refs", []):
+                grouped_ids.add(mid)
+
+        reviews: List[Dict[str, Any]] = []
+
+        # ── 第1步：组合质证（对每个组单次 LLM 调用）──
+        for group in evidence_groups:
+            group_id = group.get("group_id", "")
+            group_label = group.get("group_label", "")
+            group_type = group.get("group_type", "interrogation")
+            member_refs = group.get("member_refs", [])
+
+            if len(member_refs) < 2:
+                continue
+
+            # 收集组内证据文本
+            member_texts = []
+            for mid in member_refs:
+                ev_ref = f"{mid:03d}"
+                ev_text_data = ev_by_id.get(ev_ref)
+                meta = meta_by_id.get(mid, {})
+                if ev_text_data:
+                    member_texts.append({
+                        "id": mid,
+                        "name": ev_text_data.get("filename", meta.get("name", "")),
+                        "type": ev_text_data.get("type", meta.get("type", "")),
+                        "ref": ev_text_data.get("evidence_ref", f"证据{ev_ref}"),
+                        "text": ev_text_data.get("text", ""),
+                    })
+
+            if not member_texts:
+                continue
+
+            # 构建组合质证 prompt
+            prompt = self._build_group_review_prompt(member_texts, group_label, group_type)
+
+            try:
+                response = await llm.chat([
+                    {"role": "system", "content": "你是一名资深刑事辩护律师，精通证据法和庭审质证技巧。你的任务是对一组关联证据进行组合审查，发现独立审查无法发现的问题（如供述稳定性、程序合法性联动、重复性供述排除等）。审查要具体、有针对性，法律依据要准确。"},
+                    {"role": "user", "content": prompt}
+                ])
+
+                group_review = self._parse_group_review_result(response, group, member_texts)
+                reviews.append(group_review)
+            except Exception as e:
+                logger.error(f"[组合质证] 组 {group_id}({group_label}) 审查失败: {e}")
+                reviews.append({
+                    "group_id": group_id,
+                    "group_label": group_label,
+                    "group_type": group_type,
+                    "member_refs": member_refs,
+                    "group_findings": [],
+                    "per_member_notes": {},
+                    "group_cross_summary": f"组合审查失败: {str(e)}",
+                    "repeated_statement_exclusion": False,
+                    "final_conclusion": "存疑",
+                    "error": str(e),
+                })
+
+        # ── 第2步：未分组证据走逐份质证 ──
+        ungrouped_reviews = await self._review_ungrouped_evidence(llm, texts, grouped_ids, meta_by_id)
+        reviews.extend(ungrouped_reviews)
+
+        # 生成质证意见 Markdown
+        cross_md = self._generate_cross_examination_markdown(reviews)
+
+        # 保存审查结果
+        evidence_dir = self.case_dir / "evidence"
+        evidence_dir.mkdir(parents=True, exist_ok=True)
+        result = {
+            "case_id": self.case_id,
+            "total_evidence": len(texts),
+            "total_groups": len(evidence_groups),
+            "reviews": reviews,
+            "generated_at": datetime.now().isoformat(),
+        }
+        review_file = evidence_dir / "evidence_review.json"
+        review_file.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        # 兼容旧路径
+        (self.analysis_dir / "evidence_review.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        (self.analysis_dir / "cross_examination.md").write_text(cross_md, encoding="utf-8")
+
+        return result
+
+    def _build_group_review_prompt(self, member_texts: List[Dict], group_label: str, group_type: str) -> str:
+        """构建组合质证提示词"""
+        template = EVIDENCE_GROUP_TEMPLATES.get(group_type, EVIDENCE_GROUP_TEMPLATES.get("interrogation", ""))
+
+        # 组装组内证据信息（每份截断到 3000 字，总控 8000 字）
+        evidence_sections = []
+        total_chars = 0
+        max_total = 8000
+        for ev in member_texts:
+            ev_text = ev.get("text", "")
+            # 单份截断到 3000 字
+            if len(ev_text) > 3000:
+                ev_text = ev_text[:1500] + "\n\n[...中段已截断...]\n\n" + ev_text[-1500:]
+            section = f"### {ev.get('ref', '')} - {ev.get('name', '')}（类型：{ev.get('type', '')}）\n\n{ev_text}"
+            if total_chars + len(section) > max_total:
+                section = section[:max_total - total_chars] + "\n\n[...本组证据已达 token 上限，后续证据已截断...]"
+                evidence_sections.append(section)
+                break
+            evidence_sections.append(section)
+            total_chars += len(section)
+
+        prompt = f"""你是一名经验丰富的刑事辩护律师，正在对一组关联证据进行组合质证审查。
+
+# 证据组合信息
+- 组合名称：{group_label}
+- 组合类型：{group_type}
+- 组内证据数量：{len(member_texts)}
+
+# 组内证据内容
+{chr(10).join(evidence_sections)}
+
+# 组合审查要点（请按此逐项审查）
+{template}
+
+# 法律依据参考
+{LEGAL_BASIS_FOR_REVIEW[:3000]}
+
+# 输出要求
+请严格按照以下 JSON 格式输出组合审查结果：
+
+{{
+  "group_label": "{group_label}",
+  "group_findings": [
+    {{
+      "finding_type": "供述稳定性|程序合法性|重复性供述排除|非法证据传导|印证关系",
+      "issue": "发现的具体问题",
+      "legal_basis": "对应法条（如：刑诉解释第96条、检察院规则第68条）",
+      "details": "问题详细说明，涉及哪些证据",
+      "evidence_refs": ["证据001", "证据002"]
+    }}
+  ],
+  "per_member_notes": {{
+    "证据001": {{
+      "cross_opinion": "针对该证据的质证意见（一句话）",
+      "strategy": ["质证策略1", "质证策略2"]
+    }},
+    "证据002": {{
+      "cross_opinion": "...",
+      "strategy": ["..."]
+    }}
+  }},
+  "repeated_statement_exclusion": false,
+  "group_cross_summary": "组合质证综合意见（200字以内，可当庭陈述）",
+  "final_conclusion": "采信/不采信/存疑"
+}}
+
+# 注意事项
+1. 重点发现独立审查无法发现的问题：供述高度一致（复制粘贴）、提押证与笔录时间不对应、重复性供述排除等
+2. per_member_notes 要覆盖组内每份证据，但可简短
+3. repeated_statement_exclusion：是否建议适用重复性供述一并排除规则
+4. 只输出 JSON，不要其他内容。"""
+        return prompt
+
+    def _parse_group_review_result(self, response: str, group: Dict, member_texts: List[Dict]) -> Dict[str, Any]:
+        """解析组合质证 LLM 返回结果"""
+        import re
+        # 提取 JSON
+        json_text = response.strip()
+        # 去除可能的 ```json 标记
+        if json_text.startswith("```"):
+            json_text = re.sub(r'^```(?:json)?\s*', '', json_text)
+            json_text = re.sub(r'\s*```$', '', json_text)
+        # 截断到最后一个 }
+        last_brace = json_text.rfind("}")
+        if last_brace > 0:
+            json_text = json_text[:last_brace + 1]
+
+        try:
+            data = json.loads(json_text)
+        except Exception:
+            data = {
+                "group_findings": [],
+                "per_member_notes": {},
+                "group_cross_summary": response[:500],
+                "repeated_statement_exclusion": False,
+                "final_conclusion": "存疑",
+            }
+
+        return {
+            "group_id": group.get("group_id", ""),
+            "group_label": group.get("group_label", data.get("group_label", "")),
+            "group_type": group.get("group_type", "interrogation"),
+            "member_refs": group.get("member_refs", []),
+            "group_findings": data.get("group_findings", []),
+            "per_member_notes": data.get("per_member_notes", {}),
+            "group_cross_summary": data.get("group_cross_summary", ""),
+            "repeated_statement_exclusion": data.get("repeated_statement_exclusion", False),
+            "final_conclusion": data.get("final_conclusion", "存疑"),
+        }
+
+    async def _review_ungrouped_evidence(self, llm, texts: List[Dict], grouped_ids: set, meta_by_id: Dict) -> List[Dict]:
+        """对未分组的证据走原有逐份质证逻辑"""
+        reviews = []
+        for ev in texts:
+            if ev.get("is_indictment"):
+                continue
+            ev_ref = ev.get("evidence_ref", "")
+            if not ev_ref:
+                continue
+            # 从 ref 提取数字 id
+            import re
+            m = re.search(r'\d+', ev_ref)
+            if not m:
+                continue
+            ev_id = int(m.group())
+            if ev_id in grouped_ids:
+                continue  # 已在组合中，跳过
+
+            ev_name = ev.get("filename", "未知证据")
+            ev_type = ev.get("type", "其他证据")
+            ev_text = ev.get("text", "")
+            if not ev_text.strip():
+                continue
+
+            template = self._get_review_template(ev_type)
+            prompt = self._build_review_prompt(ev, template)
+            try:
+                response = await llm.chat([
+                    {"role": "system", "content": "你是一名资深刑事辩护律师，精通证据法和庭审质证技巧。你的任务是严格审查证据的三性（合法性、真实性、关联性），并生成可直接用于庭审的质证意见。审查要具体、有针对性，法律依据要准确。"},
+                    {"role": "user", "content": prompt}
+                ])
+                review = self._parse_review_result(response, ev)
+                reviews.append(review)
+            except Exception as e:
+                logger.error(f"[证据审查] {ev_name} 审查失败: {e}")
+                reviews.append({
+                    "evidence_name": ev_name,
+                    "evidence_ref": ev_ref,
+                    "evidence_type": ev_type,
+                    "final_conclusion": "存疑",
+                    "cross_examination_summary": f"审查失败: {str(e)}",
+                    "error": str(e),
+                })
+        return reviews
 
     def _generate_cross_examination_markdown(self, reviews: List[Dict[str, Any]]) -> str:
         """生成质证意见 Markdown 文档"""
