@@ -16,6 +16,7 @@ interface Step1ExtractProps {
   evidenceList: EvidenceItem[]
   evidenceExtracted: boolean
   processing: boolean
+  stopping?: boolean
   onExtract: () => void
   onStop: () => void
   onClear: () => void
@@ -23,7 +24,7 @@ interface Step1ExtractProps {
 }
 
 export function Step1Extract({
-  files, evidenceList, evidenceExtracted, processing,
+  files, evidenceList, evidenceExtracted, processing, stopping,
   onExtract, onStop, onClear,
 }: Step1ExtractProps) {
   const mdConversionComplete = files.length > 0 && files.every(f => f.status === 'done')
@@ -37,7 +38,9 @@ export function Step1Extract({
         </div>
         <div className="flex-row gap-sm">
           {processing ? (
-            <MacOSButton variant="secondary" onClick={onStop} style={{ color: '#ff9500', borderColor: '#ff9500' }}>停止</MacOSButton>
+            <MacOSButton variant="secondary" disabled={!!stopping} onClick={onStop} style={{ color: '#ff9500', borderColor: '#ff9500' }}>
+              {stopping ? '正在停止...' : '停止'}
+            </MacOSButton>
           ) : evidenceExtracted ? (
             <>
               <MacOSButton variant="secondary" onClick={onExtract}>重新提取</MacOSButton>

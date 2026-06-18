@@ -1247,6 +1247,7 @@ async def _extract_single_file_with_tracking(
     md_text: str,
     temp_dir: Path,
     semaphore: asyncio.Semaphore,
+    case_id: str = "",
 ) -> tuple:
     """
     包装 _extract_single_file，管理信号量和重试。
@@ -1254,6 +1255,16 @@ async def _extract_single_file_with_tracking(
     """
     max_retries = 2
     last_error = None
+
+    def _report_retry(attempt: int, reason: str, wait: int):
+        """上报重试状态到 EXTRACT_TASKS，让前端可见"""
+        if not case_id:
+            return
+        task = EXTRACT_TASKS.get(case_id)
+        if isinstance(task, dict):
+            task["retry_count"] = attempt
+            task["retry_reason"] = reason
+            task["retry_wait_seconds"] = wait
 
     for attempt in range(1, max_retries + 1):
         # 获取信号量，执行提取
@@ -1264,12 +1275,15 @@ async def _extract_single_file_with_tracking(
             except asyncio.TimeoutError:
                 last_error = "LLM 调用超时（600s）"
                 logger.info(f"[证据提取] {md_file.name}: 第 {attempt} 次尝试超时")
+                if attempt < max_retries:
+                    _report_retry(attempt, "timeout", 10 * attempt)
             except Exception as e:
                 last_error = str(e)
                 error_msg = str(e).lower()
                 if any(kw in error_msg for kw in ['429', 'rate limit', 'too many', 'quota']):
                     logger.info(f"[证据提取] {md_file.name}: 触发限流，退避后重试")
                     if attempt < max_retries:
+                        _report_retry(attempt, "rate_limit", 30 * attempt)
                         # 信号量已释放（with 块退出），其他文件可继续
                         await asyncio.sleep(30 * attempt)
                         continue
@@ -1278,6 +1292,7 @@ async def _extract_single_file_with_tracking(
         # 重试等待在信号量之外（其他文件可在此期间获得并发机会）
         if attempt < max_retries:
             logger.info(f"[证据提取] {md_file.name}: {attempt * 10}s 退避等待中...")
+            _report_retry(attempt, "general_error", 10 * attempt)
             await asyncio.sleep(10 * attempt)
 
     raise RuntimeError(f"[证据提取] {md_file.name}: 重试 {max_retries} 次均失败，最后错误: {last_error}")
@@ -1358,9 +1373,31 @@ async def _run_extract_background(case_id: str, case_path, md_dir, evidence_dir)
         task = EXTRACT_TASKS.get(case_id)
         if isinstance(task, dict):
             task["status"] = "error"
+            # 分类错误类型，提供用户友好的提示
+            err_str = str(e)[:500]
+            err_type = "unknown"
+            hint = "请查看后端日志排查详情"
+            err_lower = err_str.lower()
+            if "timeout" in err_lower or "timed out" in err_lower:
+                err_type = "timeout"
+                hint = "LLM 响应超时，可能是模型负载高或文件过大，建议重试或减小并发数"
+            elif "rate" in err_lower and "limit" in err_lower:
+                err_type = "rate_limit"
+                hint = "触发 API 限流，请降低并发数后重试"
+            elif "401" in err_lower or "unauthorized" in err_lower or "api key" in err_lower:
+                err_type = "auth_error"
+                hint = "API Key 无效或已过期，请在设置页检查 LLM 配置"
+            elif "connection" in err_lower or "refused" in err_lower or "unreachable" in err_lower:
+                err_type = "network"
+                hint = "无法连接 LLM 服务，请检查 Base URL 是否可达"
+            elif "json" in err_lower or "parse" in err_lower:
+                err_type = "parse_failure"
+                hint = "LLM 输出解析失败，可能模型未按格式输出，建议重试"
             task["error_details"] = [{
+                "type": err_type,
                 "reason": "extract_failed",
-                "message": str(e)[:500],
+                "message": err_str,
+                "hint": hint,
                 "recoverable": True,
             }]
             task["recoverable"] = True
@@ -1520,7 +1557,7 @@ async def _do_extract_evidence(
 
                     logger.info(f"[证据提取] 处理: {md_file.name}")
                     source_name, evidence_list = await _extract_single_file_with_tracking(
-                        md_file, md_text, file_temp_dir, semaphore
+                        md_file, md_text, file_temp_dir, semaphore, case_id
                     )
 
                     # 停止心跳
@@ -1585,6 +1622,17 @@ async def _do_extract_evidence(
                     elapsed = time.time() - last_progress_time
                     if elapsed > stall_threshold:
                         logger.info(f"[证据提取] 检测到卡死：{elapsed:.0f}s 无进展（阈值 {stall_threshold}s），自动取消提取")
+                        # 标记卡死取消原因，让前端能看到
+                        task = EXTRACT_TASKS.get(case_id)
+                        if isinstance(task, dict):
+                            task["status"] = "error"
+                            task["error_details"] = [{
+                                "type": "stall_cancelled",
+                                "reason": "stall_detected",
+                                "message": f"超过 {stall_threshold // 60} 分钟无进展自动取消（可能是 LLM 响应卡住或大文件处理超时）",
+                                "hint": "建议检查 LLM 服务状态，或降低 evidence_concurrency 并发数后重试",
+                                "recoverable": True,
+                            }]
                         if gather_task and not gather_task.done():
                             gather_task.cancel()
                         return
@@ -1937,15 +1985,27 @@ async def get_extract_status(case_id: str):
         return {"case_id": case_id, "status": "cancelled"}
     if task and isinstance(task, dict):
         elapsed = time.time() - task.get("started_at", time.time())
+        total = task.get("total_files", 0)
+        processed = task.get("processed_files", 0)
+        # ETA 预估：基于已处理文件均速，至少处理 2 个文件才计算（避免前期波动）
+        eta_seconds = None
+        if total > 0 and processed >= 2:
+            avg_per_file = elapsed / processed
+            remaining = total - processed
+            eta_seconds = round(avg_per_file * remaining)
         result = {
             "case_id": case_id,
             "status": task.get("status", "running"),
-            "total_files": task.get("total_files", 0),
-            "processed_files": task.get("processed_files", 0),
+            "total_files": total,
+            "processed_files": processed,
             "current_file": task.get("current_file", ""),
             "elapsed_seconds": round(elapsed),
+            "eta_seconds": eta_seconds,
             "llm_waiting": task.get("llm_waiting", False),
             "llm_latency_ms": task.get("llm_latency", 0),
+            "retry_count": task.get("retry_count", 0),
+            "retry_reason": task.get("retry_reason", ""),
+            "retry_wait_seconds": task.get("retry_wait_seconds", 0),
             "stopped_by_user": task.get("stopped_by_user", False),
             "recoverable": task.get("recoverable", True),
         }

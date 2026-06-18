@@ -79,8 +79,25 @@ export function useStageAnalysis(caseId: string | undefined, defendant: string, 
     const controller = new AbortController()
     stageAbortRef.current[stageNum] = controller
 
+    // 在阶段执行期间轮询后端 progress，更新实时消息
+    const progressPoll = setInterval(async () => {
+      try {
+        const r = await fetch(`${API_BASE}/stage-analysis/${caseId}/progress`)
+        const d = await r.json()
+        if (d.running && d.stage === stageNum) {
+          const stage = STAGES.find(s => s.num === stageNum)
+          const parts: string[] = []
+          if (d.message) parts.push(d.message)
+          if (d.substage) parts.push(`(${d.substage})`)
+          if (d.total && d.current) parts.push(`${d.current}/${d.total}`)
+          setStageMessages(prev => ({ ...prev, [stageNum]: parts.join(' · ') || `正在执行：${stage?.name}...` }))
+        }
+      } catch {}
+    }, 2000)
+
     try {
       const result = await api.runSingleStage(caseId, stageNum, defendant, crimeType || undefined)
+      clearInterval(progressPoll)
       if (!result.success) throw new Error(result.detail || result.error || '阶段执行失败')
 
       setStageStatus(prev => ({ ...prev, [stageNum]: 'completed' }))
@@ -95,6 +112,7 @@ export function useStageAnalysis(caseId: string | undefined, defendant: string, 
         setTimeout(() => navigate(`/case/${caseId}/report`), 2000)
       }
     } catch (err) {
+      clearInterval(progressPoll)
       if (err instanceof Error && err.name === 'AbortError') {
         await handleClearStage(stageNum)
         setStageStatus(prev => ({ ...prev, [stageNum]: 'idle' }))
@@ -133,11 +151,28 @@ export function useStageAnalysis(caseId: string | undefined, defendant: string, 
       setStageMessages(prev => ({ ...prev, [i]: `正在执行：${stage?.name}...` }))
       setRunningStage(i)
 
+      // 在阶段执行期间轮询后端 progress，更新实时消息
+      const progressPoll = setInterval(async () => {
+        try {
+          const r = await fetch(`${API_BASE}/stage-analysis/${caseId}/progress`)
+          const d = await r.json()
+          if (d.running && d.stage === i) {
+            const parts: string[] = []
+            if (d.message) parts.push(d.message)
+            if (d.substage) parts.push(`(${d.substage})`)
+            if (d.total && d.current) parts.push(`${d.current}/${d.total}`)
+            setStageMessages(prev => ({ ...prev, [i]: parts.join(' · ') || `正在执行：${stage?.name}...` }))
+          }
+        } catch {}
+      }, 2000)
+
       try {
         const result = await api.runSingleStage(caseId, i, defendant, crimeType || undefined)
+        clearInterval(progressPoll)
         if (!result.success) throw new Error(result.detail || result.error || '阶段执行失败')
         setStageStatus(prev => ({ ...prev, [i]: 'completed' }))
       } catch (err) {
+        clearInterval(progressPoll)
         setStageStatus(prev => ({ ...prev, [i]: 'error' }))
         setStageErrors(prev => ({ ...prev, [i]: err instanceof Error ? err.message : '阶段执行失败' }))
         setRunningStage(null)

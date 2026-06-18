@@ -120,11 +120,24 @@ def _read_stage_md(analysis_dir, stage: int) -> str:
     return ""
 
 
-def _set_progress(case_id: str, stage: int, message: str):
+def _set_progress(case_id: str, stage: int, message: str, current: int = 0, total: int = 0, substage: str = ""):
+    """设置阶段分析进度
+
+    Args:
+        case_id: 案件 ID
+        stage: 阶段号（1-6）
+        message: 进度消息
+        current: 当前进度（如子阶段序号）
+        total: 总进度（如子阶段总数）
+        substage: 子阶段名称（如 "5a 案件概述"）
+    """
     STAGE_PROGRESS[case_id] = {
         "stage": stage,
         "message": message,
         "status": "running",
+        "current": current,
+        "total": total,
+        "substage": substage,
         "updated_at": time.time(),
     }
 
@@ -187,31 +200,31 @@ async def _execute_all_stages(case_id: str, defendant: str, crime_type: Optional
             return
 
         engine = AnalysisEngine(case_id, case_path, indictment_file=indictment_file)
-        _set_progress(case_id, 0, "开始 5 阶段分析...")
+        _set_progress(case_id, 0, "开始 5 阶段分析...", current=0, total=5)
 
         # 阶段 1
         ANALYSIS_TASKS[case_id] = {"status": "running", "current_stage": 1}
-        _set_progress(case_id, 1, "正在分析起诉书，提取指控要素...")
+        _set_progress(case_id, 1, "正在分析起诉书，提取指控要素...", current=1, total=5, substage="指控要素")
         r1 = await engine.stage_1_read_indictment(defendant, crime_type)
 
         # 阶段 2
         ANALYSIS_TASKS[case_id] = {"status": "running", "current_stage": 2}
-        _set_progress(case_id, 2, "正在分析人物关系...")
+        _set_progress(case_id, 2, "正在分析人物关系...", current=2, total=5, substage="人物关系")
         r2 = await engine.stage_2_character_relations(defendant, crime_type)
 
         # 阶段 3
         ANALYSIS_TASKS[case_id] = {"status": "running", "current_stage": 3}
-        _set_progress(case_id, 3, "正在分析事件时间线和证据归组...")
+        _set_progress(case_id, 3, "正在分析事件时间线和证据归组...", current=3, total=5, substage="事件拆解")
         r3 = await engine.stage_3_event_timeline(defendant, crime_type)
 
         # 阶段 4
         ANALYSIS_TASKS[case_id] = {"status": "running", "current_stage": 4}
-        _set_progress(case_id, 4, f"正在梳理{crime_type or '涉案罪名'}相关法律法规...")
+        _set_progress(case_id, 4, f"正在梳理{crime_type or '涉案罪名'}相关法律法规...", current=4, total=5, substage="法律法规")
         r4 = await engine.stage_4_legal_regulations(defendant, crime_type)
 
         # 阶段 5
         ANALYSIS_TASKS[case_id] = {"status": "running", "current_stage": 5}
-        _set_progress(case_id, 5, "正在生成综合辩护分析报告...")
+        _set_progress(case_id, 5, "正在生成综合辩护分析报告...", current=5, total=5, substage="综合辩护")
         r5 = await engine.stage_5_full_defense(defendant, crime_type)
 
         _clear_progress(case_id)

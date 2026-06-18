@@ -8,6 +8,7 @@ export function useEvidenceExtraction(caseId: string | undefined) {
   const [evidenceList, setEvidenceList] = useState<any[]>([])
   const [evidenceExtracted, setEvidenceExtracted] = useState(false)
   const [extracting, setExtracting] = useState(false)
+  const [stopping, setStopping] = useState(false)
 
   const extractPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const extractUserStoppedRef = useRef(false)
@@ -116,11 +117,17 @@ export function useEvidenceExtraction(caseId: string | undefined) {
   // 停止提取
   const handleStopExtract = useCallback(async () => {
     extractUserStoppedRef.current = true
+    setStopping(true)  // 显示"正在停止..."过渡态
     stopPolling()
     if (caseId) {
-      await api.stopExtractEvidence(caseId)
+      try {
+        await api.stopExtractEvidence(caseId)
+      } catch (e) {
+        // 即使停止请求失败也要恢复 UI
+      }
     }
     setExtracting(false)
+    setStopping(false)
   }, [caseId, stopPolling])
 
   // 清除证据
@@ -157,6 +164,7 @@ export function useEvidenceExtraction(caseId: string | undefined) {
     evidenceList, setEvidenceList,
     evidenceExtracted, setEvidenceExtracted,
     extracting, setExtracting,
+    stopping,
     checkExtractStatus, loadEvidence,
     handleExtractEvidence,
     handleStopExtract,

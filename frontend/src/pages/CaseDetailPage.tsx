@@ -51,7 +51,7 @@ export function CaseDetailPage() {
   } = useCaseFiles(caseId, currentStep)
 
   const {
-    evidenceList, evidenceExtracted, extracting, setEvidenceExtracted, setEvidenceList,
+    evidenceList, evidenceExtracted, extracting, stopping, setEvidenceExtracted, setEvidenceList,
     loadEvidence, handleExtractEvidence: extractEvidenceFn,
     handleStopExtract, handleClearEvidence, handleRefreshEvidence,
     checkExtractStatus, stopPolling: stopExtractPolling,
@@ -291,14 +291,63 @@ export function CaseDetailPage() {
           if (extractPollRef.current) { clearInterval(extractPollRef.current); extractPollRef.current = null }
           const data = await api.getEvidenceIndex(caseId)
           if (data.total_evidence > 0) { setEvidenceList(data.evidence || []); setEvidenceExtracted(true); setProgress(`已提取 ${data.total_evidence} 份证据`) }
-          else { setError(data.error_hint || '提取未成功'); setProgress('') }
+          else {
+            // 优先使用后端结构化错误详情（type + message + hint）
+            const errDetail = st.error_details
+            let errMsg = '提取未成功'
+            if (errDetail) {
+              if (Array.isArray(errDetail) && errDetail[0]) {
+                const e = errDetail[0]
+                errMsg = e.hint ? `${e.message}（${e.hint}）` : (e.message || errMsg)
+              } else if (typeof errDetail === 'object') {
+                const e = errDetail as any
+                errMsg = e.hint ? `${e.message}（${e.hint}）` : (e.message || errMsg)
+              } else if (typeof errDetail === 'string') {
+                errMsg = errDetail
+              }
+            }
+            setError(errMsg || data.error_hint || '提取未成功'); setProgress('')
+          }
           setProcessing(false)
         } else {
           const tf = st.total_files || 0, pf = st.processed_files || 0
-          setProgress(`正在提取证据... ${pf}/${tf} (${tf > 0 ? Math.round(pf/tf*100) : 0}%)`)
+          const pct = tf > 0 ? Math.round(pf/tf*100) : 0
+          // 构建详细进度信息：文件名 + 耗时 + LLM 等待状态
+          const parts: string[] = [`正在提取证据... ${pf}/${tf} (${pct}%)`]
+          if (st.current_file) {
+            // 截断过长的文件名
+            const fname = st.current_file.length > 40 ? st.current_file.slice(0, 37) + '...' : st.current_file
+            parts.push(`当前: ${fname}`)
+          }
+          if (st.llm_waiting) {
+            const latency = st.llm_latency ? `${Math.round(st.llm_latency)}s` : ''
+            parts.push(`等待 LLM 响应${latency ? ` (${latency})` : ''}`)
+          }
+          // 重试状态可见化
+          if (st.retry_count > 0) {
+            const reasonMap: Record<string, string> = {
+              timeout: '超时',
+              rate_limit: '限流',
+              general_error: '错误',
+            }
+            const reason = reasonMap[st.retry_reason] || st.retry_reason || '错误'
+            const wait = st.retry_wait_seconds ? `${st.retry_wait_seconds}s 后重试` : '重试中'
+            parts.push(`重试中（第 ${st.retry_count} 次，原因：${reason}，${wait}）`)
+          }
+          if (st.elapsed_seconds) {
+            const mins = Math.floor(st.elapsed_seconds / 60)
+            const secs = st.elapsed_seconds % 60
+            parts.push(`已耗时 ${mins}:${secs.toString().padStart(2, '0')}`)
+          }
+          if (st.eta_seconds != null && st.eta_seconds > 0) {
+            const etaMins = Math.floor(st.eta_seconds / 60)
+            const etaSecs = st.eta_seconds % 60
+            parts.push(`预计剩余 ${etaMins}:${etaSecs.toString().padStart(2, '0')}`)
+          }
+          setProgress(parts.join(' · '))
           try { const d = await api.getEvidenceIndex(caseId); if (d.total_evidence > 0) setEvidenceList(d.evidence || []) } catch {}
         }
-      } catch { extractPollFailuresRef.current++; if (extractPollFailuresRef.current >= 3) { if (extractPollRef.current) { clearInterval(extractPollRef.current); extractPollRef.current = null } setProcessing(false); setError('提取过程出错'); setProgress('') } }
+      } catch { extractPollFailuresRef.current++; if (extractPollFailuresRef.current >= 3) { if (extractPollRef.current) { clearInterval(extractPollRef.current); extractPollRef.current = null } setProcessing(false); setError('提取过程出错（连续 3 次轮询失败）'); setProgress('') } }
     }, 3000)
     setTimeout(() => { if (extractPollRef.current) { clearInterval(extractPollRef.current); extractPollRef.current = null; setProcessing(false); setProgress('⚠️ 提取超时') } }, 900000)
   }, [caseId])
@@ -317,9 +366,32 @@ export function CaseDetailPage() {
         const pi = setInterval(async () => {
           try {
             const sr = await fetch(`${API_BASE}/tasks/${caseId}/convert-status`); const sd = await sr.json()
-            if (sd.status === 'running') { const c = sd.current || 0, t = sd.total || 0; setProgress(`正在转换并提取证据（第 1/2 步）${c}/${t} (${t > 0 ? Math.round(c/t*100) : 0}%)`) }
+            if (sd.status === 'running') {
+              const c = sd.current || 0, t = sd.total || 0
+              const pct = t > 0 ? Math.round(c/t*100) : 0
+              const parts: string[] = [`正在转换并提取证据（第 1/2 步）${c}/${t} (${pct}%)`]
+              // 展示当前文件名
+              if (sd.current_file) {
+                const fname = typeof sd.current_file === 'string' ? sd.current_file : (Array.isArray(sd.current_file) && sd.current_file[0]) || ''
+                if (fname) {
+                  const shortName = fname.length > 35 ? fname.slice(0, 32) + '...' : fname
+                  parts.push(`当前: ${shortName}`)
+                }
+              }
+              // 展示后端 message（含成功/失败计数）
+              if (sd.message) parts.push(sd.message)
+              setProgress(parts.join(' · '))
+            }
             else if (sd.status === 'completed') { clearInterval(pi); resolve() }
-            else if (sd.status === 'failed' || sd.status === 'cancelled') { clearInterval(pi); reject(new Error(sd.message || '转换失败')) }
+            else if (sd.status === 'failed' || sd.status === 'cancelled') {
+              clearInterval(pi)
+              // 优先用结构化错误详情
+              const errDetail = sd.error_details
+              const errMsg = errDetail && typeof errDetail === 'object'
+                ? (errDetail.message || errDetail.raw || sd.message || '转换失败')
+                : (typeof errDetail === 'string' && errDetail ? errDetail : (sd.message || '转换失败'))
+              reject(new Error(errMsg))
+            }
             else if (sd.status === 'interrupted') { clearInterval(pi); reject(new Error('上次任务被中断，请点击「转换并提取」重新开始')) }
             // pending 或 idle 状态继续等待
           } catch (e) { clearInterval(pi); reject(e) }
@@ -474,7 +546,7 @@ export function CaseDetailPage() {
 
             {currentStep === 1 && (
               <Step1Extract files={files} evidenceList={evidenceList} evidenceExtracted={evidenceExtracted}
-                processing={extracting} onExtract={handleExtractEvidence} onStop={handleStopExtract}
+                processing={extracting} stopping={stopping} onExtract={handleExtractEvidence} onStop={handleStopExtract}
                 onClear={handleClearEvidence} onRefreshEvidence={handleRefreshEvidence} />
             )}
 
