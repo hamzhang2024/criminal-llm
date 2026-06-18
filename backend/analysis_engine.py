@@ -147,6 +147,8 @@ class AnalysisEngine:
                                     "source": ev.get("source", ""),
                                     "page_range": ev.get("page_range", ""),
                                     "key_facts": ev.get("key_facts", ""),
+                                    "persons": ev.get("persons", ""),
+                                    "contradiction_hints": ev.get("contradiction_hints", ""),
                                     "evidence_ref": f"证据{ev_id:03d}" if not is_indictment else "",
                                     "md_file": ev["md_file"],
                                     "is_indictment": is_indictment,
@@ -428,8 +430,22 @@ class AnalysisEngine:
         indictment_catalog, indictment_text, evidence_catalog_text, evidence_only = _split_indictment_and_evidence(texts)
 
         # 固定最大字符数（分层分析每次处理的证据量）
-        MAX_ANALYSIS_CHARS = 300_000  # 30万字符，约 100k tokens
+        MAX_ANALYSIS_CHARS = 200_000  # 20万字符，适配 256k 上下文模型（留 56k 给 prompt+输出）
         all_text = _truncate_all(texts, max_total=MAX_ANALYSIS_CHARS, strategy_info=strategy_info)
+
+        # 汇总已提取的人员清单（从 index.json 的 persons 字段），供 LLM 参考
+        persons_set = []
+        persons_seen = set()
+        for t in texts:
+            raw = t.get("persons", "")
+            if not raw:
+                continue
+            for name in raw.replace("，", ",").replace("、", ",").split(","):
+                name = name.strip()
+                if name and name not in persons_seen and len(name) <= 20:
+                    persons_seen.add(name)
+                    persons_set.append(name)
+        persons_summary = "、".join(persons_set) if persons_set else "（提取阶段未识别到具体人员，请从全文挖掘）"
 
         system_prompt = """你是一位资深刑事辩护律师，正在梳理案中人物关系。
 请从全部案卷材料中识别涉案人员及其相互关系。
@@ -455,6 +471,10 @@ class AnalysisEngine:
 
 {evidence_catalog_text}
 
+## 已提取人员清单（参考，仍需从全文挖掘隐含人物和关系细节）
+
+{persons_summary}
+
 ## 全部案卷材料
 
 {all_text}
@@ -471,6 +491,7 @@ class AnalysisEngine:
 角色可选：被告人/嫌疑人、同案犯、被害人、证人、鉴定人、办案人员、其他。
 涉案程度：核心、重要、次要、边缘。
 证据来源：证据用编号格式（如"见证据009"），指控文书写"据起诉书"/"据起诉意见书"。
+**上方"已提取人员清单"是提取阶段从各证据中识别的人员，请据此快速定位，但仍需从全文核实关系和补充遗漏人物。**
 
 ### 二、人物关系图
 
@@ -561,7 +582,7 @@ class AnalysisEngine:
         indictment_catalog, indictment_text, evidence_catalog_text, evidence_only = _split_indictment_and_evidence(texts)
 
         # 固定最大字符数（分层分析每次处理的证据量）
-        MAX_ANALYSIS_CHARS = 300_000  # 30万字符，约 100k tokens
+        MAX_ANALYSIS_CHARS = 200_000  # 20万字符，适配 256k 上下文模型（留 56k 给 prompt+输出）
         all_text = _truncate_all(texts, max_total=MAX_ANALYSIS_CHARS, strategy_info=strategy_info)
 
         system_prompt = """你是一位资深刑事辩护律师，正在梳理案卷中的事件脉络。
@@ -837,8 +858,17 @@ class AnalysisEngine:
         client = get_llm_client()
 
         # 固定最大字符数（分层分析每次处理的证据量）
-        MAX_ANALYSIS_CHARS = 300_000  # 30万字符，约 100k tokens
+        MAX_ANALYSIS_CHARS = 200_000  # 20万字符，适配 256k 上下文模型（留 56k 给 prompt+输出）
         all_text = _truncate_all(texts, max_total=MAX_ANALYSIS_CHARS, strategy_info=strategy_info)
+
+        # 汇总提取阶段已识别的矛盾提示，供 LLM 验证/扩展/否决
+        hints_lines = []
+        for t in texts:
+            hint = (t.get("contradiction_hints") or "").strip()
+            if hint and hint != "无":
+                ref = t.get("evidence_ref", "")
+                hints_lines.append(f"- {ref} {t.get('filename','')}：{hint}")
+        contradiction_hints_summary = "\n".join(hints_lines) if hints_lines else "（提取阶段未识别到明确矛盾提示，请从全文挖掘）"
 
         contradiction_prompt = f"""## 辩护对象
 被告人：**{defendant}**
@@ -851,6 +881,10 @@ class AnalysisEngine:
 
 {evidence_catalog_text}
 
+## 提取阶段已识别的矛盾提示（参考，需验证/扩展/否决）
+
+{contradiction_hints_summary}
+
 ## 全部案卷材料
 
 {all_text}
@@ -862,6 +896,7 @@ class AnalysisEngine:
 **引用规则**：
 - 证据用编号格式，如"见证据009"、"见证据013"
 - 起诉书/起诉意见书是指控文书不是证据，引用时写"据起诉书"/"据起诉意见书"，不要用"见证据XXX"格式
+- **上方"提取阶段已识别的矛盾提示"是提取阶段从各证据中识别的疑似矛盾，请逐一核实：确认属实的纳入分析，不成立的说明理由，并继续从全文挖掘其他矛盾**
 
 ### 一、口供稳定性分析（同一人多次笔录对比）
 
@@ -1902,14 +1937,16 @@ def generate_evidence_chain(case_path: Path) -> Dict[str, Any]:
         proves_facts = []
         proves_strength = {}  # 记录每个事实的证明强度
         proves_details = {}   # 记录每个事实的相关内容片段
-        full_text = (ev_name + " " + ev_summary + " " + ev_content[:3000]).lower()
+        ev_key_facts = ev.get("key_facts", "") or ""
+        # full_text 融合名称、关键事实、摘要、内容，用于关键词匹配
+        full_text = (ev_name + " " + ev_key_facts + " " + ev_summary + " " + ev_content[:3000]).lower()
 
         # 如果 index.json 中没有 content，尝试读取 MD 文件
         if not ev_content and ev.get("md_file"):
             md_path = evidence_dir / ev["md_file"]
             if md_path.exists():
                 try:
-                    full_text = (ev_name + " " + ev_summary + " " + md_path.read_text(encoding="utf-8")[:5000]).lower()
+                    full_text = (ev_name + " " + ev_key_facts + " " + ev_summary + " " + md_path.read_text(encoding="utf-8")[:5000]).lower()
                 except Exception:
                     pass
 
@@ -1954,6 +1991,30 @@ def generate_evidence_chain(case_path: Path) -> Dict[str, Any]:
                 proves_facts.append(fact["id"])
                 proves_strength[fact["id"]] = "low"  # 类型推断的证明力为 low
                 proves_details[fact["id"]] = ["依据证据类型推断"]
+
+        # 2.5 key_facts 关键词细筛（基于提取阶段的结构化关键事实）
+        # 当类型推断已关联某些事实时，用 key_facts 关键词提升证明强度或补充关联
+        if ev_key_facts:
+            keyfact_lower = ev_key_facts.lower()
+            # key_facts 关键词到待证事实的映射（用于细筛和强度提升）
+            keyfact_mapping = {
+                "fact_subject": ["户籍", "身份证", "出生", "年龄", "刑事责任年龄", "抓获", "到案"],
+                "fact_subjective": ["故意", "明知", "目的", "动机", "非法占有", "营利", "预谋"],
+                "fact_behavior": ["殴打", "伤害", "盗窃", "诈骗", "抢劫", "敲诈", "纠集", "分发", "持", "戳击", "殴打"],
+                "fact_result": ["轻伤", "重伤", "死亡", "损失", "金额", "赃款", "违法所得", "伤情", "骨折"],
+                "fact_circumstance": ["自首", "坦白", "认罪", "立功", "退赃", "赔偿", "累犯", "从轻", "从重"],
+            }
+            for fact_id, kws in keyfact_mapping.items():
+                matched = [kw for kw in kws if kw in keyfact_lower]
+                if matched:
+                    if fact_id not in proves_facts:
+                        proves_facts.append(fact_id)
+                        proves_strength[fact_id] = "medium"
+                        proves_details[fact_id] = [f"关键事实包含「{matched[0]}」"]
+                    elif proves_strength.get(fact_id) == "low":
+                        # 类型推断为 low，key_facts 命中则提升为 medium
+                        proves_strength[fact_id] = "medium"
+                        proves_details[fact_id] = proves_details.get(fact_id, []) + [f"关键事实印证「{matched[0]}」"]
 
         # 3. 用证据名称关键词补充（精确匹配）
         ev_name_lower = ev_name.lower()
@@ -2452,10 +2513,15 @@ def _split_indictment_and_evidence(texts: List[Dict[str, str]]):
 
 def _truncate_all(texts: List[Dict[str, str]], max_total: int, strategy_info: Dict[str, Any] = None) -> str:
     """
-    将所有证据文本合并，限制总长度
+    将所有证据文本合并，限制总长度。
+
+    分层组装策略（优先保留关键结构化字段）：
+    1. 每份证据的标题 + key_facts 全文 + original_quotes 全文 不参与缩减
+    2. 剩余预算分配给 text（MD 全文），按比例截断
+    3. 若 key_facts/original_quotes 缺失，回退到纯 text 截断
 
     Args:
-        texts: 证据文本列表
+        texts: 证据文本列表，每项含 filename/type/text 及可选 key_facts/original_quotes
         max_total: 最大总字符数
         strategy_info: 模型策略信息（可选，用于日志）
 
@@ -2464,28 +2530,66 @@ def _truncate_all(texts: List[Dict[str, str]], max_total: int, strategy_info: Di
     """
     total = sum(len(t["text"]) for t in texts)
 
-    # 记录策略信息
     if strategy_info:
         logger.info(f"[分析] 模型上下文 {strategy_info['limit_k']}, 策略 {strategy_info['strategy']}, 证据总量 {total} 字符")
         if strategy_info.get("warning"):
             logger.warning(f"[分析] {strategy_info['warning']}")
 
     if total <= max_total:
-        # 不需要截断
         logger.info(f"[分析] 证据总量 {total} 字符 ≤ 限制 {max_total} 字符，无需截断")
         return "\n\n".join([
             f"### {t['filename']}（{t['type']}）\n{t['text']}"
             for t in texts
         ])
 
-    # 需要截断，按比例缩减
-    ratio = max_total / total
-    logger.info(f"[分析] 证据总量 {total} 字符 > 限制 {max_total} 字符，按比例 {ratio:.1%} 截断")
-    parts = []
+    # 需要截断：分层组装，优先保留结构化字段
+    logger.info(f"[分析] 证据总量 {total} 字符 > 限制 {max_total} 字符，启用分层截断")
+
+    # 第1步：计算每份证据的"必保留部分"（标题 + key_facts + original_quotes）
+    # 这些不参与缩减，确保关键信息不丢失
+    essential_parts = []  # 每份证据的必保留文本
+    text_parts = []       # 每份证据的可缩减文本（MD 全文）
+    essential_total = 0
+
     for t in texts:
-        truncated = t["text"][:int(len(t["text"]) * ratio)]
-        parts.append(f"### {t['filename']}（{t['type']}）\n{truncated}")
-    return "\n\n".join(parts)
+        filename = t.get('filename', '')
+        ev_type = t.get('type', '')
+        key_facts = t.get('key_facts', '').strip() if t.get('key_facts') else ''
+        original_quotes = t.get('original_quotes', '').strip() if t.get('original_quotes') else ''
+
+        # 必保留：标题行 + key_facts + original_quotes
+        essential = f"### {filename}（{ev_type}）"
+        if key_facts:
+            essential += f"\n【关键事实】{key_facts}"
+        if original_quotes:
+            essential += f"\n【原文摘录】{original_quotes}"
+        essential_parts.append(essential)
+        essential_total += len(essential)
+
+        # 可缩减：完整 MD 文本
+        text_parts.append(t["text"])
+
+    # 第2步：剩余预算分配给 text
+    remaining_budget = max_total - essential_total - len(texts) * 2  # 预留分隔符
+    if remaining_budget <= 0:
+        # 必保留部分已超预算，退化为只保留 essential（极端情况）
+        logger.warning(f"[分析] 必保留字段 {essential_total} 字符已超预算，仅保留关键事实和原文摘录")
+        return "\n\n".join(essential_parts)
+
+    # 按各份 text 原长度比例分配剩余预算
+    text_total = sum(len(p) for p in text_parts)
+    ratio = remaining_budget / text_total if text_total > 0 else 0
+    logger.info(f"[分析] 必保留 {essential_total} 字符，剩余预算 {remaining_budget} 给全文（比例 {ratio:.1%}）")
+
+    result_parts = []
+    for i, t in enumerate(texts):
+        truncated_text = text_parts[i][:int(len(text_parts[i]) * ratio)] if text_parts[i] else ""
+        # 组装：必保留部分 + 截断后的全文
+        if truncated_text:
+            result_parts.append(f"{essential_parts[i]}\n\n{truncated_text}")
+        else:
+            result_parts.append(essential_parts[i])
+    return "\n\n".join(result_parts)
 
 
 def _check_model_support() -> Dict[str, Any]:
