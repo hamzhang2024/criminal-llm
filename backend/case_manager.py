@@ -1030,7 +1030,7 @@ _EVIDENCE_EXTRACTION_RULES = """
 - 保留关于主观明知、犯罪目的的完整问答
 - 保留关于认罪态度的完整问答
 - 保留前后供述有变化的完整对比
-- summary 字段应至少 5000 字，包含完整的关键问答，尽可能保留原文细节
+- summary 字段应详尽保留问答原文，建议 3000-8000 字，包含完整的关键问答和原文细节
 
 **书证/金融类**必须保留具体金额、时间、账号等数据
 **鉴定意见**必须保留鉴定方法、检材来源、鉴定结论
@@ -1063,7 +1063,7 @@ JSON 数组格式：
     "page_range": "页码范围",
     "persons": "涉案人员",
     "key_facts": "关键事实",
-    "summary": "详细摘要（至少5000字，保留完整问答原文和关键细节）",
+    "summary": "详细摘要（建议3000-8000字，保留完整问答原文和关键细节）",
     "original_quotes": "原文摘录（重要段落完整复制）",
     "contradiction_hints": "矛盾提示",
     "related_entities": "关联信息",
@@ -1077,7 +1077,7 @@ JSON 数组格式：
 2. 不要包含 ```json 或任何代码块标记
 3. 不要包含 Markdown 格式（如 ### 证据、- **类型** 等）
 4. 直接输出 JSON，不要有任何前缀或后缀文字
-5. **summary 字段必须详尽，至少 5000 字，讯问笔录要保留完整问答原文，其他证据要保留关键细节**
+5. **summary 字段必须详尽，建议 3000-8000 字，讯问笔录要保留完整问答原文，其他证据要保留关键细节**
 
 正确示例：`[{"name":"test","type":"书证","page_range":"1","persons":"","key_facts":"","summary":"","original_quotes":"","contradiction_hints":"","related_entities":"","images":[]}]`
 
@@ -1148,11 +1148,12 @@ async def _extract_single_file(
             "page_range": "",
             "persons": "",
             "key_facts": "",
-            "summary": md_text[:2000] if len(md_text) > 2000 else md_text,
+            "summary": md_text,
             "original_quotes": "",
             "contradiction_hints": "",
             "related_entities": "",
             "raw_text": md_text,
+            "needs_review": True,  # 标记需人工复核（LLM 解析失败的降级证据）
         }]
 
     # 调试：将 LLM 原始响应保存到 debug 文件，方便排查解析失败
@@ -1232,6 +1233,7 @@ async def _extract_single_file(
             "key_facts": ev_block.get("key_facts", ""),
             "summary_preview": ev_block["summary"][:200],
             "has_quotes": bool(ev_block.get("original_quotes", "").strip()),
+            "needs_review": ev_block.get("needs_review", False),
             "md_file": ev_path.name,
             "_temp_dir": str(temp_dir),
         })
@@ -1662,6 +1664,7 @@ async def _do_extract_evidence(
                             "related_entities": b.get("related_entities", ""),
                             "summary_preview": b["summary"][:200],
                             "has_quotes": bool(b.get("original_quotes", "").strip()),
+                            "needs_review": b.get("needs_review", False),
                             "md_file": ef.name,
                             "_temp_dir": str(file_temp_dir),
                         } for b in blocks])
@@ -1698,6 +1701,7 @@ async def _do_extract_evidence(
                         "key_facts": ev_data.get("key_facts", ""),
                         "summary_preview": ev_data["summary_preview"],
                         "has_quotes": ev_data["has_quotes"],
+                        "needs_review": ev_data.get("needs_review", False),
                         "md_file": new_name,
                     })
                     next_id += 1
@@ -1776,6 +1780,7 @@ async def _do_extract_evidence(
                     "key_facts": "",
                     "summary_preview": f"{md_file.name}（待案卷分析时详细提取）",
                     "has_quotes": True,
+                    "needs_review": False,
                     "md_file": dest_name,
                 })
                 next_id += 1
@@ -1797,6 +1802,7 @@ async def _do_extract_evidence(
                     "key_facts": "",
                     "summary_preview": ev_text[:200],
                     "has_quotes": True,
+                    "needs_review": False,
                     "md_file": ev_path.name,
                 })
                 next_id += 1
@@ -1806,6 +1812,45 @@ async def _do_extract_evidence(
             if task:
                 task["current_file"] = md_file.name
                 task["processed_files"] = task.get("processed_files", 0) + 1
+
+        # ── 过滤非证据类文书（封面/目录等案卷组织性材料）──
+        skipped_documents = []
+        filtered_evidence = []
+        for ev in all_evidence:
+            if _is_non_evidence_document(ev.get("name", ""), ev.get("type", "")):
+                skipped_documents.append({
+                    "name": ev.get("name", ""),
+                    "type": ev.get("type", ""),
+                    "source": ev.get("source", ""),
+                    "md_file": ev.get("md_file", ""),
+                    "reason": "非证据类文书（封面/目录）",
+                })
+                # 删除被跳过的证据 MD 文件
+                md_to_remove = evidence_dir / ev.get("md_file", "")
+                if md_to_remove.exists():
+                    try:
+                        md_to_remove.unlink()
+                    except Exception:
+                        pass
+                logger.info(f"[证据提取] 跳过非证据文书: {ev.get('name', '')} (来源: {ev.get('source', '')})")
+            else:
+                filtered_evidence.append(ev)
+
+        if skipped_documents:
+            # 重新分配连续编号（跳过的文书不占编号）
+            for i, ev in enumerate(filtered_evidence, 1):
+                ev["id"] = i
+            logger.info(f"[证据提取] 过滤非证据文书 {len(skipped_documents)} 份，剩余 {len(filtered_evidence)} 份证据")
+            # 记录跳过的文书到独立文件，便于审计
+            skipped_file = evidence_dir / "skipped_documents.json"
+            skipped_file.write_text(json.dumps({
+                "case_id": case_id,
+                "skipped_count": len(skipped_documents),
+                "documents": skipped_documents,
+                "generated_at": datetime.now().isoformat(),
+            }, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        all_evidence = filtered_evidence
 
         # ── 最终保存 ──
         index_data = {
@@ -2072,6 +2117,7 @@ async def clear_stage(case_id: str, stage_num: int):
 from case_manager_helpers import (  # noqa: F401
     _parse_evidence_blocks,
     _extract_field,
+    _is_non_evidence_document,
     _sanitize_filename,
 )
 

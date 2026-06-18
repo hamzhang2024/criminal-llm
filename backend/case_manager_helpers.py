@@ -5,11 +5,52 @@ Case Manager 辅助函数模块
 - _parse_evidence_blocks：解析 LLM 输出的证据块
 - _extract_field：从文本提取字段
 - _sanitize_filename：文件名净化
+- _is_non_evidence_document：判断是否为非证据类文书（封面/目录等）
 """
 import logging
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+
+# 非证据文书关键词——这类文书是案卷组织性材料，不含案件事实，不应纳入证据分析范围
+_NON_EVIDENCE_NAME_KEYWORDS = (
+    "卷内文书目录",
+    "卷内目录",
+    "案卷封面",
+    "案卷封皮",
+    "卷皮",
+    "扉页",
+    "卷宗封面",
+    "卷宗目录",
+)
+
+
+def _is_non_evidence_document(name: str, evidence_type: str = "") -> bool:
+    """判断文书是否为非证据类（封面/目录等案卷组织性材料）
+
+    Args:
+        name: 证据名称
+        evidence_type: 证据类型（可选，用于辅助判断）
+
+    Returns:
+        True 表示该文书不应纳入证据分析范围
+    """
+    if not name:
+        return False
+
+    # 名称明确匹配封面/目录关键词
+    for kw in _NON_EVIDENCE_NAME_KEYWORDS:
+        if kw in name:
+            return True
+
+    # 程序性文书 + 名称含"目录"/"封面" → 非证据
+    if evidence_type and "程序性文书" in evidence_type:
+        if "目录" in name or "封面" in name:
+            return True
+
+    return False
+
 
 
 
@@ -60,7 +101,7 @@ def _parse_evidence_blocks(llm_output: str, source_file: str) -> list:
                             "page_range": item.get("page_range", item.get("页码范围", "")),
                             "persons": item.get("persons", item.get("涉案人员", "")),
                             "key_facts": item.get("key_facts", item.get("关键事实", "")),
-                            "summary": item.get("summary", item.get("详细摘要", ""))[:2000],
+                            "summary": item.get("summary", item.get("详细摘要", "")),
                             "original_quotes": item.get("original_quotes", item.get("原文摘录", "")),
                             "contradiction_hints": item.get("contradiction_hints", item.get("矛盾提示", "无")),
                             "related_entities": item.get("related_entities", item.get("关联信息", "")),
@@ -110,7 +151,7 @@ def _parse_evidence_blocks(llm_output: str, source_file: str) -> list:
             "page_range": "",
             "persons": "",
             "key_facts": "",
-            "summary": llm_output[:2000],
+            "summary": llm_output,
             "original_quotes": "",
             "contradiction_hints": "",
             "related_entities": "",
@@ -146,7 +187,7 @@ def _parse_evidence_blocks(llm_output: str, source_file: str) -> list:
         page_range = _extract_field(content, "页码范围") or ""
         persons = _extract_field(content, "涉案人员") or ""
         key_facts = _extract_field(content, "关键事实") or ""
-        summary = _extract_field(content, "详细摘要") or content[:2000]
+        summary = _extract_field(content, "详细摘要") or content
         original_quotes = _extract_field(content, "原文摘录") or ""
         contradiction = _extract_field(content, "矛盾提示") or "无"
         related_entities = _extract_field(content, "关联信息") or ""
