@@ -2619,8 +2619,27 @@ def generate_evidence_chain(case_path: Path) -> Dict[str, Any]:
 def _extract_accusation(evidence_list: list, analysis_dir: Path, evidence_dir: Path) -> Optional[Dict[str, Any]]:
     """从起诉书/起诉意见书提取指控事实
 
-    优先级：stage_1/output.md > stage_1/output.json > 直接解析起诉书 MD
+    优先级：案件元数据（case.json）> stage_1/output.md > stage_1/output.json > 直接解析起诉书 MD
     """
+    # 0. 优先从案件元数据读取（case.json 包含被告人和罪名）
+    case_json = evidence_dir.parent.parent / "case.json"
+    case_metadata = {}
+    if case_json.exists():
+        try:
+            case_metadata = json.loads(case_json.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    case_defendant = case_metadata.get("defendant", "")
+    # 从案件名称提取罪名（如"王作通故意伤害罪" -> "故意伤害罪"）
+    case_name = case_metadata.get("name", "")
+    case_crime_type = ""
+    if case_name and "罪" in case_name:
+        import re
+        match = re.search(r'([一-龥]+罪)', case_name)
+        if match:
+            case_crime_type = match.group(1)
+
     # 1. 尝试从 stage_1/output.md 提取（内容更丰富）
     stage_1_md = analysis_dir / "stage_1" / "output.md"
     if stage_1_md.exists():
@@ -2628,41 +2647,59 @@ def _extract_accusation(evidence_list: list, analysis_dir: Path, evidence_dir: P
             content = stage_1_md.read_text(encoding="utf-8")
             # 提取关键信息
             lines = content.split("\n")
-            crime_type = ""
+            crime_type = case_crime_type  # 使用案件元数据中的罪名作为默认值
             accusation_summary = []
-            defendant = ""
+            defendant = case_defendant  # 使用案件元数据中的被告人作为默认值
 
             for line in lines:
-                # 提取罪名
-                if "**开设赌场罪**" in line or "指控罪名" in line:
-                    crime_type = "开设赌场罪"
-                elif "**" in line and "罪**" in line:
+                # 提取罪名（优先从 stage_1 输出提取，如果失败则用案件元数据）
+                if "指控罪名" in line:
+                    import re
+                    match = re.search(r'\*\*(.+?罪)\*\*', line)
+                    if match:
+                        crime_type = match.group(1)
+                elif "**" in line and "罪**" in line and not crime_type:
                     # 提取其他罪名
                     import re
                     match = re.search(r'\*\*(.+?罪)\*\*', line)
                     if match:
                         crime_type = match.group(1)
 
-                # 提取被告人
-                if "被告人" in line and ("高为峰" in line or "主犯" in line):
+                # 提取被告人（优先从 stage_1 输出提取，如果失败则用案件元数据）
+                if "被告人" in line and not defendant:
                     import re
-                    match = re.search(r'(高为峰|丁以建|方天兴)', line)
+                    # 匹配常见的被告人姓名模式
+                    match = re.search(r'被告人[：:]\s*([^\s,，]+)', line)
                     if match:
                         defendant = match.group(1)
+                    else:
+                        # 尝试匹配中文姓名（2-4 个汉字）
+                        match = re.search(r'([一-龥]{2,4})', line)
+                        if match:
+                            defendant = match.group(1)
 
                 # 提取指控事实摘要
-                if any(kw in line for kw in ["指控事实", "核心行为", "危害结果", "抽头渔利"]):
+                if any(kw in line for kw in ["指控事实", "核心行为", "危害结果"]):
                     accusation_summary.append(line.strip())
 
-            if crime_type and accusation_summary:
+            if crime_type or accusation_summary:
                 return {
-                    "name": f"指控：{crime_type}",
-                    "description": " ".join(accusation_summary[:3])[:500],
+                    "name": f"指控：{crime_type}" if crime_type else "指控事实",
+                    "description": " ".join(accusation_summary[:3])[:500] if accusation_summary else "",
                     "source": "阶段1分析",
                     "defendant": defendant,
                 }
         except Exception:
             pass
+
+    # 2. 如果 stage_1 不存在或提取失败，使用案件元数据
+    if case_defendant and case_crime_type:
+        return {
+            "name": f"指控：{case_crime_type}",
+            "description": f"被告人{case_defendant}涉嫌{case_crime_type}",
+            "source": "案件元数据",
+            "defendant": case_defendant,
+        }
 
     # 2. 尝试从 stage_1/output.json 读取
     stage_1_file = analysis_dir / "stage_1" / "output.json"
