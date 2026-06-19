@@ -45,6 +45,18 @@ export function EvidenceContrastTable({ markdown }: EvidenceContrastTableProps) 
     return null
   }
 
+  // 根据表头内容智能分配列宽：短判定列（是否矛盾/是否）给窄宽，
+  // 维度/分类列给中等，内容列均分剩余
+  const calcColumnWidths = (headers: string[]): string[] => {
+    const narrowKeywords = ['是否矛盾', '是否', '矛盾', '印证']
+    const mediumKeywords = ['维度', '类型', '分类', '序号', '编号']
+    return headers.map(h => {
+      if (narrowKeywords.some(k => h.includes(k))) return '80px'
+      if (mediumKeywords.some(k => h.includes(k))) return '120px'
+      return 'auto'
+    })
+  }
+
   return (
     <div style={{ marginBottom: '16px' }}>
       {tables.map((table, i) => (
@@ -53,15 +65,22 @@ export function EvidenceContrastTable({ markdown }: EvidenceContrastTableProps) 
             width: '100%',
             borderCollapse: 'collapse',
             fontSize: '13px',
+            tableLayout: 'fixed',
           }}>
             {(() => {
               const rows = table.split('\n').filter(r => r.trim() && !r.includes('---'))
               if (rows.length === 0) return null
               const headers = rows[0].split('|').map(c => c.trim()).filter(c => c)
               const dataRows = rows.slice(1)
+              const colWidths = calcColumnWidths(headers)
 
               return (
                 <>
+                  <colgroup>
+                    {colWidths.map((w, j) => (
+                      <col key={j} style={{ width: w }} />
+                    ))}
+                  </colgroup>
                   <thead>
                     <tr>
                       {headers.map((h, j) => (
@@ -73,6 +92,8 @@ export function EvidenceContrastTable({ markdown }: EvidenceContrastTableProps) 
                           fontWeight: 600,
                           fontSize: '12px',
                           color: 'var(--macos-text-secondary)',
+                          whiteSpace: 'normal',
+                          wordBreak: 'break-word',
                         }}>
                           {h}
                         </th>
@@ -102,14 +123,23 @@ export function EvidenceContrastTable({ markdown }: EvidenceContrastTableProps) 
                           background: rowBg,
                           borderBottom: `1px solid ${borderColor}`,
                         }}>
-                          {cells.map((cell, ci) => (
-                            <td key={ci} style={{
-                              padding: '8px 12px',
-                              color: hasContradiction ? '#666666' : hasCorroboration ? '#3b5998' : 'var(--macos-text-primary)',
-                            }}>
-                              {cell}
-                            </td>
-                          ))}
+                          {cells.map((cell, ci) => {
+                            // 判断列宽类型，短列居中且不换行
+                            const colWidth = colWidths[ci] || 'auto'
+                            const isNarrow = colWidth === '80px'
+                            return (
+                              <td key={ci} style={{
+                                padding: '8px 12px',
+                                color: hasContradiction ? '#666666' : hasCorroboration ? '#3b5998' : 'var(--macos-text-primary)',
+                                whiteSpace: isNarrow ? 'nowrap' : 'normal',
+                                wordBreak: isNarrow ? 'normal' : 'break-word',
+                                textAlign: isNarrow ? 'center' : 'left',
+                                verticalAlign: 'top',
+                              }}>
+                                {cell}
+                              </td>
+                            )
+                          })}
                         </tr>
                       )
                     })}
