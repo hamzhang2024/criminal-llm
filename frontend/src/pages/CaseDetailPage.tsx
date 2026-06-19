@@ -121,7 +121,11 @@ export function CaseDetailPage() {
   useEffect(() => {
     if (!caseId || currentStep === 0) return () => { stopExtractPolling(); if (convertPollRef.current) { clearInterval(convertPollRef.current); convertPollRef.current = null } }
     checkExtractStatus().then(running => {
-      if (running) { setProcessing(true); setProgress('正在提取证据...'); return }
+      if (running) {
+        // 后端仍在提取，恢复 processing 状态（轮询由下方专用 useEffect 启动）
+        setProcessing(true); setProgress('正在提取证据...')
+        return
+      }
       // 检查转换轮询
       if (currentStep >= 1) {
         fetch(`${API_BASE}/tasks/${caseId}/convert-status`).then(r => r.json()).then(d => {
@@ -351,6 +355,22 @@ export function CaseDetailPage() {
     }, 3000)
     setTimeout(() => { if (extractPollRef.current) { clearInterval(extractPollRef.current); extractPollRef.current = null; setProcessing(false); setProgress('⚠️ 提取超时（2小时），后端可能仍在运行，请稍后刷新查看结果') } }, 7200000)
   }, [caseId])
+
+  // 页面挂载/刷新时：若后端仍在提取，恢复轮询（修复刷新后一直显示"提取中"不更新）
+  useEffect(() => {
+    if (!caseId || currentStep === 0) return
+    let cancelled = false
+    checkExtractStatus().then(running => {
+      if (cancelled || !running) return
+      // 后端在跑但本地没有轮询，启动轮询恢复进度
+      if (!extractPollRef.current) {
+        setProcessing(true)
+        setProgress('正在提取证据...')
+        startExtractPoll()
+      }
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [caseId, currentStep, startExtractPoll, checkExtractStatus])
 
   const handleConvertAndExtract = useCallback(async () => {
     if (!caseId) { setError('案件 ID 无效'); return }
