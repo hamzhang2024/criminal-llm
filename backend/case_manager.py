@@ -1902,10 +1902,25 @@ async def _do_extract_evidence(
                 filtered_evidence.append(ev)
 
         if skipped_documents:
-            # 重新分配连续编号（跳过的文书不占编号）
+            # 重新分配连续编号（跳过的文书不占编号），同步重命名 MD 文件和更新 md_file
+            import re as _re
             for i, ev in enumerate(filtered_evidence, 1):
+                old_id = ev["id"]
                 ev["id"] = i
-            logger.info(f"[证据提取] 过滤非证据文书 {len(skipped_documents)} 份，剩余 {len(filtered_evidence)} 份证据")
+                old_md_file = ev.get("md_file", "")
+                if old_md_file:
+                    # 从旧文件名提取名称部分（去掉 NNN_ 前缀）
+                    name_part = _re.sub(r'^\d+_', '', old_md_file)
+                    new_md_file = f"{i:03d}_{name_part}"
+                    old_path = evidence_dir / old_md_file
+                    new_path = evidence_dir / new_md_file
+                    if old_path.exists() and old_path != new_path:
+                        try:
+                            old_path.rename(new_path)
+                        except Exception as re_err:
+                            logger.warning(f"[证据提取] 重命名 {old_md_file} → {new_md_file} 失败: {re_err}")
+                    ev["md_file"] = new_md_file
+            logger.info(f"[证据提取] 过滤非证据文书 {len(skipped_documents)} 份，剩余 {len(filtered_evidence)} 份证据，已同步重编号")
             # 记录跳过的文书到独立文件，便于审计
             skipped_file = evidence_dir / "skipped_documents.json"
             skipped_file.write_text(json.dumps({

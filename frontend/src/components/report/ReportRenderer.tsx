@@ -27,7 +27,7 @@ const DOMPURIFY_CONFIG = {
 
 interface ReportRendererProps {
   markdown: string
-  evidenceItems?: Array<{ id: string; mdFile: string; displayName: string }>
+  evidenceItems?: Array<{ id: string; mdFile: string; displayName: string; numericId?: number }>
   onEvidenceClick?: (mdFile: string) => void
 }
 
@@ -325,15 +325,23 @@ export function ReportRenderer({ markdown, evidenceItems, onEvidenceClick }: Rep
 }
 
 // 处理证据链接：支持名称匹配、单编号、连续编号（证据014、031、032）、范围（证据01-24）、带"第"格式（证据第34-38、证据第034, 040）
-function processEvidenceLinks(html: string, evidenceItems: Array<{ id: string; mdFile: string }>): string {
+function processEvidenceLinks(html: string, evidenceItems: Array<{ id: string; mdFile: string; numericId?: number }>): string {
   if (!html || evidenceItems.length === 0) return html
 
-  // 构建编号 → 证据项映射（mdFile 格式如 "014_张某某讯问笔录.md"）
+  // 构建编号 → 证据项映射：优先用 numericId（index.json 的 id 字段），
+  // 其次从 mdFile 前缀提取（兼容旧数据）
   const numMap: Record<number, { id: string; mdFile: string }> = {}
   for (const item of evidenceItems) {
+    if (item.numericId != null) {
+      numMap[item.numericId] = item
+    }
     const m = item.mdFile.match(/^(\d+)_/)
     if (m) {
-      numMap[parseInt(m[1])] = item
+      const fileNum = parseInt(m[1])
+      // numericId 优先，mdFile 前缀作为 fallback
+      if (!numMap[fileNum]) {
+        numMap[fileNum] = item
+      }
     }
   }
 

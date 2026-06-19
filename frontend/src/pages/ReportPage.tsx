@@ -57,6 +57,7 @@ const TABS = [
 // 左侧证据项
 interface EvidenceItem {
   id: string
+  numericId?: number
   displayName: string
   mdFile: string
   type: string
@@ -420,6 +421,7 @@ export function ReportPage() {
             const displayName = fileName.replace(/\.md$/, '')
             return {
               id: `evidence__${fileName}`,
+              numericId: ev.id,
               displayName,
               mdFile: fileName,
               type: ev.type || '',
