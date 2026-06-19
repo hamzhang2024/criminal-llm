@@ -1086,13 +1086,6 @@ JSON 数组格式：
 ]
 ```
 
-**证据类型分类指导：**
-- **起诉书/起诉意见书**：虽然内容包含犯罪嫌疑人供述，但它们是检察院/公安机关出具的**指控文书**，应归类为**程序性文书**，不是证据本身
-- **犯罪嫌疑人供述和辩解**：仅指犯罪嫌疑人在讯问笔录中的口头陈述，不包括起诉意见书
-- **证人证言**：证人在询问笔录中的陈述
-- **被害人陈述**：被害人在询问笔录中的陈述
-- **程序性文书**：立案决定书、拘留证、逮捕证、受案登记表、**起诉意见书**等诉讼程序文书
-
 **关键要求：**
 1. 你的回答必须只包含 JSON 数组，以 `[` 开始，以 `]` 结束
 2. 不要包含 ```json 或任何代码块标记
@@ -1134,8 +1127,8 @@ async def _extract_single_file(
     model = config.get("llm_model", "")
     model_info = get_model_context_limit(model)
 
-    # 固定最大字符数（不再根据模型动态调整）
-    max_chars = 200_000  # 20万字符，足够处理大多数单份案卷
+    # 固定最大字符数（单次 LLM 调用处理的最大长度）
+    max_chars = 200_000  # 20万字符
 
     # 记录策略信息
     logger.info(f"[证据提取] 模型 {model}: 上下文 {model_info['limit_k']}, 策略 {model_info['strategy']}")
@@ -1144,20 +1137,54 @@ async def _extract_single_file(
     if len(md_text) > model_info.get("small_case_limit", 0) and model_info.get("warning"):
         logger.warning(f"[证据提取] {model_info['warning']}")
 
-    if len(md_text) > max_chars:
-        logger.info(f"[证据提取] {md_file.name}: 文件过长（{len(md_text)} 字符），截断至 {max_chars} 字符")
+    # 分段提取：超长文件按段落边界切分，每段独立 LLM 调用，合并结果
+    # 避免截断导致后半段证据丢失（如王作通讯问笔录在第2卷后半段被截断）
+    all_evidence_blocks = []
 
-    result = await asyncio.wait_for(
-        client.chat([
-            # system 消息：角色定义 + 完整提取规则（合并为一条，避免 assistant role 兼容性问题）
-            {"role": "system", "content": _EVIDENCE_SYSTEM_PROMPT + "\n\n" + _EVIDENCE_EXTRACTION_RULES},
-            # user 消息：文件名 + 文件内容（变化的部分，放在最后）
-            {"role": "user", "content": f"## 案卷文件：{md_file.name}\n\n{md_text[:max_chars]}"},
-        ]),
-        timeout=timeout_seconds,
-    )
+    if len(md_text) <= max_chars:
+        # 文件不长，单次提取
+        chunks = [md_text]
+    else:
+        # 文件超长，按段落边界分段（优先在 ## 或 --- 处切分）
+        logger.info(f"[证据提取] {md_file.name}: 文件过长（{len(md_text)} 字符），分段提取")
+        chunk_size = max_chars
+        chunks = []
+        remaining = md_text
+        while remaining:
+            if len(remaining) <= chunk_size:
+                chunks.append(remaining)
+                break
+            # 在 chunk_size 附近找最近的段落分隔符
+            cut_pos = remaining.rfind('\n## ', 0, chunk_size)
+            if cut_pos < chunk_size * 0.5:
+                cut_pos = remaining.rfind('\n---', 0, chunk_size)
+            if cut_pos < chunk_size * 0.5:
+                cut_pos = remaining.rfind('\n\n', 0, chunk_size)
+            if cut_pos < chunk_size * 0.5:
+                cut_pos = chunk_size  # 找不到就硬切
+            chunks.append(remaining[:cut_pos])
+            remaining = remaining[cut_pos:].lstrip('\n')
+        logger.info(f"[证据提取] {md_file.name}: 分为 {len(chunks)} 段（每段约 {max_chars} 字符）")
 
-    evidence_blocks = _parse_evidence_blocks(result, md_file.name)
+    # 对每段独立 LLM 提取
+    for chunk_idx, chunk_text in enumerate(chunks):
+        chunk_label = f"（第{chunk_idx+1}/{len(chunks)}段）" if len(chunks) > 1 else ""
+        logger.info(f"[证据提取] {md_file.name}: 处理第 {chunk_idx+1}/{len(chunks)} 段（{len(chunk_text)} 字符）")
+
+        result = await asyncio.wait_for(
+            client.chat([
+                {"role": "system", "content": _EVIDENCE_SYSTEM_PROMPT + "\n\n" + _EVIDENCE_EXTRACTION_RULES},
+                {"role": "user", "content": f"## 案卷文件：{md_file.name}{chunk_label}\n\n{chunk_text}"},
+            ]),
+            timeout=timeout_seconds,
+        )
+
+        chunk_blocks = _parse_evidence_blocks(result, md_file.name)
+        all_evidence_blocks.extend(chunk_blocks)
+        logger.info(f"[证据提取] {md_file.name}: 第 {chunk_idx+1} 段提取 {len(chunk_blocks)} 份证据")
+
+    evidence_blocks = all_evidence_blocks
+    logger.info(f"[证据提取] {md_file.name}: 共提取 {len(evidence_blocks)} 份证据（{len(chunks)} 段合并）")
 
     # 如果 LLM 没有按格式输出（整个文件作为一条证据），使用原始 MD 内容替代
     if len(evidence_blocks) == 1 and evidence_blocks[0].get("type") == "其他证据":
@@ -1476,8 +1503,16 @@ async def _do_extract_evidence(
             return {"success": False, "error": "用户已停止提取", "case_id": case_id}
 
         # 排序辅助函数
-        def _is_indictment(name: str) -> bool:
-            return ("起诉书" in name and "意见" not in name) or "起诉意见书" in name
+        def _is_indictment(name: str, content: str = "") -> bool:
+            # 优先检查文件名关键词
+            if ("起诉书" in name and "意见" not in name) or "起诉意见书" in name or "起诉卷" in name:
+                return True
+            # 文件名不匹配时检查文件内容前 5000 字符（起诉意见书通常在文件开头）
+            if content:
+                head = content[:5000]
+                if "起诉意见书" in head or re.search(r'起\s*诉\s*书', head[:300]):
+                    return True
+            return False
 
         def _parse_volume_sort_key(name: str) -> tuple:
             import re
@@ -1501,8 +1536,18 @@ async def _do_extract_evidence(
             return sorted(files, key=lambda f: _parse_volume_sort_key(f.name))
 
         all_md_files = _sort_md_files(list(md_dir.glob("*.md")))
-        indictment_files = [f for f in all_md_files if _is_indictment(f.name)]
-        other_files = [f for f in all_md_files if not _is_indictment(f.name)]
+        # 识别起诉书/起诉意见书文件：先查文件名，再查文件内容
+        indictment_files = []
+        other_files = []
+        for f in all_md_files:
+            try:
+                content = f.read_text(encoding="utf-8")
+            except Exception:
+                content = ""
+            if _is_indictment(f.name, content):
+                indictment_files.append(f)
+            else:
+                other_files.append(f)
 
         # ── 第1步：普通文件并发提取（先处理，让用户快速看到进度）──
         pending_files = [f for f in other_files if f.name not in processed_sources]
