@@ -8,6 +8,7 @@ import { FileText, Loader2, Send, Download, Check,
 } from 'lucide-react'
 import { api, reviewEvidence, getEvidenceReview, getReviewTaskStatus, EvidenceReviewItem, EvidenceReviewResult, generateReviewNotes, getReviewNotes, generateCrossExamination, getCrossExamination, getPersonRelation, RelationGraphData, getEventTimeline, TimelineData, searchSimilarCases, SimilarCasesData } from '../api'
 import { showAlert } from '../components/MacOSDialog'
+import { EvidenceChainMindmap } from '../components/EvidenceChainMindmap'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 
@@ -169,6 +170,10 @@ export function ReportPage() {
   const [personRelationData, setPersonRelationData] = useState<RelationGraphData | null>(null)
   const [personRelationLoading, setPersonRelationLoading] = useState(false)
 
+  // 证据链可视化状态
+  const [evidenceChainData, setEvidenceChainData] = useState<any>(null)
+  const [evidenceChainLoading, setEvidenceChainLoading] = useState(false)
+
   // 事件时间线状态
   const [timelineData, setTimelineData] = useState<TimelineData | null>(null)
   const [timelineLoading, setTimelineLoading] = useState(false)
@@ -181,6 +186,7 @@ export function ReportPage() {
   // 证据中心折叠面板状态
   const [evidenceCenterPanels, setEvidenceCenterPanels] = useState({
     evidenceList: true,
+    evidenceChain: false,
     evidenceReview: false,
     reviewNotes: false,
   })
@@ -562,6 +568,16 @@ export function ReportPage() {
       loadEvidenceReview()
     }
   }, [activeTab, caseId, evidenceReview, loadEvidenceReview])
+
+  // 证据链可视化：展开面板时加载
+  useEffect(() => {
+    if (activeTab === 'evidence_center' && evidenceCenterPanels.evidenceChain && caseId && !evidenceChainData && !evidenceChainLoading) {
+      setEvidenceChainLoading(true)
+      api.getEvidenceChain(caseId).then(data => {
+        setEvidenceChainData(data)
+      }).catch(() => {}).finally(() => setEvidenceChainLoading(false))
+    }
+  }, [activeTab, evidenceCenterPanels.evidenceChain, caseId, evidenceChainData, evidenceChainLoading])
 
   // 页面挂载时检测是否有运行中的审查任务（恢复切页面前启动的任务）
   useEffect(() => {
@@ -2771,6 +2787,45 @@ export function ReportPage() {
               ) : (
                 <div style={{ textAlign: 'center', padding: '20px', color: colors.textTertiary }}>
                   证据列表尚未生成
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* 1.5 证据链可视化（思维导图） */}
+        <div style={{ border: `1px solid ${colors.border}`, borderRadius: '8px', overflow: 'hidden' }}>
+          <div style={panelHeaderStyle} onClick={() => togglePanel('evidenceChain')}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Network className="w-4 h-4" style={{ color: '#0891b2' }} />
+              <span style={{ fontSize: '13px', fontWeight: 600, color: colors.textPrimary }}>证据链可视化</span>
+              {evidenceChainData?.summary && (
+                <span style={{ fontSize: '11px', color: colors.textTertiary }}>
+                  {evidenceChainData.summary.total_evidence || 0} 份证据 · {evidenceChainData.summary.strong_chains?.length || 0} 个强链 · {evidenceChainData.summary.weak_chains?.length || 0} 个薄弱
+                </span>
+              )}
+            </div>
+            <ChevronIcon expanded={evidenceCenterPanels.evidenceChain} />
+          </div>
+          {evidenceCenterPanels.evidenceChain && (
+            <div style={{ padding: '16px', background: colors.surface }}>
+              {evidenceChainLoading ? (
+                <div style={{ textAlign: 'center', padding: '40px', color: colors.textTertiary, fontSize: '13px' }}>
+                  加载证据链数据...
+                </div>
+              ) : evidenceChainData ? (
+                <EvidenceChainMindmap data={evidenceChainData} onNodeClick={(node: any) => {
+                  // 点击证据节点时在左栏切换到对应证据
+                  if (node.type === 'evidence' && node.originalNode?.id) {
+                    const evItem = evidenceItems.find(i => i.numericId === node.originalNode.id)
+                    if (evItem) {
+                      loadEvidenceContent(evItem)
+                    }
+                  }
+                }} />
+              ) : (
+                <div style={{ textAlign: 'center', padding: '20px', color: colors.textTertiary, fontSize: '12px' }}>
+                  证据链数据加载失败，请确保已完成阶段分析
                 </div>
               )}
             </div>

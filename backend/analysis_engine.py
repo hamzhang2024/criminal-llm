@@ -2117,6 +2117,50 @@ def generate_evidence_chain(case_path: Path) -> Dict[str, Any]:
         },
     }
 
+    # 4.5 预加载三性审查数据（用于证据节点显示证明力 score）
+    review_scores: Dict[str, Dict[str, Any]] = {}  # evidence_ref -> {legality, authenticity, relevance, final}
+    review_file = analysis_dir / "evidence_review.json"
+    if review_file.exists():
+        try:
+            review_data_raw = json.loads(review_file.read_text(encoding="utf-8"))
+            for rev in review_data_raw.get("reviews", []):
+                ev_ref = rev.get("evidence_ref", "")
+                if ev_ref:
+                    review_scores[ev_ref] = {
+                        "legality_score": rev.get("legality", {}).get("score", 0) if isinstance(rev.get("legality"), dict) else 0,
+                        "authenticity_score": rev.get("authenticity", {}).get("score", 0) if isinstance(rev.get("authenticity"), dict) else 0,
+                        "relevance_score": rev.get("relevance", {}).get("score", 0) if isinstance(rev.get("relevance"), dict) else 0,
+                        "final_conclusion": rev.get("final_conclusion", ""),
+                    }
+        except Exception:
+            pass
+
+    # 4.6 预加载组合质证数据（用于证据间矛盾/印证关系）
+    group_contradictions: List[Dict[str, Any]] = []  # 组合质证发现的关系
+    for rev in review_scores.get("__groups__", {}).get("group_reviews", []):
+        pass  # placeholder
+    # 直接从 review_data_raw 读取组合质证的 group_findings
+    group_findings_edges: List[Dict[str, Any]] = []
+    if review_file.exists():
+        try:
+            for rev in review_data_raw.get("reviews", []):
+                if rev.get("group_id"):
+                    findings = rev.get("group_findings", [])
+                    for f in findings:
+                        refs = f.get("evidence_refs", [])
+                        ftype = f.get("finding_type", "")
+                        if len(refs) >= 2:
+                            edge_type = "contradiction" if "矛盾" in ftype or "不一致" in ftype else "corroboration" if "印证" in ftype or "一致" in ftype else "relation"
+                            group_findings_edges.append({
+                                "source": refs[0],
+                                "target": refs[1],
+                                "type": edge_type,
+                                "label": f.get("issue", "")[:40],
+                                "finding_type": ftype,
+                            })
+        except Exception:
+            pass
+
     # 5. 分类证据并关联待证事实
     evidence_by_type = {t: [] for t in evidence_types}
     all_evidence = []
@@ -2319,6 +2363,14 @@ def generate_evidence_chain(case_path: Path) -> Dict[str, Any]:
                     proves_strength[fact_id] = "high"
                     proves_details[fact_id] = ["证据名称精确匹配"]
 
+        # 获取三性审查 score（用于证明力可视化）
+        ev_ref_str = f"证据{ev_id:03d}" if isinstance(ev_id, int) else ""
+        review_score = review_scores.get(ev_ref_str, {})
+        avg_score = 0
+        if review_score:
+            scores = [review_score.get("legality_score", 0), review_score.get("authenticity_score", 0), review_score.get("relevance_score", 0)]
+            avg_score = sum(s for s in scores if s > 0) // max(1, sum(1 for s in scores if s > 0))
+
         evidence_item = {
             "id": ev_id,
             "name": ev_name,
@@ -2327,8 +2379,11 @@ def generate_evidence_chain(case_path: Path) -> Dict[str, Any]:
             "color": evidence_types[cat]["color"],
             "proves": proves_facts,
             "proves_strength": proves_strength,
-            "proves_details": proves_details,  # 新增：针对每个事实的相关内容
-            "summary": ev_summary[:150] if ev_summary else "",  # 证据摘要（前150字）
+            "proves_details": proves_details,
+            "summary": ev_summary[:150] if ev_summary else "",
+            # 证明力数据（三性审查 score）
+            "review_score": avg_score,
+            "review_conclusion": review_score.get("final_conclusion", ""),
         }
 
         evidence_by_type[cat].append(evidence_item)
@@ -2474,6 +2529,28 @@ def generate_evidence_chain(case_path: Path) -> Dict[str, Any]:
                 "type": "corroborate",
                 "label": "印证",
             })
+
+    # 6.8 加入组合质证发现的证据间关系（矛盾/印证/程序联动等）
+    # group_findings_edges 的 source/target 是"证据XXX"格式，需转为节点 id
+    ev_ref_to_id = {}
+    for ev in evidence_nodes:
+        if isinstance(ev["id"], int):
+            ev_ref_to_id[f"证据{ev['id']:03d}"] = ev["id"]
+    for ge in group_findings_edges:
+        src_id = ev_ref_to_id.get(ge["source"])
+        tgt_id = ev_ref_to_id.get(ge["target"])
+        if src_id and tgt_id and src_id != tgt_id:
+            # 避免重复边
+            exists = any(e["source"] == src_id and e["target"] == tgt_id and e["type"] == ge["type"]
+                        for e in edges)
+            if not exists:
+                edges.append({
+                    "source": src_id,
+                    "target": tgt_id,
+                    "type": ge["type"],
+                    "label": ge["label"],
+                    "from_group_review": True,
+                })
 
     # 7. 分析证据链薄弱环节
     weak_points = []
