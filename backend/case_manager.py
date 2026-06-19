@@ -1023,14 +1023,29 @@ _EVIDENCE_EXTRACTION_RULES = """
 - **讯问/询问人**：姓名及职务
 - **被讯问/被询问人**：姓名、身份证号、角色
 
-**关键：笔录摘要必须保留完整问答原文，不要概括简化！**
-- 保留问答形式（问：... 答：...）
-- 保留关于案发时间、地点、参与人员的完整问答
-- 保留关于犯罪经过、分工、获利的完整问答
-- 保留关于主观明知、犯罪目的的完整问答
-- 保留关于认罪态度的完整问答
-- 保留前后供述有变化的完整对比
-- summary 字段应详尽保留问答原文，建议 3000-8000 字，包含完整的关键问答和原文细节
+**summary 写作要求：忠实记录证据本身的事实内容，不做后续分析阶段的工作（如人物关系分析、矛盾分析）**
+
+summary 应包含（按证据类型差异化）：
+- **讯问/询问笔录**：讯问时间地点 + 被讯问人陈述的关键事实（作案经过、参与人员、行为方式、时间线、关键供述变化）
+- **鉴定意见**：鉴定方法 + 鉴定结论 + 关键数据（如伤情等级、金额、数量）
+- **书证**：文件名称 + 核心内容 + 重要数字（金额、日期、账号）
+- **物证**：物品描述 + 来源 + 特征
+- **程序性文书**：文书名称 + 法律程序阶段 + 核心决定
+- **其他**：事实概述
+
+summary 字段建议 3000-8000 字（根据案件规模动态调整），聚焦证据内容本身
+
+**不同证据类型的 summary 字数差异（按内容复杂度）：**
+- **讯问/询问笔录**：2000-5000 字（内容丰富，需保留关键问答要点）
+- **鉴定意见**：500-1500 字（鉴定方法+结论+数据）
+- **书证**：300-1000 字（核心内容+重要数字）
+- **物证**：200-500 字（物品描述+来源+特征）
+- **程序性文书**（立案决定书、拘留证等）：100-300 字（文书名称+程序阶段）
+- **被害人陈述**：1000-3000 字（受害经过+关键细节）
+- **证人证言**：1000-3000 字（所见所闻+关键细节）
+- **勘验/辨认笔录**：500-1500 字（过程+结果）
+
+**总体原则**：summary 字数应与证据的信息量匹配，不要为凑字数而冗余，也不要因精简而丢失关键事实。
 
 **书证/金融类**必须保留具体金额、时间、账号等数据
 **鉴定意见**必须保留鉴定方法、检材来源、鉴定结论
@@ -1108,6 +1123,7 @@ async def _extract_single_file(
     md_file: Path,
     md_text: str,
     temp_dir: Path,
+    summary_target: str = "1500-3000字",
 ) -> tuple:
     """
     提取单个 MD 文件的证据（不含信号量和重试控制，由调用方管理）。
@@ -1171,9 +1187,12 @@ async def _extract_single_file(
         chunk_label = f"（第{chunk_idx+1}/{len(chunks)}段）" if len(chunks) > 1 else ""
         logger.info(f"[证据提取] {md_file.name}: 处理第 {chunk_idx+1}/{len(chunks)} 段（{len(chunk_text)} 字符）")
 
+        # 动态替换提示词中的 summary 字数要求（按案件规模适配）
+        dynamic_rules = _EVIDENCE_EXTRACTION_RULES.replace("3000-8000字", summary_target)
+
         result = await asyncio.wait_for(
             client.chat([
-                {"role": "system", "content": _EVIDENCE_SYSTEM_PROMPT + "\n\n" + _EVIDENCE_EXTRACTION_RULES},
+                {"role": "system", "content": _EVIDENCE_SYSTEM_PROMPT + "\n\n" + dynamic_rules},
                 {"role": "user", "content": f"## 案卷文件：{md_file.name}{chunk_label}\n\n{chunk_text}"},
             ]),
             timeout=timeout_seconds,
@@ -1262,13 +1281,7 @@ async def _extract_single_file(
 
 ## 矛盾提示
 
-{ev_block.get('contradiction_hints', '无')}
-
----
-
-## LLM 原始输出
-
-{ev_block['raw_text']}"""
+{ev_block.get('contradiction_hints', '无')}"""
         ev_path.write_text(ev_content, encoding="utf-8")
 
         evidence_list.append({
@@ -1279,6 +1292,7 @@ async def _extract_single_file(
             "persons": ev_block.get("persons", ""),
             "related_entities": ev_block.get("related_entities", ""),
             "key_facts": ev_block.get("key_facts", ""),
+            "summary": ev_block.get("summary", ""),
             "summary_preview": ev_block["summary"][:200],
             "has_quotes": bool(ev_block.get("original_quotes", "").strip()),
             "needs_review": ev_block.get("needs_review", False),
@@ -1296,6 +1310,7 @@ async def _extract_single_file_with_tracking(
     temp_dir: Path,
     semaphore: asyncio.Semaphore,
     case_id: str = "",
+    summary_target: str = "1500-3000字",
 ) -> tuple:
     """
     包装 _extract_single_file，管理信号量和重试。
@@ -1318,7 +1333,7 @@ async def _extract_single_file_with_tracking(
         # 获取信号量，执行提取
         async with semaphore:
             try:
-                result = await _extract_single_file(md_file, md_text, temp_dir)
+                result = await _extract_single_file(md_file, md_text, temp_dir, summary_target)
                 return result
             except asyncio.TimeoutError:
                 last_error = "LLM 调用超时（600s）"
@@ -1486,6 +1501,24 @@ async def _do_extract_evidence(
 
     evidence_dir.mkdir(parents=True, exist_ok=True)
 
+    # ── 动态计算 summary 字数要求（按案件规模适配 1M 上下文）──
+    # 检测 MD 文件总字符数和文件数，分档设定 summary 字数
+    all_md_for_stats = list(md_dir.glob("*.md")) if md_dir.exists() else []
+    total_md_chars = 0
+    for f in all_md_for_stats:
+        try:
+            total_md_chars += len(f.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    md_file_count = len(all_md_for_stats)
+    if total_md_chars <= 200_000 or md_file_count <= 50:
+        summary_target = "3000-5000字"
+    elif total_md_chars <= 500_000 or md_file_count <= 150:
+        summary_target = "1500-3000字"
+    else:
+        summary_target = "800-1500字"
+    logger.info(f"[证据提取] 案件规模: {md_file_count} 个文件, {total_md_chars} 字符 → summary 要求 {summary_target}")
+
     # 清理上次中断遗留的临时文件
     old_temp = evidence_dir / "_temp_extract"
     if old_temp.exists():
@@ -1624,7 +1657,7 @@ async def _do_extract_evidence(
 
                     logger.info(f"[证据提取] 处理: {md_file.name}")
                     source_name, evidence_list = await _extract_single_file_with_tracking(
-                        md_file, md_text, file_temp_dir, semaphore, case_id
+                        md_file, md_text, file_temp_dir, semaphore, case_id, summary_target
                     )
 
                     # 停止心跳
@@ -1817,6 +1850,7 @@ async def _do_extract_evidence(
                         "persons": ev_data.get("persons", ""),
                         "related_entities": ev_data.get("related_entities", ""),
                         "key_facts": ev_data.get("key_facts", ""),
+                        "summary": ev_data.get("summary", ""),
                         "summary_preview": ev_data["summary_preview"],
                         "has_quotes": ev_data["has_quotes"],
                         "needs_review": ev_data.get("needs_review", False),
