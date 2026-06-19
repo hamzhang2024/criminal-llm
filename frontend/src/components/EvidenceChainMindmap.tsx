@@ -91,7 +91,7 @@ export function EvidenceChainMindmap({ data, onNodeClick }: Props) {
           name: `${cfg.label} (${categoryEvidences.length})`,
           type: 'category' as const,
           color: cfg.color,
-          collapsed: !collapsedNodes.has(`${fact.id}_${cfg.key}`),  // 默认折叠，点击展开
+          collapsed: collapsedNodes.has(`${fact.id}_${cfg.key}`),
           children: categoryEvidences.map((ev: any) => {
             // 获取该证据针对当前待证事实的相关内容
             const provesDetails = ev.proves_details || {}
@@ -129,7 +129,7 @@ export function EvidenceChainMindmap({ data, onNodeClick }: Props) {
         evidence_count: fact.evidence_count,
         strength: strength,
         children: categoryNodes,
-        collapsed: !collapsedNodes.has(fact.id),  // 默认折叠，点击展开
+        collapsed: collapsedNodes.has(fact.id),
       }
     })
 
@@ -148,7 +148,6 @@ export function EvidenceChainMindmap({ data, onNodeClick }: Props) {
         name: `${cfg.label} (${catUnassigned.length})`,
         type: 'category' as const,
         color: cfg.color,
-        collapsed: !collapsedNodes.has(`unassigned_${cfg.key}`),  // 默认折叠，点击展开
         children: catUnassigned.map((ev: any) => ({
           id: ev.id,
           name: ev.name,
@@ -166,13 +165,23 @@ export function EvidenceChainMindmap({ data, onNodeClick }: Props) {
       type: 'root' as const,
       description: rootDescription,
       children: [
-        ...factNodes,
+        ...factNodes.map(fact => ({
+          ...fact,
+          // 待证事实下的证据类别默认折叠
+          children: fact.children?.map(cat => ({
+            ...cat,
+            collapsed: true,  // 证据类别默认折叠
+          })),
+        })),
         ...(unassignedCategoryNodes.length > 0 ? [{
           id: 'unassigned',
           name: '其他证据',
           type: 'fact' as const,
           color: '#6b7280',
-          children: unassignedCategoryNodes,
+          children: unassignedCategoryNodes.map(cat => ({
+            ...cat,
+            collapsed: true,  // 默认折叠
+          })),
         }] : []),
       ],
     }
