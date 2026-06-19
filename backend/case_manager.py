@@ -1504,10 +1504,11 @@ async def _do_extract_evidence(
 
         # 排序辅助函数
         def _is_indictment(name: str, content: str = "") -> bool:
-            # 优先检查文件名关键词
-            if ("起诉书" in name and "意见" not in name) or "起诉意见书" in name or "起诉卷" in name:
+            # 文件名含明确的"起诉书"/"起诉意见书"关键词
+            if ("起诉书" in name and "意见" not in name) or "起诉意见书" in name:
                 return True
-            # 文件名不匹配时检查文件内容前 5000 字符（起诉意见书通常在文件开头）
+            # 文件名不匹配时检查文件内容前 5000 字符
+            # 起诉意见书抬头通常在文件开头或某一段落
             if content:
                 head = content[:5000]
                 if "起诉意见书" in head or re.search(r'起\s*诉\s*书', head[:300]):
