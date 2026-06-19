@@ -194,29 +194,22 @@ export function ReportRenderer({ markdown, evidenceItems, onEvidenceClick }: Rep
           overflow: hidden;
           font-size: 13px;
           box-shadow: 0 1px 3px rgba(0,0,0,0.04);
-          table-layout: fixed;
+          table-layout: auto;
         }
-        /* 各列宽度分配 */
-        .report-content th:nth-child(1),
-        .report-content td:nth-child(1) { width: 70px; }
-        .report-content th:nth-child(2),
-        .report-content td:nth-child(2) { width: 100px; }
-        .report-content th:nth-child(3),
-        .report-content td:nth-child(3) { width: 120px; }
-        .report-content th:nth-child(4),
-        .report-content td:nth-child(4) { width: 56px; }
-        .report-content th:nth-child(5),
-        .report-content td:nth-child(5) { width: 80px; }
-        .report-content th:nth-child(6),
-        .report-content td:nth-child(6) { width: auto; }
+        .report-content th,
+        .report-content td {
+          padding: 10px 12px;
+          text-align: left;
+          border: none;
+          word-break: break-word;
+          vertical-align: top;
+        }
         .report-content thead th {
           background: var(--macos-accent);
           color: #fff;
           font-weight: 600;
           font-size: 12px;
-          padding: 10px 12px;
-          text-align: left;
-          border: none;
+          white-space: nowrap;
         }
         .report-content tbody tr:nth-child(even) {
           background: #f8f9fa;
