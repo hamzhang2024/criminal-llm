@@ -456,7 +456,7 @@ export function EvidenceChainMindmap({ data, onNodeClick }: Props) {
   const totalRelations = summary?.total_relations || data.total_relations || 0
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ minHeight: 600, height: '70vh', display: 'flex', flexDirection: 'column' }}>
       {/* 工具栏 */}
       <div style={toolbarStyle}>
         <span style={{ fontSize: 12, color: '#6b7280' }}>
