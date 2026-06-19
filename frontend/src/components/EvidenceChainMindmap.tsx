@@ -38,8 +38,33 @@ interface TreeNode {
 export function EvidenceChainMindmap({ data, onNodeClick }: Props) {
   const { nodes, edges, accusation, weak_points, summary, error } = data as any
 
-  // 折叠状态
-  const [collapsedNodes, setCollapsedNodes] = useState<Set<string | number>>(new Set())
+  // 折叠状态 - 初始化时把证据类别节点加入折叠集合
+  const [collapsedNodes, setCollapsedNodes] = useState<Set<string | number>>(() => {
+    const initial = new Set<string | number>()
+    if (nodes?.length) {
+      const facts = nodes.filter((n: any) => n.type === 'fact')
+      // 把所有待证事实下的证据类别节点 ID 加入折叠集合
+      facts.forEach((fact: any) => {
+        const relatedEdges = edges?.filter((e: any) => e.target === fact.id && e.type === 'prove') || []
+        const relatedEvidenceIds = new Set(relatedEdges.map((e: any) => e.source))
+        const evidences = nodes.filter((n: any) => n.type !== 'fact' && n.type !== 'accusation')
+        const categoryConfigs = [
+          { key: 'indictment' }, { key: 'confession' }, { key: 'witness' }, { key: 'victim' },
+          { key: 'documentary' }, { key: 'physical' }, { key: 'expert' }, { key: 'inspection' },
+          { key: 'electronic' }, { key: 'audiovisual' }, { key: 'procedural' }, { key: 'other' },
+        ]
+        categoryConfigs.forEach(cfg => {
+          const categoryEvidences = evidences.filter((ev: any) =>
+            ev.category === cfg.key && relatedEvidenceIds.has(ev.id)
+          )
+          if (categoryEvidences.length > 0) {
+            initial.add(`${fact.id}_${cfg.key}`)
+          }
+        })
+      })
+    }
+    return initial
+  })
 
   // 拖拽状态
   const [scale, setScale] = useState(1)
