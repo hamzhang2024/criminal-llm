@@ -2274,16 +2274,16 @@ def generate_evidence_chain(case_path: Path) -> Dict[str, Any]:
 
         # 1. 先用证据类型推断关联（这是主要的逻辑关联）
         type_fact_mapping = {
-            "indictment": ["fact_subject", "fact_subjective", "fact_behavior", "fact_result"],  # 指控文书列明所有构成要件
-            "confession": ["fact_subject", "fact_subjective", "fact_behavior"],  # 被告人供述：身份、动机、行为
-            "witness": ["fact_behavior", "fact_result"],  # 证人证言：看到的行为和结果
-            "victim": ["fact_behavior", "fact_result"],  # 被害人陈述：受害经过和行为结果
+            "indictment": ["fact_subject", "fact_subjective", "fact_behavior", "fact_result", "fact_causation"],  # 指控文书列明所有构成要件
+            "confession": ["fact_subject", "fact_subjective", "fact_behavior", "fact_causation"],  # 被告人供述：身份、动机、行为、因果关系（供述常包含"我做了什么导致什么结果"）
+            "witness": ["fact_behavior", "fact_result", "fact_causation"],  # 证人证言：看到的行为、结果、因果关系
+            "victim": ["fact_behavior", "fact_result", "fact_causation"],  # 被害人陈述：受害经过、结果、因果关系
             "documentary": ["fact_result"],  # 书证：主要是金额、转账记录等结果证据
             "physical": ["fact_behavior"],  # 物证：证明行为存在
-            "expert": ["fact_result"],  # 鉴定意见：证明损失/伤害结果
+            "expert": ["fact_result", "fact_causation"],  # 鉴定意见：证明损失/伤害结果 + 因果关系（如伤情鉴定）
             "inspection": ["fact_behavior"],  # 勘验检查笔录：证明行为现场
-            "electronic": ["fact_result", "fact_behavior"],  # 电子数据：交易记录等
-            "audiovisual": ["fact_behavior"],  # 视听资料：监控录像等
+            "electronic": ["fact_result", "fact_behavior", "fact_causation"],  # 电子数据：交易记录、因果关系
+            "audiovisual": ["fact_behavior", "fact_causation"],  # 视听资料：监控录像、因果关系
             "procedural": [],  # 程序性文书不直接证明案件事实
             "other": [],
         }
