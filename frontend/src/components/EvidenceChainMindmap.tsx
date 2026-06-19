@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { EvidenceChainData, EvidenceChainNode } from '../api/stages'
 
 interface Props {
@@ -457,12 +458,8 @@ export function EvidenceChainMindmap({ data, onNodeClick }: Props) {
 
   const [fullscreen, setFullscreen] = useState(false)
 
-  const containerStyle: React.CSSProperties = fullscreen
-    ? { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999, background: '#fff', display: 'flex', flexDirection: 'column', padding: 16 }
-    : { minHeight: 500, height: '60vh', display: 'flex', flexDirection: 'column' }
-
-  return (
-    <div style={containerStyle}>
+  const content = (
+    <>
       {/* 工具栏 */}
       <div style={toolbarStyle}>
         <span style={{ fontSize: 12, color: '#6b7280' }}>
@@ -539,6 +536,27 @@ export function EvidenceChainMindmap({ data, onNodeClick }: Props) {
           )}
         </div>
       )}
+    </>
+  )
+
+  // 面板内模式：普通 div 容器
+  // 全屏模式：通过 Portal 渲染到 document.body，绕过父容器 overflow/transform 限制
+  if (fullscreen) {
+    return createPortal(
+      <div style={{
+        position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+        zIndex: 99999, background: '#fff', display: 'flex', flexDirection: 'column',
+        padding: 20, boxShadow: '0 0 40px rgba(0,0,0,0.3)',
+      }}>
+        {content}
+      </div>,
+      document.body
+    )
+  }
+
+  return (
+    <div style={{ minHeight: 500, height: '60vh', display: 'flex', flexDirection: 'column' }}>
+      {content}
     </div>
   )
 }
