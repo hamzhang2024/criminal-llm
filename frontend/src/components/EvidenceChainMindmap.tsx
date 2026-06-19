@@ -38,33 +38,8 @@ interface TreeNode {
 export function EvidenceChainMindmap({ data, onNodeClick }: Props) {
   const { nodes, edges, accusation, weak_points, summary, error } = data as any
 
-  // 折叠状态 - 初始化时把证据类别节点加入折叠集合
-  const [collapsedNodes, setCollapsedNodes] = useState<Set<string | number>>(() => {
-    const initial = new Set<string | number>()
-    if (nodes?.length) {
-      const facts = nodes.filter((n: any) => n.type === 'fact')
-      // 把所有待证事实下的证据类别节点 ID 加入折叠集合
-      facts.forEach((fact: any) => {
-        const relatedEdges = edges?.filter((e: any) => e.target === fact.id && e.type === 'prove') || []
-        const relatedEvidenceIds = new Set(relatedEdges.map((e: any) => e.source))
-        const evidences = nodes.filter((n: any) => n.type !== 'fact' && n.type !== 'accusation')
-        const categoryConfigs = [
-          { key: 'indictment' }, { key: 'confession' }, { key: 'witness' }, { key: 'victim' },
-          { key: 'documentary' }, { key: 'physical' }, { key: 'expert' }, { key: 'inspection' },
-          { key: 'electronic' }, { key: 'audiovisual' }, { key: 'procedural' }, { key: 'other' },
-        ]
-        categoryConfigs.forEach(cfg => {
-          const categoryEvidences = evidences.filter((ev: any) =>
-            ev.category === cfg.key && relatedEvidenceIds.has(ev.id)
-          )
-          if (categoryEvidences.length > 0) {
-            initial.add(`${fact.id}_${cfg.key}`)
-          }
-        })
-      })
-    }
-    return initial
-  })
+  // 折叠状态
+  const [collapsedNodes, setCollapsedNodes] = useState<Set<string | number>>(new Set())
 
   // 拖拽状态
   const [scale, setScale] = useState(1)
@@ -190,38 +165,26 @@ export function EvidenceChainMindmap({ data, onNodeClick }: Props) {
       type: 'root' as const,
       description: rootDescription,
       children: [
-        ...factNodes.map(fact => ({
-          ...fact,
-          // 待证事实下的证据类别默认折叠
-          children: fact.children?.map(cat => ({
-            ...cat,
-            collapsed: true,  // 证据类别默认折叠
-          })),
-        })),
+        ...factNodes,
         ...(unassignedCategoryNodes.length > 0 ? [{
           id: 'unassigned',
           name: '其他证据',
           type: 'fact' as const,
           color: '#6b7280',
-          children: unassignedCategoryNodes.map(cat => ({
-            ...cat,
-            collapsed: true,  // 默认折叠
-          })),
+          children: unassignedCategoryNodes,
         }] : []),
       ],
     }
   }, [nodes, edges, accusation, collapsedNodes])
 
-  const tree = buildTree()
-
-  // 计算布局 - 依赖 tree，在 tree 变化时重新计算
-  const calculateLayout = (tree: TreeNode) => {
-    const nodeWidth = 180  // 加宽节点
-    const nodeHeight = 32
-    const factNodeHeight = 72  // 待证事实节点更高，显示描述
-    const evidenceNodeHeight = 48  // 证据节点显示摘要
-    const levelGapX = 220  // 加大层级间距
-    const nodeGapY = 55  // 加大节点间距
+  // 计算布局
+  const calculateLayout = useCallback((tree: TreeNode) => {
+    const nodeWidth = 150  // 节点宽度
+    const nodeHeight = 28  // 普通节点高度
+    const factNodeHeight = 56  // 待证事实节点高度
+    const evidenceNodeHeight = 36  // 证据节点高度
+    const levelGapX = 180  // 层级间距
+    const nodeGapY = 40  // 节点间距
 
     const positions = new Map<string | number, { x: number; y: number; width: number; height: number }>()
 
@@ -263,8 +226,9 @@ export function EvidenceChainMindmap({ data, onNodeClick }: Props) {
 
     layoutSubtree(tree, 0, 40)
     return positions
-  }
+  }, [])
 
+  const tree = buildTree()
   const positions = calculateLayout(tree)
 
   // 计算画布尺寸
