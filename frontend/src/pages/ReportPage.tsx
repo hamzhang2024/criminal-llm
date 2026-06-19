@@ -2769,7 +2769,7 @@ export function ReportPage() {
             <ChevronIcon expanded={evidenceCenterPanels.evidenceList} />
           </div>
           {evidenceCenterPanels.evidenceList && (
-            <div style={{ padding: '16px', background: colors.surface }}>
+            <div style={{ padding: '16px', background: colors.surface, maxHeight: '500px', overflowY: 'auto' }}>
               {/* 证据列表内容 - 使用原有的 stage_51 内容 */}
               {stageContent['stage_51'] ? (
                 <ReportRenderer
