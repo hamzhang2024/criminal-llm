@@ -212,8 +212,10 @@ export function EvidenceChainMindmap({ data, onNodeClick }: Props) {
     }
   }, [nodes, edges, accusation, collapsedNodes])
 
-  // 计算布局
-  const calculateLayout = useCallback((tree: TreeNode) => {
+  const tree = buildTree()
+
+  // 计算布局 - 依赖 tree，在 tree 变化时重新计算
+  const calculateLayout = (tree: TreeNode) => {
     const nodeWidth = 180  // 加宽节点
     const nodeHeight = 32
     const factNodeHeight = 72  // 待证事实节点更高，显示描述
@@ -261,9 +263,8 @@ export function EvidenceChainMindmap({ data, onNodeClick }: Props) {
 
     layoutSubtree(tree, 0, 40)
     return positions
-  }, [])
+  }
 
-  const tree = buildTree()
   const positions = calculateLayout(tree)
 
   // 计算画布尺寸
