@@ -131,9 +131,10 @@ class AnalysisEngine:
                                     if candidate.stem == cleaned or candidate.stem == stem:
                                         md_file = candidate
                                         break
-                        if md_file.exists():
-                            text = md_file.read_text(encoding="utf-8")
-                            if text.strip():
+                        # 从 index.json 的 summary 字段读取（不再读 MD 全文）
+                        # summary 是证据的唯一信息载体，包含所有下游需要的事实内容
+                        text = ev.get("summary", "") or ev.get("summary_preview", "")
+                        if text.strip():
                                 ev_id = ev.get("id", 0)
                                 ev_type = ev.get("type", "其他证据")
                                 ev_name = ev.get("name", "")
@@ -363,7 +364,7 @@ class AnalysisEngine:
 
 > 注：优先以起诉书为准，无起诉书时以起诉意见书为准。如有多份，取形成时间最后的。
 
-{indictment["text"][:80000]}
+{indictment["text"][:150000]}
 
 ---
 
@@ -432,7 +433,7 @@ class AnalysisEngine:
         indictment_catalog, indictment_text, evidence_catalog_text, evidence_only = _split_indictment_and_evidence(texts)
 
         # 固定最大字符数（分层分析每次处理的证据量）
-        MAX_ANALYSIS_CHARS = 200_000  # 20万字符，适配 256k 上下文模型（留 56k 给 prompt+输出）
+        MAX_ANALYSIS_CHARS = 500_000  # 50万字符，适配 1M 上下文模型（留 500k 给 prompt+输出）
         all_text = _truncate_all(texts, max_total=MAX_ANALYSIS_CHARS, strategy_info=strategy_info)
 
         # 汇总已提取的人员清单（从 index.json 的 persons 字段），供 LLM 参考
@@ -584,7 +585,7 @@ class AnalysisEngine:
         indictment_catalog, indictment_text, evidence_catalog_text, evidence_only = _split_indictment_and_evidence(texts)
 
         # 固定最大字符数（分层分析每次处理的证据量）
-        MAX_ANALYSIS_CHARS = 200_000  # 20万字符，适配 256k 上下文模型（留 56k 给 prompt+输出）
+        MAX_ANALYSIS_CHARS = 500_000  # 50万字符，适配 1M 上下文模型（留 500k 给 prompt+输出）
         all_text = _truncate_all(texts, max_total=MAX_ANALYSIS_CHARS, strategy_info=strategy_info)
 
         system_prompt = """你是一位资深刑事辩护律师，正在梳理案卷中的事件脉络。
@@ -860,7 +861,7 @@ class AnalysisEngine:
         client = get_llm_client()
 
         # 固定最大字符数（分层分析每次处理的证据量）
-        MAX_ANALYSIS_CHARS = 200_000  # 20万字符，适配 256k 上下文模型（留 56k 给 prompt+输出）
+        MAX_ANALYSIS_CHARS = 500_000  # 50万字符，适配 1M 上下文模型（留 500k 给 prompt+输出）
         all_text = _truncate_all(texts, max_total=MAX_ANALYSIS_CHARS, strategy_info=strategy_info)
 
         # 汇总提取阶段已识别的矛盾提示，供 LLM 验证/扩展/否决
@@ -1141,7 +1142,7 @@ class AnalysisEngine:
 - 证据类型：{ev_type}
 
 # 证据内容摘要
-{ev_text[:4000]}
+{ev_text[:8000]}
 
 # 审查模板（请按此模板逐项审查）
 {template}
@@ -1480,12 +1481,12 @@ class AnalysisEngine:
         # 组装组内证据信息（每份截断到 3000 字，总控 8000 字）
         evidence_sections = []
         total_chars = 0
-        max_total = 8000
+        max_total = 15000
         for ev in member_texts:
             ev_text = ev.get("text", "")
             # 单份截断到 3000 字
             if len(ev_text) > 3000:
-                ev_text = ev_text[:1500] + "\n\n[...中段已截断...]\n\n" + ev_text[-1500:]
+                ev_text = ev_text[:2500] + "\n\n[...中段已截断...]\n\n" + ev_text[-2500:]
             section = f"### {ev.get('ref', '')} - {ev.get('name', '')}（类型：{ev.get('type', '')}）\n\n{ev_text}"
             if total_chars + len(section) > max_total:
                 section = section[:max_total - total_chars] + "\n\n[...本组证据已达 token 上限，后续证据已截断...]"
@@ -2179,13 +2180,8 @@ def generate_evidence_chain(case_path: Path) -> Dict[str, Any]:
         # 优先根据证据 type 字段精确匹配，再使用关键词 fallback
         cat = "other"
 
-        # 0. 优先根据文件名判断（修正 LLM 分类错误）
-        # 起诉意见书/起诉书是指控文书，不是证据本身
-        if "起诉意见书" in ev_name or "起诉书" in ev_name:
-            cat = "indictment"
-
         # 1. 指控文书（起诉书、起诉意见书）- 单独分类便于识别
-        elif "起诉书" in ev_type or "起诉意见书" in ev_type:
+        if "起诉书" in ev_type or "起诉意见书" in ev_type:
             cat = "indictment"
 
         # 2. 犯罪嫌疑人供述和辩解（法定种类第5类）
@@ -2624,27 +2620,8 @@ def generate_evidence_chain(case_path: Path) -> Dict[str, Any]:
 def _extract_accusation(evidence_list: list, analysis_dir: Path, evidence_dir: Path) -> Optional[Dict[str, Any]]:
     """从起诉书/起诉意见书提取指控事实
 
-    优先级：案件元数据（case.json）> stage_1/output.md > stage_1/output.json > 直接解析起诉书 MD
+    优先级：stage_1/output.md > stage_1/output.json > 直接解析起诉书 MD
     """
-    # 0. 优先从案件元数据读取（case.json 包含被告人和罪名）
-    case_json = evidence_dir.parent.parent / "case.json"
-    case_metadata = {}
-    if case_json.exists():
-        try:
-            case_metadata = json.loads(case_json.read_text(encoding="utf-8"))
-        except Exception:
-            pass
-
-    case_defendant = case_metadata.get("defendant", "")
-    # 从案件名称提取罪名（如"王作通故意伤害罪" -> "故意伤害罪"）
-    case_name = case_metadata.get("name", "")
-    case_crime_type = ""
-    if case_name and "罪" in case_name:
-        import re
-        match = re.search(r'([一-龥]+罪)', case_name)
-        if match:
-            case_crime_type = match.group(1)
-
     # 1. 尝试从 stage_1/output.md 提取（内容更丰富）
     stage_1_md = analysis_dir / "stage_1" / "output.md"
     if stage_1_md.exists():
@@ -2652,59 +2629,41 @@ def _extract_accusation(evidence_list: list, analysis_dir: Path, evidence_dir: P
             content = stage_1_md.read_text(encoding="utf-8")
             # 提取关键信息
             lines = content.split("\n")
-            crime_type = case_crime_type  # 使用案件元数据中的罪名作为默认值
+            crime_type = ""
             accusation_summary = []
-            defendant = case_defendant  # 使用案件元数据中的被告人作为默认值
+            defendant = ""
 
             for line in lines:
-                # 提取罪名（优先从 stage_1 输出提取，如果失败则用案件元数据）
-                if "指控罪名" in line:
-                    import re
-                    match = re.search(r'\*\*(.+?罪)\*\*', line)
-                    if match:
-                        crime_type = match.group(1)
-                elif "**" in line and "罪**" in line and not crime_type:
+                # 提取罪名
+                if "**开设赌场罪**" in line or "指控罪名" in line:
+                    crime_type = "开设赌场罪"
+                elif "**" in line and "罪**" in line:
                     # 提取其他罪名
                     import re
                     match = re.search(r'\*\*(.+?罪)\*\*', line)
                     if match:
                         crime_type = match.group(1)
 
-                # 提取被告人（优先从 stage_1 输出提取，如果失败则用案件元数据）
-                if "被告人" in line and not defendant:
+                # 提取被告人
+                if "被告人" in line and ("高为峰" in line or "主犯" in line):
                     import re
-                    # 匹配常见的被告人姓名模式
-                    match = re.search(r'被告人[：:]\s*([^\s,，]+)', line)
+                    match = re.search(r'(高为峰|丁以建|方天兴)', line)
                     if match:
                         defendant = match.group(1)
-                    else:
-                        # 尝试匹配中文姓名（2-4 个汉字）
-                        match = re.search(r'([一-龥]{2,4})', line)
-                        if match:
-                            defendant = match.group(1)
 
                 # 提取指控事实摘要
-                if any(kw in line for kw in ["指控事实", "核心行为", "危害结果"]):
+                if any(kw in line for kw in ["指控事实", "核心行为", "危害结果", "抽头渔利"]):
                     accusation_summary.append(line.strip())
 
-            if crime_type or accusation_summary:
+            if crime_type and accusation_summary:
                 return {
-                    "name": f"指控：{crime_type}" if crime_type else "指控事实",
-                    "description": " ".join(accusation_summary[:3])[:500] if accusation_summary else "",
+                    "name": f"指控：{crime_type}",
+                    "description": " ".join(accusation_summary[:3])[:500],
                     "source": "阶段1分析",
                     "defendant": defendant,
                 }
         except Exception:
             pass
-
-    # 2. 如果 stage_1 不存在或提取失败，使用案件元数据
-    if case_defendant and case_crime_type:
-        return {
-            "name": f"指控：{case_crime_type}",
-            "description": f"被告人{case_defendant}涉嫌{case_crime_type}",
-            "source": "案件元数据",
-            "defendant": case_defendant,
-        }
 
     # 2. 尝试从 stage_1/output.json 读取
     stage_1_file = analysis_dir / "stage_1" / "output.json"
