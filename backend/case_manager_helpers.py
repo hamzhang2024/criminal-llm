@@ -23,6 +23,16 @@ _NON_EVIDENCE_NAME_KEYWORDS = (
     "扉页",
     "卷宗封面",
     "卷宗目录",
+    "卷内备考表",
+    "备考表",
+    "卷内封面",
+    "卷内封底",
+    "案卷封底",
+    "卷底",
+    "卷首",
+    "卷尾",
+    "目录页",
+    "空白页",
 )
 
 
@@ -44,9 +54,10 @@ def _is_non_evidence_document(name: str, evidence_type: str = "") -> bool:
         if kw in name:
             return True
 
-    # 程序性文书 + 名称含"目录"/"封面" → 非证据
+    # 程序性文书 + 名称含案卷组织性材料关键词 → 非证据
     if evidence_type and "程序性文书" in evidence_type:
-        if "目录" in name or "封面" in name:
+        aux_keywords = ["目录", "封面", "封底", "封皮", "备考", "卷首", "卷尾", "卷皮", "扉页"]
+        if any(kw in name for kw in aux_keywords):
             return True
 
     return False
