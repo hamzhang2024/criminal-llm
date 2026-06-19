@@ -2835,6 +2835,9 @@ export function ReportPage() {
                   )}
 
                   {evidenceReview.reviews.map((review, idx) => {
+                    // 组合质证项在此处跳过（由上方组合卡片渲染，避免缺三性评分显示全 0）
+                    if (review.group_id) return null
+
                     const hasIssues = (review.legality?.score || 100) < 70 ||
                                      (review.authenticity?.score || 100) < 70 ||
                                      (review.relevance?.score || 100) < 70
