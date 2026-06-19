@@ -2179,8 +2179,13 @@ def generate_evidence_chain(case_path: Path) -> Dict[str, Any]:
         # 优先根据证据 type 字段精确匹配，再使用关键词 fallback
         cat = "other"
 
+        # 0. 优先根据文件名判断（修正 LLM 分类错误）
+        # 起诉意见书/起诉书是指控文书，不是证据本身
+        if "起诉意见书" in ev_name or "起诉书" in ev_name:
+            cat = "indictment"
+
         # 1. 指控文书（起诉书、起诉意见书）- 单独分类便于识别
-        if "起诉书" in ev_type or "起诉意见书" in ev_type:
+        elif "起诉书" in ev_type or "起诉意见书" in ev_type:
             cat = "indictment"
 
         # 2. 犯罪嫌疑人供述和辩解（法定种类第5类）
