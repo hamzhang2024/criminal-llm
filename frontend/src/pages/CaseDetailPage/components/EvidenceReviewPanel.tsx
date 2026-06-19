@@ -79,28 +79,29 @@ export function EvidenceReviewPanel({ caseId, evidence, onClose, onSaved }: Evid
 
   const inputStyle: React.CSSProperties = {
     width: '100%', padding: '8px 10px',
-    border: '1px solid var(--macos-border)', borderRadius: '6px',
+    border: '1px solid #d1d1d6', borderRadius: '6px',
     fontSize: '13px', boxSizing: 'border-box',
-    background: 'var(--macos-bg)',
+    background: '#ffffff', color: '#1d1d1f',
   }
   const labelStyle: React.CSSProperties = {
-    fontSize: '12px', fontWeight: 500, color: 'var(--macos-text-secondary)',
+    fontSize: '12px', fontWeight: 500, color: '#6e6e73',
     marginBottom: '4px', display: 'block',
   }
 
   return (
     <div style={{
       position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-      background: 'rgba(0,0,0,0.4)', display: 'flex',
+      background: 'rgba(0,0,0,0.5)', display: 'flex',
       alignItems: 'center', justifyContent: 'center', zIndex: 1000,
     }} onClick={onClose}>
       <div style={{
-        background: 'var(--macos-bg)', borderRadius: '12px',
+        background: '#ffffff', borderRadius: '12px',
         padding: '24px', width: '560px', maxWidth: '90vw', maxHeight: '85vh',
-        overflowY: 'auto', boxShadow: '0 8px 32px rgba(0,0,0,0.2)',
+        overflowY: 'auto', boxShadow: '0 12px 40px rgba(0,0,0,0.3)',
+        color: '#1d1d1f',
       }} onClick={e => e.stopPropagation()}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-          <h3 style={{ fontSize: '16px', fontWeight: 600, margin: 0 }}>
+          <h3 style={{ fontSize: '16px', fontWeight: 600, margin: 0, color: '#1d1d1f' }}>
             证据校对 #{evidence.id}
             {evidence.needs_review && (
               <span style={{ marginLeft: '8px', fontSize: '11px', color: '#ff9500', background: 'rgba(255,149,0,0.1)', padding: '2px 6px', borderRadius: '4px' }}>
@@ -113,7 +114,7 @@ export function EvidenceReviewPanel({ caseId, evidence, onClose, onSaved }: Evid
               </span>
             )}
           </h3>
-          <button onClick={onClose} style={{ border: 'none', background: 'transparent', fontSize: '18px', cursor: 'pointer', color: 'var(--macos-text-secondary)' }}>×</button>
+          <button onClick={onClose} style={{ border: 'none', background: 'transparent', fontSize: '18px', cursor: 'pointer', color: '#86868b' }}>×</button>
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -170,7 +171,7 @@ export function EvidenceReviewPanel({ caseId, evidence, onClose, onSaved }: Evid
             />
           </div>
 
-          <div style={{ fontSize: '11px', color: 'var(--macos-text-tertiary)', padding: '8px 10px', background: 'var(--macos-bg-secondary)', borderRadius: '6px' }}>
+          <div style={{ fontSize: '11px', color: '#6e6e73', padding: '8px 10px', background: '#f5f5f7', borderRadius: '6px' }}>
             校对后的字段将同步更新 index.json 和证据 MD 文件头部，下游分析（人物关系、矛盾分析、证据链）会使用校对后的值。
           </div>
         </div>
@@ -178,7 +179,7 @@ export function EvidenceReviewPanel({ caseId, evidence, onClose, onSaved }: Evid
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '20px' }}>
           <button
             onClick={onClose}
-            style={{ padding: '8px 16px', borderRadius: '6px', border: '1px solid var(--macos-border)', background: 'transparent', cursor: 'pointer', fontSize: '13px' }}
+            style={{ padding: '8px 16px', borderRadius: '6px', border: '1px solid #d1d1d6', background: 'transparent', cursor: 'pointer', fontSize: '13px', color: '#1d1d1f' }}
           >
             取消
           </button>
@@ -187,7 +188,7 @@ export function EvidenceReviewPanel({ caseId, evidence, onClose, onSaved }: Evid
             disabled={saving}
             style={{
               padding: '8px 16px', borderRadius: '6px', border: 'none',
-              background: saving ? 'var(--macos-text-tertiary)' : 'var(--macos-accent)',
+              background: saving ? '#86868b' : '#007aff',
               color: 'white', cursor: saving ? 'not-allowed' : 'pointer', fontSize: '13px',
             }}
           >
