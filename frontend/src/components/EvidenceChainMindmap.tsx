@@ -91,7 +91,7 @@ export function EvidenceChainMindmap({ data, onNodeClick }: Props) {
           name: `${cfg.label} (${categoryEvidences.length})`,
           type: 'category' as const,
           color: cfg.color,
-          collapsed: collapsedNodes.has(`${fact.id}_${cfg.key}`),
+          collapsed: !collapsedNodes.has(`${fact.id}_${cfg.key}`),  // 默认折叠，点击展开
           children: categoryEvidences.map((ev: any) => {
             // 获取该证据针对当前待证事实的相关内容
             const provesDetails = ev.proves_details || {}
@@ -129,7 +129,7 @@ export function EvidenceChainMindmap({ data, onNodeClick }: Props) {
         evidence_count: fact.evidence_count,
         strength: strength,
         children: categoryNodes,
-        collapsed: collapsedNodes.has(fact.id),
+        collapsed: !collapsedNodes.has(fact.id),  // 默认折叠，点击展开
       }
     })
 
@@ -148,6 +148,7 @@ export function EvidenceChainMindmap({ data, onNodeClick }: Props) {
         name: `${cfg.label} (${catUnassigned.length})`,
         type: 'category' as const,
         color: cfg.color,
+        collapsed: !collapsedNodes.has(`unassigned_${cfg.key}`),  // 默认折叠，点击展开
         children: catUnassigned.map((ev: any) => ({
           id: ev.id,
           name: ev.name,
