@@ -455,8 +455,14 @@ export function EvidenceChainMindmap({ data, onNodeClick }: Props) {
   const totalEvidence = summary?.total_evidence || data.total_evidence || 0
   const totalRelations = summary?.total_relations || data.total_relations || 0
 
+  const [fullscreen, setFullscreen] = useState(false)
+
+  const containerStyle: React.CSSProperties = fullscreen
+    ? { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999, background: '#fff', display: 'flex', flexDirection: 'column', padding: 16 }
+    : { minHeight: 500, height: '60vh', display: 'flex', flexDirection: 'column' }
+
   return (
-    <div style={{ minHeight: 600, height: '70vh', display: 'flex', flexDirection: 'column' }}>
+    <div style={containerStyle}>
       {/* 工具栏 */}
       <div style={toolbarStyle}>
         <span style={{ fontSize: 12, color: '#6b7280' }}>
@@ -469,6 +475,9 @@ export function EvidenceChainMindmap({ data, onNodeClick }: Props) {
           <span style={{ fontSize: 12, width: 40, textAlign: 'center' }}>{Math.round(scale * 100)}%</span>
           <button onClick={() => setScale(s => Math.min(s + 0.1, 2))} style={btnStyle}>+</button>
           <button onClick={handleReset} style={btnStyle}>重置</button>
+          <button onClick={() => setFullscreen(f => !f)} style={{ ...btnStyle, fontWeight: 600 }}>
+            {fullscreen ? '退出全屏' : '全屏'}
+          </button>
         </div>
       </div>
 
