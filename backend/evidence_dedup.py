@@ -146,7 +146,7 @@ def dedup_and_link(evidence_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     # 锚点类型：供述/证言类（作为分组主体）
     anchor_types = {"犯罪嫌疑人供述和辩解", "证人证言", "被害人陈述"}
     # 附属类型：程序文书（提讯证/告知书等，按 persons[0] 匹配并入同组）
-    auxiliary_keywords = ["提讯", "提解", "权利义务告知", "讯问通知", "诉讼权利"]
+    auxiliary_keywords = ["提讯", "提解", "权利义务告知", "讯问通知", "询问通知", "诉讼权利"]
 
     def _is_auxiliary(ev_type: str, name: str) -> bool:
         """判断是否为讯问组的附属程序文书"""
