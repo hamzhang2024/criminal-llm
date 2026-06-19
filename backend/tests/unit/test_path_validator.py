@@ -181,8 +181,10 @@ class TestEdgeCases:
         assert sanitize_filename("file.name.test.pdf") == "file.name.test.pdf"
 
     def test_whitespace_filename(self, base_dir):
-        """测试包含空格的文件名"""
-        # 空格会被正则匹配（\w 不包含空格，但实际业务可能允许）
-        # 根据当前实现，空格会触发非法字符错误
-        with pytest.raises(HTTPException):
-            sanitize_filename("file name.pdf")
+        """测试包含空格的文件名（空格合法，案卷名常带空格）"""
+        # 空格是合法文件名字符，应通过校验
+        result = sanitize_filename("file name.pdf")
+        assert result == "file name.pdf"
+        # 含空格的中文案卷名也应通过
+        result2 = sanitize_filename("第1卷 320281002213号王作通故意伤害起诉卷.pdf")
+        assert "王作通" in result2

@@ -16,11 +16,13 @@ from fastapi import HTTPException
 logger = logging.getLogger(__name__)
 
 
-# 安全文件名正则：允许中文、字母、数字、下划线、横杠、点
-SAFE_FILENAME_PATTERN = re.compile(r'^[\w\-\.一-龥]+$')
+# 安全文件名正则：允许中文、字母、数字、下划线、横杠、点、空格、全角括号
+# 注：空格和全角括号是合法文件名字符（如"讯问笔录（王作通）第一次.pdf"），
+# 路径遍历由后续 .. 检查防护，命令注入由危险字符检查防护
+SAFE_FILENAME_PATTERN = re.compile(r'^[\w\-\. （）()．·、，,_\-一-龥]+$')
 
-# 安全路径正则：允许中文、字母、数字、下划线、横杠、点、斜杠、反斜杠
-SAFE_PATH_PATTERN = re.compile(r'^[\w\-\.\/\\一-龥]+$')
+# 安全路径正则：允许中文、字母、数字、下划线、横杠、点、斜杠、反斜杠、空格、全角括号
+SAFE_PATH_PATTERN = re.compile(r'^[\w\-\.\/\\ （）()．·、，,_\-一-龥]+$')
 
 # 危险扩展名黑名单：可执行脚本和系统命令文件，防止命令注入
 DANGEROUS_EXTENSIONS = {
