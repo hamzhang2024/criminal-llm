@@ -55,7 +55,7 @@ async def _run_sub_stage(engine, sub_stage_type: str, defendant: str, crime_type
         parts = []
         for ev in texts:
             result = await client.chat([
-                {"role": "system", "content": "你是刑事辩护律师，正在逐份审查证据，评估证据的合法性、真实性、关联性。"},
+                {"role": "system", "content": "你是刑事案卷智能分析系统，请逐份审查证据，评估证据的合法性、真实性、关联性。"},
                 {"role": "user", "content": f"""## 证据文件：{ev["filename"]}（{ev["type"]}）
 
 {ev["text"][:50000]}
@@ -88,7 +88,7 @@ async def _run_sub_stage(engine, sub_stage_type: str, defendant: str, crime_type
     elif sub_stage_type == "contradiction_analysis":
         all_text = "\n\n".join([f"### {t['filename']}\n{t['text'][:30000]}" for t in texts])
         result = await client.chat([
-            {"role": "system", "content": "你是刑事辩护律师，正在识别证据间的矛盾和口供变化。"},
+            {"role": "system", "content": "你是刑事案卷智能分析系统，请客观识别证据间的矛盾和口供变化。"},
             {"role": "user", "content": f"""## 辩护对象：{defendant}\n\n## 案卷材料\n{all_text[:150000]}\n\n请分析：1. 同一人多次笔录的变化 2. 不同证据对同一事实的矛盾 3. 证据链条薄弱环节"""},
         ])
         engine._save_stage(52, {"name": "矛盾分析"}, result)
@@ -107,7 +107,7 @@ async def _run_sub_stage(engine, sub_stage_type: str, defendant: str, crime_type
             crime_specific = ""
 
         result = await client.chat([
-            {"role": "system", "content": "你是资深刑事辩护律师，正在撰写三阶层综合辩护分析报告。"},
+            {"role": "system", "content": "你是刑事案卷智能分析系统，请客观撰写三阶层综合辩护分析报告。"},
             {"role": "user", "content": f"""## 辩护对象：{defendant}\n## 阶段1：指控要素\n{stage1_md[:3000]}\n## 阶段3：事件拆解\n{stage3_md[:3000]}\n## 阶段4：法律法规\n{stage4_md[:5000]}\n## 5A：证据分析\n{stage51[:5000]}\n## 5B：矛盾分析\n{stage52[:5000]}\n## 三阶层体系\n{THEORY_THREE_TIERS[:2000]}\n\n请完成三阶层综合辩护分析：1. 辩护概要 2. 构成要件符合性 3. 违法性 4. 有责性 5. 综合辩护意见"""},
         ])
         engine._save_stage(53, {"name": "三阶层辩护"}, result)

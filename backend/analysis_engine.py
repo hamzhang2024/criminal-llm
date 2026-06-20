@@ -344,7 +344,7 @@ class AnalysisEngine:
         from llm_client import get_llm_client
         client = get_llm_client()
 
-        system_prompt = """你是一位资深刑事辩护律师，正在阅读案卷材料。
+        system_prompt = """你是刑事案卷智能分析系统，请客观、专业地分析案卷材料。
 请仔细阅读起诉书/起诉意见书及相关材料，提取指控的核心要素。
 
 注意：
@@ -450,7 +450,7 @@ class AnalysisEngine:
                     persons_set.append(name)
         persons_summary = "、".join(persons_set) if persons_set else "（提取阶段未识别到具体人员，请从全文挖掘）"
 
-        system_prompt = """你是一位资深刑事辩护律师，正在梳理案中人物关系。
+        system_prompt = """你是刑事案卷智能分析系统，请客观梳理案中人物关系。
 请从全部案卷材料中识别涉案人员及其相互关系。
 
 **重要区分**：
@@ -588,7 +588,7 @@ class AnalysisEngine:
         MAX_ANALYSIS_CHARS = 500_000  # 50万字符，适配 1M 上下文模型（留 500k 给 prompt+输出）
         all_text = _truncate_all(texts, max_total=MAX_ANALYSIS_CHARS, strategy_info=strategy_info)
 
-        system_prompt = """你是一位资深刑事辩护律师，正在梳理案卷中的事件脉络。
+        system_prompt = """你是刑事案卷智能分析系统，请客观梳理案卷中的事件脉络。
 请按时间顺序识别案件中的所有关键事件，并将相关证据归组到对应事件下。
 
 **重要区分**：
@@ -717,7 +717,7 @@ class AnalysisEngine:
         from llm_client import get_llm_client
         client = get_llm_client()
 
-        system_prompt = """你是一位资深刑事辩护律师，精通中国刑法。
+        system_prompt = """你是刑事案卷智能分析系统，精通中国刑法和相关法律法规。
 请根据案件涉及的罪名，梳理相关法律法规、司法解释和类案裁判要旨。
 
 输出要求：
@@ -933,7 +933,7 @@ class AnalysisEngine:
 """
 
         contradiction_md = await client.chat([
-            {"role": "system", "content": "你是刑事辩护律师，正在识别证据间的矛盾和证据链薄弱环节。\n\n重要：起诉书/起诉意见书是指控文书不是证据，引用时写'据起诉书'/'据起诉意见书'，不要用'见证据XXX'格式。只有正式证据（笔录、证言、鉴定等）才用'见证据XXX'格式。"},
+            {"role": "system", "content": "你是刑事案卷智能分析系统，请客观识别证据间的矛盾和证据链薄弱环节。\n\n重要：起诉书/起诉意见书是指控文书不是证据，引用时写'据起诉书'/'据起诉意见书'，不要用'见证据XXX'格式。只有正式证据（笔录、证言、鉴定等）才用'见证据XXX'格式。"},
             {"role": "user", "content": contradiction_prompt},
         ])
 
@@ -1043,7 +1043,7 @@ class AnalysisEngine:
 """
 
         defense_md = await client.chat([
-            {"role": "system", "content": """你是资深刑事辩护律师，正在撰写三阶层综合辩护分析报告。
+            {"role": "system", "content": """你是刑事案卷智能分析系统，请客观撰写三阶层综合辩护分析报告。
 要求：
 1. 分析要专业、准确，引用法律条文要准确
 2. 从有利于被告人的角度出发
@@ -1134,7 +1134,7 @@ class AnalysisEngine:
         ev_type = evidence.get("type", "其他证据")
         ev_text = evidence.get("text", "")[:6000]  # 截断长文本
 
-        prompt = f"""你是一名经验丰富的刑事辩护律师，正在对证据进行严格的三性审查并生成质证意见。
+        prompt = f"""你是刑事案卷智能分析系统，请对证据进行严格的三性审查并生成专业质证意见。
 
 # 证据信息
 - 证据名称：{ev_name}
@@ -1308,7 +1308,7 @@ class AnalysisEngine:
 
             try:
                 response = await llm.chat([
-                    {"role": "system", "content": "你是一名资深刑事辩护律师，精通证据法和庭审质证技巧。你的任务是严格审查证据的三性（合法性、真实性、关联性），并生成可直接用于庭审的质证意见。审查要具体、有针对性，法律依据要准确。"},
+                    {"role": "system", "content": "你是刑事案卷智能分析系统，精通证据法和庭审质证规范。请客观审查证据的三性（合法性、真实性、关联性），并生成可直接用于庭审的质证意见。审查要具体、有针对性，法律依据要准确。"},
                     {"role": "user", "content": prompt}
                 ])
 
@@ -1428,7 +1428,7 @@ class AnalysisEngine:
 
             try:
                 response = await llm.chat([
-                    {"role": "system", "content": "你是一名资深刑事辩护律师，精通证据法和庭审质证技巧。你的任务是对一组关联证据进行组合审查，发现独立审查无法发现的问题（如供述稳定性、程序合法性联动、重复性供述排除等）。审查要具体、有针对性，法律依据要准确。"},
+                    {"role": "system", "content": "你是刑事案卷智能分析系统，精通证据法和庭审质证规范。请对一组关联证据进行组合审查，发现独立审查无法发现的问题（如供述稳定性、程序合法性联动、重复性供述排除等）。审查要具体、有针对性，法律依据要准确。"},
                     {"role": "user", "content": prompt}
                 ])
 
@@ -1495,7 +1495,7 @@ class AnalysisEngine:
             evidence_sections.append(section)
             total_chars += len(section)
 
-        prompt = f"""你是一名经验丰富的刑事辩护律师，正在对一组关联证据进行组合质证审查。
+        prompt = f"""你是刑事案卷智能分析系统，请对一组关联证据进行组合质证审查。
 
 # 证据组合信息
 - 组合名称：{group_label}
@@ -1612,7 +1612,7 @@ class AnalysisEngine:
             prompt = self._build_review_prompt(ev, template)
             try:
                 response = await llm.chat([
-                    {"role": "system", "content": "你是一名资深刑事辩护律师，精通证据法和庭审质证技巧。你的任务是严格审查证据的三性（合法性、真实性、关联性），并生成可直接用于庭审的质证意见。审查要具体、有针对性，法律依据要准确。"},
+                    {"role": "system", "content": "你是刑事案卷智能分析系统，精通证据法和庭审质证规范。请客观审查证据的三性（合法性、真实性、关联性），并生成可直接用于庭审的质证意见。审查要具体、有针对性，法律依据要准确。"},
                     {"role": "user", "content": prompt}
                 ])
                 review = self._parse_review_result(response, ev)
