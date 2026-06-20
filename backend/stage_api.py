@@ -1140,42 +1140,40 @@ async def _search_similar_cases_llm(stage1_content: str, case_path: Path = None)
     else:
         logger.info("[类案检索] 未配置元典 Token，回退到 LLM")
 
-    # ========== 回退：使用 LLM ==========
-    search_prompt = f"""请搜索与以下罪名和事实相似的已判决案例。
+    # ========== 回退：使用 LLM（严格禁止编造案例）==========
+    search_prompt = f"""请检索与以下罪名和事实相似的已判决案例。
 
 **罪名**：{crime_type}
 
 **关键事实**：
 {chr(10).join(f"- {f}" for f in key_facts)}
 
-请严格按照以下优先顺序搜索案例：
-1. 最高人民法院指导性案例
-2. 最高人民检察院指导性案例
-3. 最高人民法院公报案例
-4. 各省高级人民法院发布的典型案例
-5. 如无上述案例，可提供其他参考案例
-
-请搜索并返回20-30个案例。
+**严格要求**：
+1. **严禁编造案例！** 只能返回你确信真实存在的案例
+2. **严禁编造案号！** 如不确定案号，不要填写虚构案号
+3. 可以引用最高人民法院发布的指导性案例（引用编号+标题即可，如"指导案例14号：董某某故意伤害案"）
+4. 可以引用公报案例（注明来源：《最高人民法院公报》年份+期号）
+5. 可以概括裁判规则（如"司法实践中，被害人明显过错可减轻被告人责任"），但不要附编造的具体案件
+6. 如不确定具体案例，宁可返回空列表，也不要编造
+7. 返回的案例数量不超过 10 个，重质不重量
 
 **输出格式**（JSON）：
 ```json
 [
   {{
-    "title": "案件标题",
+    "title": "案件标题（如不确定可写概括性标题）",
     "court": "审理法院",
     "crime_type": "认定罪名",
     "amount": "涉案金额（如有）",
     "result": "判决结果（刑期/罚金）",
     "key_point": "裁判要旨（100字以内）",
-    "link": "来源链接（必须是中国裁判文书网wenshu.court.gov.cn或无讼案例wangwang.cn的链接，如无则为空字符串）"
+    "link": "来源链接（如不确定则为空字符串）",
+    "verified": true
   }}
 ]
 ```
 
-**注意**：
-1. 优先选择最高法院指导性案例、典型案例
-2. 关注涉案金额相近、情节相似的案例
-3. 如无法联网搜索，请基于训练数据提供参考案例，并注明"基于训练数据"
+**注意**：如无法确认案例的真实性，请在 verified 字段填 false，并在 key_point 中注明"需人工核实"。
 """
 
     try:
@@ -1183,7 +1181,7 @@ async def _search_similar_cases_llm(stage1_content: str, case_path: Path = None)
         try:
             response = await client.chat(
                 messages=[
-                    {"role": "system", "content": "你是法律检索专家，擅长搜索和分析类案。请返回严格的 JSON 格式。"},
+                    {"role": "system", "content": "你是法律检索系统，擅长检索和分析类案。严禁编造案例和案号，只返回确信真实存在的案例。请返回严格的 JSON 格式。"},
                     {"role": "user", "content": search_prompt},
                 ]
             )
@@ -1192,7 +1190,7 @@ async def _search_similar_cases_llm(stage1_content: str, case_path: Path = None)
             # 回退：使用本地知识
             response = await client.chat(
                 messages=[
-                    {"role": "system", "content": "你是资深刑事律师，精通最高人民法院指导性案例、最高人民检察院指导性案例、公报案例等。请优先提供这类权威案例，并返回严格的 JSON 格式。"},
+                    {"role": "system", "content": "你是法律检索系统，精通最高人民法院指导性案例、最高人民检察院指导性案例、公报案例等。严禁编造案例和案号，只返回确信真实存在的权威案例。请返回严格的 JSON 格式。"},
                     {"role": "user", "content": search_prompt + "\n\n请优先提供最高人民法院指导性案例、最高人民检察院指导性案例、公报案例等权威案例。如果没有这类案例，请提供其他参考案例，但需注明来源。"},
                 ]
             )
