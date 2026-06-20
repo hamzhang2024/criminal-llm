@@ -179,12 +179,12 @@ export function EvidenceChainMindmap({ data, onNodeClick }: Props) {
 
   // 计算布局
   const calculateLayout = useCallback((tree: TreeNode) => {
-    const nodeWidth = 150  // 节点宽度
-    const nodeHeight = 28  // 普通节点高度
-    const factNodeHeight = 56  // 待证事实节点高度
-    const evidenceNodeHeight = 36  // 证据节点高度
-    const levelGapX = 180  // 层级间距
-    const nodeGapY = 40  // 节点间距
+    const nodeWidth = 180  // 加宽节点
+    const nodeHeight = 32
+    const factNodeHeight = 72  // 待证事实节点更高，显示描述
+    const evidenceNodeHeight = 48  // 证据节点显示摘要
+    const levelGapX = 220  // 加大层级间距
+    const nodeGapY = 55  // 加大节点间距
 
     const positions = new Map<string | number, { x: number; y: number; width: number; height: number }>()
 
