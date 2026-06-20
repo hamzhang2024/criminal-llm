@@ -2265,18 +2265,20 @@ def generate_evidence_chain(case_path: Path) -> Dict[str, Any]:
         # ========== 证据与待证事实的关联逻辑 =============
         # 原则：以证据类型推断为主 + 关键词精确匹配为辅
 
-        # 1. 先用证据类型推断关联（这是主要的逻辑关联）
+        # 1. 先用证据类型推断关联（保守策略：只关联最核心的事实）
+        # type_fact_mapping 只做粗筛，精确关联由 key_facts 关键词细筛补充
+        # 避免同一份证据关联太多待证事实导致可视化"都一样"
         type_fact_mapping = {
-            "indictment": ["fact_subject", "fact_subjective", "fact_behavior", "fact_result", "fact_causation"],  # 指控文书列明所有构成要件
-            "confession": ["fact_subject", "fact_subjective", "fact_behavior", "fact_causation"],  # 被告人供述：身份、动机、行为、因果关系（供述常包含"我做了什么导致什么结果"）
-            "witness": ["fact_behavior", "fact_result", "fact_causation"],  # 证人证言：看到的行为、结果、因果关系
-            "victim": ["fact_behavior", "fact_result", "fact_causation"],  # 被害人陈述：受害经过、结果、因果关系
-            "documentary": ["fact_result"],  # 书证：主要是金额、转账记录等结果证据
+            "indictment": ["fact_subject", "fact_subjective", "fact_behavior", "fact_result"],  # 指控文书列明主要构成要件
+            "confession": ["fact_subject", "fact_behavior"],  # 被告人供述：身份 + 行为（主观/因果由 key_facts 补充）
+            "witness": ["fact_result"],  # 证人证言：看到的结果（行为/因果由 key_facts 补充）
+            "victim": ["fact_result"],  # 被害人陈述：受害结果（行为/因果由 key_facts 补充）
+            "documentary": ["fact_result"],  # 书证：金额、记录等结果证据
             "physical": ["fact_behavior"],  # 物证：证明行为存在
-            "expert": ["fact_result", "fact_causation"],  # 鉴定意见：证明损失/伤害结果 + 因果关系（如伤情鉴定）
+            "expert": ["fact_result"],  # 鉴定意见：证明损失/伤害结果（因果由 key_facts 补充）
             "inspection": ["fact_behavior"],  # 勘验检查笔录：证明行为现场
-            "electronic": ["fact_result", "fact_behavior", "fact_causation"],  # 电子数据：交易记录、因果关系
-            "audiovisual": ["fact_behavior", "fact_causation"],  # 视听资料：监控录像、因果关系
+            "electronic": ["fact_result"],  # 电子数据：交易记录等结果（行为/因果由 key_facts 补充）
+            "audiovisual": ["fact_behavior"],  # 视听资料：监控录像等行为证据
             "procedural": [],  # 程序性文书不直接证明案件事实
             "other": [],
         }
@@ -2626,31 +2628,35 @@ def _extract_accusation(evidence_list: list, analysis_dir: Path, evidence_dir: P
             defendant = ""
 
             for line in lines:
-                # 提取罪名
-                if "**开设赌场罪**" in line or "指控罪名" in line:
-                    crime_type = "开设赌场罪"
-                elif "**" in line and "罪**" in line:
-                    # 提取其他罪名
-                    import re
+                # 通用罪名提取：匹配 **XX罪** 格式
+                import re
+                if "指控罪名" in line or "涉嫌罪名" in line:
                     match = re.search(r'\*\*(.+?罪)\*\*', line)
                     if match:
                         crime_type = match.group(1)
+                    else:
+                        match2 = re.search(r'[：:]\s*(.+?罪)', line)
+                        if match2:
+                            crime_type = match2.group(1).strip()
+                elif "**" in line and "罪**" in line:
+                    match = re.search(r'\*\*(.+?罪)\*\*', line)
+                    if match and not crime_type:
+                        crime_type = match.group(1)
 
-                # 提取被告人
-                if "被告人" in line and ("高为峰" in line or "主犯" in line):
-                    import re
-                    match = re.search(r'(高为峰|丁以建|方天兴)', line)
+                # 通用被告人提取：匹配"被告人：XXX"格式
+                if "被告人" in line:
+                    match = re.search(r'被告人[：:]\s*(\S+)', line)
                     if match:
-                        defendant = match.group(1)
+                        defendant = match.group(1).strip().rstrip('*')
 
-                # 提取指控事实摘要
-                if any(kw in line for kw in ["指控事实", "核心行为", "危害结果", "抽头渔利"]):
+                # 提取指控事实摘要（通用关键词）
+                if any(kw in line for kw in ["指控事实", "犯罪事实", "核心行为", "危害结果", "案件事实"]):
                     accusation_summary.append(line.strip())
 
-            if crime_type and accusation_summary:
+            if crime_type:
                 return {
                     "name": f"指控：{crime_type}",
-                    "description": " ".join(accusation_summary[:3])[:500],
+                    "description": " ".join(accusation_summary[:3])[:500] if accusation_summary else f"罪名：{crime_type}",
                     "source": "阶段1分析",
                     "defendant": defendant,
                 }
@@ -2675,9 +2681,8 @@ def _extract_accusation(evidence_list: list, analysis_dir: Path, evidence_dir: P
             defendant = stage_1_data.get("defendant", "")
             indictment_source = stage_1_data.get("indictment_source", "")
             if defendant and indictment_source:
-                # 从 stage_1 信息推断罪名
                 return {
-                    "name": "指控：开设赌场罪" if "赌场" in indictment_source else "指控事实",
+                    "name": "指控事实",
                     "description": f"被告人：{defendant}；来源：{indictment_source}",
                     "source": indictment_source,
                     "defendant": defendant,
@@ -2685,7 +2690,7 @@ def _extract_accusation(evidence_list: list, analysis_dir: Path, evidence_dir: P
         except Exception:
             pass
 
-    # 2. 从起诉书/起诉意见书 MD 文件提取
+    # 3. 从起诉书/起诉意见书 MD 文件提取
     for ev in evidence_list:
         if not isinstance(ev, dict):
             continue
@@ -2713,7 +2718,7 @@ def _extract_accusation(evidence_list: list, analysis_dir: Path, evidence_dir: P
                     except Exception:
                         pass
 
-    # 3. 返回默认值
+    # 4. 返回默认值
     return {
         "name": "指控事实",
         "description": "请完成阶段1分析以提取指控事实",
