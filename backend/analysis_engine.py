@@ -593,7 +593,7 @@ graph TD
 1. 以"事件"为单位，不是以"文件"为单位
 2. 同一事件可能涉及多份证据（供述、证言、物证、鉴定等）
 3. 对每个事件，要简要概括各证据的说法
-4. **必须输出时间线的 JSON 数据结构**（见下方示例）"""
+4. **必须输出时间线的 Mermaid timeline 代码**（见下方示例）"""
 
         user_prompt = f"""## 辩护对象
 被告人：**{defendant}**
@@ -616,22 +616,21 @@ graph TD
 
 ### 一、事件时间线
 
-请将事件时间线输出为以下 JSON 格式。系统将据此生成图形化时间线：
+请输出事件时间线的 Mermaid timeline 代码，系统将据此渲染图形化时间线：
 
-```json
-{{
-  "title": "案件时间线",
-  "events": [
-    {{"date": "2025-12-22", "title": "第一次赌局开场", "evidence": ["见证据009", "见证据013"]}},
-    {{"date": "2026-01-21 19:40-23:00", "title": "终场聚赌，现场抓捕", "evidence": ["见证据001", "见证据027"]}}
-  ]
-}}
+```mermaid
+timeline
+    title 案件时间线
+    2024-10-29 : 报案接警 : 双方冲突发生
+    2025-01-20 : 郭洪芳第二次询问 : 伤情确认
+    2025-01-24 : 王作通刑拘 : 立案侦查
 ```
 
 规则：
-- `date`: 日期或时间范围，保留原始时间格式（如 `19:40-23:00`）
-- `title`: 事件简述（不超过 30 字）
-- `evidence`: 相关证据编号列表（仅正式证据，不包括起诉书/起诉意见书）
+- 每个事件一行，格式：`日期 : 事件简述 : 补充说明`
+- 日期保留原始格式
+- 事件简述不超过 30 字
+- 不遗漏重要事件
 
 ### 二、事件拆解与证据归组
 
@@ -668,10 +667,7 @@ graph TD
 
         md_output = await client.chat(messages)
 
-        # 优先尝试从 JSON 生成 Mermaid 时间线
-        md_output = _extract_json_and_render(md_output, _json_to_mermaid_timeline)
-
-        # 如果 LLM 直接输出了 mermaid（未走 JSON 路径），用旧逻辑修复
+        # LLM 直接输出 Mermaid timeline，做后处理修复
         if '```mermaid' in md_output:
             md_output = _legacy_fix_mermaid_timeline(md_output)
 
