@@ -461,7 +461,7 @@ class AnalysisEngine:
 1. 用 Markdown 格式
 2. 关系表要完整，不遗漏重要人物
 3. 关系说明要具体，不要只写"认识"这种模糊描述
-4. **必须输出关系图的 JSON 数据结构**（见下方示例）"""
+4. **必须输出关系图的 Mermaid 代码**（见下方示例）"""
 
         user_prompt = f"""## 辩护对象
 被告人：**{defendant}**
@@ -498,29 +498,26 @@ class AnalysisEngine:
 
 ### 二、人物关系图
 
-请将人物关系输出为以下 JSON 格式。系统将据此生成图形化关系图：
+请输出人物关系的 Mermaid 图表代码，使用 graph TD 格式：
 
-```json
-{{
-  "subgraphs": [
-    {{"name": "核心合伙人", "nodes": ["A", "B"]}}
-  ],
-  "nodes": [
-    {{"id": "A", "label": "项少甫", "group": "core"}},
-    {{"id": "B", "label": "江涛", "group": "core"}}
-  ],
-  "edges": [
-    {{"from": "A", "to": "B", "label": "合伙开赌"}}
-  ]
-}}
+```mermaid
+graph TD
+    subgraph 攻击方
+        A["王作通"]
+        B["胡余剩"]
+        A ---|"纠集"| B
+    end
+    subgraph 被害方
+        C["郭洪芳"]
+    end
+    B -.->|"持钢管戳击致伤"| C
 ```
 
 规则：
-- `nodes`: 所有涉案人员，`id` 为单字母标识符（A, B, C...），`label` 为姓名，`group` 可选：core（核心）、staff（执行）、witness（证人）、other（其他）
-- `edges`: 两人之间的关系，`label` 为关系描述（2-6 字关键词）
-- `subgraphs`: 按角色层级分组，`nodes` 中为该组包含的节点 ID 列表
-- 不限制节点数量，包含所有重要人物
-- 连线标签不要用 emoji 或特殊符号
+- 用 subgraph 按角色分组（如"攻击方""被害方""证人"等）
+- 节点用 `ID["姓名"]` 格式定义
+- 关系用 `A ---|"关系描述"| B` 或 `A -.->|"关系描述"| B`（虚线表示间接关系）
+- 包含所有重要人物，不限制数量
 
 ### 三、关系详细分析
 
@@ -543,10 +540,7 @@ class AnalysisEngine:
 
         md_output = await client.chat(messages)
 
-        # 优先尝试从 JSON 生成 Mermaid 图
-        md_output = _extract_json_and_render(md_output, _json_to_mermaid_graph)
-
-        # 如果 JSON 提取失败（LLM 直接输出了 mermaid），回退到旧的后处理逻辑
+        # LLM 直接输出 Mermaid 代码，做后处理修复
         if '```mermaid' in md_output:
             md_output = _legacy_fix_mermaid(md_output)
 
