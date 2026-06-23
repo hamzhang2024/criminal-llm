@@ -6,6 +6,7 @@
 """
 # 初始化环境：加载 DATA_DIR/.env（必须在所有 import 之前）
 import os
+import re
 
 from _bootstrap import DATA_DIR
 
@@ -51,7 +52,7 @@ from config_manager import get_config_status, load_config, save_config
 from data_dir_api import router as data_dir_router
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from legal_kb_api import router as legal_kb_router
 from llm_client import close_llm_client
@@ -142,6 +143,19 @@ async def get_config():
 @app.put("/api/config")
 async def update_config(body: Dict[str, Any]):
     """保存配置（合并已有配置，保留 llm_base_url / llm_model）"""
+    # SSRF 防护：校验用户可控的外部服务 URL
+    from utils.url_guard import SSRFError, validate_external_url
+    try:
+        llm_base_url = (body.get("llm_base_url") or "").strip()
+        if llm_base_url:
+            validate_external_url(llm_base_url)
+        mineru_local_url = (body.get("mineru_local_url") or "").strip()
+        if mineru_local_url:
+            # 本地 MinerU 服务允许回环地址
+            validate_external_url(mineru_local_url, allow_loopback=True)
+    except SSRFError as e:
+        return {"success": False, "error": f"URL 校验失败: {e}"}
+
     existing = load_config()
     merged = {**existing, **body}
     save_config(merged)
@@ -178,6 +192,12 @@ async def test_config(body: Dict[str, Any]):
             # 本地模式：检查服务器是否可访问
             if not local_url:
                 return {"success": False, "error": "本地服务器地址不能为空"}
+            # SSRF 防护：本地模式仅允许回环地址
+            from utils.url_guard import SSRFError, validate_external_url
+            try:
+                validate_external_url(local_url, allow_loopback=True)
+            except SSRFError as e:
+                return {"success": False, "error": f"URL 校验失败: {e}"}
             try:
                 async with httpx.AsyncClient(timeout=10) as client:
                     # 尝试访问根路径或 API 端点
@@ -235,6 +255,12 @@ async def test_config(body: Dict[str, Any]):
             return {"success": False, "error": "Base URL 不能为空"}
         if not model:
             return {"success": False, "error": "模型名称不能为空"}
+        # SSRF 防护：LLM 为外部云服务，禁止回环/内网地址
+        from utils.url_guard import SSRFError, validate_external_url
+        try:
+            validate_external_url(base_url)
+        except SSRFError as e:
+            return {"success": False, "error": f"Base URL 校验失败: {e}"}
         try:
             # 同上：打包后 macOS 用系统证书
             import sys
@@ -333,8 +359,10 @@ async def upload_pdf(file: UploadFile = File(...)):
     job_id = create_job()
     processor = get_processor(job_id)
 
-    # 保存文件
-    pdf_path = await processor.save_upload(file_content, file.filename)
+    # 保存文件（净化文件名防路径穿越）
+    from utils.path_validator import sanitize_filename
+    safe_filename = sanitize_filename(Path(file.filename).name)
+    pdf_path = await processor.save_upload(file_content, safe_filename)
 
     # 获取页数
     total_pages = processor.get_page_count(pdf_path)
@@ -408,25 +436,43 @@ async def manual_cleanup(days: int = 7):
     }
 
 
+# 日志脱敏正则：遮蔽常见密钥/密码/Token 形式的敏感值
+_REDACT_PATTERNS = [
+    # key=value 或 key: value 形式（api_key / token / password / secret / Authorization）
+    re.compile(
+        r'((?:api[_-]?key|token|password|passwd|secret|authorization|mineru[_-]?token|paddleocr[_-]?token|llm[_-]?api[_-]?key)\s*[:=]\s*)["\']?[A-Za-z0-9_\-\.+/=]{6,}',
+        re.IGNORECASE,
+    ),
+    # Bearer token
+    re.compile(r'(Bearer\s+)[A-Za-z0-9_\-\.+/=]+', re.IGNORECASE),
+]
+
+
+def _redact_log(text: str) -> str:
+    """对日志文本做敏感字段脱敏，保留 key 名只遮蔽值。"""
+    redacted = text
+    for pattern in _REDACT_PATTERNS:
+        redacted = pattern.sub(lambda m: m.group(1) + "***REDACTED***" if m.lastindex else "***REDACTED***", redacted)
+    return redacted
+
+
 @app.get("/api/logs/backend/download")
 async def download_backend_log():
-    """下载完整的后端日志文件"""
+    """下载完整的后端日志文件（敏感字段已脱敏）"""
     if not _log_path.exists():
         raise HTTPException(status_code=404, detail="日志文件不存在")
-    return FileResponse(
-        str(_log_path),
-        media_type="text/plain",
-        filename="criminal-llm-backend.log",
-    )
+    # 读取并脱敏后返回，避免日志中残留的密钥/密码/Token 经下载端点泄露
+    raw = _log_path.read_text(encoding="utf-8")
+    return PlainTextResponse(_redact_log(raw), media_type="text/plain")
 
 
 @app.get("/api/logs/backend")
 async def get_backend_log(lines: int = 500):
-    """获取后端日志的最后 N 行（默认 500 行）"""
+    """获取后端日志的最后 N 行（默认 500 行，敏感字段已脱敏）"""
     if not _log_path.exists():
         return {"success": False, "error": "日志文件不存在", "path": str(_log_path)}
     try:
-        all_lines = _log_path.read_text(encoding="utf-8").splitlines()
+        all_lines = _redact_log(_log_path.read_text(encoding="utf-8")).splitlines()
         tail = all_lines[-lines:] if len(all_lines) > lines else all_lines
         return {
             "success": True,

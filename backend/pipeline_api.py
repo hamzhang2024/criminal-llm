@@ -16,6 +16,7 @@ from typing import Optional
 from analysis_pipeline import AnalysisPipeline, _contains_indictment_title
 from case_manager import find_case_path
 from fastapi import APIRouter, Body, File, HTTPException, UploadFile
+from utils.path_validator import sanitize_filename
 
 router = APIRouter(prefix="/api/pipeline", tags=["案卷分析流水线"])
 
@@ -399,7 +400,7 @@ async def upload_wiki_reference(case_id: str, file: UploadFile = File(...)):
     ref_dir = case_path / "analysis" / "user_reference"
     ref_dir.mkdir(parents=True, exist_ok=True)
 
-    target = ref_dir / file.filename
+    target = ref_dir / sanitize_filename(Path(file.filename).name)
     with open(target, "wb") as f:
         content = await file.read()
         f.write(content)

@@ -28,6 +28,50 @@ elif sys.platform == "win32":
 else:
     DEFAULT_DATA_DIR = Path.home() / ".criminal-llm-data"
 
+# 禁止作为数据目录的系统敏感路径前缀（绝对路径比较，resolve 后校验）
+FORBIDDEN_DIR_PREFIXES = []
+_home = Path.home()
+for p in [
+    Path("/etc"), Path("/usr"), Path("/System"), Path("/Library"),
+    Path("/bin"), Path("/sbin"), Path("/var"),
+    Path("/private/etc"), Path("/private/var"),
+    _home / ".ssh",
+    _home / "Library" / "LaunchAgents",
+    _home / "Library" / "LaunchDaemons",
+    _home / "Library" / "Keychains",
+]:
+    FORBIDDEN_DIR_PREFIXES.append(str(p))
+
+# Windows 敏感路径
+if sys.platform == "win32":
+    for env in ("SystemRoot", "ProgramFiles", "ProgramFiles(x86)"):
+        val = __import__("os").environ.get(env)
+        if val:
+            FORBIDDEN_DIR_PREFIXES.append(str(Path(val)))
+
+
+def _validate_data_dir(new_path: Path) -> str | None:
+    """校验数据目录是否安全，返回错误信息或 None。"""
+    try:
+        resolved = new_path.resolve(strict=False)
+    except (OSError, RuntimeError) as e:
+        return f"路径解析失败: {e}"
+
+    resolved_str = str(resolved)
+    for forbidden in FORBIDDEN_DIR_PREFIXES:
+        if resolved_str == forbidden or resolved_str.startswith(forbidden.rstrip("/") + "/"):
+            return f"不允许使用系统敏感目录: {resolved_str}"
+
+    # 必须位于用户主目录或程序自带 data 目录下，避免任意位置写入
+    allowed_roots = [str(_home), str(Path(__file__).resolve().parent.parent / "data")]
+    if sys.platform == "win32" and getattr(sys, "frozen", False):
+        allowed_roots.append(str(Path(sys.executable).resolve().parent.parent / "data"))
+    if not any(resolved_str == r or resolved_str.startswith(r.rstrip("/") + "/") for r in allowed_roots):
+        return f"数据目录必须位于用户主目录下: {resolved_str}"
+
+    return None
+
+
 
 def _load_data_dir_config() -> dict:
     """加载数据目录配置"""
@@ -78,6 +122,11 @@ class SetDataDirRequest(BaseModel):
 async def set_data_dir(request: SetDataDirRequest):
     """设置新的数据目录"""
     new_path = Path(request.new_dir)
+
+    # 安全校验：禁止系统敏感目录、限制可写位置
+    err = _validate_data_dir(new_path)
+    if err:
+        return {"success": False, "error": err}
 
     if not new_path.exists():
         return {"success": False, "error": f"目录不存在: {request.new_dir}"}

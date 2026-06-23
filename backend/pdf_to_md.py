@@ -469,8 +469,9 @@ def _do_mineru_convert(
                         return None, None
                     zip_resp = requests.get(zip_url, timeout=120, verify=_SSL_VERIFY)
                     zip_path.write_bytes(zip_resp.content)
-                    with zipfile.ZipFile(zip_path) as zf:
-                        zf.extractall(temp_dir)
+                    # 安全解压：防路径穿越与 Zip Bomb
+                    from utils.zip_safe import safe_extract_zip
+                    safe_extract_zip(zip_path, temp_dir)
                     zip_path.unlink()
 
                     # 5. 解析输出

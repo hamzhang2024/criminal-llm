@@ -1,6 +1,15 @@
 import { useEffect, useState } from 'react'
+import DOMPurify from 'dompurify'
 
 let nextId = 0
+
+// SVG 净化配置：仅保留 SVG 渲染所需的标签与属性，剥离脚本与事件处理器
+const SVG_PURIFY_CONFIG = {
+  USE_PROFILES: { svg: true, svgFilters: true },
+  ADD_TAGS: ['foreignObject'],
+  FORBID_TAGS: ['script'],
+  FORBID_ATTR: ['onload', 'onclick', 'onerror', 'onmouseover'],
+}
 
 interface MermaidRendererProps {
   code: string
@@ -40,7 +49,7 @@ export function MermaidRenderer({ code }: MermaidRendererProps) {
       return
     }
 
-    // 动态导入 mermaid（与 MermaidTestInline 一致）
+    // 动态导入 mermaid
     import('mermaid').then(async (mermaidModule) => {
       const mermaid = mermaidModule.default
 
@@ -48,7 +57,7 @@ export function MermaidRenderer({ code }: MermaidRendererProps) {
       mermaid.initialize({
         startOnLoad: false,
         theme: 'default',
-        securityLevel: 'loose',
+        securityLevel: 'strict',
         fontSize: 18,
         fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
         flowchart: {
@@ -71,8 +80,10 @@ export function MermaidRenderer({ code }: MermaidRendererProps) {
 
       if (cancelled) return
 
-      // 与 MermaidTestInline 一致：使用 state + dangerouslySetInnerHTML
-      setSvgHtml(svg)
+      // 防御性净化：mermaid 输出经 securityLevel:'strict' 已初步消毒，
+      // 再用 DOMPurify (SVG profile) 兜底，确保无 <script> 与内联事件处理器
+      const safeSvg = DOMPurify.sanitize(svg, SVG_PURIFY_CONFIG) as string
+      setSvgHtml(safeSvg)
       setLoading(false)
       setError(null)
     }).catch((err) => {

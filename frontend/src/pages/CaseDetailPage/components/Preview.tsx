@@ -3,8 +3,25 @@
 import React, { useState, useEffect } from 'react'
 import { API_BASE } from '../../../api'
 import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 
 marked.setOptions({ async: false, gfm: true, breaks: true })
+
+// DOMPurify 严格配置：仅允许常见展示性标签，禁止 data-* 与自定义属性，
+// 防止 LLM 产出的 Markdown 中夹带的脚本/事件处理器执行
+const MD_PURIFY_CONFIG = {
+  ALLOWED_TAGS: [
+    'p', 'br', 'span', 'div',
+    'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+    'table', 'thead', 'tbody', 'tr', 'th', 'td',
+    'ul', 'ol', 'li',
+    'blockquote', 'pre', 'code',
+    'a', 'strong', 'em', 'b', 'i', 'u', 's',
+    'hr', 'img',
+  ],
+  ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'class'],
+  ALLOW_DATA_ATTR: false,
+}
 
 interface PreviewFile {
   id: string | number
@@ -101,7 +118,7 @@ function MDPreview({ url }: { url: string }) {
               }
             )
           : text
-        setHtml(marked.parse(rewritten) as string)
+        setHtml(DOMPurify.sanitize(marked.parse(rewritten) as string, MD_PURIFY_CONFIG) as string)
         setLoading(false)
       })
       .catch(err => {

@@ -47,11 +47,15 @@ function checkUpdateSilent() {
 /** 认证门禁：检查 token 有效性，无效则显示登录页 */
 function AuthGate({ children }: { children: React.ReactNode }) {
   const [authed, setAuthed] = useState<boolean | null>(null)
+  // 认证服务不可达时不放行，进入重试态（避免离线绕过认证）
+  const [netError, setNetError] = useState(false)
 
   useEffect(() => {
     let cancelled = false
 
     const checkAuth = async () => {
+      if (!cancelled) setNetError(false)
+
       // 开发模式：无 token 时自动放行，方便浏览器调试
       if (import.meta.env.DEV) {
         const token = getToken()
@@ -81,17 +85,18 @@ function AuthGate({ children }: { children: React.ReactNode }) {
           checkUpdateSilent()
         }
       } catch (err) {
-        if (!cancelled) {
-          const msg = err instanceof Error ? err.message : ''
-          // 网络错误（服务器不可达）→ 信任本地 token，允许使用
-          if (msg.includes('网络错误')) {
-            setAuthed(true)
-          } else {
-            // token 明确无效/过期 → 清除并跳转登录
-            clearToken()
-            clearAuthEmail()
-            setAuthed(false)
-          }
+        if (cancelled) return
+        const msg = err instanceof Error ? err.message : ''
+        if (msg.includes('网络错误')) {
+          // 认证服务不可达：不信任本地 token，进入重试态而非放行
+          // 保留 token（可能仍有效，仅服务器暂时不可达）
+          setAuthed(null)
+          setNetError(true)
+        } else {
+          // token 明确无效/过期 → 清除并跳转登录
+          clearToken()
+          clearAuthEmail()
+          setAuthed(false)
         }
       }
     }
@@ -99,6 +104,39 @@ function AuthGate({ children }: { children: React.ReactNode }) {
 
     return () => { cancelled = true }
   }, [])
+
+  // 认证服务不可达：提供重试与返回登录，绝不静默放行
+  if (netError && authed === null) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', gap: '16px', background: 'var(--macos-bg-secondary)' }}>
+        <div style={{ fontSize: 15, color: 'var(--macos-text-secondary)' }}>认证服务暂不可达，请检查网络后重试</div>
+        <div style={{ display: 'flex', gap: '12px' }}>
+          <button
+            onClick={() => {
+              setNetError(false)
+              setAuthed(null)
+              // 触发重新校验：通过状态变更由 effect 重跑
+              setTimeout(() => window.location.reload(), 0)
+            }}
+            style={{ padding: '8px 20px', background: 'var(--macos-accent)', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: 13 }}
+          >
+            重试
+          </button>
+          <button
+            onClick={() => {
+              clearToken()
+              clearAuthEmail()
+              setNetError(false)
+              setAuthed(false)
+            }}
+            style={{ padding: '8px 20px', background: 'transparent', color: 'var(--macos-accent)', border: '1px solid var(--macos-border)', borderRadius: '8px', cursor: 'pointer', fontSize: 13 }}
+          >
+            返回登录
+          </button>
+        </div>
+      </div>
+    )
+  }
 
   // 验证中，最多显示 500ms，超时后直接显示登录页
   if (authed === null) {

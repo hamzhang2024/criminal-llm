@@ -300,7 +300,8 @@ def process_single_file(
 
     logger.info(f"\n{'='*60}")
     logger.info(f"处理文件: {input_path}")
-    logger.info(f"密码: '{password}'")
+    # 敏感信息脱敏：密码不写入日志（避免经日志端点泄露）
+    logger.info(f"密码: {'已设置' if password else '(无)'}")
     logger.info(f"水印文字: '{watermark_text}'")
     logger.info(f"{'='*60}")
 

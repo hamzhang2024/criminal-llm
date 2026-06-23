@@ -77,6 +77,7 @@ async def list_cases():
 # LLM 客户端
 from llm_client import get_llm_client
 from pdf_to_md import get_evidence_text  # PDF → MD 转换模块
+from utils.path_validator import sanitize_filename
 
 # ========== 数据模型 ==========
 
@@ -342,15 +343,16 @@ async def upload_directory(
     # 保存文件并构建证据列表
     evidence_list = []
     for i, file in enumerate(pdf_files):
-        # 保存文件到案件目录
-        file_path = case_dir / file.filename
+        # 保存文件到案件目录（净化文件名防路径穿越）
+        safe_name = sanitize_filename(Path(file.filename).name)
+        file_path = case_dir / safe_name
         file_path.parent.mkdir(parents=True, exist_ok=True)
         with open(file_path, "wb") as f:
             content = await file.read()
             f.write(content)
-        
+
         # 推断证据类型
-        filename_only = Path(file.filename).name
+        filename_only = safe_name
         evidence_type = infer_evidence_type(filename_only)
         
         evidence_list.append({
@@ -576,12 +578,12 @@ async def add_supplement_files(
     # 保存文件并添加证据
     new_evidence = []
     for i, file in enumerate(pdf_files):
-        filename = Path(file.filename).name
-        
+        filename = sanitize_filename(Path(file.filename).name)
+
         # 检查是否已存在（按文件名）
         if filename in existing_filenames:
             continue
-        
+
         # 保存文件
         file_path = case_dir / f"补充_{filename}"
         with open(file_path, "wb") as f:

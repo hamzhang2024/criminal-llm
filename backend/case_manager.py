@@ -327,10 +327,10 @@ async def import_folder(folder_path: str, name: str, defendant: str) -> CaseInfo
         folder = Path(folder_path)
         # 验证路径是否在 CASES_DIR 范围内（防止路径遍历）
         if folder.is_absolute():
-            # 绝对路径：验证是否在数据目录范围内
+            # 绝对路径：验证是否在数据目录范围内（用 is_relative_to 防前缀匹配绕过）
             resolved_folder = folder.resolve()
             resolved_cases = CASES_DIR.resolve()
-            if not str(resolved_folder).startswith(str(resolved_cases)):
+            if not resolved_folder.is_relative_to(resolved_cases):
                 logger.warning(f"[安全] 导入路径越界: {folder_path}")
                 return {"error": "路径越界，只能导入数据目录内的文件夹"}
         else:
@@ -1642,8 +1642,12 @@ async def _do_extract_evidence(
                     heartbeat_task.cancel()
                     try:
                         await heartbeat_task
-                    except (asyncio.CancelledError, Exception):
+                    except asyncio.CancelledError:
+                        # 任务被取消是预期行为，正常吞掉
                         pass
+                    except Exception as e:
+                        # 心跳任务的真实错误不应静默，记录以便排查
+                        logger.warning(f"[证据提取] 心跳任务异常退出: {type(e).__name__}: {e}")
 
                     # LLM 调用成功，立即更新心跳（细粒度心跳）
                     last_progress_time = time.time()
@@ -1740,12 +1744,16 @@ async def _do_extract_evidence(
                 stall_task.cancel()
                 try:
                     await watcher
-                except (asyncio.CancelledError, Exception):
+                except asyncio.CancelledError:
                     pass
+                except Exception as e:
+                    logger.warning(f"[证据提取] 监视器任务异常退出: {type(e).__name__}: {e}")
                 try:
                     await stall_task
-                except (asyncio.CancelledError, Exception):
+                except asyncio.CancelledError:
                     pass
+                except Exception as e:
+                    logger.warning(f"[证据提取] 卡死检测任务异常退出: {type(e).__name__}: {e}")
 
             # 合并结果：已完成的文件 + 新提取的文件
             # 按 pending_files 原始顺序，保证证据编号跟随卷号顺序
@@ -2621,8 +2629,8 @@ async def open_file_endpoint(case_id: str, file_path: str):
 
     actual_path = str(Path(matched[0]).resolve())
 
-    # 安全验证：文件必须在案件目录内（双重检查）
-    if not actual_path.startswith(case_root_resolved):
+    # 安全验证：文件必须在案件目录内（双重检查，用 is_relative_to 防前缀匹配绕过）
+    if not Path(actual_path).is_relative_to(Path(case_root_resolved)):
         logger.warning(f"[安全] 文件路径越界: {actual_path} 不在 {case_root_resolved}")
         return {"success": False, "error": "拒绝访问：文件不在案件目录内"}
 
@@ -2682,8 +2690,8 @@ async def serve_file(case_id: str, file_path: str, dir: Optional[str] = None):
     actual_path = str(matched[0])
     fp = Path(actual_path).resolve()
 
-    # 安全验证：文件必须在案件目录内
-    if not str(fp).startswith(str(case_root_resolved)):
+    # 安全验证：文件必须在案件目录内（用 is_relative_to 防前缀匹配绕过）
+    if not fp.is_relative_to(case_root_resolved):
         raise HTTPException(status_code=403, detail="拒绝访问")
 
     if not fp.exists():
@@ -2816,10 +2824,10 @@ async def serve_md_image(case_id: str, image_path: str):
     if not actual_path.exists() or not actual_path.is_file():
         raise HTTPException(status_code=404, detail=f"图片不存在：{image_path}")
 
-    # 确保在案件目录内
+    # 确保在案件目录内（用 is_relative_to 防前缀匹配绕过）
     case_root_resolved = Path(case_root).resolve()
     fp = actual_path.resolve()
-    if not str(fp).startswith(str(case_root_resolved)):
+    if not fp.is_relative_to(case_root_resolved):
         raise HTTPException(status_code=403, detail="拒绝访问")
 
     # 根据扩展名设置 MIME type

@@ -98,9 +98,9 @@ class AsyncMinerUConverter:
             self.token = token or _get_mineru_token()
             if not self.token:
                 raise ValueError("MinerU Token 未配置，请设置 MINERU_TOKEN 环境变量或在设置中配置")
-            # 调试日志：显示 token 来源和前几位（不泄露完整 token）
+            # 敏感信息脱敏：仅记录来源与长度，不输出任何 token 字符（避免经日志端点泄露）
             source = "参数传入" if token else "配置文件/环境变量"
-            logger.info(f"[MinerU] 初始化: 模式=云端, token来源={source}, token前20字符={self.token[:20]}...")
+            logger.info(f"[MinerU] 初始化: 模式=云端, token来源={source}, token长度={len(self.token)}")
 
     async def convert_single(
         self,
@@ -825,9 +825,9 @@ class AsyncMinerUConverter:
                     zip_data = await resp.read()
                     zip_path.write_bytes(zip_data)
 
-            # 解压
-            with zipfile.ZipFile(zip_path) as zf:
-                zf.extractall(temp_dir)
+            # 安全解压：防路径穿越与 Zip Bomb
+            from utils.zip_safe import safe_extract_zip
+            safe_extract_zip(zip_path, temp_dir)
             zip_path.unlink()
 
             # 读取 MD
