@@ -28,7 +28,8 @@ export function CaseDetailPage() {
   const [crimeType, setCrimeType] = useState('')
   const processAbortRef = useRef<AbortController | null>(null)
   const convertPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const extractPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  /** 证据提取 SSE 订阅清理函数（取消订阅 + 超时定时器） */
+  const extractSubRef = useRef<(() => void) | null>(null)
   const [analysisCompleted, setAnalysisCompleted] = useState(false)
 
   // 安全获取 caseId 的辅助函数
@@ -285,75 +286,98 @@ export function CaseDetailPage() {
   const startExtractPoll = useCallback(() => {
     if (!caseId) return
     extractUserStoppedRef.current = false; extractPollFailuresRef.current = 0
-    if (extractPollRef.current) clearInterval(extractPollRef.current)
-    extractPollRef.current = setInterval(async () => {
-      if (extractUserStoppedRef.current) { if (extractPollRef.current) { clearInterval(extractPollRef.current); extractPollRef.current = null } return }
-      try {
-        const st = await api.getExtractStatus(caseId)
-        extractPollFailuresRef.current = 0
-        if (st.status !== 'running') {
-          if (extractPollRef.current) { clearInterval(extractPollRef.current); extractPollRef.current = null }
-          const data = await api.getEvidenceIndex(caseId)
-          if (data.total_evidence > 0) { setEvidenceList(data.evidence || []); setEvidenceExtracted(true); setProgress(`已提取 ${data.total_evidence} 份证据`) }
-          else {
-            // 优先使用后端结构化错误详情（type + message + hint）
-            const errDetail = st.error_details
-            let errMsg = '提取未成功'
-            if (errDetail) {
-              if (Array.isArray(errDetail) && errDetail[0]) {
-                const e = errDetail[0]
-                errMsg = e.hint ? `${e.message}（${e.hint}）` : (e.message || errMsg)
-              } else if (typeof errDetail === 'object') {
-                const e = errDetail as any
-                errMsg = e.hint ? `${e.message}（${e.hint}）` : (e.message || errMsg)
-              } else if (typeof errDetail === 'string') {
-                errMsg = errDetail
-              }
+    // 关闭已有订阅
+    if (extractSubRef.current) { extractSubRef.current(); extractSubRef.current = null }
+
+    // 处理单条状态：返回 true 表示进入终态（应停止订阅）
+    // st 含动态错误结构（error_details），用 any 保留原容错收窄逻辑
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const handleStatus = async (st: any): Promise<boolean> => {
+      if (extractUserStoppedRef.current) return true
+      extractPollFailuresRef.current = 0
+      if (st.status !== 'running') {
+        const data = await api.getEvidenceIndex(caseId)
+        if (data.total_evidence > 0) { setEvidenceList(data.evidence || []); setEvidenceExtracted(true); setProgress(`已提取 ${data.total_evidence} 份证据`) }
+        else {
+          // 优先使用后端结构化错误详情（type + message + hint）
+          const errDetail = st.error_details
+          let errMsg = '提取未成功'
+          if (errDetail) {
+            if (Array.isArray(errDetail) && errDetail[0]) {
+              const e = errDetail[0]
+              errMsg = e.hint ? `${e.message}（${e.hint}）` : (e.message || errMsg)
+            } else if (typeof errDetail === 'object') {
+              const e = errDetail as any
+              errMsg = e.hint ? `${e.message}（${e.hint}）` : (e.message || errMsg)
+            } else if (typeof errDetail === 'string') {
+              errMsg = errDetail
             }
-            setError(errMsg || data.error_hint || '提取未成功'); setProgress('')
           }
-          setProcessing(false)
-        } else {
-          const tf = st.total_files || 0, pf = st.processed_files || 0
-          const pct = tf > 0 ? Math.round(pf/tf*100) : 0
-          // 构建详细进度信息：文件名 + 耗时 + LLM 等待状态
-          const parts: string[] = [`正在提取证据... ${pf}/${tf} (${pct}%)`]
-          if (st.current_file) {
-            // 截断过长的文件名
-            const fname = st.current_file.length > 40 ? st.current_file.slice(0, 37) + '...' : st.current_file
-            parts.push(`当前: ${fname}`)
-          }
-          if (st.llm_waiting) {
-            const latency = st.llm_latency ? `${Math.round(st.llm_latency)}s` : ''
-            parts.push(`等待 LLM 响应${latency ? ` (${latency})` : ''}`)
-          }
-          // 重试状态可见化
-          if (st.retry_count > 0) {
-            const reasonMap: Record<string, string> = {
-              timeout: '超时',
-              rate_limit: '限流',
-              general_error: '错误',
-            }
-            const reason = reasonMap[st.retry_reason] || st.retry_reason || '错误'
-            const wait = st.retry_wait_seconds ? `${st.retry_wait_seconds}s 后重试` : '重试中'
-            parts.push(`重试中（第 ${st.retry_count} 次，原因：${reason}，${wait}）`)
-          }
-          if (st.elapsed_seconds) {
-            const mins = Math.floor(st.elapsed_seconds / 60)
-            const secs = st.elapsed_seconds % 60
-            parts.push(`已耗时 ${mins}:${secs.toString().padStart(2, '0')}`)
-          }
-          if (st.eta_seconds != null && st.eta_seconds > 0) {
-            const etaMins = Math.floor(st.eta_seconds / 60)
-            const etaSecs = st.eta_seconds % 60
-            parts.push(`预计剩余 ${etaMins}:${etaSecs.toString().padStart(2, '0')}`)
-          }
-          setProgress(parts.join(' · '))
-          try { const d = await api.getEvidenceIndex(caseId); if (d.total_evidence > 0) setEvidenceList(d.evidence || []) } catch {}
+          setError(errMsg || data.error_hint || '提取未成功'); setProgress('')
         }
-      } catch { extractPollFailuresRef.current++; if (extractPollFailuresRef.current >= 3) { if (extractPollRef.current) { clearInterval(extractPollRef.current); extractPollRef.current = null } setProcessing(false); setError('提取过程出错（连续 3 次轮询失败）'); setProgress('') } }
-    }, 3000)
-    setTimeout(() => { if (extractPollRef.current) { clearInterval(extractPollRef.current); extractPollRef.current = null; setProcessing(false); setProgress('⚠️ 提取超时（2小时），后端可能仍在运行，请稍后刷新查看结果') } }, 7200000)
+        setProcessing(false)
+        return true
+      }
+      const tf = st.total_files || 0, pf = st.processed_files || 0
+      const pct = tf > 0 ? Math.round(pf/tf*100) : 0
+      // 构建详细进度信息：文件名 + 耗时 + LLM 等待状态
+      const parts: string[] = [`正在提取证据... ${pf}/${tf} (${pct}%)`]
+      if (st.current_file) {
+        // 截断过长的文件名
+        const fname = st.current_file.length > 40 ? st.current_file.slice(0, 37) + '...' : st.current_file
+        parts.push(`当前: ${fname}`)
+      }
+      if (st.llm_waiting) {
+        const latency = st.llm_latency ? `${Math.round(st.llm_latency)}s` : ''
+        parts.push(`等待 LLM 响应${latency ? ` (${latency})` : ''}`)
+      }
+      // 重试状态可见化
+      if (st.retry_count > 0) {
+        const reasonMap: Record<string, string> = {
+          timeout: '超时',
+          rate_limit: '限流',
+          general_error: '错误',
+        }
+        const reason = reasonMap[st.retry_reason] || st.retry_reason || '错误'
+        const wait = st.retry_wait_seconds ? `${st.retry_wait_seconds}s 后重试` : '重试中'
+        parts.push(`重试中（第 ${st.retry_count} 次，原因：${reason}，${wait}）`)
+      }
+      if (st.elapsed_seconds) {
+        const mins = Math.floor(st.elapsed_seconds / 60)
+        const secs = st.elapsed_seconds % 60
+        parts.push(`已耗时 ${mins}:${secs.toString().padStart(2, '0')}`)
+      }
+      if (st.eta_seconds != null && st.eta_seconds > 0) {
+        const etaMins = Math.floor(st.eta_seconds / 60)
+        const etaSecs = st.eta_seconds % 60
+        parts.push(`预计剩余 ${etaMins}:${etaSecs.toString().padStart(2, '0')}`)
+      }
+      setProgress(parts.join(' · '))
+      try { const d = await api.getEvidenceIndex(caseId); if (d.total_evidence > 0) setEvidenceList(d.evidence || []) } catch {}
+      return false
+    }
+
+    // SSE 订阅：后端主动推送状态，EventSource 自动重连
+    const unsubscribe = api.subscribeExtractStatus(
+      caseId,
+      async (st) => {
+        const terminal = await handleStatus(st)
+        if (terminal && extractSubRef.current) { extractSubRef.current(); extractSubRef.current = null }
+      },
+      () => {
+        // 连续错误兜底（EventSource 会自动重连，此处仅做超时保护下的失败计数）
+        extractPollFailuresRef.current++
+        if (extractPollFailuresRef.current >= 10 && extractSubRef.current) {
+          extractSubRef.current(); extractSubRef.current = null
+          setProcessing(false); setError('提取过程出错（SSE 连接持续失败）'); setProgress('')
+        }
+      },
+    )
+    // 2 小时超时保护
+    const timeoutId = setTimeout(() => {
+      if (extractSubRef.current) { extractSubRef.current(); extractSubRef.current = null; setProcessing(false); setProgress('⚠️ 提取超时（2小时），后端可能仍在运行，请稍后刷新查看结果') }
+    }, 7200000)
+    extractSubRef.current = () => { unsubscribe(); clearTimeout(timeoutId) }
   }, [caseId])
 
   // 页面挂载/刷新时：若后端仍在提取，恢复轮询（修复刷新后一直显示"提取中"不更新）
@@ -362,8 +386,8 @@ export function CaseDetailPage() {
     let cancelled = false
     checkExtractStatus().then(running => {
       if (cancelled || !running) return
-      // 后端在跑但本地没有轮询，启动轮询恢复进度
-      if (!extractPollRef.current) {
+      // 后端在跑但本地没有订阅，启动 SSE 订阅恢复进度
+      if (!extractSubRef.current) {
         setProcessing(true)
         setProgress('正在提取证据...')
         startExtractPoll()

@@ -10,15 +10,16 @@ export function useEvidenceExtraction(caseId: string | undefined) {
   const [extracting, setExtracting] = useState(false)
   const [stopping, setStopping] = useState(false)
 
-  const extractPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  /** SSE 订阅清理函数 */
+  const extractSubRef = useRef<(() => void) | null>(null)
   const extractUserStoppedRef = useRef(false)
   const extractPollFailuresRef = useRef(0)
 
-  // 停止提取轮询
+  // 停止提取进度订阅
   const stopPolling = useCallback(() => {
-    if (extractPollRef.current) {
-      clearInterval(extractPollRef.current)
-      extractPollRef.current = null
+    if (extractSubRef.current) {
+      extractSubRef.current()
+      extractSubRef.current = null
     }
   }, [])
 
@@ -47,20 +48,21 @@ export function useEvidenceExtraction(caseId: string | undefined) {
     } catch { /* 无证据 */ }
   }, [caseId])
 
-  // 轮询证据提取进度
+  // 订阅证据提取进度（SSE 推送，替代轮询）
   const pollExtractProgress = useCallback(() => {
     if (!caseId) return
 
     extractUserStoppedRef.current = false
     extractPollFailuresRef.current = 0
+    stopPolling()
 
-    extractPollRef.current = setInterval(async () => {
-      if (extractUserStoppedRef.current) {
-        stopPolling()
-        return
-      }
-      try {
-        const st = await api.getExtractStatus(caseId!)
+    const unsubscribe = api.subscribeExtractStatus(
+      caseId,
+      async (st) => {
+        if (extractUserStoppedRef.current) {
+          stopPolling()
+          return
+        }
         extractPollFailuresRef.current = 0
 
         if (st.status !== 'running') {
@@ -77,14 +79,16 @@ export function useEvidenceExtraction(caseId: string | undefined) {
           const data = await api.getEvidenceIndex(caseId!)
           if (data.total_evidence > 0) setEvidenceList(data.evidence || [])
         }
-      } catch {
+      },
+      () => {
         extractPollFailuresRef.current += 1
-        if (extractPollFailuresRef.current >= 3) {
+        if (extractPollFailuresRef.current >= 10) {
           stopPolling()
           setExtracting(false)
         }
-      }
-    }, 3000)
+      },
+    )
+    extractSubRef.current = unsubscribe
   }, [caseId, stopPolling])
 
   // 提取证据

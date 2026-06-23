@@ -59,6 +59,57 @@ export async function getExtractStatus(caseId: string): Promise<any> {
   return res.json()
 }
 
+/** 证据提取状态（与后端 _build_extract_status 对应） */
+export interface ExtractStatus {
+  case_id: string
+  status: string
+  total_files?: number
+  processed_files?: number
+  current_file?: string
+  elapsed_seconds?: number
+  eta_seconds?: number | null
+  llm_waiting?: boolean
+  llm_latency_ms?: number
+  retry_count?: number
+  retry_reason?: string
+  retry_wait_seconds?: number
+  stopped_by_user?: boolean
+  recoverable?: boolean
+  error_details?: unknown
+  error_detail?: unknown
+}
+
+/**
+ * 订阅证据提取进度（SSE 推送，替代轮询）。
+ *
+ * 后端在状态变化时主动推送，任务进入终态后自动关闭流。
+ * EventSource 内置自动重连，无需手动处理。
+ *
+ * @returns 关闭订阅的函数（在组件卸载时调用）
+ */
+export function subscribeExtractStatus(
+  caseId: string,
+  onStatus: (status: ExtractStatus) => void,
+  onError?: (error: Event) => void,
+): () => void {
+  const url = `${API_BASE}/cases/${caseId}/extract-status/stream`
+  const source = new EventSource(url)
+
+  source.addEventListener('status', (e: MessageEvent) => {
+    try {
+      onStatus(JSON.parse(e.data) as ExtractStatus)
+    } catch {
+      // 解析失败忽略，下一条事件会覆盖
+    }
+  })
+
+  if (onError) {
+    source.onerror = onError
+  }
+
+  return () => source.close()
+}
+
 export async function getEvidenceSummary(caseId: string, filename: string): Promise<any> {
   const res = await fetch(`${API_BASE}/cases/${caseId}/evidence-summary/${encodeURIComponent(filename)}`)
   return res.json()

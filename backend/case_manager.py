@@ -2327,9 +2327,8 @@ async def get_evidence_graph(case_id: str):
         raise HTTPException(status_code=500, detail=f"图谱生成失败: {e}")
 
 
-@router.get("/{case_id}/extract-status")
-async def get_extract_status(case_id: str):
-    """获取证据提取状态（含进度信息）"""
+def _build_extract_status(case_id: str) -> dict:
+    """构建证据提取状态字典（供轮询接口和 SSE 共用，避免逻辑重复）"""
     task = EXTRACT_TASKS.get(case_id)
     if task == "cancelled":
         return {"case_id": case_id, "status": "cancelled"}
@@ -2366,6 +2365,34 @@ async def get_extract_status(case_id: str):
             result["error_detail"] = task["error_detail"]
         return result
     return {"case_id": case_id, "status": "idle"}
+
+
+@router.get("/{case_id}/extract-status")
+async def get_extract_status(case_id: str):
+    """获取证据提取状态（含进度信息）"""
+    return _build_extract_status(case_id)
+
+
+@router.get("/{case_id}/extract-status/stream")
+async def stream_extract_status(case_id: str):
+    """证据提取进度 SSE 推送（替代前端轮询）
+
+    后端主动推送状态变化，任务结束（status != running/idle）时推送最终状态后关闭。
+    前端用 EventSource 接收，自动重连。
+    """
+    from sse_starlette.sse import EventSourceResponse
+
+    async def event_generator():
+        # 客户端断开时 req.is_disconnected() 为 True，但 sse-starlette 已处理取消
+        while True:
+            status = _build_extract_status(case_id)
+            yield {"event": "status", "data": json.dumps(status, ensure_ascii=False)}
+            # 任务进入终态（非 running/idle）后推送最终状态并关闭流
+            if status.get("status") not in ("running", "idle"):
+                return
+            await asyncio.sleep(1)
+
+    return EventSourceResponse(event_generator())
 
 
 @router.get("/{case_id}/evidence-summary/{filename}")
