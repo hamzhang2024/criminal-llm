@@ -35,6 +35,11 @@ ignore = [
     "W293",  # blank line contains whitespace
 ]
 
+# 逐文件豁免：main.py 需在 import 前执行 bootstrap（加载 .env、配置日志），
+# 模块级 import 无法置于文件顶部，E402 为预期行为
+[tool.ruff.lint.per-file-ignores]
+"backend/main.py" = ["E402"]
+
 # isort 配置
 [tool.ruff.lint.isort]
 known-first-party = ["backend"]

@@ -41,7 +41,7 @@ logging.basicConfig(
 del _handlers  # _log_path 保留供 /api/logs/backend 端点使用
 
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 import uvicorn
 from analyzer_api import router as analyzer_router
@@ -61,7 +61,7 @@ from pipeline_api import router as pipeline_router
 from process_api import router as process_router
 from stage_api import router as stage_router
 
-from config import CACHE_DIR, DEBUG, HOST, OUTPUT_DIR, PORT, UPLOAD_DIR, cleanup_old_files
+from config import CACHE_DIR, DEBUG, HOST, MAX_FILE_SIZE, OUTPUT_DIR, PORT, UPLOAD_DIR, cleanup_old_files
 
 # 创建 FastAPI 应用
 app = FastAPI(
@@ -141,7 +141,7 @@ async def get_config():
 
 
 @app.put("/api/config")
-async def update_config(body: Dict[str, Any]):
+async def update_config(body: dict[str, Any]):
     """保存配置（合并已有配置，保留 llm_base_url / llm_model）"""
     # SSRF 防护：校验用户可控的外部服务 URL
     from utils.url_guard import SSRFError, validate_external_url
@@ -171,7 +171,7 @@ async def update_config(body: Dict[str, Any]):
 
 
 @app.post("/api/config/test")
-async def test_config(body: Dict[str, Any]):
+async def test_config(body: dict[str, Any]):
     """
     测试配置是否可用（后端发起，无 CORS 问题）
 
@@ -391,8 +391,6 @@ async def get_pages(job_id: str):
     Returns:
         thumbnails: 缩略图列表
     """
-    processor = get_processor(job_id)
-    
     # 加载已生成的缩略图
     thumbnail_dir = CACHE_DIR / job_id / "thumbnails"
     if not thumbnail_dir.exists():
