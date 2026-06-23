@@ -4,6 +4,7 @@ LLM 客户端 - 支持多种 LLM 提供商
 从应用配置 (DATA_DIR/criminal-llm-config.json) 获取 API Key、Base URL 和模型
 """
 import asyncio
+import json
 import logging
 import sys
 import time

@@ -63,28 +63,15 @@ DEFAULT_STATE = {
     },
 }
 
-# 笔录时间分隔正则（支持两种格式：至15时32分 和 至2025年11月25日15时32分）
-SESSION_TIME_PATTERN = re.compile(r'时间(\d{4}年\d{2}月\d{2}日\d{2}时\d{2}分.*?至(?:\d{4}年\d{2}月\d{2}日)?\d{2}时\d{2}分)')
-
-# 笔录正文中提取人名的正则（被讯问人/被询问人后的姓名）
-CONTENT_NAME_PATTERNS = [
-    # 无冒号紧凑格式：被询问人项少甫性别 / 被讯问人张三年龄 / 被询问/讯问人李四出生日期
-    re.compile(r'(?:被讯问|被询问)[/／]?(?:讯问|询问)?人\s*([\u4e00-\u9fff]{2,4})(?=性别|年龄|出生日期|出生[年月])'),
-    # 冒号格式：被讯问人：XXX / 被询问人：XXX
-    re.compile(r'(?:被讯问|被询问)[/／]?(?:讯问|询问)?人\s*[：:]\s*([\u4e00-\u9fff]{2,4})'),
-    # 犯罪嫌疑人/被告人
-    re.compile(r'(?:犯罪嫌疑人|被告人)\s*[：:]\s*([\u4e00-\u9fff]{2,4})'),
-    re.compile(r'(?:犯罪嫌疑人|被告人)\s*([\u4e00-\u9fff]{2,4})(?=性别|年龄|出生日期|出生[年月])'),
-    # 姓名标签
-    re.compile(r'姓\s*名\s*[：:]\s*([\u4e00-\u9fff]{2,4})'),
-    # 我叫 XXX（对话中提到）
-    re.compile(r'(?:我叫|本人叫|名字是)\s*([\u4e00-\u9fff]{2,4})'),
-]
+# 笔录正则常量（SESSION_TIME_PATTERN / CONTENT_NAME_PATTERNS）已移至
+# analysis_pipeline_helpers.py，避免循环依赖（helpers 被本模块导入时
+# 本模块的模块级常量尚未定义，导致 NameError）
 # 辅助函数从 analysis_pipeline_helpers 导入（向后兼容 re-export）
 from analysis_pipeline_helpers import (  # noqa: F401
     _extract_name_from_content,
     _extract_person_from_filename,
     infer_evidence_type,
+    _classify_document_type,
     _contains_indictment_title,
     _split_sessions,
 )
