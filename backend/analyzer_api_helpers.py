@@ -84,16 +84,16 @@ def infer_evidence_type(filename: str) -> str:
     """从文件名推断证据类型"""
     if "起诉" in filename or "指控" in filename:
         return "起诉意见书"
+    elif "勘验" in filename or "检查" in filename:
+        return "勘验笔录"
+    elif "辨认" in filename:
+        return "辨认笔录"
     elif "讯问" in filename or "供述" in filename or "笔录" in filename:
         return "讯问笔录"
     elif "证言" in filename or "证人" in filename:
         return "证人证言"
     elif "鉴定" in filename:
         return "鉴定意见"
-    elif "勘验" in filename or "检查" in filename:
-        return "勘验笔录"
-    elif "辨认" in filename:
-        return "辨认笔录"
     elif "银行" in filename or "流水" in filename or "转账" in filename:
         return "书证-金融"
     elif "合同" in filename or "协议" in filename:
