@@ -31,10 +31,10 @@ def _normalize_name(name: str) -> str:
     s = re.sub(r'^\d+[_\s]*', '', s)
     # 去除括号内的日期和次数，保留人名
     # 日期：2024.10.29 / 2024-10-29 / 2024年10月29日 / 20241029
-    s = re.sub(r'[（(]\s*\d{4}[\.\-/年]\d{1,2}[\.\-/月]\d{1,2}[）)]', '', s)
+    s = re.sub(r'[（(]\s*\d{4}[\.\-/年]\d{1,2}[\.\-/月]\d{1,2}日?[）)]', '', s)
     s = re.sub(r'[（(]\s*\d{8}[）)]', '', s)
-    # 次数：第一次/第1次（保留人名，仅去掉次数标记）
-    s = re.sub(r'第\s*\d+\s*次', '', s)
+    # 次数：第一次/第1次（支持中文数字一二三...十，保留人名，仅去掉次数标记）
+    s = re.sub(r'第\s*[\d一二三四五六七八九十]+\s*次', '', s)
     # 清理空括号
     s = re.sub(r'[（(]\s*[）)]', '', s)
     # 统一空白
@@ -83,11 +83,17 @@ def _extract_interrogatee_and_date(name: str, persons: str, page_range: str = ""
                 if not re.fullmatch(r'第\s*\d+\s*次.*', candidate):
                     interrogatee = candidate
 
-    # 次数：从 name 提取"第N次"作为排序键
+    # 次数：从 name 提取"第N次"作为排序键（支持中文数字）
     sequence = 0
-    seq_match = re.search(r'第\s*(\d+)\s*次', name or "")
+    cn_num_map = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5,
+                  "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
+    seq_match = re.search(r'第\s*(\d+|[一二三四五六七八九十]+)\s*次', name or "")
     if seq_match:
-        sequence = int(seq_match.group(1))
+        raw = seq_match.group(1)
+        if raw.isdigit():
+            sequence = int(raw)
+        else:
+            sequence = cn_num_map.get(raw, 0)
 
     # 日期：从 name 和 page_range 中找日期模式
     date_str = ""
