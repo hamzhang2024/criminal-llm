@@ -436,13 +436,14 @@ async def manual_cleanup(days: int = 7):
 
 # 日志脱敏正则：遮蔽常见密钥/密码/Token 形式的敏感值
 _REDACT_PATTERNS = [
+    # Bearer token（优先匹配整段，含后面的 JWT/Token 值，不保留前缀）
+    re.compile(r'Bearer\s+[A-Za-z0-9_\-\.+/=]+', re.IGNORECASE),
     # key=value 或 key: value 形式（api_key / token / password / secret / Authorization）
+    # 值部分允许空格以覆盖 "Authorization: Bearer xxx" 已被上一条处理后剩余的纯值场景
     re.compile(
-        r'((?:api[_-]?key|token|password|passwd|secret|authorization|mineru[_-]?token|paddleocr[_-]?token|llm[_-]?api[_-]?key)\s*[:=]\s*)["\']?[A-Za-z0-9_\-\.+/=]{6,}',
+        r'((?:api[_-]?key|token|password|passwd|secret|authorization|mineru[_-]?token|paddleocr[_-]?token|llm[_-]?api[_-]?key)\s*[:=]\s*)["\']?[A-Za-z0-9_\-\.+/= ]{6,}',
         re.IGNORECASE,
     ),
-    # Bearer token
-    re.compile(r'(Bearer\s+)[A-Za-z0-9_\-\.+/=]+', re.IGNORECASE),
 ]
 
 
@@ -450,7 +451,10 @@ def _redact_log(text: str) -> str:
     """对日志文本做敏感字段脱敏，保留 key 名只遮蔽值。"""
     redacted = text
     for pattern in _REDACT_PATTERNS:
-        redacted = pattern.sub(lambda m: m.group(1) + "***REDACTED***" if m.lastindex else "***REDACTED***", redacted)
+        redacted = pattern.sub(
+            lambda m: (m.group(1) + "***REDACTED***") if m.lastindex else "***REDACTED***",
+            redacted,
+        )
     return redacted
 
 
