@@ -12,11 +12,11 @@
 """
 import base64
 import json
+import logging
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -93,10 +93,10 @@ class CriminalCaseSplitter:
     def __init__(self):
         self.config = self._load_config()
 
-    def _load_config(self) -> Dict:
+    def _load_config(self) -> dict:
         """加载配置文件"""
         if CONFIG_PATH.exists():
-            with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+            with open(CONFIG_PATH, encoding='utf-8') as f:
                 return json.load(f)
         return {}
 
@@ -104,7 +104,7 @@ class CriminalCaseSplitter:
     # 边界检测（关键词匹配前 300 字符）
     # ============================================================
 
-    def detect_document_boundaries(self, page_texts: Dict[int, str], total_pages: int) -> List[int]:
+    def detect_document_boundaries(self, page_texts: dict[int, str], total_pages: int) -> list[int]:
         """
         检测文书边界 — 每份新文书的起始页
         """
@@ -142,7 +142,7 @@ class CriminalCaseSplitter:
     # 第一页文字判断文书类型
     # ============================================================
 
-    def classify_first_page(self, first_page_text: str) -> Tuple[str, str]:
+    def classify_first_page(self, first_page_text: str) -> tuple[str, str]:
         """
         根据第一页文字判断文书类型
 
@@ -187,7 +187,7 @@ class CriminalCaseSplitter:
     async def classify_with_vision(
         self,
         first_page_image_base64: str,
-    ) -> Tuple[str, str]:
+    ) -> tuple[str, str]:
         """
         用多模态 LLM 判断纯图片页的文书类型
 
@@ -251,11 +251,11 @@ class CriminalCaseSplitter:
 
     def create_split_plan(
         self,
-        page_texts: Dict[int, str],
+        page_texts: dict[int, str],
         total_pages: int,
         source_filename: str = "",
-        vision_classifier: Optional[Callable] = None,
-    ) -> List[Dict]:
+        vision_classifier: Callable | None = None,
+    ) -> list[dict]:
         """
         创建拆分方案
 
@@ -272,7 +272,7 @@ class CriminalCaseSplitter:
         boundaries = self.detect_document_boundaries(page_texts, total_pages)
 
         # 2. 逐个判断类型
-        segments: List[DocumentSegment] = []
+        segments: list[DocumentSegment] = []
 
         for i, start in enumerate(boundaries):
             end = boundaries[i + 1] - 1 if i + 1 < len(boundaries) else total_pages
@@ -320,11 +320,11 @@ class CriminalCaseSplitter:
 
     async def create_split_plan_with_vision(
         self,
-        page_texts: Dict[int, str],
+        page_texts: dict[int, str],
         total_pages: int,
         source_filename: str = "",
-        pdf_path: Optional[str] = None,
-    ) -> List[Dict]:
+        pdf_path: str | None = None,
+    ) -> list[dict]:
         """
         创建拆分方案（支持多模态 LLM 判断纯图片页）
 
@@ -392,7 +392,7 @@ class CriminalCaseSplitter:
             return f"{seg.suspect_name}{seg.doc_type}"
         return seg.doc_type
 
-    def _merge_consecutive_segments(self, segments: List[DocumentSegment]) -> List[DocumentSegment]:
+    def _merge_consecutive_segments(self, segments: list[DocumentSegment]) -> list[DocumentSegment]:
         """
         合并相同类型的连续片段
 
@@ -411,7 +411,7 @@ class CriminalCaseSplitter:
             "立案材料": {"受案登记表", "立案决定书"},
         }
 
-        def get_group(doc_type: str) -> Optional[str]:
+        def get_group(doc_type: str) -> str | None:
             for group, types in procedural_groups.items():
                 if doc_type in types:
                     return group
@@ -456,7 +456,7 @@ class CriminalCaseSplitter:
 
         return merged
 
-    def to_json(self, results: List[Dict]) -> List[Dict]:
+    def to_json(self, results: list[dict]) -> list[dict]:
         return results
 
 

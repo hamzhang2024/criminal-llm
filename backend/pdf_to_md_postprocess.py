@@ -11,7 +11,6 @@ PDF → Markdown 后处理模块
 """
 import logging
 from pathlib import Path
-from typing import Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -285,7 +284,7 @@ async def _correct_chunk(text: str) -> str:
         return text
 
 
-def llm_fix_ocr_sync(pdf_path: str, output_dir: str = None) -> Optional[str]:
+def llm_fix_ocr_sync(pdf_path: str, output_dir: str = None) -> str | None:
     """同步版本：对已有 MD 文件进行 LLM 智能纠错
 
     用法：
@@ -425,7 +424,7 @@ def _compress_images(images_dir: Path, max_dim: int = _MAX_IMAGE_DIM) -> int:
     return count
 
 
-def _fold_consecutive_images(text: str, min_count: int = 1) -> Tuple[str, int]:
+def _fold_consecutive_images(text: str, min_count: int = 1) -> tuple[str, int]:
     """将连续 3+ 张图片折叠为 <details> 折叠块
 
     图片之间可能有空行，视为同一图片块。

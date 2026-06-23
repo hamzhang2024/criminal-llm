@@ -9,7 +9,7 @@ import shutil
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from fastapi import APIRouter, Body, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
@@ -23,7 +23,7 @@ ANALYSIS_DIR = Path(__file__).parent.parent / "data" / "analysis"
 ANALYSIS_DIR.mkdir(parents=True, exist_ok=True)
 
 # 分析进度缓存（内存存储）
-analysis_progress: Dict[str, Dict[str, Any]] = {}
+analysis_progress: dict[str, dict[str, Any]] = {}
 
 
 @router.get("/cases")
@@ -39,7 +39,7 @@ async def list_cases():
     # 扫描案件 JSON 文件
     for json_file in ANALYSIS_DIR.glob("*.json"):
         try:
-            with open(json_file, "r", encoding="utf-8") as f:
+            with open(json_file, encoding="utf-8") as f:
                 case_info = json.load(f)
             
             # 计算文件大小
@@ -85,7 +85,7 @@ class CaseInfo(BaseModel):
     """案件信息"""
     case_id: str
     case_dir: str  # 案卷目录路径
-    defendant: Optional[str] = None  # 辩护对象
+    defendant: str | None = None  # 辩护对象
     created_at: str
     status: str  # pending, analyzing, ready, chatting
 
@@ -98,19 +98,19 @@ class EvidenceItem(BaseModel):
     type: str  # 起诉意见书, 讯问笔录, 证人证言, 书证等
     pages: int
     selected: bool = False
-    summary: Optional[str] = None
+    summary: str | None = None
 
 
 class AnalysisReport(BaseModel):
     """分析报告"""
     case_id: str
     defendant: str
-    indictment_summary: Dict[str, Any]  # 起诉意见书摘要
-    evidence_map: List[Dict[str, Any]]  # 证据-要素映射
-    evidence_analysis: List[Dict[str, Any]]  # 证据三性分析
-    contradictions: List[Dict[str, Any]]  # 矛盾点
-    defense_points: List[str]  # 辩护要点
-    sentencing_factors: Dict[str, Any]  # 量刑情节
+    indictment_summary: dict[str, Any]  # 起诉意见书摘要
+    evidence_map: list[dict[str, Any]]  # 证据-要素映射
+    evidence_analysis: list[dict[str, Any]]  # 证据三性分析
+    contradictions: list[dict[str, Any]]  # 矛盾点
+    defense_points: list[str]  # 辩护要点
+    sentencing_factors: dict[str, Any]  # 量刑情节
     generated_at: str
 
 
@@ -118,7 +118,7 @@ class ChatMessage(BaseModel):
     """对话消息"""
     role: str  # user, assistant
     content: str
-    evidence_refs: Optional[List[str]] = None  # 引用的证据
+    evidence_refs: list[str] | None = None  # 引用的证据
     timestamp: str
 
 
@@ -212,7 +212,7 @@ async def delete_case(case_id: str):
         raise HTTPException(status_code=404, detail="案件不存在")
     
     # 读取案件信息
-    with open(case_file, "r", encoding="utf-8") as f:
+    with open(case_file, encoding="utf-8") as f:
         case_info = json.load(f)
     
     freed_bytes = 0
@@ -298,7 +298,7 @@ async def get_storage_stats():
 
 @router.post("/upload-directory")
 async def upload_directory(
-    files: List[UploadFile] = File(...),
+    files: list[UploadFile] = File(...),
     case_name: str = None,
     defendant: str = None
 ):
@@ -471,7 +471,7 @@ async def add_supplement_evidence(
     if not case_file.exists():
         raise HTTPException(status_code=404, detail="案件不存在")
     
-    with open(case_file, "r", encoding="utf-8") as f:
+    with open(case_file, encoding="utf-8") as f:
         case_info = json.load(f)
     
     # 扫描补充目录
@@ -537,7 +537,7 @@ async def add_supplement_evidence(
 @router.post("/add-supplement-files/{case_id}")
 async def add_supplement_files(
     case_id: str,
-    files: List[UploadFile] = File(...)
+    files: list[UploadFile] = File(...)
 ):
     """
     向已有案件添加补充案卷（文件上传方式）
@@ -553,7 +553,7 @@ async def add_supplement_files(
     if not case_file.exists():
         raise HTTPException(status_code=404, detail="案件不存在")
     
-    with open(case_file, "r", encoding="utf-8") as f:
+    with open(case_file, encoding="utf-8") as f:
         case_info = json.load(f)
     
     # 过滤 PDF 文件
@@ -634,7 +634,7 @@ async def get_evidence_list(case_id: str):
     if not case_file.exists():
         raise HTTPException(status_code=404, detail="案件不存在")
     
-    with open(case_file, "r", encoding="utf-8") as f:
+    with open(case_file, encoding="utf-8") as f:
         case_info = json.load(f)
     
     # 检查每个证据的 MD 缓存状态
@@ -664,7 +664,7 @@ async def get_evidence_file(case_id: str, evidence_id: str):
     if not case_file.exists():
         raise HTTPException(status_code=404, detail="案件不存在")
     
-    with open(case_file, "r", encoding="utf-8") as f:
+    with open(case_file, encoding="utf-8") as f:
         case_info = json.load(f)
     
     # 查找证据
@@ -686,14 +686,14 @@ async def get_evidence_file(case_id: str, evidence_id: str):
 @router.put("/evidence/{case_id}/select")
 async def select_evidence(
     case_id: str,
-    evidence_ids: List[str] = Body(..., embed=True)
+    evidence_ids: list[str] = Body(..., embed=True)
 ):
     """选择/取消选择证据"""
     case_file = ANALYSIS_DIR / f"{case_id}.json"
     if not case_file.exists():
         raise HTTPException(status_code=404, detail="案件不存在")
     
-    with open(case_file, "r", encoding="utf-8") as f:
+    with open(case_file, encoding="utf-8") as f:
         case_info = json.load(f)
     
     # 更新选择状态
@@ -735,7 +735,7 @@ async def analyze_case(
     case_id: str,
     defendant: str = Body(..., embed=True),
     use_ai: bool = Body(default=True, embed=True),  # 是否调用 AI 分析
-    crime_type: Optional[str] = Body(default=None, embed=True)  # 新增：罪名类型，用于动态加载知识
+    crime_type: str | None = Body(default=None, embed=True)  # 新增：罪名类型，用于动态加载知识
 ):
     """
     分析案卷
@@ -752,7 +752,7 @@ async def analyze_case(
     if not case_file.exists():
         raise HTTPException(status_code=404, detail="案件不存在")
     
-    with open(case_file, "r", encoding="utf-8") as f:
+    with open(case_file, encoding="utf-8") as f:
         case_info = json.load(f)
     
     # 更新辩护对象和状态
@@ -879,14 +879,14 @@ async def analyze_case(
 @router.post("/report/{case_id}")
 async def save_report(
     case_id: str,
-    report: Dict[str, Any] = Body(...)
+    report: dict[str, Any] = Body(...)
 ):
     """保存分析报告"""
     case_file = ANALYSIS_DIR / f"{case_id}.json"
     if not case_file.exists():
         raise HTTPException(status_code=404, detail="案件不存在")
     
-    with open(case_file, "r", encoding="utf-8") as f:
+    with open(case_file, encoding="utf-8") as f:
         case_info = json.load(f)
     
     # 保存报告
@@ -909,7 +909,7 @@ async def get_report(case_id: str):
     if not case_file.exists():
         raise HTTPException(status_code=404, detail="案件不存在")
     
-    with open(case_file, "r", encoding="utf-8") as f:
+    with open(case_file, encoding="utf-8") as f:
         case_info = json.load(f)
     
     if "report" not in case_info:
@@ -998,8 +998,8 @@ async def chat_update(
 async def chat(
     case_id: str,
     message: str = Body(..., embed=True),
-    history: List[Dict[str, str]] = Body(default=[], embed=True),
-    evidence_ids: List[str] = Body(default=[], embed=True),
+    history: list[dict[str, str]] = Body(default=[], embed=True),
+    evidence_ids: list[str] = Body(default=[], embed=True),
     use_ai: bool = Body(default=True, embed=True),
     include_report: bool = Body(default=False, embed=True)  # 是否包含原报告上下文（用于更新报告）
 ):
@@ -1020,7 +1020,7 @@ async def chat(
     if not case_file.exists():
         raise HTTPException(status_code=404, detail="案件不存在")
     
-    with open(case_file, "r", encoding="utf-8") as f:
+    with open(case_file, encoding="utf-8") as f:
         case_info = json.load(f)
     
     if use_ai:
@@ -1136,7 +1136,7 @@ async def update_report(
     if not case_file.exists():
         raise HTTPException(status_code=404, detail="案件不存在")
     
-    with open(case_file, "r", encoding="utf-8") as f:
+    with open(case_file, encoding="utf-8") as f:
         case_info = json.load(f)
     
     if "report" not in case_info:
@@ -1215,10 +1215,10 @@ async def update_report(
 # 辅助函数从 analyzer_api_helpers 导入（向后兼容 re-export）
 from analyzer_api_helpers import (  # noqa: F401
     apply_report_update,
-    infer_evidence_type,
-    get_pdf_pages,
-    extract_pdf_text,
     build_analysis_prompt,
+    extract_pdf_text,
+    get_pdf_pages,
+    infer_evidence_type,
     parse_report,
 )
 

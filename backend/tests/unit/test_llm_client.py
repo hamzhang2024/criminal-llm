@@ -94,7 +94,7 @@ class TestModelContextLimits:
         result = get_model_context_limit("unknown-model-xyz")
         # 应该有合理的默认值
         assert result["limit"] > 0
-        assert result["is_estimated"] == True
+        assert result["is_estimated"] is True
 
 
 class TestLLMClientConfiguration:

@@ -6,9 +6,9 @@ OCR 加速模块
 - NVIDIA: CUDA
 - 其他: CPU
 """
-import platform
-from typing import Any, Dict
 import logging
+import platform
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +57,7 @@ def init_rapidocr_with_acceleration(device: str = None):
     if device is None:
         device = detect_gpu_device()
 
-    params: Dict[str, Any] = {
+    params: dict[str, Any] = {
         "Det.engine_type": EngineType.ONNXRUNTIME,
         "Cls.engine_type": EngineType.ONNXRUNTIME,
         "Rec.engine_type": EngineType.ONNXRUNTIME,
@@ -76,7 +76,7 @@ def init_rapidocr_with_acceleration(device: str = None):
     return RapidOCR(params=params)
 
 
-def create_acceleration_info() -> Dict[str, str]:
+def create_acceleration_info() -> dict[str, str]:
     """
     返回当前环境的加速信息（用于前端显示）
 

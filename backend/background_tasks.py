@@ -17,7 +17,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from config import DATA_DIR
 
@@ -30,11 +30,11 @@ TASKS_FILE = DATA_DIR / "criminal-llm-tasks.json"
 _executor = ThreadPoolExecutor(max_workers=10, thread_name_prefix="convert")
 
 # 内存中的任务状态
-_task_states: Dict[str, Dict[str, Any]] = {}
+_task_states: dict[str, dict[str, Any]] = {}
 _lock = threading.Lock()
 
 
-def _load_tasks() -> Dict[str, Any]:
+def _load_tasks() -> dict[str, Any]:
     """从文件加载任务状态"""
     if TASKS_FILE.exists():
         try:
@@ -84,7 +84,7 @@ def _make_task_id(case_id: str) -> str:
     return f"convert_{case_id}"
 
 
-def get_task_status(case_id: str) -> Optional[Dict[str, Any]]:
+def get_task_status(case_id: str) -> dict[str, Any] | None:
     """获取任务状态"""
     task_id = _make_task_id(case_id)
     with _lock:
@@ -247,7 +247,7 @@ def start_convert_task(case_id: str, max_concurrent: int = 3):
 
                 # 执行异步批量转换（仅处理待转换文件）
                 logger.info(f"[后台任务] {case_id}: 使用引擎 '{pdf_engine}'，转换 {len(pending_files)} 个文件，并发={max_concurrent}")
-                convert_results: List[ConvertResult] = []
+                convert_results: list[ConvertResult] = []
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
                 try:
@@ -371,7 +371,7 @@ def cancel_task(case_id: str) -> bool:
     return False
 
 
-def list_all_tasks() -> Dict[str, Any]:
+def list_all_tasks() -> dict[str, Any]:
     """列出所有任务"""
     with _lock:
         return dict(_task_states)

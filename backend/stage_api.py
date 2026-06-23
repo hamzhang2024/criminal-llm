@@ -13,7 +13,6 @@ import json
 import logging
 import time
 from pathlib import Path
-from typing import Optional
 
 from analysis_engine import AnalysisEngine
 from analysis_pipeline import AnalysisPipeline, _contains_indictment_title
@@ -35,7 +34,7 @@ REVIEW_TASKS: dict = {}
 _OPINION_PATTERNS = ["起诉意见书", "呈请起诉", "起诉报告"]
 
 
-async def _run_sub_stage(engine, sub_stage_type: str, defendant: str, crime_type: Optional[str]):
+async def _run_sub_stage(engine, sub_stage_type: str, defendant: str, crime_type: str | None):
     """
     运行阶段 5 的子阶段（51/52/53）
     需要阶段 1-4 的结果已存在
@@ -190,7 +189,7 @@ async def get_indictment_candidates(case_id: str):
 ANALYSIS_TASKS: dict = {}
 
 
-async def _execute_all_stages(case_id: str, defendant: str, crime_type: Optional[str], indictment_file: Optional[str] = None):
+async def _execute_all_stages(case_id: str, defendant: str, crime_type: str | None, indictment_file: str | None = None):
     """后台执行全部 5 阶段分析"""
     try:
         case_path = find_case_path(case_id)
@@ -247,8 +246,8 @@ async def _execute_all_stages(case_id: str, defendant: str, crime_type: Optional
 async def run_all_stages(
     case_id: str,
     defendant: str = Body(..., embed=True),
-    crime_type: Optional[str] = Body(default=None, embed=True),
-    indictment_file: Optional[str] = Body(default=None, embed=True),
+    crime_type: str | None = Body(default=None, embed=True),
+    indictment_file: str | None = Body(default=None, embed=True),
 ):
     """
     异步执行全部 5 阶段分析
@@ -285,8 +284,8 @@ async def run_single_stage(
     case_id: str,
     stage_num: int,
     defendant: str = Body(..., embed=True),
-    crime_type: Optional[str] = Body(default=None, embed=True),
-    indictment_file: Optional[str] = Body(default=None, embed=True),
+    crime_type: str | None = Body(default=None, embed=True),
+    indictment_file: str | None = Body(default=None, embed=True),
 ):
     """
     单独执行某个阶段（支持 51/52/53 子阶段）
@@ -424,7 +423,7 @@ async def get_stage_result(case_id: str, stage_num: int):
     if not result_file.exists():
         raise HTTPException(status_code=404, detail=f"阶段 {stage_num} 的结果不存在")
 
-    with open(result_file, "r", encoding="utf-8") as f:
+    with open(result_file, encoding="utf-8") as f:
         return json.load(f)
 
 
@@ -865,10 +864,9 @@ async def get_event_timeline(case_id: str):
 
 # 解析函数从 stage_api_parsers 导入（向后兼容 re-export）
 from stage_api_parsers import (  # noqa: F401
-    _parse_person_relation,
     _parse_event_timeline,
+    _parse_person_relation,
 )
-
 
 # ========== 类案检索 ==========
 
@@ -928,7 +926,7 @@ async def _search_similar_cases_llm(stage1_content: str, case_path: Path = None)
         if saved_file.exists():
             try:
                 import json as json_load
-                with open(saved_file, 'r', encoding='utf-8') as f:
+                with open(saved_file, encoding='utf-8') as f:
                     saved_data = json_load.load(f)
                 logger.info(f"[类案检索] 加载已保存的结果，共 {len(saved_data.get('similar_cases', []))} 个案例")
                 return saved_data

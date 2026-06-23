@@ -16,7 +16,6 @@ import sys
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -98,9 +97,9 @@ class ConvertResult:
     """单个文件的转换结果"""
     file_name: str
     success: bool
-    text: Optional[str] = None
-    images_dir: Optional[Path] = None
-    error: Optional[str] = None
+    text: str | None = None
+    images_dir: Path | None = None
+    error: str | None = None
     source: str = "mineru"  # mineru | cache
 
 
@@ -110,7 +109,7 @@ class BatchProgress:
     total: int = 0
     completed: int = 0
     failed: int = 0
-    current_files: List[str] = field(default_factory=list)
+    current_files: list[str] = field(default_factory=list)
     started_at: str = field(default_factory=lambda: datetime.now().isoformat())
 
 
@@ -153,7 +152,7 @@ def _get_mineru_token() -> str:
 # ═══════════════════════════════════════════════════════════
 # PDF 分段
 # ═══════════════════════════════════════════════════════════
-def _split_pdf_pages(pdf_path: Path, chunk_size: int = MINERU_MAX_PAGES) -> List[Tuple[Path, int, int]]:
+def _split_pdf_pages(pdf_path: Path, chunk_size: int = MINERU_MAX_PAGES) -> list[tuple[Path, int, int]]:
     """将大 PDF 按页数/文件大小分段
 
     Returns:
@@ -262,7 +261,7 @@ def _protect_signatures_as_images(text: str) -> str:
     return text
 
 
-def _fold_consecutive_images(text: str, min_count: int = 1) -> Tuple[str, int]:
+def _fold_consecutive_images(text: str, min_count: int = 1) -> tuple[str, int]:
     """将连续图片折叠为 <details> 块"""
     lines = text.split('\\n')
     is_image = [bool(re.match(r'^!\\[.*\\]\\([^)]+\\)$', line.strip())) for line in lines]

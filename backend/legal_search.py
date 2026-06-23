@@ -8,12 +8,12 @@
 """
 
 import json
+import logging
 import sys
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import httpx
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -140,7 +140,7 @@ def search_laws_by_llm(crime_type: str, timeout: int = 120) -> str:
 
 # ========== 用户自定义法律知识库 ==========
 
-def list_legal_kb() -> List[Dict[str, Any]]:
+def list_legal_kb() -> list[dict[str, Any]]:
     """列出所有用户自定义法律条目"""
     items = []
     if not LEGAL_KB_DIR.exists():
@@ -151,7 +151,7 @@ def list_legal_kb() -> List[Dict[str, Any]]:
         meta = {}
         if meta_path.exists():
             try:
-                with open(meta_path, "r", encoding="utf-8") as mf:
+                with open(meta_path, encoding="utf-8") as mf:
                     meta = json.load(mf)
             except Exception:
                 pass
@@ -168,7 +168,7 @@ def list_legal_kb() -> List[Dict[str, Any]]:
     return items
 
 
-def get_legal_kb_item(item_id: str) -> Optional[Dict[str, Any]]:
+def get_legal_kb_item(item_id: str) -> dict[str, Any] | None:
     """获取单个法律知识条目"""
     md_path = LEGAL_KB_DIR / f"{item_id}.md"
     meta_path = LEGAL_KB_DIR / f"{item_id}.meta.json"
@@ -180,7 +180,7 @@ def get_legal_kb_item(item_id: str) -> Optional[Dict[str, Any]]:
     meta = {}
     if meta_path.exists():
         try:
-            with open(meta_path, "r", encoding="utf-8") as f:
+            with open(meta_path, encoding="utf-8") as f:
                 meta = json.load(f)
         except Exception:
             pass
@@ -199,8 +199,8 @@ def create_legal_kb_item(
     title: str,
     content: str,
     crime_type: str = "",
-    item_id: Optional[str] = None,
-) -> Dict[str, Any]:
+    item_id: str | None = None,
+) -> dict[str, Any]:
     """创建新的法律知识条目"""
     if not item_id:
         # 生成 ID：拼音或简短名称 + 时间戳
@@ -234,10 +234,10 @@ def create_legal_kb_item(
 
 def update_legal_kb_item(
     item_id: str,
-    title: Optional[str] = None,
-    content: Optional[str] = None,
-    crime_type: Optional[str] = None,
-) -> Optional[Dict[str, Any]]:
+    title: str | None = None,
+    content: str | None = None,
+    crime_type: str | None = None,
+) -> dict[str, Any] | None:
     """更新法律知识条目"""
     md_path = LEGAL_KB_DIR / f"{item_id}.md"
     meta_path = LEGAL_KB_DIR / f"{item_id}.meta.json"
@@ -253,7 +253,7 @@ def update_legal_kb_item(
     meta = {}
     if meta_path.exists():
         try:
-            with open(meta_path, "r", encoding="utf-8") as f:
+            with open(meta_path, encoding="utf-8") as f:
                 meta = json.load(f)
         except Exception:
             pass

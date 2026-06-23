@@ -77,7 +77,7 @@ def _load_data_dir_config() -> dict:
     """加载数据目录配置"""
     if DATA_DIR_CONFIG_FILE.exists():
         try:
-            with open(DATA_DIR_CONFIG_FILE, "r", encoding="utf-8") as f:
+            with open(DATA_DIR_CONFIG_FILE, encoding="utf-8") as f:
                 return json.load(f)
         except Exception:
             pass

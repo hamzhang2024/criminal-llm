@@ -12,7 +12,6 @@ import json
 import shutil
 import time
 from pathlib import Path
-from typing import Optional
 
 from analysis_pipeline import AnalysisPipeline, _contains_indictment_title
 from case_manager import find_case_path
@@ -87,8 +86,8 @@ async def run_pipeline_step(
     case_id: str,
     step_num: float,
     defendant: str = Body(..., embed=True),
-    crime_type: Optional[str] = Body(default=None, embed=True),
-    indictment_file: Optional[str] = Body(default=None, embed=True),
+    crime_type: str | None = Body(default=None, embed=True),
+    indictment_file: str | None = Body(default=None, embed=True),
 ):
     """
     执行分析流水线的指定步骤
@@ -174,7 +173,7 @@ async def get_pipeline_status(case_id: str):
         }
         if result_file.exists():
             try:
-                with open(result_file, "r", encoding="utf-8") as f:
+                with open(result_file, encoding="utf-8") as f:
                     step_data = json.load(f)
                 if step == 1:
                     status[f"step_{step}"]["summary"] = f"{step_data.get('total_persons', 0)} 人，{step_data.get('total_sessions', 0)} 次笔录"
@@ -219,8 +218,8 @@ async def get_analysis_state(case_id: str):
 async def resume_pipeline(
     case_id: str,
     defendant: str = Body(..., embed=True),
-    crime_type: Optional[str] = Body(default=None, embed=True),
-    indictment_file: Optional[str] = Body(default=None, embed=True),
+    crime_type: str | None = Body(default=None, embed=True),
+    indictment_file: str | None = Body(default=None, embed=True),
 ):
     """从断点恢复，自动找到下一个未完成的步骤继续执行"""
     case_path = find_case_path(case_id)
@@ -294,7 +293,7 @@ async def get_step_result(case_id: str, step_num: int):
     if not result_file.exists():
         raise HTTPException(status_code=404, detail=f"步骤 {step_num} 的结果不存在")
 
-    with open(result_file, "r", encoding="utf-8") as f:
+    with open(result_file, encoding="utf-8") as f:
         return json.load(f)
 
 

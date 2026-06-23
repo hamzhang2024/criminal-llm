@@ -19,26 +19,27 @@ import json
 import logging
 import re
 import shutil
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, List, Optional, Tuple
 
 import aiohttp
 
 # 从 helpers 模块导入辅助函数、常量和数据类
 from paddleocr_async_helpers import (
+    _SSL_CONTEXT,
+    DEFAULT_MAX_CONCURRENT,
+    DEFAULT_TIMEOUT,
     PADDLEOCR_API_URL,
     PADDLEOCR_MODEL,
     PADDLEOCR_OPTIONAL_PAYLOAD,
     POLL_INTERVAL,
-    DEFAULT_MAX_CONCURRENT,
-    DEFAULT_TIMEOUT,
-    _SSL_CONTEXT,
+    BatchProgress,
+    ConvertResult,
     _apply_postprocessing,
     _get_paddleocr_token,
     _split_pdf_pages,
     get_daily_quota_status,
 )
-from paddleocr_async_helpers import BatchProgress, ConvertResult
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +77,7 @@ class AsyncPaddleOCRConverter:
         )
     """
 
-    def __init__(self, token: Optional[str] = None):
+    def __init__(self, token: str | None = None):
         self.token = token or _get_paddleocr_token()
         if not self.token:
             raise ValueError("PaddleOCR Token 未配置，请设置 PADDLEOCR_TOKEN 环境变量或在设置中配置")
@@ -86,7 +87,7 @@ class AsyncPaddleOCRConverter:
         pdf_path: Path,
         output_dir: Path,
         timeout: int = DEFAULT_TIMEOUT,
-        progress_cb: Optional[Callable[[str, str], None]] = None,
+        progress_cb: Callable[[str, str], None] | None = None,
     ) -> ConvertResult:
         """转换单个 PDF 文件
 
@@ -111,7 +112,7 @@ class AsyncPaddleOCRConverter:
         pdf_path: Path,
         output_dir: Path,
         timeout: int,
-        progress_cb: Optional[Callable[[str, str], None]] = None,
+        progress_cb: Callable[[str, str], None] | None = None,
     ) -> ConvertResult:
         """转换单个文件（内部方法，不分段）"""
         stem = pdf_path.stem
@@ -180,11 +181,11 @@ class AsyncPaddleOCRConverter:
 
     async def _convert_chunks(
         self,
-        chunks: List[Tuple[Path, int, int]],
+        chunks: list[tuple[Path, int, int]],
         original_pdf: Path,
         output_dir: Path,
         timeout: int,
-        progress_cb: Optional[Callable[[str, str], None]] = None,
+        progress_cb: Callable[[str, str], None] | None = None,
     ) -> ConvertResult:
         """分段处理超大 PDF
 
@@ -282,12 +283,12 @@ class AsyncPaddleOCRConverter:
 
     async def convert_batch(
         self,
-        pdf_paths: List[Path],
+        pdf_paths: list[Path],
         output_dir: Path,
         max_concurrent: int = DEFAULT_MAX_CONCURRENT,
         timeout: int = DEFAULT_TIMEOUT,
-        progress_cb: Optional[Callable[[BatchProgress], None]] = None,
-    ) -> List[ConvertResult]:
+        progress_cb: Callable[[BatchProgress], None] | None = None,
+    ) -> list[ConvertResult]:
         """批量转换多个 PDF 文件（并发处理）"""
         logger.info(f"[PaddleOCR] convert_batch 入口: {len(pdf_paths)} 个文件, output_dir={output_dir}, max_concurrent={max_concurrent}")
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -342,7 +343,7 @@ class AsyncPaddleOCRConverter:
         self,
         session: aiohttp.ClientSession,
         pdf_path: Path,
-    ) -> Optional[str]:
+    ) -> str | None:
         """提交 PDF 转换任务，返回 jobId"""
         headers = {"Authorization": f"bearer {self.token}"}
 
@@ -394,8 +395,8 @@ class AsyncPaddleOCRConverter:
         session: aiohttp.ClientSession,
         job_id: str,
         timeout: int,
-        progress_cb: Optional[Callable[[str, str], None]] = None,
-    ) -> Optional[str]:
+        progress_cb: Callable[[str, str], None] | None = None,
+    ) -> str | None:
         """轮询任务状态，完成后返回结果 URL"""
         headers = {"Authorization": f"bearer {self.token}"}
         waited = 0
@@ -457,7 +458,7 @@ class AsyncPaddleOCRConverter:
         jsonl_url: str,
         output_dir: Path,
         stem: str,
-    ) -> Tuple[Optional[str], Optional[Path]]:
+    ) -> tuple[str | None, Path | None]:
         """下载 JSONL 结果，合并为 Markdown
 
         注意：jsonl_url 和 img_url 可能是 OSS 签名 URL，需要禁止自动添加请求头
@@ -554,7 +555,7 @@ class AsyncPaddleOCRConverter:
 async def convert_pdf_async(
     pdf_path: Path,
     output_dir: Path,
-    progress_cb: Optional[Callable[[str, str], None]] = None,
+    progress_cb: Callable[[str, str], None] | None = None,
 ) -> ConvertResult:
     """异步转换单个 PDF（便捷函数）"""
     converter = AsyncPaddleOCRConverter()
@@ -562,21 +563,21 @@ async def convert_pdf_async(
 
 
 async def convert_batch_async(
-    pdf_paths: List[Path],
+    pdf_paths: list[Path],
     output_dir: Path,
     max_concurrent: int = DEFAULT_MAX_CONCURRENT,
-    progress_cb: Optional[Callable[[BatchProgress], None]] = None,
-) -> List[ConvertResult]:
+    progress_cb: Callable[[BatchProgress], None] | None = None,
+) -> list[ConvertResult]:
     """异步批量转换（便捷函数）"""
     converter = AsyncPaddleOCRConverter()
     return await converter.convert_batch(pdf_paths, output_dir, max_concurrent, progress_cb=progress_cb)
 
 
 def convert_batch_sync(
-    pdf_paths: List[Path],
+    pdf_paths: list[Path],
     output_dir: Path,
     max_concurrent: int = DEFAULT_MAX_CONCURRENT,
-    progress_cb: Optional[Callable[[BatchProgress], None]] = None,
-) -> List[ConvertResult]:
+    progress_cb: Callable[[BatchProgress], None] | None = None,
+) -> list[ConvertResult]:
     """同步批量转换（包装异步函数）"""
     return asyncio.run(convert_batch_async(pdf_paths, output_dir, max_concurrent, progress_cb))

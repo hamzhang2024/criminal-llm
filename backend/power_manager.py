@@ -3,10 +3,10 @@ macOS 电源管理模块
 
 在长时间操作（PDF 转换、证据提取）期间防止系统休眠。
 """
+import logging
 import subprocess
 import sys
 import threading
-import logging
 
 logger = logging.getLogger(__name__)
 

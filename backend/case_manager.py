@@ -12,7 +12,6 @@ import re
 import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
 
 from pydantic import BaseModel
 
@@ -91,7 +90,7 @@ class CaseInfo(BaseModel):
 class CreateCaseRequest(BaseModel):
     name: str
     defendant: str
-    owner: Optional[str] = None  # 创建者邮箱
+    owner: str | None = None  # 创建者邮箱
 
 
 class PendingFolder(BaseModel):
@@ -101,7 +100,7 @@ class PendingFolder(BaseModel):
     size_mb: float
 
 
-def scan_cases(owner: Optional[str] = None) -> List[CaseInfo]:
+def scan_cases(owner: str | None = None) -> list[CaseInfo]:
     """扫描所有合法案件（有 case.json），可按 owner 过滤"""
     cases = []
 
@@ -115,7 +114,7 @@ def scan_cases(owner: Optional[str] = None) -> List[CaseInfo]:
                     metadata_file = sub / "case.json"
                     if metadata_file.exists():
                         try:
-                            with open(metadata_file, 'r', encoding='utf-8') as f:
+                            with open(metadata_file, encoding='utf-8') as f:
                                 metadata = json.load(f)
 
                             # 按 owner 过滤
@@ -154,7 +153,7 @@ def scan_cases(owner: Optional[str] = None) -> List[CaseInfo]:
     return sorted(cases, key=lambda x: x.created_at, reverse=True)
 
 
-def scan_pending_folders() -> List[PendingFolder]:
+def scan_pending_folders() -> list[PendingFolder]:
     """扫描待导入文件夹（无 case.json 但有 PDF）"""
     pending = []
 
@@ -184,7 +183,7 @@ def scan_pending_folders() -> List[PendingFolder]:
     return pending
 
 
-def find_case_path(case_id: str) -> Optional[Path]:
+def find_case_path(case_id: str) -> Path | None:
     """查找案件目录（扫描 CASES_DIR 下所有子目录匹配 case_id）"""
     if not CASES_DIR.exists():
         logger.warning(f"[find_case_path] CASES_DIR 不存在: {CASES_DIR}")
@@ -204,7 +203,7 @@ def find_case_path(case_id: str) -> Optional[Path]:
     return None
 
 
-def extract_header_footer_text(pdf_path: str, top_pct: float = 0.15, bottom_pct: float = 0.15) -> Dict[int, str]:
+def extract_header_footer_text(pdf_path: str, top_pct: float = 0.15, bottom_pct: float = 0.15) -> dict[int, str]:
     """提取 PDF 每页的页头和页尾文本（跳过页面中间部分），用于快速 LLM 拆分分析。
 
     用 fitz 直接提取文字层中的页头页尾区域文本。
@@ -245,7 +244,7 @@ def extract_header_footer_text(pdf_path: str, top_pct: float = 0.15, bottom_pct:
     return page_texts
 
 
-def extract_full_page_text(pdf_path: str) -> Dict[int, str]:
+def extract_full_page_text(pdf_path: str) -> dict[int, str]:
     """提取 PDF 每页的完整文本（用于文书类型识别）"""
     import fitz
 
@@ -272,7 +271,7 @@ def get_case_dir(case_id: str, name: str) -> Path:
 
 
 @router.get("/list")
-async def list_cases(owner: Optional[str] = None):
+async def list_cases(owner: str | None = None):
     """列出所有合法案件，可按 owner 过滤"""
     return scan_cases(owner)
 
@@ -471,7 +470,7 @@ async def upload_files(case_id: str, files: list[UploadFile] = File(...)):
 
     # 更新案件状态
     metadata_file = case_path / "case.json"
-    with open(metadata_file, 'r', encoding='utf-8') as f:
+    with open(metadata_file, encoding='utf-8') as f:
         metadata = json.load(f)
     metadata["status"] = "uploaded"
     metadata["file_count"] = len(list(original_dir.glob("*.pdf")))
@@ -694,11 +693,11 @@ async def get_step_files(case_id: str, step: int):
 class BatchProcessRequest(BaseModel):
     step: int
     file_names: list[str]
-    password: Optional[str] = None
-    dpi: Optional[int] = None
-    remove_watermark: Optional[bool] = None
-    enhance_resolution: Optional[bool] = None
-    delete_original: Optional[bool] = None
+    password: str | None = None
+    dpi: int | None = None
+    remove_watermark: bool | None = None
+    enhance_resolution: bool | None = None
+    delete_original: bool | None = None
 
 
 @router.post("/{case_id}/batch-process")
@@ -2072,13 +2071,20 @@ async def list_md_files(case_id: str):
         return {"files": []}
 
     def _infer_type(name: str) -> str:
-        if "讯问" in name: return "讯问笔录"
-        if "询问" in name: return "询问笔录"
-        if "辨认" in name: return "辨认笔录"
-        if "鉴定" in name: return "鉴定意见"
-        if "勘验" in name: return "勘验笔录"
-        if "微信" in name or "支付" in name or "流水" in name: return "电子数据/书证"
-        if "照片" in name: return "物证/照片"
+        if "讯问" in name:
+            return "讯问笔录"
+        if "询问" in name:
+            return "询问笔录"
+        if "辨认" in name:
+            return "辨认笔录"
+        if "鉴定" in name:
+            return "鉴定意见"
+        if "勘验" in name:
+            return "勘验笔录"
+        if "微信" in name or "支付" in name or "流水" in name:
+            return "电子数据/书证"
+        if "照片" in name:
+            return "物证/照片"
         return "其他证据"
 
     files = []
@@ -2109,11 +2115,11 @@ async def get_evidence_index(case_id: str):
 
 class EvidenceReviewRequest(BaseModel):
     """证据校对请求体（带字段长度限制，防止滥用）"""
-    name: Optional[str] = None
-    type: Optional[str] = None
-    persons: Optional[str] = None
-    key_facts: Optional[str] = None
-    contradiction_hints: Optional[str] = None
+    name: str | None = None
+    type: str | None = None
+    persons: str | None = None
+    key_facts: str | None = None
+    contradiction_hints: str | None = None
 
     # 字段长度约束
     @classmethod
@@ -2581,9 +2587,9 @@ async def clear_stage(case_id: str, stage_num: int):
     return {"success": True, "message": f"已清除阶段 {stage_num} 的输出"}
 # 辅助函数从 case_manager_helpers 导入（向后兼容 re-export）
 from case_manager_helpers import (  # noqa: F401
-    _parse_evidence_blocks,
     _extract_field,
     _is_non_evidence_document,
+    _parse_evidence_blocks,
     _sanitize_filename,
 )
 
@@ -2646,7 +2652,7 @@ async def open_file_endpoint(case_id: str, file_path: str):
 
 
 @router.get("/{case_id}/serve-file")
-async def serve_file(case_id: str, file_path: str, dir: Optional[str] = None):
+async def serve_file(case_id: str, file_path: str, dir: str | None = None):
     """提供文件下载/预览
 
     Args:
@@ -2867,7 +2873,7 @@ async def list_trash():
             case_info = {}
             for sub in item.iterdir():
                 if sub.is_dir() and (sub / "case.json").exists():
-                    with open(sub / "case.json", 'r', encoding='utf-8') as f:
+                    with open(sub / "case.json", encoding='utf-8') as f:
                         case_info = json.load(f)
                     break
             
@@ -2919,13 +2925,13 @@ async def permanent_delete_case(case_id: str):
 # ═══════════════════════════════════════════════════════════
 
 @router.get("/{case_id}")
-async def get_case(case_id: str) -> Optional[CaseInfo]:
+async def get_case(case_id: str) -> CaseInfo | None:
     """获取案件详情"""
     for case_dir in CASES_DIR.iterdir():
         if case_dir.is_dir() and case_dir.name == case_id:
             for sub in case_dir.iterdir():
                 if sub.is_dir() and (sub / "case.json").exists():
-                    with open(sub / "case.json", 'r', encoding='utf-8') as f:
+                    with open(sub / "case.json", encoding='utf-8') as f:
                         metadata = json.load(f)
                         return CaseInfo(**metadata)
     return None
@@ -2972,7 +2978,7 @@ async def claim_cases(owner: str):
                     metadata_file = sub / "case.json"
                     if metadata_file.exists():
                         try:
-                            with open(metadata_file, 'r', encoding='utf-8') as f:
+                            with open(metadata_file, encoding='utf-8') as f:
                                 metadata = json.load(f)
                             if not metadata.get("owner"):
                                 metadata["owner"] = owner

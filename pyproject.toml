@@ -35,10 +35,25 @@ ignore = [
     "W293",  # blank line contains whitespace
 ]
 
-# 逐文件豁免：main.py 需在 import 前执行 bootstrap（加载 .env、配置日志），
-# 模块级 import 无法置于文件顶部，E402 为预期行为
+# 逐文件豁免：以下文件因架构需要，模块级 import 无法置于文件顶部
+# - bootstrap 前置：文件顶部需先加载 .env / 配置日志 / 定义常量
+# - helpers re-export：文件后部从 *_helpers 导入辅助函数供向后兼容
+# - 测试文件：需先注入 sys.path 再导入被测模块
+# E402 为预期行为，非错误
 [tool.ruff.lint.per-file-ignores]
 "backend/main.py" = ["E402"]
+"backend/analysis_engine.py" = ["E402"]
+"backend/analysis_pipeline.py" = ["E402"]
+"backend/analyzer_api.py" = ["E402"]
+"backend/background_tasks.py" = ["E402"]
+"backend/case_manager.py" = ["E402"]
+"backend/legal_search.py" = ["E402"]
+"backend/llm_client.py" = ["E402"]
+"backend/mineru_async.py" = ["E402"]
+"backend/pdf_to_md.py" = ["E402"]
+"backend/stage_api.py" = ["E402"]
+"backend/tests/conftest.py" = ["E402"]
+"backend/tests/unit/test_evidence_extraction.py" = ["E402"]
 
 # isort 配置
 [tool.ruff.lint.isort]

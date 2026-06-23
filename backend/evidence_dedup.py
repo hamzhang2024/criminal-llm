@@ -10,7 +10,7 @@
 import hashlib
 import logging
 import re
-from typing import Any, Dict, List
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +42,7 @@ def _normalize_name(name: str) -> str:
     return s.lower()
 
 
-def _dedup_key(ev: Dict[str, Any]) -> str:
+def _dedup_key(ev: dict[str, Any]) -> str:
     """生成去重哈希键
 
     当 page_range 为空时，加入 key_facts 前 50 字符避免同名同类型不同内容的证据被误判为重复。
@@ -104,7 +104,7 @@ def _extract_interrogatee_and_date(name: str, persons: str, page_range: str = ""
     return (interrogatee, date_str, sequence)
 
 
-def dedup_and_link(evidence_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def dedup_and_link(evidence_list: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """对证据列表做去重标记和同人多笔关联
 
     Args:
@@ -121,7 +121,7 @@ def dedup_and_link(evidence_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
     # ── 第1步：重复标记 ──
     # 同一 dedup_key 的证据只保留第一个为"源"，其余标记 duplicate_of
-    key_to_first_id: Dict[str, int] = {}
+    key_to_first_id: dict[str, int] = {}
     dup_count = 0
     for ev in evidence_list:
         ev["duplicate_of"] = None
@@ -156,7 +156,7 @@ def dedup_and_link(evidence_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         return any(kw in name_lower for kw in auxiliary_keywords)
 
     # 按 (被讯问人,) 分组，同人多份合并到同一组
-    groups: Dict[str, List[Dict[str, Any]]] = {}
+    groups: dict[str, list[dict[str, Any]]] = {}
     for ev in evidence_list:
         ev_type = (ev.get("type") or "").strip()
         name = ev.get("name", "")
@@ -204,7 +204,7 @@ def dedup_and_link(evidence_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return evidence_list
 
 
-def group_evidence_by_chain(evidence_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def group_evidence_by_chain(evidence_list: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """对证据列表按程序链条分组（供组合质证使用）
 
     首期只做讯问笔录组（interrogation）：
@@ -216,7 +216,7 @@ def group_evidence_by_chain(evidence_list: List[Dict[str, Any]]) -> List[Dict[st
         evidence_groups 数组，每组：
         {group_id, group_type, group_label, member_refs, anchor_evidence_id}
     """
-    groups: List[Dict[str, Any]] = []
+    groups: list[dict[str, Any]] = []
     anchor_types = {"犯罪嫌疑人供述和辩解", "证人证言", "被害人陈述"}
 
     # 收集有 related_evidence_ids 的锚点证据，按 interrogatee 聚合

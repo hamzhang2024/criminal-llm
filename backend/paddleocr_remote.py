@@ -12,18 +12,18 @@ API: https://paddleocr.aistudio-app.com/api/v2/ocr/jobs
 """
 
 import json
+import logging
 import os
 
 # 打包后 certifi 证书路径可能失效，macOS 用系统证书
 import sys
 import tempfile
 import time
+from collections.abc import Callable
 from datetime import date
 from pathlib import Path
-from typing import Callable, Optional
 
 import requests
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -133,7 +133,7 @@ def _get_paddleocr_token() -> str:
 # ═══════════════════════════════════════════════════════════
 # API 调用
 # ═══════════════════════════════════════════════════════════
-def _submit_job(pdf_path: Path, token: str) -> Optional[str]:
+def _submit_job(pdf_path: Path, token: str) -> str | None:
     """提交 PDF 转换任务，返回 jobId"""
     headers = {"Authorization": f"bearer {token}"}
     data = {
@@ -168,7 +168,7 @@ def _submit_job(pdf_path: Path, token: str) -> Optional[str]:
         return None
 
 
-def _poll_job(job_id: str, token: str, timeout: int = 3600, progress_cb: Optional[Callable] = None) -> Optional[str]:
+def _poll_job(job_id: str, token: str, timeout: int = 3600, progress_cb: Callable | None = None) -> str | None:
     """轮询任务状态，完成后返回 result JSON URL"""
     headers = {"Authorization": f"bearer {token}"}
     waited = 0
@@ -234,7 +234,7 @@ def _poll_job(job_id: str, token: str, timeout: int = 3600, progress_cb: Optiona
     return None
 
 
-def _download_and_parse_jsonl(jsonl_url: str, output_dir: Path, stem: str) -> Optional[str]:
+def _download_and_parse_jsonl(jsonl_url: str, output_dir: Path, stem: str) -> str | None:
     """下载 JSONL 结果，合并为 Markdown，并下载图片到本地"""
     try:
         resp = requests.get(jsonl_url, timeout=60, verify=_SSL_VERIFY)
@@ -501,8 +501,8 @@ def paddleocr_convert(
     pdf_path: Path,
     output_dir: Path,
     timeout: int = 3600,
-    progress_cb: Optional[Callable] = None,
-) -> Optional[tuple[str, Optional[Path]]]:
+    progress_cb: Callable | None = None,
+) -> tuple[str, Path | None] | None:
     """使用 PaddleOCR-VL API 转换 PDF → MD
 
     异步模式：上传文件 → 提交任务 → 轮询结果 → 下载 JSONL → 解析

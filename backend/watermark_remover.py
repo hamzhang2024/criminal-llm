@@ -7,20 +7,20 @@ PDF 水印移除工具 - 集成到后端，不再依赖外部脚本
 3. 直接文本水印（嵌入页面内容流）
 """
 
+import logging
 import os
 import re
 import subprocess
 import tempfile
-from typing import Any, Dict, Optional
+from typing import Any
 
 import fitz
 from pipeline_errors import PDFProcessingError
-import logging
 
 logger = logging.getLogger(__name__)
 
 
-def _try_fix_with_qpdf(input_path: str) -> Optional[str]:
+def _try_fix_with_qpdf(input_path: str) -> str | None:
     """尝试使用 qpdf 修复损坏的 PDF"""
     try:
         result = subprocess.run(["which", "qpdf"], capture_output=True)
@@ -52,7 +52,7 @@ def _try_fix_with_qpdf(input_path: str) -> Optional[str]:
         return None
 
 
-def _open_pdf_with_repair(input_path: str, password: Optional[str] = None) -> Optional[fitz.Document]:
+def _open_pdf_with_repair(input_path: str, password: str | None = None) -> fitz.Document | None:
     """打开 PDF，必要时自动修复损坏的文件"""
     try:
         doc = fitz.open(input_path)
@@ -309,7 +309,7 @@ def auto_detect_repeating_text(doc, sample_count=5):
         page = doc[i]
         text = page.get_text()
         # 降低长度阈值到 2，避免漏掉短水印（如"江阴市院"只有4字）
-        lines = [l.strip() for l in text.split('\n') if l.strip() and len(l.strip()) >= 2]
+        lines = [ln.strip() for ln in text.split('\n') if ln.strip() and len(ln.strip()) >= 2]
         for line in lines:
             line_counts[line] += 1
 
@@ -407,9 +407,9 @@ def remove_direct_text_watermark(doc, watermark_text):
 def remove_watermark(
     input_path: str,
     output_path: str,
-    watermark_text: Optional[str] = None,
-    password: Optional[str] = None
-) -> Dict[str, Any]:
+    watermark_text: str | None = None,
+    password: str | None = None
+) -> dict[str, Any]:
     """
     移除 PDF 水印
 

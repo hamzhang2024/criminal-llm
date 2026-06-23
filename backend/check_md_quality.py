@@ -12,10 +12,9 @@ MD 质量验证模块
 """
 import re
 from pathlib import Path
-from typing import Dict
 
 
-def check_md_quality(md_path: str, min_quality: float = 0.8) -> Dict:
+def check_md_quality(md_path: str, min_quality: float = 0.8) -> dict:
     """
     检查 MD 文件质量
     
@@ -110,7 +109,7 @@ def check_md_quality(md_path: str, min_quality: float = 0.8) -> Dict:
     }
 
 
-def batch_check_quality(md_files: list, min_quality: float = 0.8) -> Dict:
+def batch_check_quality(md_files: list, min_quality: float = 0.8) -> dict:
     """
     批量检查 MD 文件质量
     

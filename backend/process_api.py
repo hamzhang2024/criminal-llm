@@ -13,7 +13,7 @@ import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -61,7 +61,7 @@ async def browse_directory():
 executor = ThreadPoolExecutor(max_workers=4)
 
 # 任务状态存储
-tasks: Dict[str, Dict[str, Any]] = {}
+tasks: dict[str, dict[str, Any]] = {}
 
 
 # ═══════════════════════════════════════════════════════════
@@ -69,7 +69,7 @@ tasks: Dict[str, Dict[str, Any]] = {}
 # ═══════════════════════════════════════════════════════════
 
 
-def enhance_pdf_resolution(pdf_path: str, output_path: str, dpi: int = 300) -> Dict[str, Any]:
+def enhance_pdf_resolution(pdf_path: str, output_path: str, dpi: int = 300) -> dict[str, Any]:
     """
     使用 Ghostscript 提高 PDF 图片精度（重采样）
 
@@ -178,8 +178,8 @@ class ScanRequest(BaseModel):
 
 
 class ProcessRequest(BaseModel):
-    files: List[str]
-    password: Optional[str] = None
+    files: list[str]
+    password: str | None = None
 
 
 class FileInfo(BaseModel):
@@ -283,9 +283,9 @@ async def scan_directory(request: ScanRequest):
 
 def process_single_file(
     input_path: str,
-    password: Optional[str] = None,
-    watermark_text: Optional[str] = None
-) -> Dict[str, Any]:
+    password: str | None = None,
+    watermark_text: str | None = None
+) -> dict[str, Any]:
     """
     处理单个 PDF 文件 - 去水印
 

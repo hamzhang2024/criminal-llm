@@ -7,12 +7,12 @@ LLM 客户端配置模块
 - 数据量警告判断
 """
 import logging
-from typing import Any, Dict, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-def _get_bailian_config() -> tuple[str, Optional[str], str]:
+def _get_bailian_config() -> tuple[str, str | None, str]:
     """
     获取 LLM 配置（从 config_manager 读取，带缓存）
 
@@ -118,7 +118,7 @@ def _estimate_context_limit(model: str) -> int:
     return 128_000
 
 
-async def query_model_info_from_api(base_url: str, api_key: str, model: str) -> Dict[str, Any] | None:
+async def query_model_info_from_api(base_url: str, api_key: str, model: str) -> dict[str, Any] | None:
     """
     尝试从 API 查询模型信息
 
@@ -155,7 +155,7 @@ async def query_model_info_from_api(base_url: str, api_key: str, model: str) -> 
         return None
 
 
-def get_model_context_limit(model: str, user_specified_limit: int | None = None) -> Dict[str, Any]:
+def get_model_context_limit(model: str, user_specified_limit: int | None = None) -> dict[str, Any]:
     """
     根据模型名称返回上下文限制和处理策略
 
@@ -222,7 +222,7 @@ def get_model_context_limit(model: str, user_specified_limit: int | None = None)
         }
 
 
-def check_data_size_warning(data_size: int, model_info: Dict[str, Any]) -> Dict[str, Any]:
+def check_data_size_warning(data_size: int, model_info: dict[str, Any]) -> dict[str, Any]:
     """
     根据数据量和模型信息判断是否需要警告
 

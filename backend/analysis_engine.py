@@ -11,9 +11,10 @@
 """
 import json
 import logging
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +51,7 @@ except ImportError:
 # 模型上下文能力检测（仅用于显示策略名称和警告）
 # ═══════════════════════════════════════════════════════════════════════════
 
-def _get_analysis_strategy() -> Dict[str, Any]:
+def _get_analysis_strategy() -> dict[str, Any]:
     """
     获取当前模型的上下文策略（仅用于显示信息）
 
@@ -73,7 +74,7 @@ def _get_analysis_strategy() -> Dict[str, Any]:
 try:
     ZHANG_CRIMINAL_DEFENSE_PATH = Path(__file__).parent.parent / "zhang-criminal-defense" / "criminal-defense.md"
     if ZHANG_CRIMINAL_DEFENSE_PATH.exists():
-        with open(ZHANG_CRIMINAL_DEFENSE_PATH, "r", encoding="utf-8") as f:
+        with open(ZHANG_CRIMINAL_DEFENSE_PATH, encoding="utf-8") as f:
             ZHANG_CRIMINAL_DEFENSE = f.read()
     else:
         ZHANG_CRIMINAL_DEFENSE = ""
@@ -81,28 +82,28 @@ except Exception:
     ZHANG_CRIMINAL_DEFENSE = ""
 # Mermaid 渲染函数从 analysis_engine_mermaid 导入（向后兼容 re-export）
 from analysis_engine_mermaid import (  # noqa: F401
+    _extract_json_and_render,
     _json_to_mermaid_graph,
     _json_to_mermaid_timeline,
     _legacy_fix_mermaid,
     _legacy_fix_mermaid_timeline,
-    _extract_json_and_render,
 )
 
 
 class AnalysisEngine:
     """5 阶段分析引擎"""
 
-    def __init__(self, case_id: str, case_dir: Path, indictment_file: Optional[str] = None):
+    def __init__(self, case_id: str, case_dir: Path, indictment_file: str | None = None):
         self.case_id = case_id
         self.case_dir = case_dir
         self.analysis_dir = case_dir / "analysis"
         self.analysis_dir.mkdir(parents=True, exist_ok=True)
-        self.md_texts: List[Dict[str, str]] = []  # [{filename, type, text}]
-        self.stage_results: Dict[int, Dict[str, Any]] = {}
+        self.md_texts: list[dict[str, str]] = []  # [{filename, type, text}]
+        self.stage_results: dict[int, dict[str, Any]] = {}
         # 用户手动指定的起诉书文件名（优先级高于自动检测）
         self.selected_indictment_file = indictment_file
 
-    def _load_evidence_texts(self) -> List[Dict[str, str]]:
+    def _load_evidence_texts(self) -> list[dict[str, str]]:
         """加载案件目录下所有证据文本
 
         优先从 evidence/ 目录加载 LLM 生成的证据总结
@@ -237,7 +238,7 @@ class AnalysisEngine:
         self.md_texts = texts
         return texts
 
-    def _save_stage(self, stage: int, data: Dict[str, Any], markdown: str):
+    def _save_stage(self, stage: int, data: dict[str, Any], markdown: str):
         """保存阶段结果"""
         stage_dir = self.analysis_dir / f"stage_{stage}"
         stage_dir.mkdir(parents=True, exist_ok=True)
@@ -252,7 +253,7 @@ class AnalysisEngine:
 
         self.stage_results[stage] = data
 
-    def _find_indictment(self, texts: list) -> Optional[Dict]:
+    def _find_indictment(self, texts: list) -> dict | None:
         """
         查找起诉书/起诉意见书。
         优先级：用户手动指定 > 起诉书 > 起诉意见书；同类多份时取形成时间在后面的。
@@ -290,7 +291,7 @@ class AnalysisEngine:
         indictments.sort(key=sort_key, reverse=True)
         return indictments[0][2]
 
-    def _extract_date_from_text(self, text: str) -> Optional[str]:
+    def _extract_date_from_text(self, text: str) -> str | None:
         """从文本中提取日期，格式 YYYY-MM-DD"""
         import re
         # 匹配常见日期格式
@@ -320,9 +321,9 @@ class AnalysisEngine:
     async def stage_1_read_indictment(
         self,
         defendant: str,
-        crime_type: Optional[str] = None,
-        progress_cb: Optional[Callable] = None,
-    ) -> Dict[str, Any]:
+        crime_type: str | None = None,
+        progress_cb: Callable | None = None,
+    ) -> dict[str, Any]:
         """
         阶段 1：从起诉意见书/起诉书中提取指控要素
         输出：指控罪名、指控事实、涉案人员、辩护对象
@@ -413,9 +414,9 @@ class AnalysisEngine:
     async def stage_2_character_relations(
         self,
         defendant: str,
-        crime_type: Optional[str] = None,
-        progress_cb: Optional[Callable] = None,
-    ) -> Dict[str, Any]:
+        crime_type: str | None = None,
+        progress_cb: Callable | None = None,
+    ) -> dict[str, Any]:
         """
         阶段 2：从全部证据中提取人物关系
         输出：人物关系图（表格形式）
@@ -559,9 +560,9 @@ graph TD
     async def stage_3_event_timeline(
         self,
         defendant: str,
-        crime_type: Optional[str] = None,
-        progress_cb: Optional[Callable] = None,
-    ) -> Dict[str, Any]:
+        crime_type: str | None = None,
+        progress_cb: Callable | None = None,
+    ) -> dict[str, Any]:
         """
         阶段 3：构建事件时间线 + 按事件归组证据
         每个事件下挂接全部相关证据
@@ -686,9 +687,9 @@ timeline
     async def stage_4_legal_regulations(
         self,
         defendant: str,
-        crime_type: Optional[str] = None,
-        progress_cb: Optional[Callable] = None,
-    ) -> Dict[str, Any]:
+        crime_type: str | None = None,
+        progress_cb: Callable | None = None,
+    ) -> dict[str, Any]:
         """
         阶段 4：梳理涉案罪名的法律法规
         输出：刑法法条 + 司法解释 + 类案裁判要旨 + 量刑指导意见
@@ -797,9 +798,9 @@ timeline
     async def stage_5_full_defense(
         self,
         defendant: str,
-        crime_type: Optional[str] = None,
-        progress_cb: Optional[Callable] = None,
-    ) -> Dict[str, Any]:
+        crime_type: str | None = None,
+        progress_cb: Callable | None = None,
+    ) -> dict[str, Any]:
         """
         阶段 5：综合分析
         5A：逐份证据分析
@@ -1115,7 +1116,7 @@ timeline
         normalized_type = type_mapping.get(evidence_type, "其他证据")
         return EVIDENCE_REVIEW_TEMPLATES.get(normalized_type, EVIDENCE_REVIEW_TEMPLATES.get("其他证据", ""))
 
-    def _build_review_prompt(self, evidence: Dict[str, Any], template: str) -> str:
+    def _build_review_prompt(self, evidence: dict[str, Any], template: str) -> str:
         """构建差异化的证据审查提示词"""
         ev_name = evidence.get("filename", "未知证据")
         ev_ref = evidence.get("evidence_ref", "")
@@ -1204,7 +1205,7 @@ timeline
 只输出 JSON，不要其他内容。"""
         return prompt
 
-    def _parse_review_result(self, response: str, evidence: Dict[str, Any]) -> Dict[str, Any]:
+    def _parse_review_result(self, response: str, evidence: dict[str, Any]) -> dict[str, Any]:
         """解析 LLM 返回的审查结果"""
         import re
         ev_name = evidence.get("filename", "未知证据")
@@ -1251,7 +1252,7 @@ timeline
             "error": "解析失败"
         }
 
-    async def generate_cross_examination_opinion(self) -> Dict[str, Any]:
+    async def generate_cross_examination_opinion(self) -> dict[str, Any]:
         """生成证据质证意见（合并三性审查）
 
         审查过程即质证过程，每一项审查结论都包含：
@@ -1344,7 +1345,7 @@ timeline
 
         return result
 
-    async def generate_grouped_cross_examination_opinion(self) -> Dict[str, Any]:
+    async def generate_grouped_cross_examination_opinion(self) -> dict[str, Any]:
         """组合证据质证（对证据组单次 LLM 调用，做跨证据一致性审查）
 
         流程：
@@ -1381,7 +1382,7 @@ timeline
             for mid in g.get("member_refs", []):
                 grouped_ids.add(mid)
 
-        reviews: List[Dict[str, Any]] = []
+        reviews: list[dict[str, Any]] = []
 
         # ── 第1步：组合质证（对每个组单次 LLM 调用）──
         for group in evidence_groups:
@@ -1462,7 +1463,7 @@ timeline
 
         return result
 
-    def _build_group_review_prompt(self, member_texts: List[Dict], group_label: str, group_type: str) -> str:
+    def _build_group_review_prompt(self, member_texts: list[dict], group_label: str, group_type: str) -> str:
         """构建组合质证提示词"""
         template = EVIDENCE_GROUP_TEMPLATES.get(group_type, EVIDENCE_GROUP_TEMPLATES.get("interrogation", ""))
 
@@ -1535,7 +1536,7 @@ timeline
 4. 只输出 JSON，不要其他内容。"""
         return prompt
 
-    def _parse_group_review_result(self, response: str, group: Dict, member_texts: List[Dict]) -> Dict[str, Any]:
+    def _parse_group_review_result(self, response: str, group: dict, member_texts: list[dict]) -> dict[str, Any]:
         """解析组合质证 LLM 返回结果"""
         import re
         # 提取 JSON
@@ -1572,7 +1573,7 @@ timeline
             "final_conclusion": data.get("final_conclusion", "存疑"),
         }
 
-    async def _review_ungrouped_evidence(self, llm, texts: List[Dict], grouped_ids: set, meta_by_id: Dict) -> List[Dict]:
+    async def _review_ungrouped_evidence(self, llm, texts: list[dict], grouped_ids: set, meta_by_id: dict) -> list[dict]:
         """对未分组的证据走原有逐份质证逻辑"""
         reviews = []
         for ev in texts:
@@ -1617,7 +1618,7 @@ timeline
                 })
         return reviews
 
-    def _generate_cross_examination_markdown(self, reviews: List[Dict[str, Any]]) -> str:
+    def _generate_cross_examination_markdown(self, reviews: list[dict[str, Any]]) -> str:
         """生成质证意见 Markdown 文档"""
         md = "# 证据质证意见\n\n"
         md += f"> 生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
@@ -1779,7 +1780,7 @@ timeline
         return md
 
     # 保留旧方法名作为别名，保持向后兼容
-    async def review_evidence_triple_property(self) -> Dict[str, Any]:
+    async def review_evidence_triple_property(self) -> dict[str, Any]:
         """对全部证据进行三性审查（真实性、合法性、关联性）
 
         已重构为 generate_cross_examination_opinion()
@@ -1789,7 +1790,7 @@ timeline
 
     # ========== 阅卷笔录 ==========
 
-    async def generate_review_notes(self) -> Dict[str, Any]:
+    async def generate_review_notes(self) -> dict[str, Any]:
         """生成阅卷笔录
 
         阅卷笔录是律师阅卷工作的核心文档，汇总案件关键信息。
@@ -1887,7 +1888,7 @@ timeline
 
     # ========== 质证意见（向后兼容） ==========
 
-    async def generate_cross_examination(self) -> Dict[str, Any]:
+    async def generate_cross_examination(self) -> dict[str, Any]:
         """生成质证意见（向后兼容方法）
 
         注意：此方法已合并到 generate_cross_examination_opinion() 中。
@@ -1932,7 +1933,7 @@ timeline
 
 # ========== 工具函数 ==========
 
-def generate_evidence_chain(case_path: Path) -> Dict[str, Any]:
+def generate_evidence_chain(case_path: Path) -> dict[str, Any]:
     """生成证据链可视化数据
 
     结构：
@@ -2107,7 +2108,7 @@ def generate_evidence_chain(case_path: Path) -> Dict[str, Any]:
     }
 
     # 4.5 预加载三性审查数据（用于证据节点显示证明力 score）
-    review_scores: Dict[str, Dict[str, Any]] = {}  # evidence_ref -> {legality, authenticity, relevance, final}
+    review_scores: dict[str, dict[str, Any]] = {}  # evidence_ref -> {legality, authenticity, relevance, final}
     review_file = analysis_dir / "evidence_review.json"
     if review_file.exists():
         try:
@@ -2128,7 +2129,7 @@ def generate_evidence_chain(case_path: Path) -> Dict[str, Any]:
     for rev in review_scores.get("__groups__", {}).get("group_reviews", []):
         pass  # placeholder
     # 直接从 review_data_raw 读取组合质证的 group_findings
-    group_findings_edges: List[Dict[str, Any]] = []
+    group_findings_edges: list[dict[str, Any]] = []
     if review_file.exists():
         try:
             for rev in review_data_raw.get("reviews", []):
@@ -2606,7 +2607,7 @@ def generate_evidence_chain(case_path: Path) -> Dict[str, Any]:
     }
 
 
-def _extract_accusation(evidence_list: list, analysis_dir: Path, evidence_dir: Path) -> Optional[Dict[str, Any]]:
+def _extract_accusation(evidence_list: list, analysis_dir: Path, evidence_dir: Path) -> dict[str, Any] | None:
     """从起诉书/起诉意见书提取指控事实
 
     优先级：stage_1/output.md > stage_1/output.json > 直接解析起诉书 MD
@@ -2721,7 +2722,7 @@ def _extract_accusation(evidence_list: list, analysis_dir: Path, evidence_dir: P
     }
 
 
-def _extract_facts_to_prove(analysis_dir: Path, defendant: str = "") -> Dict[str, str]:
+def _extract_facts_to_prove(analysis_dir: Path, defendant: str = "") -> dict[str, str]:
     """从分析结果中提取具体的待证事实内容
 
     从 stage_1/output.md 中提取具体的构成要件事实描述，
@@ -2833,7 +2834,7 @@ def _infer_evidence_type(filename: str) -> str:
         return "其他证据"
 
 
-def _split_indictment_and_evidence(texts: List[Dict[str, str]]):
+def _split_indictment_and_evidence(texts: list[dict[str, str]]):
     """将证据列表分为指控文书和证据两部分，分别构建目录文本"""
     indictments = [t for t in texts if t.get("is_indictment")]
     evidences = [t for t in texts if not t.get("is_indictment")]
@@ -2857,7 +2858,7 @@ def _split_indictment_and_evidence(texts: List[Dict[str, str]]):
     return indictment_catalog, indictment_text, evidence_catalog, evidences
 
 
-def _truncate_all(texts: List[Dict[str, str]], max_total: int, strategy_info: Dict[str, Any] = None) -> str:
+def _truncate_all(texts: list[dict[str, str]], max_total: int, strategy_info: dict[str, Any] = None) -> str:
     """
     将所有证据文本合并，限制总长度。
 
@@ -2938,7 +2939,7 @@ def _truncate_all(texts: List[Dict[str, str]], max_total: int, strategy_info: Di
     return "\n\n".join(result_parts)
 
 
-def _check_model_support() -> Dict[str, Any]:
+def _check_model_support() -> dict[str, Any]:
     """
     获取模型策略信息（不再拒绝，所有模型都可以处理）
 

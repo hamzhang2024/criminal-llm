@@ -8,7 +8,6 @@ Case Manager 辅助函数模块
 - _is_non_evidence_document：判断是否为非证据类文书（封面/目录等）
 """
 import logging
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -225,7 +224,7 @@ def _parse_evidence_blocks(llm_output: str, source_file: str) -> list:
     return blocks
 
 
-def _extract_field(text: str, field_name: str) -> Optional[str]:
+def _extract_field(text: str, field_name: str) -> str | None:
     """从证据文本中提取指定字段"""
     import re
     # 匹配 "字段名"：值 或 **字段名**：值 或 | 字段名 | 值 |

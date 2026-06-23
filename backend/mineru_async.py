@@ -19,8 +19,9 @@ import asyncio
 import logging
 import re
 import shutil
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any
 
 import aiohttp
 
@@ -32,27 +33,28 @@ logger.setLevel(logging.DEBUG)
 
 # 从 helpers 模块导入辅助函数、常量和数据类（向后兼容 re-export）
 from mineru_async_helpers import (  # noqa: F401
-    MINERU_API,
-    MINERU_MAX_PAGES,
-    MINERU_MAX_FILE_SIZE,
-    MINERU_BATCH_SIZE,
-    DEFAULT_TIMEOUT,
-    POLL_INTERVAL,
-    DEFAULT_MAX_CONCURRENT,
-    _SSL_CONTEXT,
-    _get_ssl_context,
-    _get_mineru_mode,
-    _get_mineru_local_url,
-    _get_mineru_token,
-    _split_pdf_pages,
-    _fix_ocr_errors,
-    _protect_signatures_as_images,
-    _fold_consecutive_images,
     _OCR_FIXES,
     _SIGNATURE_HTML,
     _SIGNATURE_PATTERNS,
+    _SSL_CONTEXT,
+    DEFAULT_MAX_CONCURRENT,
+    DEFAULT_TIMEOUT,
+    MINERU_API,
+    MINERU_BATCH_SIZE,
+    MINERU_MAX_FILE_SIZE,
+    MINERU_MAX_PAGES,
+    POLL_INTERVAL,
+    BatchProgress,
+    ConvertResult,
+    _fix_ocr_errors,
+    _fold_consecutive_images,
+    _get_mineru_local_url,
+    _get_mineru_mode,
+    _get_mineru_token,
+    _get_ssl_context,
+    _protect_signatures_as_images,
+    _split_pdf_pages,
 )
-from mineru_async_helpers import BatchProgress, ConvertResult
 
 __all__ = [
     "AsyncMinerUConverter",
@@ -84,7 +86,7 @@ class AsyncMinerUConverter:
         )
     """
 
-    def __init__(self, token: Optional[str] = None):
+    def __init__(self, token: str | None = None):
         self.mode = _get_mineru_mode()
         self.local_url = _get_mineru_local_url()
 
@@ -106,7 +108,7 @@ class AsyncMinerUConverter:
         pdf_path: Path,
         output_dir: Path,
         timeout: int = DEFAULT_TIMEOUT,
-        progress_cb: Optional[Callable[[str, str], None]] = None,
+        progress_cb: Callable[[str, str], None] | None = None,
     ) -> ConvertResult:
         """转换单个 PDF 文件
 
@@ -141,12 +143,12 @@ class AsyncMinerUConverter:
 
     async def convert_batch(
         self,
-        pdf_paths: List[Path],
+        pdf_paths: list[Path],
         output_dir: Path,
         max_concurrent: int = DEFAULT_MAX_CONCURRENT,
         timeout: int = DEFAULT_TIMEOUT,
-        progress_cb: Optional[Callable[[BatchProgress], None]] = None,
-    ) -> List[ConvertResult]:
+        progress_cb: Callable[[BatchProgress], None] | None = None,
+    ) -> list[ConvertResult]:
         """批量转换多个 PDF 文件（并发处理）"""
         logger.info(f"[MinerU] convert_batch 入口: {len(pdf_paths)} 个文件, output_dir={output_dir}, max_concurrent={max_concurrent}")
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -217,7 +219,7 @@ class AsyncMinerUConverter:
         pdf_path: Path,
         output_dir: Path,
         timeout: int,
-        progress_cb: Optional[Callable[[str, str], None]] = None,
+        progress_cb: Callable[[str, str], None] | None = None,
     ) -> ConvertResult:
         """转换单个文件（内部方法）"""
         stem = pdf_path.stem
@@ -316,7 +318,7 @@ class AsyncMinerUConverter:
         pdf_path: Path,
         output_dir: Path,
         timeout: int,
-        progress_cb: Optional[Callable[[str, str], None]] = None,
+        progress_cb: Callable[[str, str], None] | None = None,
     ) -> ConvertResult:
         """本地模式：调用本地 MinerU API（异步任务模式）
 
@@ -530,11 +532,11 @@ class AsyncMinerUConverter:
 
     async def _convert_chunks(
         self,
-        chunks: List[Tuple[Path, int, int]],
+        chunks: list[tuple[Path, int, int]],
         original_pdf: Path,
         output_dir: Path,
         timeout: int,
-        progress_cb: Optional[Callable[[str, str], None]] = None,
+        progress_cb: Callable[[str, str], None] | None = None,
     ) -> ConvertResult:
         """分段处理超大 PDF
 
@@ -625,7 +627,7 @@ class AsyncMinerUConverter:
         session: aiohttp.ClientSession,
         pdf_path: Path,
         data_id: str,
-    ) -> Tuple[Optional[str], Optional[str], str]:
+    ) -> tuple[str | None, str | None, str]:
         """提交转换任务，返回 (batch_id, upload_url, error_msg)
 
         Returns:
@@ -737,8 +739,8 @@ class AsyncMinerUConverter:
         batch_id: str,
         data_id: str,
         timeout: int,
-        progress_cb: Optional[Callable[[str, str], None]] = None,
-    ) -> Optional[Dict[str, Any]]:
+        progress_cb: Callable[[str, str], None] | None = None,
+    ) -> dict[str, Any] | None:
         """异步轮询任务结果"""
         waited = 0
         poll_interval = POLL_INTERVAL
@@ -792,10 +794,10 @@ class AsyncMinerUConverter:
 
     async def _download_and_parse(
         self,
-        result_data: Dict[str, Any],
+        result_data: dict[str, Any],
         output_dir: Path,
         stem: str,
-    ) -> Tuple[Optional[str], Optional[Path]]:
+    ) -> tuple[str | None, Path | None]:
         """下载并解析转换结果"""
         zip_url = result_data.get("full_zip_url", "")
         if not zip_url:
@@ -859,7 +861,7 @@ class AsyncMinerUConverter:
 async def convert_pdf_async(
     pdf_path: Path,
     output_dir: Path,
-    progress_cb: Optional[Callable[[str, str], None]] = None,
+    progress_cb: Callable[[str, str], None] | None = None,
 ) -> ConvertResult:
     """异步转换单个 PDF（便捷函数）"""
     converter = AsyncMinerUConverter()
@@ -867,11 +869,11 @@ async def convert_pdf_async(
 
 
 async def convert_batch_async(
-    pdf_paths: List[Path],
+    pdf_paths: list[Path],
     output_dir: Path,
     max_concurrent: int = 3,
-    progress_cb: Optional[Callable[[BatchProgress], None]] = None,
-) -> List[ConvertResult]:
+    progress_cb: Callable[[BatchProgress], None] | None = None,
+) -> list[ConvertResult]:
     """异步批量转换（便捷函数）"""
     converter = AsyncMinerUConverter()
     return await converter.convert_batch(
@@ -880,11 +882,11 @@ async def convert_batch_async(
 
 
 def convert_batch_sync(
-    pdf_paths: List[Path],
+    pdf_paths: list[Path],
     output_dir: Path,
     max_concurrent: int = 3,
-    progress_cb: Optional[Callable[[BatchProgress], None]] = None,
-) -> List[ConvertResult]:
+    progress_cb: Callable[[BatchProgress], None] | None = None,
+) -> list[ConvertResult]:
     """同步批量转换（包装异步函数）"""
     return asyncio.run(convert_batch_async(pdf_paths, output_dir, max_concurrent, progress_cb))
 

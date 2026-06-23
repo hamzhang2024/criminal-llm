@@ -4,7 +4,7 @@
 配置文件：DATA_DIR/criminal-llm-config.json
 """
 import json
-from typing import Any, Dict
+from typing import Any
 
 # 使用 config.py 的 DATA_DIR 确保开发和打包模式下路径一致
 from config import DATA_DIR
@@ -34,11 +34,11 @@ def _ensure_dir():
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
-def load_config() -> Dict[str, Any]:
+def load_config() -> dict[str, Any]:
     """读取配置，合并默认值"""
     if CONFIG_PATH.exists():
         try:
-            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            with open(CONFIG_PATH, encoding="utf-8") as f:
                 user_config = json.load(f)
             return {**DEFAULTS, **user_config}
         except Exception:
@@ -46,14 +46,14 @@ def load_config() -> Dict[str, Any]:
     return {**DEFAULTS}
 
 
-def save_config(config: Dict[str, Any]):
+def save_config(config: dict[str, Any]):
     """保存配置（只保存用户设置的字段）"""
     _ensure_dir()
     with open(CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(config, f, ensure_ascii=False, indent=2)
 
 
-def get_config_status() -> Dict[str, Any]:
+def get_config_status() -> dict[str, Any]:
     """返回配置状态（不返回敏感 Token 明文，供前端显示状态）"""
     config = load_config()
     model = config.get("llm_model", "")

@@ -174,7 +174,7 @@ class TestCaseMetadata:
         """测试更新案件状态"""
         metadata_file = temp_case_dir["case_path"] / "case.json"
 
-        with open(metadata_file, "r", encoding="utf-8") as f:
+        with open(metadata_file, encoding="utf-8") as f:
             metadata = json.load(f)
 
         assert metadata["status"] == "new"
@@ -184,7 +184,7 @@ class TestCaseMetadata:
         with open(metadata_file, "w", encoding="utf-8") as f:
             json.dump(metadata, f, ensure_ascii=False, indent=2)
 
-        with open(metadata_file, "r", encoding="utf-8") as f:
+        with open(metadata_file, encoding="utf-8") as f:
             updated = json.load(f)
 
         assert updated["status"] == "uploaded"

@@ -9,7 +9,7 @@ import subprocess
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import fitz
 from pdf2image import convert_from_path
@@ -51,7 +51,7 @@ class PDFProcessor:
             f.write(file_content)
         return file_path
     
-    def generate_thumbnails(self, pdf_path: Path) -> List[Dict[str, Any]]:
+    def generate_thumbnails(self, pdf_path: Path) -> list[dict[str, Any]]:
         """
         生成所有页面的缩略图
         
@@ -92,7 +92,7 @@ class PDFProcessor:
         
         return thumbnails
     
-    def extract_text(self, pdf_path: Path, max_pages: int = 200) -> Dict[int, str]:
+    def extract_text(self, pdf_path: Path, max_pages: int = 200) -> dict[int, str]:
         """
         提取 PDF 文本内容
 
@@ -129,9 +129,9 @@ class PDFProcessor:
     def split_pdf_with_deletions(
         self,
         pdf_path: Path,
-        splits: List[Dict[str, Any]],
+        splits: list[dict[str, Any]],
         deleted_pages: set
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         按 split 方案拆分 PDF（支持删除页面和不连续页面）
 
@@ -186,7 +186,7 @@ class PDFProcessor:
         doc.close()
         return results
     
-    def save_split_plan(self, splits: List[Dict[str, Any]], deleted_pages: List[int] = None) -> Path:
+    def save_split_plan(self, splits: list[dict[str, Any]], deleted_pages: list[int] = None) -> Path:
         """保存拆分方案"""
         plan_path = self.job_dir / "split_plan.json"
         with open(plan_path, "w", encoding="utf-8") as f:
@@ -198,11 +198,11 @@ class PDFProcessor:
             }, f, ensure_ascii=False, indent=2)
         return plan_path
     
-    def load_split_plan(self) -> Optional[Dict[str, Any]]:
+    def load_split_plan(self) -> dict[str, Any] | None:
         """加载拆分方案"""
         plan_path = self.job_dir / "split_plan.json"
         if plan_path.exists():
-            with open(plan_path, "r", encoding="utf-8") as f:
+            with open(plan_path, encoding="utf-8") as f:
                 return json.load(f)
         return None
 

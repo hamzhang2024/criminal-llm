@@ -14,17 +14,18 @@ PDF → Markdown 转换模块
 """
 
 import json
+import logging
 import os
 import shutil
 
 # 打包后 certifi 证书路径可能失效，macOS 用系统证书
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any
 
 import requests
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +101,7 @@ def _split_pdf_pages(pdf_path: Path, chunk_size: int = MINERU_MAX_PAGES) -> list
     return chunks
 
 
-def _merge_mineru_texts(chunks_data: list[tuple[str, Optional[Path]]]) -> tuple[str, Optional[Path]]:
+def _merge_mineru_texts(chunks_data: list[tuple[str, Path | None]]) -> tuple[str, Path | None]:
     """合并多个 MinerU 转换结果为一个"""
     texts = []
     images_dirs = []
@@ -152,7 +153,7 @@ def _get_mineru_token() -> str:
 # ═══════════════════════════════════════════════════════════
 # 1. 已有 MD 缓存（最快）
 # ═══════════════════════════════════════════════════════════
-def _read_cached_md(pdf_path: Path, output_dir: Optional[Path] = None) -> Optional[str]:
+def _read_cached_md(pdf_path: Path, output_dir: Path | None = None) -> str | None:
     """
     读取已有的 MD 缓存文件
 
@@ -183,7 +184,7 @@ def _read_cached_md(pdf_path: Path, output_dir: Optional[Path] = None) -> Option
     return None
 
 
-def _save_md(pdf_path: Path, text: str) -> Optional[str]:
+def _save_md(pdf_path: Path, text: str) -> str | None:
     """保存 MD 缓存文件（在 PDF 同目录）"""
     md_path = pdf_path.with_suffix(".md")
     try:
@@ -193,7 +194,7 @@ def _save_md(pdf_path: Path, text: str) -> Optional[str]:
         return None
 
 
-def _save_to_dir(pdf_path: Path, text: str, output_dir: Path) -> Optional[str]:
+def _save_to_dir(pdf_path: Path, text: str, output_dir: Path) -> str | None:
     """保存 MD 文件到指定目录"""
     md_path = output_dir / f"{pdf_path.stem}.md"
     try:
@@ -203,19 +204,19 @@ def _save_to_dir(pdf_path: Path, text: str, output_dir: Path) -> Optional[str]:
         return None
 # 后处理函数从 pdf_to_md_postprocess 导入（向后兼容 re-export）
 from pdf_to_md_postprocess import (  # noqa: F401
+    _MAX_IMAGE_DIM,
     _OCR_FIXES,
     _SIGNATURE_HTML,
     _SIGNATURE_PATTERNS,
-    _MAX_IMAGE_DIM,
-    _fix_ocr_errors,
-    _strip_hallucinated_tables,
-    _llm_fix_ocr_errors,
-    _correct_chunk,
-    llm_fix_ocr_sync,
-    _protect_signatures_as_images,
-    _detect_handwritten_pages,
     _compress_images,
+    _correct_chunk,
+    _detect_handwritten_pages,
+    _fix_ocr_errors,
     _fold_consecutive_images,
+    _llm_fix_ocr_errors,
+    _protect_signatures_as_images,
+    _strip_hallucinated_tables,
+    llm_fix_ocr_sync,
 )
 
 
@@ -224,8 +225,8 @@ def _mineru_convert(
     pdf_path: Path,
     output_dir: Path,
     timeout: int = 3600,
-    progress_cb: Optional[callable] = None,
-) -> Optional[tuple[str, Optional[Path]]]:
+    progress_cb: Callable[..., Any] | None = None,
+) -> tuple[str, Path | None] | None:
     """使用 MinerU API 转换 PDF → MD，自动处理超大文件
 
     MinerU 使用 auto 模式，内部智能判断每页是否需要 OCR。
@@ -325,8 +326,8 @@ def _mineru_convert_single(
     pdf_path: Path,
     output_dir: Path,
     timeout: int = 3600,
-    progress_cb: Optional[callable] = None,
-) -> Optional[tuple[str, Optional[Path]]]:
+    progress_cb: Callable[..., Any] | None = None,
+) -> tuple[str, Path | None] | None:
     """使用 MinerU API 转换单个 PDF → MD（调用方已确保文件大小在限制内）
 
     失败时自动重试 2 次（共 3 次尝试），指数退避间隔 15s → 30s。
@@ -355,8 +356,8 @@ def _do_mineru_convert(
     pdf_path: Path,
     output_dir: Path,
     timeout: int = 3600,
-    progress_cb: Optional[callable] = None,
-) -> Optional[tuple[str, Optional[Path]]]:
+    progress_cb: Callable[..., Any] | None = None,
+) -> tuple[str, Path | None] | None:
     """执行一次 MinerU 转换调用（单次，不含重试）"""
     token = _get_mineru_token()
     if not token:
@@ -444,7 +445,8 @@ def _do_mineru_convert(
                 data = resp_json.get("data", {})
                 results = data.get("extract_result", [])
                 if not results:
-                    time.sleep(poll_interval); waited += poll_interval
+                    time.sleep(poll_interval)
+                    waited += poll_interval
                     if progress_cb:
                         progress_cb("processing", f"正在识别文本内容...（已等待 {waited} 秒）")
                     continue
@@ -531,11 +533,13 @@ def _do_mineru_convert(
                     logger.error(f"[MinerU] 云端转换失败: {pdf_path.name}, {err_info}")
                     return None, None
 
-                time.sleep(poll_interval); waited += poll_interval
+                time.sleep(poll_interval)
+                waited += poll_interval
 
             except Exception as inner_e:
                 logger.error(f"[MinerU] 轮询异常: {inner_e}")
-                time.sleep(poll_interval); waited += poll_interval
+                time.sleep(poll_interval)
+                waited += poll_interval
                 continue
 
         logger.info(f"[MinerU] 转换超时: {pdf_path.name}")
@@ -552,9 +556,9 @@ def _do_mineru_convert(
 def get_evidence_text(
     pdf_path: str,
     prefer_md: bool = True,
-    output_dir: Optional[str] = None,
-    progress_cb: Optional[callable] = None,
-) -> Tuple[str, Optional[str]]:
+    output_dir: str | None = None,
+    progress_cb: Callable[..., Any] | None = None,
+) -> tuple[str, str | None]:
     """
     获取证据文本
 
@@ -632,8 +636,8 @@ def get_evidence_text(
 def _convert_with_paddleocr(
     pdf: Path,
     out: Path,
-    progress_cb: Optional[callable] = None,
-) -> Tuple[Optional[str], Optional[Path]]:
+    progress_cb: Callable[..., Any] | None = None,
+) -> tuple[str | None, Path | None]:
     """使用 PaddleOCR 引擎转换 PDF
 
     配额用尽时自动回退到 MinerU。
@@ -670,10 +674,10 @@ def _convert_with_paddleocr(
 
 def convert_directory(
     dir_path: str,
-    output_dir: Optional[str] = None,
+    output_dir: str | None = None,
     prefer_mineru: bool = True,
     recursive: bool = True,
-) -> List[Dict[str, str]]:
+) -> list[dict[str, str]]:
     """
     批量转换目录下所有 PDF → MD
     

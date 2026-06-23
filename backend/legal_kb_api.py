@@ -4,7 +4,6 @@
 提供法律知识条目的 CRUD 操作，数据存储在 ~/.criminal-llm/legal_kb/
 """
 
-from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 from legal_search import (
@@ -23,14 +22,14 @@ router = APIRouter(prefix="/api/legal-knowledge", tags=["法律知识库"])
 class LegalKBItem(BaseModel):
     title: str
     content: str
-    crime_type: Optional[str] = ""
-    id: Optional[str] = None
+    crime_type: str | None = ""
+    id: str | None = None
 
 
 class LegalKBUpdate(BaseModel):
-    title: Optional[str] = None
-    content: Optional[str] = None
-    crime_type: Optional[str] = None
+    title: str | None = None
+    content: str | None = None
+    crime_type: str | None = None
 
 
 class LegalSearchRequest(BaseModel):

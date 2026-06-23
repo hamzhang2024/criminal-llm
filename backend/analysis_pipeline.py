@@ -9,13 +9,12 @@
 5. 辩护意见生成
 """
 import json
+import logging
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 from llm_client import get_llm_client
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -68,12 +67,12 @@ DEFAULT_STATE = {
 # 本模块的模块级常量尚未定义，导致 NameError）
 # 辅助函数从 analysis_pipeline_helpers 导入（向后兼容 re-export）
 from analysis_pipeline_helpers import (  # noqa: F401
-    _extract_name_from_content,
-    _extract_person_from_filename,
-    infer_evidence_type,
     _classify_document_type,
     _contains_indictment_title,
+    _extract_name_from_content,
+    _extract_person_from_filename,
     _split_sessions,
+    infer_evidence_type,
 )
 
 
@@ -82,7 +81,7 @@ class AnalysisPipeline:
 
     MAX_CONCURRENCY = 5
 
-    def __init__(self, case_id: str, case_dir: Path, indictment_file: Optional[str] = None):
+    def __init__(self, case_id: str, case_dir: Path, indictment_file: str | None = None):
         self.case_id = case_id
         self.case_dir = Path(case_dir) if isinstance(case_dir, str) else case_dir
         self.analysis_dir = self.case_dir / "analysis"
@@ -210,7 +209,7 @@ class AnalysisPipeline:
         """读取前序步骤结果"""
         path = self.analysis_dir / f"step_{step}_result.json"
         if path.exists():
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 return json.load(f)
         return None
 
@@ -223,7 +222,7 @@ class AnalysisPipeline:
         """加载分析状态，不存在则从磁盘证据重建"""
         path = self._state_path()
         if path.exists():
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 return json.load(f)
         return self._reconstruct_state_from_disk()
 
@@ -241,7 +240,7 @@ class AnalysisPipeline:
                 state["steps"][step_key]["completed_at"] = now
                 if step_num == 4:
                     try:
-                        with open(result_file, "r", encoding="utf-8") as f:
+                        with open(result_file, encoding="utf-8") as f:
                             data = json.load(f)
                         if "sub_steps" in data:
                             for sk, sv in data["sub_steps"].items():
@@ -278,7 +277,7 @@ class AnalysisPipeline:
 
         return state
 
-    def _save_analysis_state(self, state: Optional[dict] = None):
+    def _save_analysis_state(self, state: dict | None = None):
         """保存分析状态到 analysis_state.json
 
         Args:
@@ -329,7 +328,7 @@ class AnalysisPipeline:
         state["steps"][step] = step_data
         self._save_analysis_state(state)  # 传递修改后的 state
 
-    def _get_next_unfinished_step(self) -> Optional[float]:
+    def _get_next_unfinished_step(self) -> float | None:
         """找到下一个未完成的步骤编号，全部完成返回 None。
         步骤 4 完成后优先检查 4.5 是否完成，再进入步骤 5。
         步骤 5 已完但 4.5 不存在时，返回 4.5 用于补充控辩对抗。
@@ -412,14 +411,14 @@ class AnalysisPipeline:
         with open(path, "w", encoding="utf-8") as f:
             f.write(content)
 
-    def _load_summary_file(self, subdir: str, filename: str) -> Optional[str]:
+    def _load_summary_file(self, subdir: str, filename: str) -> str | None:
         """读取已存在的总结文件"""
         path = self.analysis_dir / "summaries" / subdir / filename
         if path.exists():
             return path.read_text(encoding="utf-8")
         return None
 
-    def _load_contradiction_file(self, filename: str) -> Optional[str]:
+    def _load_contradiction_file(self, filename: str) -> str | None:
         """读取已存在的矛盾分析文件（返回 Markdown 文本）"""
         path = self.analysis_dir / "contradictions" / filename
         if path.exists():
@@ -444,7 +443,7 @@ class AnalysisPipeline:
 
     # ========== 步骤 1: 合并笔录 ==========
 
-    async def step1_merge_statements(self, defendant: str, crime_type: Optional[str] = None) -> dict:
+    async def step1_merge_statements(self, defendant: str, crime_type: str | None = None) -> dict:
         """合并笔录：扫描 md/ 目录，按人名+类型合并笔录文件（纯代码，无 LLM）
 
         人名提取策略（三源交叉验证）：
@@ -549,7 +548,7 @@ class AnalysisPipeline:
 
     # ========== 步骤 2: 逐次详细总结 ==========
 
-    async def step2_detailed_summaries(self, defendant: str, crime_type: Optional[str] = None, progress_cb=None) -> dict:
+    async def step2_detailed_summaries(self, defendant: str, crime_type: str | None = None, progress_cb=None) -> dict:
         """对合并后的笔录文件，逐人做详细总结（串行，每次一个）"""
         step1 = self._load_step_result(1)
         if not step1:
@@ -651,7 +650,7 @@ class AnalysisPipeline:
 
     # ========== 步骤 3: 内部矛盾分析 ==========
 
-    async def step3_internal_contradiction(self, defendant: str, crime_type: Optional[str] = None, progress_cb=None) -> dict:
+    async def step3_internal_contradiction(self, defendant: str, crime_type: str | None = None, progress_cb=None) -> dict:
         """对有多次笔录的人，做内部矛盾分析（串行）"""
         step1 = self._load_step_result(1)
         step2 = self._load_step_result(2)
@@ -758,7 +757,7 @@ class AnalysisPipeline:
             return []
         return sorted([f.name for f in d.iterdir() if f.is_file()])
 
-    def _search_legal_knowledge(self, crime_type: Optional[str]) -> dict:
+    def _search_legal_knowledge(self, crime_type: str | None) -> dict:
         """从内置刑法中搜索相关法条"""
         from legal_knowledge import CRIME_ARTICLE_MAP, load_criminal_law
 
@@ -817,7 +816,7 @@ class AnalysisPipeline:
 
         return idx
 
-    async def step4_build_case_wiki(self, defendant: str, crime_type: Optional[str] = None, progress_cb=None) -> dict:
+    async def step4_build_case_wiki(self, defendant: str, crime_type: str | None = None, progress_cb=None) -> dict:
         """步骤 4：用 LLM Wiki 模式构建案件证据知识库（全部串行）"""
         step1 = self._load_step_result(1)
         step2 = self._load_step_result(2)
@@ -1126,7 +1125,7 @@ class AnalysisPipeline:
     def _debate_file_exists(self, filename: str) -> bool:
         return (self._debate_dir() / filename).exists()
 
-    async def step45_debate_simulation(self, defendant: str, crime_type: Optional[str] = None, progress_cb=None) -> dict:
+    async def step45_debate_simulation(self, defendant: str, crime_type: str | None = None, progress_cb=None) -> dict:
         """步骤 4.5：控辩对抗模拟（沙箱模式 + 交叉对决 + 法官裁决）
 
         沙箱模式：控辩双方各自独立组织论点，互不可见。
@@ -1502,7 +1501,7 @@ class AnalysisPipeline:
                 report += f"\n## {title}\n\n{content}\n\n---\n\n"
         return report
 
-    async def step5_defense_opinion(self, defendant: str, crime_type: Optional[str] = None, progress_cb=None) -> dict:
+    async def step5_defense_opinion(self, defendant: str, crime_type: str | None = None, progress_cb=None) -> dict:
         """辩护意见生成（分阶段渐进式，每阶段独立保存）"""
         step1 = self._load_step_result(1)
         if not step1:

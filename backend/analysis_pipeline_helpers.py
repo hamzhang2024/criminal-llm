@@ -11,7 +11,6 @@ Analysis Pipeline 辅助函数模块
 import logging
 import re
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +36,7 @@ CONTENT_NAME_PATTERNS = [
 ]
 
 
-def _extract_name_from_content(text: str, max_len: int = 5000) -> Optional[str]:
+def _extract_name_from_content(text: str, max_len: int = 5000) -> str | None:
     """从笔录正文提取人名（匹配被讯问人/被询问人后的姓名）"""
     preview = text[:max_len]
     for pat in CONTENT_NAME_PATTERNS:
@@ -50,7 +49,7 @@ def _extract_name_from_content(text: str, max_len: int = 5000) -> Optional[str]:
     return None
 
 
-def _extract_person_from_filename(filename: str) -> Optional[str]:
+def _extract_person_from_filename(filename: str) -> str | None:
     """从文件名提取人名
     文件名格式示例：
     - 第2卷_处理_01_江涛讯问笔录.md  （_序号_人名+类型）

@@ -5,9 +5,8 @@
 动态：通过 LLM 联网搜索从国家法律法规数据库获取司法解释
 """
 
-from pathlib import Path
-from typing import Optional
 import logging
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +19,7 @@ def _load_builtin_law(filename: str) -> str:
     if not law_path.exists():
         logger.info(f"[法律知识库] 内置法律文件不存在: {filename}")
         return ""
-    with open(law_path, "r", encoding="utf-8") as f:
+    with open(law_path, encoding="utf-8") as f:
         return f.read()
 
 
@@ -41,7 +40,7 @@ def load_all_builtin_laws() -> str:
         return ""
     for f in sorted(LEGAL_DB_DIR.glob("*.md")):
         try:
-            with open(f, "r", encoding="utf-8") as fh:
+            with open(f, encoding="utf-8") as fh:
                 content = fh.read()
                 parts.append(content)
         except Exception as e:
@@ -64,7 +63,7 @@ CRIME_ARTICLE_MAP = {
 }
 
 
-def get_dynamic_legal_knowledge(crime_type: Optional[str] = None) -> str:
+def get_dynamic_legal_knowledge(crime_type: str | None = None) -> str:
     """获取动态法律知识（内置 + 联网搜索 + 用户自定义知识库）
 
     合并三个来源：

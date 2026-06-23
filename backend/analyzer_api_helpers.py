@@ -10,12 +10,12 @@ Analyzer API 辅助函数模块
 """
 import logging
 import re
-from typing import Any, Dict, List
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-def apply_report_update(original_markdown: str, update_result: Dict[str, Any]) -> str:
+def apply_report_update(original_markdown: str, update_result: dict[str, Any]) -> str:
     """
     应用增量更新到原报告（支持多个更新批量应用）
     
@@ -134,7 +134,7 @@ def extract_pdf_text(pdf_path: str, max_pages: int = 50) -> str:
         return f"[文本提取失败: {e}]"
 
 
-def build_analysis_prompt(defendant: str, evidence_texts: List[Dict]) -> str:
+def build_analysis_prompt(defendant: str, evidence_texts: list[dict]) -> str:
     """构建分析提示词"""
     evidence_section = "\n\n".join([
         f"### {e['filename']} ({e['type']})\n{e['text']}"
@@ -182,7 +182,7 @@ def build_analysis_prompt(defendant: str, evidence_texts: List[Dict]) -> str:
 """
 
 
-def parse_report(markdown_text: str) -> Dict[str, Any]:
+def parse_report(markdown_text: str) -> dict[str, Any]:
     """
     解析 Markdown 报告为结构化数据
     

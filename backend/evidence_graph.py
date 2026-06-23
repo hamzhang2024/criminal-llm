@@ -10,12 +10,12 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-def generate_evidence_graph(evidence_dir: Path, case_id: str = "") -> Dict[str, Any]:
+def generate_evidence_graph(evidence_dir: Path, case_id: str = "") -> dict[str, Any]:
     """生成证据关联图谱
 
     Args:
@@ -45,7 +45,7 @@ def generate_evidence_graph(evidence_dir: Path, case_id: str = "") -> Dict[str, 
         return {"case_id": case_id, "mermaid": "", "nodes": [], "edges": [], "stats": {}, "error": "无证据数据"}
 
     # ── 第1步：提取人物节点（从 persons 字段） ──
-    person_to_evidence: Dict[str, List[int]] = {}  # 人物 -> 出现的证据 id 列表
+    person_to_evidence: dict[str, list[int]] = {}  # 人物 -> 出现的证据 id 列表
     for ev in evidence_list:
         persons_raw = ev.get("persons", "") or ""
         if not persons_raw.strip():
@@ -61,7 +61,7 @@ def generate_evidence_graph(evidence_dir: Path, case_id: str = "") -> Dict[str, 
     all_persons = list(frequent_persons.keys())
 
     # ── 第2步：构建共现边（两人同时出现在同一证据） ──
-    co_occurrence: Dict[tuple, int] = {}  # (personA, personB) -> 共现次数
+    co_occurrence: dict[tuple, int] = {}  # (personA, personB) -> 共现次数
     for ev in evidence_list:
         persons_raw = ev.get("persons", "") or ""
         if not persons_raw.strip():
@@ -79,7 +79,7 @@ def generate_evidence_graph(evidence_dir: Path, case_id: str = "") -> Dict[str, 
 
     # ── 第3步：构建矛盾边（contradiction_hints 中提到的人物之间） ──
     # 矛盾边为人物↔人物（hint 中提到的两人之间），避免引用未定义的证据节点
-    contradiction_edges: List[dict] = []
+    contradiction_edges: list[dict] = []
     for ev in evidence_list:
         hint = (ev.get("contradiction_hints") or "").strip()
         if not hint or hint == "无":
@@ -94,7 +94,7 @@ def generate_evidence_graph(evidence_dir: Path, case_id: str = "") -> Dict[str, 
 
     # ── 第4步：构建同人多笔关联边（人物节点之间的关联） ──
     # 关联边的两端都是该被讯问人，渲染为人物节点的自指标注
-    relation_edges: List[dict] = []
+    relation_edges: list[dict] = []
     for ev in evidence_list:
         related = ev.get("related_evidence_ids", []) or []
         if not related:

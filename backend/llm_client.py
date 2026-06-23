@@ -9,7 +9,7 @@ import logging
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import httpx
 
@@ -51,7 +51,7 @@ except ImportError:
 try:
     ZHANG_CRIMINAL_DEFENSE_PATH = Path(__file__).parent.parent / "zhang-criminal-defense" / "criminal-defense.md"
     if ZHANG_CRIMINAL_DEFENSE_PATH.exists():
-        with open(ZHANG_CRIMINAL_DEFENSE_PATH, "r", encoding="utf-8") as f:
+        with open(ZHANG_CRIMINAL_DEFENSE_PATH, encoding="utf-8") as f:
             ZHANG_CRIMINAL_DEFENSE = f.read()
     else:
         ZHANG_CRIMINAL_DEFENSE = ""
@@ -78,7 +78,7 @@ class LLMClient:
     """LLM 客户端 - 支持 OpenAI 兼容 API"""
 
     # 类级别配置缓存
-    _config_cache: Optional[Dict[str, Any]] = None
+    _config_cache: dict[str, Any] | None = None
     _config_cache_time: float = 0
     _config_cache_ttl: float = 30.0  # 缓存有效期 30 秒
 
@@ -100,7 +100,7 @@ class LLMClient:
         logger.info("[LLM 客户端] apiKey: %s", '已配置' if api_key else '未配置')
 
     @classmethod
-    def _get_cached_config(cls) -> tuple[str, Optional[str], str]:
+    def _get_cached_config(cls) -> tuple[str, str | None, str]:
         """获取配置（带缓存，30秒有效期）"""
         now = time.time()
         if cls._config_cache is not None and (now - cls._config_cache_time) < cls._config_cache_ttl:
@@ -138,8 +138,8 @@ class LLMClient:
 
     async def chat(
         self,
-        messages: List[Dict[str, str]],
-        model: Optional[str] = None
+        messages: list[dict[str, str]],
+        model: str | None = None
     ) -> str:
         """
         发送聊天请求
@@ -226,9 +226,9 @@ class LLMClient:
     async def analyze_case(
         self,
         defendant: str,
-        evidence_texts: List[Dict[str, Any]],
-        model: Optional[str] = None,
-        crime_type: Optional[str] = None  # 新增：罪名类型，用于动态加载知识
+        evidence_texts: list[dict[str, Any]],
+        model: str | None = None,
+        crime_type: str | None = None  # 新增：罪名类型，用于动态加载知识
     ) -> str:
         """
         分析案卷内容
@@ -495,8 +495,8 @@ class LLMClient:
         update_instruction: str,
         original_report: str,
         evidence_context: str,
-        model: Optional[str] = None
-    ) -> Dict[str, Any]:
+        model: str | None = None
+    ) -> dict[str, Any]:
         """
         智能更新报告 - 分析修改的影响范围，输出需要修改的所有部分
         
@@ -545,7 +545,7 @@ class LLMClient:
             "reason": "自首情节需要新增辩护要点"
         },
         {
-            "action": "replace", 
+            "action": "replace",
             "target_section": "七、结论与建议",
             "new_content": "...",
             "reason": "辩护策略因自首情节需要调整"
@@ -607,8 +607,8 @@ class LLMClient:
         self,
         question: str,
         evidence_context: str,
-        report_context: Optional[str] = None,
-        model: Optional[str] = None
+        report_context: str | None = None,
+        model: str | None = None
     ) -> str:
         """
         基于案件证据进行对话问答
@@ -690,7 +690,7 @@ class LLMClient:
 
 
 # 全局客户端实例
-_client: Optional[LLMClient] = None
+_client: LLMClient | None = None
 import threading
 
 _lock = threading.Lock()

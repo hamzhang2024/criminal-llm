@@ -8,12 +8,12 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-def run_quality_gate(evidence_dir: Path, case_id: str = "") -> Dict[str, Any]:
+def run_quality_gate(evidence_dir: Path, case_id: str = "") -> dict[str, Any]:
     """对证据提取结果运行质量门禁检查
 
     Args:
@@ -24,7 +24,7 @@ def run_quality_gate(evidence_dir: Path, case_id: str = "") -> Dict[str, Any]:
         质量报告字典，同时写入 evidence/quality_report.json
     """
     index_file = evidence_dir / "index.json"
-    report: Dict[str, Any] = {
+    report: dict[str, Any] = {
         "case_id": case_id,
         "generated_at": datetime.now().isoformat(),
         "alerts": [],
@@ -67,7 +67,7 @@ def run_quality_gate(evidence_dir: Path, case_id: str = "") -> Dict[str, Any]:
         1 for e in evidence_list
         if not (hint := (e.get("contradiction_hints") or "").strip()) or hint == "无"
     )
-    type_distribution: Dict[str, int] = {}
+    type_distribution: dict[str, int] = {}
     for e in evidence_list:
         t = e.get("type", "其他证据")
         type_distribution[t] = type_distribution.get(t, 0) + 1
@@ -83,7 +83,7 @@ def run_quality_gate(evidence_dir: Path, case_id: str = "") -> Dict[str, Any]:
     }
 
     # 规则检查
-    alerts: List[Dict[str, Any]] = []
+    alerts: list[dict[str, Any]] = []
 
     # 规则1：全案证据数量异常
     if total == 0:
@@ -148,7 +148,7 @@ def run_quality_gate(evidence_dir: Path, case_id: str = "") -> Dict[str, Any]:
     return report
 
 
-def _save_report(evidence_dir: Path, report: Dict[str, Any]) -> None:
+def _save_report(evidence_dir: Path, report: dict[str, Any]) -> None:
     """保存质量报告到 evidence/quality_report.json"""
     report_file = evidence_dir / "quality_report.json"
     try:
