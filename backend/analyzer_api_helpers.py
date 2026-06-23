@@ -82,8 +82,6 @@ def apply_report_update(original_markdown: str, update_result: Dict[str, Any]) -
 
 def infer_evidence_type(filename: str) -> str:
     """从文件名推断证据类型"""
-    filename_lower = filename.lower()
-    
     if "起诉" in filename or "指控" in filename:
         return "起诉意见书"
     elif "讯问" in filename or "供述" in filename or "笔录" in filename:

@@ -693,10 +693,7 @@ timeline
         阶段 4：梳理涉案罪名的法律法规
         输出：刑法法条 + 司法解释 + 类案裁判要旨 + 量刑指导意见
         """
-        texts = self._load_evidence_texts()
-
         # 获取法律知识库
-        legal_kb = get_legal_knowledge()
         crime_specific = ""
         if crime_type:
             crime_specific = get_dynamic_legal_knowledge(crime_type)
@@ -820,7 +817,6 @@ timeline
         stage3_md = _read_stage_md(self.analysis_dir, 3)
         stage4_md = _read_stage_md(self.analysis_dir, 4)
 
-        legal_kb = get_legal_knowledge()
         crime_specific = ""
         if crime_type:
             crime_specific = get_dynamic_legal_knowledge(crime_type)
@@ -2129,7 +2125,6 @@ def generate_evidence_chain(case_path: Path) -> Dict[str, Any]:
             pass
 
     # 4.6 预加载组合质证数据（用于证据间矛盾/印证关系）
-    group_contradictions: List[Dict[str, Any]] = []  # 组合质证发现的关系
     for rev in review_scores.get("__groups__", {}).get("group_reviews", []):
         pass  # placeholder
     # 直接从 review_data_raw 读取组合质证的 group_findings
@@ -2251,14 +2246,14 @@ def generate_evidence_chain(case_path: Path) -> Dict[str, Any]:
         proves_details = {}   # 记录每个事实的相关内容片段
         ev_key_facts = ev.get("key_facts", "") or ""
         # full_text 融合名称、关键事实、摘要、内容，用于关键词匹配
-        full_text = (ev_name + " " + ev_key_facts + " " + ev_summary + " " + ev_content[:3000]).lower()
+        full_text = (ev_name + " " + ev_key_facts + " " + ev_summary + " " + ev_content[:3000]).lower()  # noqa: F841  疑似未完成逻辑：本应用于关键词匹配但当前未使用
 
         # 如果 index.json 中没有 content，尝试读取 MD 文件
         if not ev_content and ev.get("md_file"):
             md_path = evidence_dir / ev["md_file"]
             if md_path.exists():
                 try:
-                    full_text = (ev_name + " " + ev_key_facts + " " + ev_summary + " " + md_path.read_text(encoding="utf-8")[:5000]).lower()
+                    full_text = (ev_name + " " + ev_key_facts + " " + ev_summary + " " + md_path.read_text(encoding="utf-8")[:5000]).lower()  # noqa: F841  同上，fallback 路径
                 except Exception:
                     pass
 

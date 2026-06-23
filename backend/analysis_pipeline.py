@@ -1175,13 +1175,6 @@ class AnalysisPipeline:
         ] if p]
         context = "\n\n".join(context_parts)[:50000]
 
-        step_name_map = {
-            "45a": "控方沙箱",
-            "45b": "辩方沙箱",
-            "45c": "交叉对决",
-            "45d": "法官裁决",
-        }
-
         results_log = {"sub_steps": [], "debate_dir": str(self._debate_dir())}
         sub_done = 0
         sub_total = 4

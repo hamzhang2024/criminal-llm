@@ -20,7 +20,6 @@ import shutil
 # 打包后 certifi 证书路径可能失效，macOS 用系统证书
 import sys
 import time
-import zipfile
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 

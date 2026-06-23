@@ -134,14 +134,12 @@ def _parse_evidence_blocks(llm_output: str, source_file: str) -> list:
         r'#{1,3}\s*证据\s*(\d+)\s*$',                  # ### 证据 1
     ]
 
-    used_pattern = None
     sections = None
 
     for pat in patterns:
         p = re.compile(pat, re.MULTILINE)
         matches = list(p.finditer(llm_output))
         if matches:
-            used_pattern = pat
             # 按匹配位置拆分
             sections = []
             last_end = 0

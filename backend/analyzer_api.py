@@ -989,7 +989,6 @@ async def chat_update(
 
     try:
         updated = await client.chat(messages)
-        summary = updated[:200] + '...' if len(updated) > 200 else updated
         return {'updated_report': updated, 'summary': '已按要求更新报告'}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f'更新失败: {str(e)}')

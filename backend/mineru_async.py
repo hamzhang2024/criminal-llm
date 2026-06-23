@@ -19,7 +19,6 @@ import asyncio
 import logging
 import re
 import shutil
-import zipfile
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -333,9 +332,6 @@ class AsyncMinerUConverter:
             if progress_cb:
                 progress_cb("uploading", "正在发送到本地服务器...")
 
-            file_size = pdf_path.stat().st_size
-            upload_timeout = max(300, file_size // (1024 * 1024) * 30)
-
             with open(pdf_path, "rb") as f:
                 file_content = f.read()
 
@@ -565,8 +561,6 @@ class AsyncMinerUConverter:
             chunk_path.unlink(missing_ok=True)
 
             if result.success and result.text:
-                # 添加页码范围标记，保持与原 PDF 结构对应
-                page_marker = f"\n\n<!-- 原PDF第{start_page}-{end_page}页 -->\n\n"
                 chunk_results.append((result.text, start_page, end_page))
                 if result.images_dir:
                     all_images_dirs.append(result.images_dir)

@@ -214,7 +214,6 @@ async def _llm_fix_ocr_errors(text: str) -> str:
     if len(text) > max_input:
         # 长文本分段处理
         paragraphs = text.split('\n\n')
-        result_parts = []
         current_chunk = ""
         chunks = []
         for p in paragraphs:

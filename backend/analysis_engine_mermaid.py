@@ -24,8 +24,6 @@ def _json_to_mermaid_graph(data: dict) -> str:
     nodes = data.get("nodes", [])
     edges = data.get("edges", [])
     subgraphs = data.get("subgraphs", [])
-    group_styles = {}
-
     # 根据 group 定义样式
     group_map = {
         "core": ("核心", "#f9d0a6", "#d48a3c", 2),

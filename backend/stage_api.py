@@ -42,7 +42,6 @@ async def _run_sub_stage(engine, sub_stage_type: str, defendant: str, crime_type
     """
     # 读取阶段 1-4 的 Markdown
     stage1_md = _read_stage_md(engine.analysis_dir, 1)
-    stage2_md = _read_stage_md(engine.analysis_dir, 2)
     stage3_md = _read_stage_md(engine.analysis_dir, 3)
     stage4_md = _read_stage_md(engine.analysis_dir, 4)
 
@@ -102,9 +101,11 @@ async def _run_sub_stage(engine, sub_stage_type: str, defendant: str, crime_type
         from legal_knowledge import THEORY_THREE_TIERS
         try:
             from legal_knowledge import get_dynamic_legal_knowledge
-            crime_specific = get_dynamic_legal_knowledge(crime_type) if crime_type else ""
+            # 保留联网搜索副作用，返回值当前未使用（疑似遗留代码）
+            if crime_type:
+                get_dynamic_legal_knowledge(crime_type)
         except Exception:
-            crime_specific = ""
+            pass
 
         result = await client.chat([
             {"role": "system", "content": "你是刑事案卷智能分析系统，请客观撰写三阶层综合辩护分析报告。"},
@@ -209,27 +210,27 @@ async def _execute_all_stages(case_id: str, defendant: str, crime_type: Optional
         # 阶段 1
         ANALYSIS_TASKS[case_id] = {"status": "running", "current_stage": 1}
         _set_progress(case_id, 1, "正在分析起诉书，提取指控要素...", current=1, total=5, substage="指控要素")
-        r1 = await engine.stage_1_read_indictment(defendant, crime_type)
+        await engine.stage_1_read_indictment(defendant, crime_type)
 
         # 阶段 2
         ANALYSIS_TASKS[case_id] = {"status": "running", "current_stage": 2}
         _set_progress(case_id, 2, "正在分析人物关系...", current=2, total=5, substage="人物关系")
-        r2 = await engine.stage_2_character_relations(defendant, crime_type)
+        await engine.stage_2_character_relations(defendant, crime_type)
 
         # 阶段 3
         ANALYSIS_TASKS[case_id] = {"status": "running", "current_stage": 3}
         _set_progress(case_id, 3, "正在分析事件时间线和证据归组...", current=3, total=5, substage="事件拆解")
-        r3 = await engine.stage_3_event_timeline(defendant, crime_type)
+        await engine.stage_3_event_timeline(defendant, crime_type)
 
         # 阶段 4
         ANALYSIS_TASKS[case_id] = {"status": "running", "current_stage": 4}
         _set_progress(case_id, 4, f"正在梳理{crime_type or '涉案罪名'}相关法律法规...", current=4, total=5, substage="法律法规")
-        r4 = await engine.stage_4_legal_regulations(defendant, crime_type)
+        await engine.stage_4_legal_regulations(defendant, crime_type)
 
         # 阶段 5
         ANALYSIS_TASKS[case_id] = {"status": "running", "current_stage": 5}
         _set_progress(case_id, 5, "正在生成综合辩护分析报告...", current=5, total=5, substage="综合辩护")
-        r5 = await engine.stage_5_full_defense(defendant, crime_type)
+        await engine.stage_5_full_defense(defendant, crime_type)
 
         _clear_progress(case_id)
         ANALYSIS_TASKS[case_id] = {"status": "completed", "stages": 5}
@@ -1049,9 +1050,6 @@ async def _search_similar_cases_llm(stage1_content: str, case_path: Path = None)
             if all_cases:
                 try:
                     logger.info(f"[类案检索] 开始 LLM 增强，共 {len(all_cases)} 个案例")
-                    
-                    # 提取案例标题列表
-                    case_list = "\n".join([f"{i+1}. {c['title']}" for i, c in enumerate(all_cases[:15])])
                     
                     # 构建案例内容列表给 LLM 分析
                     case_contents = "\n\n".join([

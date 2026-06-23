@@ -1977,7 +1977,6 @@ async def _do_extract_evidence(
             # 重新分配连续编号（跳过的文书不占编号），同步重命名 MD 文件和更新 md_file
             import re as _re
             for i, ev in enumerate(filtered_evidence, 1):
-                old_id = ev["id"]
                 ev["id"] = i
                 old_md_file = ev.get("md_file", "")
                 if old_md_file:
