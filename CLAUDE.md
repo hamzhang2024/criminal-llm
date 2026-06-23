@@ -356,11 +356,23 @@ python3 -m uvicorn main:app --host 0.0.0.0 --port 8000
 - 触发：`git tag v1.0.10 && git push origin --tags` 或在 GitHub Actions 页面手动 Run workflow
 
 #### 本地打包
-1. **PyInstaller 打包后端**：`cd backend && pyinstaller criminal-llm.spec --noconfirm`
-2. **前端构建**：`cd frontend && npm run build`
-3. **Tauri 构建**：`cd frontend && npx tauri build`
+1. **一键打包**：`cd frontend && ./build-app.sh`（含打包前校验 + PyInstaller + 复制资源 + Tauri build）
+2. **PyInstaller 打包后端**：`cd backend && pyinstaller criminal-llm.spec --noconfirm`
+3. **前端构建**：`cd frontend && npm run build`
+4. **Tauri 构建**：`cd frontend && npx tauri build`
    - DMG 打包有中文文件名兼容问题，需用 `hdiutil` 手动创建
-4. **清理缓存**：重新打包前清理 `backend/__pycache__/` 和 `backend/build/`
+5. **清理缓存**：重新打包前清理 `backend/__pycache__/` 和 `backend/build/`
+
+#### 打包前校验（必须通过）
+- **`scripts/prebuild_check.py`**：扫描硬编码路径、外部命令、print 语句、**模块完整性**（被 import 的本地模块是否都被 collect_modules 收集）
+- 模块完整性失败会阻断打包（避免运行时 ModuleNotFoundError）
+- **`backend/collect_modules.py`**：自动扫描 `backend/*.py` 生成本地模块列表，被 spec 调用，**新增模块无需手动同步 spec**
+
+#### 依赖管理
+- **`backend/requirements.txt`**：直接依赖 + 版本下限（允许补丁更新）
+- **`backend/requirements-lock.txt`**：精确版本锁文件，CI/打包用 `pip install -r requirements-lock.txt` 保证可复现
+- 升级依赖后重新生成锁文件：`python3 -m pip freeze | grep -iE '<包名>'`
+- **spec excludes**：排除后端未使用的重依赖（numpy/opencv/PyPDF2/pdfplumber/matplotlib/tkinter 等），瘦身产物
 
 #### 服务器部署
 - 下载地址：`root@118.196.83.43:/opt/criminal-llm-auth/data/uploads/`

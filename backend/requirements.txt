@@ -1,22 +1,21 @@
 # FastAPI 及依赖
-fastapi
-uvicorn
-python-multipart
-pydantic
+fastapi>=0.129.0
+uvicorn>=0.40.0
+python-multipart>=0.0.22
+pydantic>=2.13.0
 
-# PDF 处理
-pypdf
-pdf2image
-PyMuPDF  # PDF 文本提取
-Pillow   # 图像处理（打包必需）
+# PDF 处理（PyMuPDF 为核心 PDF 引擎，pdf2image 用于缩略图）
+pdf2image>=1.17.0
+PyMuPDF>=1.24.14
+Pillow>=12.2.0   # 图像处理（打包必需）
 
 # HTTP 客户端
-httpx
-requests
-aiohttp  # 异步 HTTP 客户端（PaddleOCR/MinerU 异步转换依赖）
+httpx>=0.28.1
+requests>=2.32.5
+aiohttp>=3.13.3  # 异步 HTTP（PaddleOCR/MinerU 异步转换依赖）
 
 # 工具
-python-dotenv
+python-dotenv>=1.2.1
 
-# 打包
-pyinstaller
+# 打包（仅开发环境需要，CI 用）
+pyinstaller>=6.20.0

@@ -93,11 +93,22 @@ jobs:
         run: |
           npm install
 
-      # ---- Backend deps ----
+      # ---- Backend deps（用锁文件保证可复现） ----
       - name: Install backend deps
         run: |
           pip install --upgrade pip
-          pip install -r backend/requirements.txt
+          pip install -r backend/requirements-lock.txt
+
+      # ---- 打包前校验：兼容性 + 模块完整性 ----
+      - name: Prebuild check (compatibility + module integrity)
+        shell: bash
+        run: |
+          python scripts/prebuild_check.py
+          # 模块完整性问题必须阻断（避免打包后运行时 ModuleNotFoundError）
+          if python scripts/prebuild_check.py 2>&1 | grep -q "ModuleNotFoundError"; then
+            echo "❌ 模块完整性检查失败，终止打包"
+            exit 1
+          fi
 
       # ---- Build frontend ----
       - name: Build frontend

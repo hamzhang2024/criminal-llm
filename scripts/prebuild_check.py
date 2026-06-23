@@ -17,6 +17,7 @@
 """
 
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -42,6 +43,7 @@ RULES = {
             # 允许这些位置的 print（调试输出、临时提示）
             "scripts/",  # 脚本本身
             "main.py",  # 启动提示保留
+            "collect_modules.py",  # 打包辅助脚本，print 为其输出
         ],
         "message": "print() 语句（打包后丢失，应改用 logger）",
     },
@@ -76,6 +78,60 @@ def check_file(file_path: Path, rule_name: str, rule: dict) -> list:
     return issues
 
 
+def check_module_integrity() -> list:
+    """检查模块完整性：被引用的本地模块是否都在 collect_modules 收集范围内。
+
+    捕获未来新增模块忘记打包导致的运行时 ModuleNotFoundError。
+    直接调用 collect_modules.py 拿真实输出，避免与脚本排除规则脱节。
+    """
+    issues = []
+
+    # 调用 collect_modules.py 拿真实收集结果
+    collect_script = BACKEND_DIR / "collect_modules.py"
+    result = subprocess.run(
+        [sys.executable, str(collect_script)],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        issues.append({
+            "file": "backend/collect_modules.py",
+            "line": 0,
+            "match": "collect_modules 执行失败",
+            "message": f"collect_modules.py 执行失败: {result.stderr.strip()}",
+        })
+        return issues
+
+    collected = set(result.stdout.split())
+
+    # 扫描所有 import 引用，确认被引用的本地模块都在收集范围内
+    import_re = re.compile(r'^\s*(?:from\s+(\w+)\s+import|import\s+(\w+))', re.MULTILINE)
+    referenced = set()
+    for py_file in BACKEND_DIR.glob("*.py"):
+        try:
+            content = py_file.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        for m in import_re.finditer(content):
+            mod = m.group(1) or m.group(2)
+            referenced.add(mod)
+
+    # 被引用、是本地 .py 文件、但未被 collect_modules 收集的模块
+    truly_missing = {
+        mod for mod in referenced
+        if (BACKEND_DIR / f"{mod}.py").exists() and mod not in collected
+    }
+
+    for mod in sorted(truly_missing):
+        issues.append({
+            "file": f"backend/{mod}.py",
+            "line": 0,
+            "match": f"import {mod}",
+            "message": f"本地模块 '{mod}' 被 import 但未被 collect_modules 收集，打包后会 ModuleNotFoundError",
+        })
+
+    return issues
+
+
 def run_checks():
     """运行所有检查"""
     all_issues = []
@@ -88,6 +144,9 @@ def run_checks():
         for py_file in py_files:
             issues = check_file(py_file, rule_name, rule)
             all_issues.extend(issues)
+
+    # 模块完整性检查
+    all_issues.extend(check_module_integrity())
 
     return all_issues
 
@@ -119,6 +178,7 @@ def print_report(issues: list):
     print("1. 硬编码路径 → 改用 shutil.which() 或 get_ssl_verify()")
     print("2. 外部命令 → 预检 shutil.which() 后再调用")
     print("3. print() → 改用 logging.getLogger(__name__)")
+    print("4. 模块未收集 → 确认 backend/collect_modules.py 的 _EXCLUDE_MODULES 是否误排除")
 
     return 1
 
