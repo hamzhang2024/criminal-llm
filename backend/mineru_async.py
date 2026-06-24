@@ -352,6 +352,9 @@ class AsyncMinerUConverter:
                 u = owner_units[0]
                 text, images_dir = unit_results.get(u.data_id, (None, None))
                 if text:
+                    # 落盘 MD（生产流程的证据提取依赖 MD 文件存在）
+                    target_md = output_dir / f"{pdf.stem}.md"
+                    target_md.write_text(text, encoding="utf-8")
                     final_results.append(ConvertResult(file_name=pdf.name, success=True, text=text, images_dir=images_dir))
                 else:
                     final_results.append(ConvertResult(file_name=pdf.name, success=False, error="转换失败"))
