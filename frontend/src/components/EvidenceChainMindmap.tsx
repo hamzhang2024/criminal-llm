@@ -46,6 +46,8 @@ export function EvidenceChainMindmap({ data, onNodeClick }: Props) {
   const [pan, setPan] = useState({ x: 0, y: 0 })
   const [isPanning, setIsPanning] = useState(false)
   const [panStart, setPanStart] = useState({ x: 0, y: 0 })
+  // 全屏状态（与其他 hooks 集中在组件顶部，避免条件调用）
+  const [fullscreen, setFullscreen] = useState(false)
 
   // 构建树形结构
   const buildTree = useCallback((): TreeNode => {
@@ -455,8 +457,6 @@ export function EvidenceChainMindmap({ data, onNodeClick }: Props) {
   // 统计数据
   const totalEvidence = summary?.total_evidence || data.total_evidence || 0
   const totalRelations = summary?.total_relations || data.total_relations || 0
-
-  const [fullscreen, setFullscreen] = useState(false)
 
   const content = (
     <>

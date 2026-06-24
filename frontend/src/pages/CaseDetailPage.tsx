@@ -313,7 +313,7 @@ export function CaseDetailPage() {
         if (ok) handleConvertAllToMd()
         return
       }
-    } catch { }
+    } catch { /* 无 MD 文件，忽略 */ }
     setProcessing(true); setError(null); setProgress('正在提取证据...')
     try {
       await api.extractEvidence(caseId)
@@ -407,7 +407,7 @@ export function CaseDetailPage() {
         parts.push(`预计剩余 ${etaMins}:${etaSecs.toString().padStart(2, '0')}`)
       }
       setProgress(parts.join(' · '))
-      try { const d = await api.getEvidenceIndex(caseId); if (d.total_evidence > 0) setEvidenceList(d.evidence || []) } catch {}
+      try { const d = await api.getEvidenceIndex(caseId); if (d.total_evidence > 0) setEvidenceList(d.evidence || []) } catch { /* 证据索引刷新失败忽略 */ }
       return false
     }
 

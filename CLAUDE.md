@@ -219,16 +219,17 @@ criminal-llm/
 1. **写代码必须使用 qwen3.6-plus**（用户明确要求）
 2. **前端构建**：`cd frontend && npm run build`
 3. **前端类型检查**：`cd frontend && npx tsc --noEmit`
-4. **前端开发服务器**：`cd frontend && npm run dev`（默认端口 5173，host 0.0.0.0）
-5. **后端启动**：`cd backend && python main.py`（Windows）或 `python3 main.py`（macOS/Linux，默认 http://127.0.0.1:8080）
-6. **Tauri 开发**：`cd frontend && npx tauri dev`（前端 Vite dev + Rust 热重载）
-7. **Tauri 构建**：`cd frontend && npx tauri build`（打包三平台桌面应用）
-8. **测试 API**：`curl -s http://localhost:8080/api/cases/list | jq '.'`
-9. **后端无热重载**：修改后端后需手动重启（Windows: `taskkill /F /IM python.exe` 或关闭终端；macOS: `pkill -f 'uvicorn main:app'`）
-10. **用中文注释**：代码注释用中文
-11. **版本号管理**：`cd frontend && python3 bump-version.py`（自动递增 package.json + tauri.conf.json 版本号）
-12. **图标生成**：`cd frontend && python3 generate-icon.py`（从桌面图片生成多尺寸图标 + icns）
-13. **发布流程**：`git tag v1.x.x && git push origin --tags`（触发 GitHub Actions 多平台构建）
+4. **前端 lint**：`cd frontend && npm run lint`（error 必须修，warning 为存量技术债）
+5. **前端开发服务器**：`cd frontend && npm run dev`（默认端口 5173，host 0.0.0.0）
+6. **后端启动**：`cd backend && python main.py`（Windows）或 `python3 main.py`（macOS/Linux，默认 http://127.0.0.1:8080）
+7. **Tauri 开发**：`cd frontend && npx tauri dev`（前端 Vite dev + Rust 热重载）
+8. **Tauri 构建**：`cd frontend && npx tauri build`（打包三平台桌面应用）
+9. **测试 API**：`curl -s http://localhost:8080/api/cases/list | jq '.'`
+10. **后端无热重载**：修改后端后需手动重启（Windows: `taskkill /F /IM python.exe` 或关闭终端；macOS: `pkill -f 'uvicorn main:app'`）
+11. **用中文注释**：代码注释用中文
+12. **版本号管理**：`cd frontend && python3 bump-version.py`（自动递增 package.json + tauri.conf.json 版本号）
+13. **图标生成**：`cd frontend && python3 generate-icon.py`（从桌面图片生成多尺寸图标 + icns）
+14. **发布流程**：`git tag v1.x.x && git push origin --tags`（触发 GitHub Actions 多平台构建）
 
 ### Vite 代理配置
 开发环境 `vite.config.ts` 将 `/api` 请求代理到 `http://localhost:8080`：

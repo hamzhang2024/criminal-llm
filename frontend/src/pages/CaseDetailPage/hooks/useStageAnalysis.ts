@@ -233,8 +233,6 @@ export function useStageAnalysis(caseId: string | undefined, defendant: string, 
       setStepResults(prev => ({ ...prev, [step]: result.data }))
       setPipelineStatus(prev => ({ ...prev, [step]: true }))
       return true
-    } catch (err) {
-      throw err
     } finally {
       setPipelineRunning(false)
       setCurrentPipelineStep(0)
@@ -377,18 +375,20 @@ export function useStageAnalysis(caseId: string | undefined, defendant: string, 
       switch (type) {
         case 0: path = '01-指控要素.md'; break
         case 1: path = subPath || ''; break
-        case 2:
+        case 2: {
           if (selectedContradictionFile && contradictionFilesList.length > 0) {
             const data = await api.getContradictionContent(caseId, selectedContradictionFile)
             setAnalysisContent(data.content || '')
             return
           }
           path = '05-矛盾记录.md'; break
+        }
         case 3: path = '04-法律依据/适用法条.md'; break
-        case 4:
+        case 4: {
           const step5 = await api.getStepResult(caseId, 5)
           setAnalysisContent(step5.full_report || step5.defense_opinion || '无内容')
           return
+        }
       }
       if (!path && type !== 4) return
       const data = await api.getWikiPage(caseId, path)

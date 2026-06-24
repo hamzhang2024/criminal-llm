@@ -38,7 +38,7 @@ export function MermaidRenderer({ code }: MermaidRendererProps) {
       .split('\n')
       .map(line => {
         const cleaned = line.replace(/[\u{1F300}-\u{1F9FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]|[\u{FE00}-\u{FE0F}]|[\u{1F1E0}-\u{1F1FF}]|[\u{200D}]/gu, '')
-        return cleaned.replace(/subgraph\s+([^\n\[]+)\[([^\]]+)\]/g, 'subgraph $1-$2')
+        return cleaned.replace(/subgraph\s+([^\n[]+)\[([^\]]+)\]/g, 'subgraph $1-$2')
       })
       .join('\n')
       .trim()
