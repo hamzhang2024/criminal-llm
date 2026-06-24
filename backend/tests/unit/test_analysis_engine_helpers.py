@@ -11,7 +11,6 @@ LLM 调用/IO 方法不在此测。
 """
 
 import pytest
-
 from analysis_engine import (
     _infer_evidence_type,
     _split_indictment_and_evidence,
