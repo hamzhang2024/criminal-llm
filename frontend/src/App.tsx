@@ -1,21 +1,32 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom'
-import { HomePage } from './pages/HomePage'
-import { CaseDetailPage } from './pages/CaseDetailPage'
-import AnalyzePage from './pages/AnalyzePage'
-import ProcessPage from './pages/ProcessPage'
-import ConvertPage from './pages/ConvertPage'
-import { ReportPage } from './pages/ReportPage'
-import { SettingsPage } from './pages/SettingsPage'
-import { ManualPage } from './pages/ManualPage'
 import { LoginPage } from './pages/LoginPage'
-import { RegisterPage } from './pages/RegisterPage'
-import { ResetPasswordPage } from './pages/ResetPasswordPage'
 import { useDialogProvider } from './components/MacOSDialog'
 import { verifyToken, getToken, clearToken, clearAuthEmail, claimCases, checkUpdate } from './api'
 import { showAlert, showConfirm } from './components/MacOSDialog'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+
+// 路由级懒加载：每个页面拆成独立 chunk，首屏只加载当前路由
+const HomePage = lazy(() => import('./pages/HomePage').then(m => ({ default: m.HomePage })))
+const CaseDetailPage = lazy(() => import('./pages/CaseDetailPage').then(m => ({ default: m.CaseDetailPage })))
+const AnalyzePage = lazy(() => import('./pages/AnalyzePage'))
+const ProcessPage = lazy(() => import('./pages/ProcessPage'))
+const ConvertPage = lazy(() => import('./pages/ConvertPage'))
+const ReportPage = lazy(() => import('./pages/ReportPage').then(m => ({ default: m.ReportPage })))
+const SettingsPage = lazy(() => import('./pages/SettingsPage').then(m => ({ default: m.SettingsPage })))
+const ManualPage = lazy(() => import('./pages/ManualPage').then(m => ({ default: m.ManualPage })))
+const RegisterPage = lazy(() => import('./pages/RegisterPage').then(m => ({ default: m.RegisterPage })))
+const ResetPasswordPage = lazy(() => import('./pages/ResetPasswordPage').then(m => ({ default: m.ResetPasswordPage })))
+
+/** 页面懒加载占位 */
+function PageFallback() {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', background: 'var(--macos-bg-secondary)' }}>
+      <div style={{ fontSize: 14, color: 'var(--macos-text-tertiary)' }}>加载中...</div>
+    </div>
+  )
+}
 
 function DialogWrapper() {
   const DialogComponent = useDialogProvider()
@@ -191,37 +202,41 @@ function App() {
       {/* 登录/注册页面不需要认证 */}
       {/* 公开路由（不需要认证） */}
       <PageTransition>
-        <Routes>
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/register" element={<RegisterPage />} />
-          <Route path="/reset-password" element={<ResetPasswordPage />} />
-          {/* Mermaid 渲染测试（调试用，无需认证） */}
-        </Routes>
+        <Suspense fallback={<PageFallback />}>
+          <Routes>
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/register" element={<RegisterPage />} />
+            <Route path="/reset-password" element={<ResetPasswordPage />} />
+            {/* Mermaid 渲染测试（调试用，无需认证） */}
+          </Routes>
+        </Suspense>
       </PageTransition>
 
       <AuthGate>
         <PageTransition>
-          <Routes>
-          {/* 首页 - 案件管理 */}
-          <Route path="/" element={<HomePage />} />
+          <Suspense fallback={<PageFallback />}>
+            <Routes>
+            {/* 首页 - 案件管理 */}
+            <Route path="/" element={<HomePage />} />
 
-          {/* 设置页面 */}
-          <Route path="/settings" element={<SettingsPage />} />
+            {/* 设置页面 */}
+            <Route path="/settings" element={<SettingsPage />} />
 
-          {/* 案件详情 - 完整工作流 */}
-          <Route path="/case/:caseId" element={<CaseDetailPage />} />
+            {/* 案件详情 - 完整工作流 */}
+            <Route path="/case/:caseId" element={<CaseDetailPage />} />
 
-          {/* 独立页面（保留用于向后兼容） */}
-          <Route path="/process" element={<ProcessPage />} />
-          <Route path="/convert" element={<ConvertPage />} />
-          <Route path="/analyze" element={<AnalyzePage />} />
+            {/* 独立页面（保留用于向后兼容） */}
+            <Route path="/process" element={<ProcessPage />} />
+            <Route path="/convert" element={<ConvertPage />} />
+            <Route path="/analyze" element={<AnalyzePage />} />
 
-          {/* 案卷分析报告页面 */}
-          <Route path="/case/:caseId/report" element={<ReportPage />} />
+            {/* 案卷分析报告页面 */}
+            <Route path="/case/:caseId/report" element={<ReportPage />} />
 
-          {/* 使用说明书 */}
-          <Route path="/manual" element={<ManualPage />} />
-        </Routes>
+            {/* 使用说明书 */}
+            <Route path="/manual" element={<ManualPage />} />
+          </Routes>
+          </Suspense>
         </PageTransition>
       </AuthGate>
       <DialogWrapper />
