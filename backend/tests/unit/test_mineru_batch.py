@@ -49,6 +49,10 @@ async def test_batch_single_files_no_split(tmp_path):
     assert results[0].text == "text0"
     assert results[1].text == "text1"
     assert results[2].text == "text2"
+    # MD 文件应落盘（生产流程证据提取依赖）
+    assert (tmp_path / "a0.md").read_text(encoding="utf-8") == "text0"
+    assert (tmp_path / "a1.md").read_text(encoding="utf-8") == "text1"
+    assert (tmp_path / "a2.md").read_text(encoding="utf-8") == "text2"
 
 
 @pytest.mark.asyncio
