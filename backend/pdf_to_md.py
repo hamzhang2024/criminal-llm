@@ -27,6 +27,9 @@ from typing import Any
 
 import requests
 
+# 复用 mineru_async_helpers 的拆分函数（带页码、统一逻辑），避免两份重复实现
+from mineru_async_helpers import _split_pdf_pages
+
 logger = logging.getLogger(__name__)
 
 if sys.platform == "darwin" and getattr(sys, "frozen", False):
@@ -43,62 +46,6 @@ MINERU_MAX_PAGES = 180  # MinerU API 限制 200 页，留 20 页缓冲
 
 # MinerU API 限制
 MINERU_MAX_FILE_SIZE = 200 * 1024 * 1024  # 200MB
-
-
-def _split_pdf_pages(pdf_path: Path, chunk_size: int = MINERU_MAX_PAGES) -> list[Path]:
-    """将大 PDF 按页数/文件大小分段，返回各段临时文件路径列表
-
-    同时考虑两个限制：
-    1. 页数不超过 chunk_size（默认 180 页）
-    2. 每段文件大小不超过 200MB（MinerU API 限制）
-    """
-    import fitz
-    doc = fitz.open(str(pdf_path))
-    total = len(doc)
-    file_size = pdf_path.stat().st_size
-    doc.close()
-
-    if total <= chunk_size and file_size <= MINERU_MAX_FILE_SIZE:
-        return []  # 不需要拆分
-
-    # 计算满足文件大小限制的每段最大页数
-    if total > 0:
-        avg_page_size = file_size / total
-        if avg_page_size > 0:
-            # 留 20% 缓冲（0.80），避免 chunk 接近 200MB 上限时因开销超限
-            max_pages_by_size = int(MINERU_MAX_FILE_SIZE * 0.80 / avg_page_size)
-            chunk_size = min(chunk_size, max_pages_by_size)
-            chunk_size = max(chunk_size, 10)  # 至少 10 页一段
-
-    chunks = []
-    for start in range(0, total, chunk_size):
-        end = min(start + chunk_size, total)
-        import fitz
-        new_doc = fitz.open()
-        new_doc.insert_pdf(fitz.open(str(pdf_path)), from_page=start, to_page=end - 1)
-        tmp_path = Path(pdf_path.parent) / f"_chunk_{start+1}-{end}_{pdf_path.name}"
-        new_doc.save(str(tmp_path))
-        new_doc.close()
-
-        # 检查实际文件大小，fitz.save 可能与预期不同
-        actual_size = tmp_path.stat().st_size
-        if actual_size > MINERU_MAX_FILE_SIZE * 0.95:
-            logger.info(f"[分段转换] chunk {start+1}-{end} 实际 {actual_size//1024//1024}MB 超限，减半重新拆分")
-            tmp_path.unlink(missing_ok=True)
-            # 用减半后的 chunk_size 重新拆分这段范围
-            sub_size = max(chunk_size // 2, 10)
-            for sub_start in range(start, end, sub_size):
-                sub_end = min(sub_start + sub_size, end)
-                sub_doc = fitz.open()
-                sub_doc.insert_pdf(fitz.open(str(pdf_path)), from_page=sub_start, to_page=sub_end - 1)
-                sub_path = Path(pdf_path.parent) / f"_chunk_{sub_start+1}-{sub_end}_{pdf_path.name}"
-                sub_doc.save(str(sub_path))
-                sub_doc.close()
-                chunks.append(sub_path)
-        else:
-            chunks.append(tmp_path)
-
-    return chunks
 
 
 def _merge_mineru_texts(chunks_data: list[tuple[str, Path | None]]) -> tuple[str, Path | None]:
@@ -247,16 +194,21 @@ def _mineru_convert(
     need_split = total_pages > MINERU_MAX_PAGES or file_size > MINERU_MAX_FILE_SIZE
 
     if need_split:
-        chunks = _split_pdf_pages(pdf_path, MINERU_MAX_PAGES)
-        if chunks:
+        try:
+            # _split_pdf_pages 返回 [(chunk_path, start_page, end_page), ...]
+            split_result = _split_pdf_pages(pdf_path, MINERU_MAX_PAGES)
+        except RuntimeError as e:
+            logger.warning(f"[分段转换] 拆分失败，降级为整体转换: {e}")
+            split_result = []
+        if split_result:
             chunk_results = []
             chunk_index = 0
             all_images_dirs = []
 
             # 使用文件名 stem 作为前缀，确保并发转换时互不干扰
             temp_prefix = f"_temp_{pdf_path.stem}"
-            logger.info(f"[分段转换] {pdf_path.name}: 共 {len(chunks)} 个 chunk")
-            for chunk_path in chunks:
+            logger.info(f"[分段转换] {pdf_path.name}: 共 {len(split_result)} 个 chunk")
+            for chunk_path, _start_page, _end_page in split_result:
                 chunk_output = output_dir / f"{temp_prefix}_{chunk_index}"
                 chunk_output.mkdir(parents=True, exist_ok=True)
                 logger.info(f"[分段转换] 开始处理 chunk {chunk_index}: {chunk_path.name}")
@@ -278,7 +230,7 @@ def _mineru_convert(
                     logger.error(f"[分段转换] chunk {chunk_index} 重试后仍失败，跳过（已丢失对应页）")
                 chunk_index += 1
 
-            logger.info(f"[分段转换] 完成 {pdf_path.name}: {len(chunk_results)}/{len(chunks)} 个 chunk 成功")
+            logger.info(f"[分段转换] 完成 {pdf_path.name}: {len(chunk_results)}/{len(split_result)} 个 chunk 成功")
 
             if not chunk_results:
                 return None, None

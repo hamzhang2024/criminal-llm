@@ -152,6 +152,15 @@ class AsyncMinerUConverter:
         """批量转换多个 PDF 文件（并发处理）"""
         logger.info(f"[MinerU] convert_batch 入口: {len(pdf_paths)} 个文件, output_dir={output_dir}, max_concurrent={max_concurrent}")
         output_dir.mkdir(parents=True, exist_ok=True)
+
+        # 云端模式：优先真批量（原文件+chunks 合并提交，单 batch_id 单轮询）
+        if self.mode == "cloud" and pdf_paths:
+            try:
+                return await self._convert_batch_cloud(pdf_paths, output_dir, timeout, progress_cb)
+            except Exception as e:
+                logger.exception(f"[MinerU] 真批量异常，降级为逐文件并发: {e}")
+                # 降级到下方逐文件并发逻辑
+
         results = []
 
         # 创建信号量控制并发
@@ -211,6 +220,191 @@ class AsyncMinerUConverter:
                 ))
             else:
                 final_results.append(r)
+
+        return final_results
+
+    async def _convert_batch_cloud(
+        self,
+        pdf_paths: list[Path],
+        output_dir: Path,
+        timeout: int = DEFAULT_TIMEOUT,
+        progress_cb: Callable[[BatchProgress], None] | None = None,
+    ) -> list[ConvertResult]:
+        """云端真批量转换：原文件+拆分chunks 合并提交，单 batch_id 单轮询。
+
+        相比逐文件并发，N 次提交→⌈N/50⌉ 次，N 个轮询流→1 个，大幅减少请求数。
+        """
+        from dataclasses import dataclass
+
+        @dataclass
+        class Unit:
+            file_path: Path            # 待提交文件（原文件或 chunk）
+            data_id: str
+            owner: Path                # 所属原文件（chunk 的 owner 是被拆分的原文件）
+            is_chunk: bool
+            chunk_idx: int             # chunk 在 owner 中的序号
+            start_page: int
+            end_page: int
+
+        # ── 第1步：收集所有任务单元（原文件 + 大文件拆分的 chunks）──
+        units: list[Unit] = []
+        for pdf in pdf_paths:
+            try:
+                chunks = _split_pdf_pages(pdf)  # [(path, start, end), ...] 或 []
+            except Exception as e:
+                logger.warning(f"[MinerU-批量] 拆分失败 {pdf.name}，按单文件处理: {e}")
+                chunks = []
+
+            if not chunks:
+                # 无需拆分：整体作为一个单元
+                units.append(Unit(pdf, pdf.stem, pdf, False, 0, 0, 0))
+            else:
+                logger.info(f"[MinerU-批量] {pdf.name} 拆分为 {len(chunks)} 段")
+                for idx, (cpath, start, end) in enumerate(chunks):
+                    units.append(Unit(cpath, cpath.stem, pdf, True, idx, start, end))
+
+        if not units:
+            return []
+
+        progress = BatchProgress(total=len(pdf_paths))
+        progress_lock = asyncio.Lock()
+
+        def _report():
+            if progress_cb:
+                progress_cb(progress)
+
+        # ── 第2步：分批提交（≤ MINERU_BATCH_SIZE）──
+        # 每批：提交 → 并发上传 → 单轮询 → 逐个下载
+        # unit_result: data_id → (text, images_dir) 或 None
+        unit_results: dict[str, tuple[str | None, Path | None]] = {}
+
+        async with aiohttp.ClientSession() as session:
+            for batch_start in range(0, len(units), MINERU_BATCH_SIZE):
+                batch = units[batch_start:batch_start + MINERU_BATCH_SIZE]
+                logger.info(f"[MinerU-批量] 提交第 {batch_start // MINERU_BATCH_SIZE + 1} 批: {len(batch)} 个文件")
+
+                # 提交
+                files_payload = [(u.file_path, u.data_id) for u in batch]
+                batch_id, upload_urls, err = await self._submit_batch_task(session, files_payload)
+                if not batch_id:
+                    logger.error(f"[MinerU-批量] 批量提交失败: {err}，该批降级为单文件")
+                    # 降级：逐个单文件转换
+                    for u in batch:
+                        r = await self._convert_single_file(u.file_path, output_dir, timeout, None)
+                        unit_results[u.data_id] = (r.text if r.success else None, r.images_dir if r.success else None)
+                        if u.is_chunk:
+                            u.file_path.unlink(missing_ok=True)
+                        async with progress_lock:
+                            progress.completed += 1
+                            if not (r.text if r.success else None):
+                                progress.failed += 1
+                            progress.current_files = [u.file_path.name]
+                            _report()
+                    continue
+
+                # 并发上传
+                upload_tasks = [
+                    self._upload_file(session, upload_urls[i], batch[i].file_path)
+                    for i in range(len(batch))
+                ]
+                upload_oks = await asyncio.gather(*upload_tasks)
+                for u, ok in zip(batch, upload_oks):
+                    if not ok:
+                        logger.error(f"[MinerU-批量] 上传失败: {u.file_path.name}")
+                        unit_results[u.data_id] = (None, None)
+
+                # 单轮询拿全部状态
+                results = await self._poll_batch_results(
+                    session, batch_id, len(batch), timeout,
+                    lambda stage, detail: None,
+                )
+                if not results:
+                    logger.error(f"[MinerU-批量] 轮询失败 batch_id={batch_id}")
+                    for u in batch:
+                        unit_results.setdefault(u.data_id, (None, None))
+                        if u.is_chunk:
+                            u.file_path.unlink(missing_ok=True)
+                    continue
+
+                # 按 file_name 匹配并下载（extract_result 含 file_name）
+                result_by_name = {r.get("file_name"): r for r in results}
+                for u in batch:
+                    r = result_by_name.get(u.file_path.name)
+                    if r and r.get("state") == "done" and u.data_id not in unit_results:
+                        text, images_dir = await self._download_and_parse(r, output_dir, u.data_id)
+                        unit_results[u.data_id] = (text, images_dir)
+                    else:
+                        unit_results.setdefault(u.data_id, (None, None))
+                        err_msg = r.get("err_msg") if r else "无结果"
+                        logger.warning(f"[MinerU-批量] {u.file_path.name} 未成功: {err_msg}")
+                    if u.is_chunk:
+                        u.file_path.unlink(missing_ok=True)
+
+        # ── 第3步：按 owner 组装结果（chunks 按页序合并回原文件）──
+        final_results: list[ConvertResult] = []
+        for pdf in pdf_paths:
+            owner_units = [u for u in units if u.owner == pdf]
+            if not owner_units:
+                continue
+
+            if len(owner_units) == 1 and not owner_units[0].is_chunk:
+                # 单文件（未拆分）
+                u = owner_units[0]
+                text, images_dir = unit_results.get(u.data_id, (None, None))
+                if text:
+                    final_results.append(ConvertResult(file_name=pdf.name, success=True, text=text, images_dir=images_dir))
+                else:
+                    final_results.append(ConvertResult(file_name=pdf.name, success=False, error="转换失败"))
+            else:
+                # 多 chunk：按页序合并
+                chunk_texts = []
+                all_images: list[Path] = []
+                for u in sorted(owner_units, key=lambda x: x.start_page):
+                    text, images_dir = unit_results.get(u.data_id, (None, None))
+                    if text:
+                        chunk_texts.append((text, u.start_page, u.end_page))
+                    if images_dir:
+                        all_images.append(images_dir)
+
+                if not chunk_texts:
+                    final_results.append(ConvertResult(file_name=pdf.name, success=False, error="所有分段转换失败"))
+                    continue
+
+                # 复用 _convert_chunks 的合并逻辑（页码分隔 + 图片路径修正 + 后处理）
+                merged_parts = []
+                for text, start_page, end_page in chunk_texts:
+                    page_header = f"---\n\n<!-- 原PDF第{start_page}-{end_page}页 -->\n\n"
+                    merged_parts.append(page_header + text)
+                merged_text = "\n\n".join(merged_parts)
+                merged_text = re.sub(
+                    r'\./(_chunk_[^/]+?)_([^/]+_images)/',
+                    r'\2/',
+                    merged_text
+                )
+                merged_text = _protect_signatures_as_images(merged_text)
+                merged_text = _fix_ocr_errors(merged_text)
+                merged_text, _ = _fold_consecutive_images(merged_text)
+
+                merged_images_dir = output_dir / f"{pdf.stem}_images"
+                merged_images_dir.mkdir(parents=True, exist_ok=True)
+                for src_dir in all_images:
+                    if src_dir.exists():
+                        for img in src_dir.iterdir():
+                            if img.is_file():
+                                shutil.copy2(str(img), str(merged_images_dir / img.name))
+
+                target_md = output_dir / f"{pdf.stem}.md"
+                target_md.write_text(merged_text, encoding="utf-8")
+                final_results.append(ConvertResult(
+                    file_name=pdf.name, success=True, text=merged_text, images_dir=merged_images_dir
+                ))
+
+            async with progress_lock:
+                progress.completed += 1
+                if not final_results[-1].success:
+                    progress.failed += 1
+                progress.current_files = [pdf.name]
+                _report()
 
         return final_results
 
@@ -695,6 +889,67 @@ class AsyncMinerUConverter:
             logger.error(f"[MinerU] 提交任务异常: {e}")
             return None, None, f"MinerU 提交异常: {str(e)[:100]}"
 
+    async def _submit_batch_task(
+        self,
+        session: aiohttp.ClientSession,
+        files: list[tuple[Path, str]],
+    ) -> tuple[str | None, list[str], str]:
+        """批量提交转换任务（一次提交多个文件），返回 (batch_id, upload_urls, error_msg)
+
+        Args:
+            files: [(pdf_path, data_id), ...]，单次不超过 MINERU_BATCH_SIZE(50) 个
+
+        Returns:
+            (batch_id, [upload_url, ...], "") 成功；失败时 (None, [], error)
+        """
+        try:
+            params = {
+                "is_ocr": "true",
+                "enable_formula": "false",
+                "enable_table": "true",
+                "language": "ch_server",
+            }
+            payload_files = [{"name": p.name, "data_id": did} for p, did in files]
+
+            async with session.post(
+                f"{MINERU_API}/file-urls/batch",
+                headers={"Authorization": f"Bearer {self.token}"},
+                params=params,
+                json={"files": payload_files, "model_version": "vlm"},
+                timeout=aiohttp.ClientTimeout(total=30),
+                ssl=_SSL_CONTEXT,
+            ) as resp:
+                if resp.status == 401:
+                    return None, [], "MinerU Token 无效或已过期，请在设置页面重新配置"
+                if resp.status != 200:
+                    body = await resp.text()
+                    return None, [], f"MinerU API HTTP {resp.status}: {body[:200]}"
+
+                result = await resp.json()
+                if result.get("code") != 0:
+                    err_code = result.get("code")
+                    err_msg = result.get("msg", "未知错误")
+                    return None, [], f"MinerU API 错误 ({err_code}): {err_msg}"
+
+                data = result.get("data", {})
+                batch_id = data.get("batch_id")
+                upload_urls = data.get("file_urls", [])
+
+                if not batch_id or len(upload_urls) != len(files):
+                    logger.error(f"[MinerU] 批量返回不完整: batch_id={'有' if batch_id else '无'}, urls={len(upload_urls)}/{len(files)}")
+                    return None, [], "MinerU 批量返回数据不完整"
+
+                logger.info(f"[MinerU] 批量提交成功: {len(files)} 个文件, batch_id={batch_id}")
+                return batch_id, upload_urls, ""
+
+        except asyncio.TimeoutError:
+            return None, [], "MinerU 批量提交超时"
+        except aiohttp.ClientError as e:
+            return None, [], f"MinerU 网络错误: {str(e)[:100]}"
+        except Exception as e:
+            logger.error(f"[MinerU] 批量提交异常: {e}")
+            return None, [], f"MinerU 批量提交异常: {str(e)[:100]}"
+
     async def _upload_file(
         self,
         session: aiohttp.ClientSession,
@@ -790,6 +1045,75 @@ class AsyncMinerUConverter:
                 waited += poll_interval
 
         logger.error(f"[MinerU] 转换超时: {data_id}")
+        return None
+
+    async def _poll_batch_results(
+        self,
+        session: aiohttp.ClientSession,
+        batch_id: str,
+        file_count: int,
+        timeout: int,
+        progress_cb: Callable[[str, str], None] | None = None,
+    ) -> list[dict[str, Any]] | None:
+        """轮询批量任务结果，返回所有文件的 extract_result 列表。
+
+        单次请求拿全部文件状态（替代每文件单独轮询）。
+        退避轮询：2s 起步，逐步拉长到 10s 上限（短任务快感知，长任务省请求）。
+        全部文件进入终态（done/failed）后返回。
+        """
+        waited = 0
+        poll_interval = 2  # 退避起点
+        last_progress_msg = ""
+
+        while waited < timeout:
+            try:
+                async with session.get(
+                    f"{MINERU_API}/extract-results/batch/{batch_id}",
+                    headers={"Authorization": f"Bearer {self.token}"},
+                    timeout=aiohttp.ClientTimeout(total=30),
+                    ssl=_SSL_CONTEXT,
+                ) as resp:
+                    if resp.status == 401:
+                        logger.error("[MinerU] 批量轮询认证失败 (401): Token 无效或已过期")
+                        return None
+
+                    result = await resp.json()
+                    results = result.get("data", {}).get("extract_result", [])
+
+                    if not results:
+                        await asyncio.sleep(poll_interval)
+                        waited += poll_interval
+                        poll_interval = min(poll_interval + 1, 10)  # 退避
+                        continue
+
+                    # 统计进度：done/failed/running，利用 extract_progress 显示页级进度
+                    done = sum(1 for r in results if r.get("state") in ("done", "failed"))
+                    running = [r for r in results if r.get("state") == "running"]
+                    if progress_cb and running:
+                        # 取第一个 running 文件的页进度
+                        prog = running[0].get("extract_progress") or {}
+                        extracted = prog.get("extracted_pages", 0)
+                        total_p = prog.get("total_pages", 0)
+                        msg = f"批量转换 {done}/{file_count} 完成，正在解析（{extracted}/{total_p} 页）..."
+                        if msg != last_progress_msg:
+                            progress_cb("processing", msg)
+                            last_progress_msg = msg
+
+                    # 全部进入终态 → 返回
+                    if done >= file_count:
+                        logger.info(f"[MinerU] 批量转换完成: batch_id={batch_id}, {done}/{file_count}")
+                        return results
+
+                    await asyncio.sleep(poll_interval)
+                    waited += poll_interval
+                    poll_interval = min(poll_interval + 1, 10)  # 退避到 10s 上限
+
+            except Exception as e:
+                logger.error(f"[MinerU] 批量轮询异常: {e}")
+                await asyncio.sleep(poll_interval)
+                waited += poll_interval
+
+        logger.error(f"[MinerU] 批量转换超时: batch_id={batch_id}")
         return None
 
     async def _download_and_parse(
