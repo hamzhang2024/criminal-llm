@@ -12,7 +12,6 @@ LLM/PDF IO 函数不在此测。
 """
 
 import pytest
-
 from pdf_to_md_postprocess import (
     _fix_ocr_errors,
     _fold_consecutive_images,
