@@ -46,3 +46,4 @@ data/cache/
 data/uploads/
 data/output/
 data/criminal-llm-config.json
+backend/src-tauri/
