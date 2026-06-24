@@ -1,9 +1,9 @@
 // API 服务层 — barrel 导出，保持与旧 index.ts 完全兼容
 // 所有命名函数和 api 对象保持不变，调用方无需修改
 
-export { waitForBackend, safeFetch, API_BASE, isTauri, tauriInvoke, openUrl, timeoutSignal } from './client'
-export { thumbnailUrl, serveFileUrl, thumbCacheUrl } from './cases'
-export type { Thumbnail, SplitItem } from './cases'
+export { waitForBackend, safeFetch, subscribeSSE, API_BASE, isTauri, tauriInvoke, openUrl, timeoutSignal } from './client'
+export { thumbnailUrl, serveFileUrl, thumbCacheUrl, subscribeConvertStatus } from './cases'
+export type { Thumbnail, SplitItem, ConvertStatus } from './cases'
 
 // 认证
 export { login, verifyToken, register, resetPassword, sendResetCode, resetWithCode, getToken, setToken, clearToken, getAuthEmail, setAuthEmail, clearAuthEmail } from './auth'
@@ -24,11 +24,12 @@ export { extractEvidence, stopExtractEvidence, getEvidenceIndex, getExtractStatu
 export type { EvidenceReviewPayload, ExtractStatus } from './evidence'
 
 // 分析流水线
-export { runPipelineStep, getPipelineStatus, getPipelineProgress, getStepResult, getAnalysisState, resumePipeline, getDefenseStages, getDefenseStageContent, getWikiIndex, getWikiPage, getMdFile, getPdfText, uploadWikiReference, clearWiki, getEvidenceSummaries, getEvidenceOther, getSummaryContent, getEvidenceFiles, getContradictionFiles, getContradictionContent } from './pipeline'
+export { runPipelineStep, getPipelineStatus, getPipelineProgress, subscribePipelineProgress, subscribeDefenseStages, getStepResult, getAnalysisState, resumePipeline, getDefenseStages, getDefenseStageContent, getWikiIndex, getWikiPage, getMdFile, getPdfText, uploadWikiReference, clearWiki, getEvidenceSummaries, getEvidenceOther, getSummaryContent, getEvidenceFiles, getContradictionFiles, getContradictionContent } from './pipeline'
+export type { PipelineProgressStream, DefenseStagesStream } from './pipeline'
 
 // 5 阶段分析引擎
-export { getIndictmentCandidates, runAllStages, getStageStatus, getStageProgress, runSingleStage, getStageResult, getStageMarkdown, getFullReport, saveStageMarkdown, saveFullReport, reviewEvidence, getEvidenceReview, getReviewTaskStatus, generateReviewNotes, getReviewNotes, generateCrossExamination, getCrossExamination, getEvidenceChain, getPersonRelation, getEventTimeline, searchSimilarCases } from './stages'
-export type { IndictmentCandidate, EvidenceReviewItem, EvidenceReviewResult, ReviewNotesResult, CrossExaminationResult, EvidenceChainNode, EvidenceChainEdge, EvidenceChainGroup, EvidenceChainData, PersonNode, RelationEdge, RelationGraphData, EventNode, TimelineData, SimilarCase, SimilarCasesData } from './stages'
+export { getIndictmentCandidates, runAllStages, getStageStatus, getStageProgress, subscribeStageProgress, subscribeReviewTaskStatus, runSingleStage, getStageResult, getStageMarkdown, getFullReport, saveStageMarkdown, saveFullReport, reviewEvidence, getEvidenceReview, getReviewTaskStatus, generateReviewNotes, getReviewNotes, generateCrossExamination, getCrossExamination, getEvidenceChain, getPersonRelation, getEventTimeline, searchSimilarCases } from './stages'
+export type { IndictmentCandidate, EvidenceReviewItem, EvidenceReviewResult, ReviewNotesResult, CrossExaminationResult, EvidenceChainNode, EvidenceChainEdge, EvidenceChainGroup, EvidenceChainData, PersonNode, RelationEdge, RelationGraphData, EventNode, TimelineData, SimilarCase, SimilarCasesData, StageProgressStream, ReviewTaskStatus } from './stages'
 
 // 法律知识库
 export { listLegalKB, getLegalKBItem, createLegalKBItem, updateLegalKBItem, deleteLegalKBItem, searchLaws } from './legal'
@@ -42,10 +43,10 @@ import { openUrl, waitForBackend, API_BASE, safeFetch } from './client'
 import { thumbnailUrl, serveFileUrl, thumbCacheUrl } from './cases'
 import { login, verifyToken, register, resetPassword, sendResetCode, resetWithCode, getToken, setToken, clearToken, getAuthEmail, setAuthEmail, clearAuthEmail } from './auth'
 import { getAppVersion, checkUpdate } from './config'
-import { listCases, getPendingCases, getTrash, getCaseInfo, getCaseFiles, getStepFiles, createCase, importCase, deleteCase, restoreCase, permanentDeleteCase, claimCases, uploadFiles, deleteFile, deleteOriginalFileOnly, batchProcess, convertToMd, deleteMdFile, deletePdfFile, openFile, getLlmSegmentNames, getThumbnails, cleanupProcessed, createAnalysis, analyzeCase, getAnalysisProgress, chatAboutCase, getReport, selectEvidence } from './cases'
+import { listCases, getPendingCases, getTrash, getCaseInfo, getCaseFiles, getStepFiles, createCase, importCase, deleteCase, restoreCase, permanentDeleteCase, claimCases, uploadFiles, deleteFile, deleteOriginalFileOnly, batchProcess, convertToMd, deleteMdFile, deletePdfFile, openFile, getLlmSegmentNames, getThumbnails, cleanupProcessed, createAnalysis, analyzeCase, getAnalysisProgress, chatAboutCase, getReport, selectEvidence, subscribeConvertStatus } from './cases'
 import { extractEvidence, stopExtractEvidence, getEvidenceIndex, getExtractStatus, subscribeExtractStatus, getEvidenceSummary, getMdFiles, getProcessedPdfs, reviewEvidenceItem } from './evidence'
-import { runPipelineStep, getPipelineStatus, getPipelineProgress, getStepResult, getAnalysisState, resumePipeline, getDefenseStages, getDefenseStageContent, getWikiIndex, getWikiPage, getMdFile, getPdfText, uploadWikiReference, clearWiki, getEvidenceSummaries, getEvidenceOther, getSummaryContent, getEvidenceFiles, getContradictionFiles, getContradictionContent } from './pipeline'
-import { getIndictmentCandidates, runAllStages, getStageStatus, getStageProgress, runSingleStage, getStageResult, getStageMarkdown, getFullReport, saveStageMarkdown, saveFullReport, reviewEvidence, getEvidenceReview, getReviewTaskStatus, generateReviewNotes, getReviewNotes, generateCrossExamination, getCrossExamination, getEvidenceChain, getPersonRelation, getEventTimeline, searchSimilarCases } from './stages'
+import { runPipelineStep, getPipelineStatus, getPipelineProgress, subscribePipelineProgress, subscribeDefenseStages, getStepResult, getAnalysisState, resumePipeline, getDefenseStages, getDefenseStageContent, getWikiIndex, getWikiPage, getMdFile, getPdfText, uploadWikiReference, clearWiki, getEvidenceSummaries, getEvidenceOther, getSummaryContent, getEvidenceFiles, getContradictionFiles, getContradictionContent } from './pipeline'
+import { getIndictmentCandidates, runAllStages, getStageStatus, getStageProgress, subscribeStageProgress, subscribeReviewTaskStatus, runSingleStage, getStageResult, getStageMarkdown, getFullReport, saveStageMarkdown, saveFullReport, reviewEvidence, getEvidenceReview, getReviewTaskStatus, generateReviewNotes, getReviewNotes, generateCrossExamination, getCrossExamination, getEvidenceChain, getPersonRelation, getEventTimeline, searchSimilarCases } from './stages'
 import { listLegalKB, getLegalKBItem, createLegalKBItem, updateLegalKBItem, deleteLegalKBItem, searchLaws } from './legal'
 import { pickFiles, pickFolder, pickMultiple, sendNotification, showNativeConfirm, createWorkflow, updateWorkflowStatus, listWorkflows, getWorkflow, addStep, updateStep, getSteps, addFile, updateFilePaths, getFiles, logOperation, deleteWorkflow } from './native'
 
@@ -80,6 +81,7 @@ export const api = {
   deleteFile,
   deleteOriginalFileOnly,
   cleanupProcessed,
+  subscribeConvertStatus,
   // 案卷分析
   createAnalysis,
   analyzeCase,
@@ -91,6 +93,8 @@ export const api = {
   runPipelineStep,
   getPipelineStatus,
   getPipelineProgress,
+  subscribePipelineProgress,
+  subscribeDefenseStages,
   getStepResult,
   getAnalysisState,
   resumePipeline,
@@ -125,6 +129,8 @@ export const api = {
   runAllStages,
   runSingleStage,
   getStageProgress,
+  subscribeStageProgress,
+  subscribeReviewTaskStatus,
   getStageStatus,
   getStageResult,
   getStageMarkdown,

@@ -1,6 +1,6 @@
 // 5 阶段分析引擎 API
 
-import { API_BASE } from './client'
+import { API_BASE, subscribeSSE } from './client'
 
 export interface IndictmentCandidate {
   filename: string
@@ -33,6 +33,49 @@ export async function getStageStatus(caseId: string): Promise<any> {
 export async function getStageProgress(caseId: string): Promise<any> {
   const res = await fetch(`${API_BASE}/stage-analysis/${caseId}/progress`)
   return res.json()
+}
+
+/** 阶段分析进度 SSE 推送 payload（progress + task 合并） */
+export interface StageProgressStream {
+  progress: { case_id: string; running: boolean; message?: string; stage?: number; substage?: string; current?: number; total?: number }
+  task: { status: string; current_stage?: number; error?: string; stages?: number } | null
+}
+
+/** 订阅阶段分析进度（SSE 推送，替代轮询）。task 进入终态后流自动关闭。 */
+export function subscribeStageProgress(
+  caseId: string,
+  onStatus: (status: StageProgressStream) => void,
+  onError?: (error: Event) => void,
+): () => void {
+  return subscribeSSE<StageProgressStream>(
+    `${API_BASE}/stage-analysis/${caseId}/progress/stream`,
+    onStatus,
+    onError,
+  )
+}
+
+/** 证据审查任务状态（review/notes/crossExam 共用） */
+export interface ReviewTaskStatus {
+  case_id: string
+  status: string
+  total_evidence?: number
+  processed?: number
+  current_evidence?: string
+  elapsed_seconds?: number
+  error?: string
+}
+
+/** 订阅证据审查任务状态（SSE）。终态 completed/error 后流自动关闭。 */
+export function subscribeReviewTaskStatus(
+  caseId: string,
+  onStatus: (status: ReviewTaskStatus) => void,
+  onError?: (error: Event) => void,
+): () => void {
+  return subscribeSSE<ReviewTaskStatus>(
+    `${API_BASE}/stage-analysis/${caseId}/review-evidence-status/stream`,
+    onStatus,
+    onError,
+  )
 }
 
 export async function runSingleStage(caseId: string, stageNum: number, defendant: string, crimeType?: string, indictmentFile?: string): Promise<any> {

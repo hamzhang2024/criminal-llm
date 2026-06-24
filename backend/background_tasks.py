@@ -394,6 +394,29 @@ async def get_convert_status(case_id: str):
     return status
 
 
+# 转换任务终态（进入这些状态后 SSE 流关闭）
+_CONVERT_TERMINAL = {"completed", "failed", "cancelled", "interrupted"}
+
+
+@router.get("/{case_id}/convert-status/stream")
+async def stream_convert_status(case_id: str):
+    """转换任务进度 SSE 推送（替代前端轮询）
+
+    后端主动推送状态，任务进入终态后推送最终状态并关闭流。
+    """
+    from sse_starlette.sse import EventSourceResponse
+
+    async def event_generator():
+        while True:
+            status = get_task_status(case_id) or {"status": "idle", "message": "无任务"}
+            yield {"event": "status", "data": json.dumps(status, ensure_ascii=False)}
+            if status.get("status") in _CONVERT_TERMINAL:
+                return
+            await asyncio.sleep(1)
+
+    return EventSourceResponse(event_generator())
+
+
 @router.post("/{case_id}/convert-all-to-md")
 async def trigger_convert(case_id: str):
     """触发后台转换任务（异步并发模式，固定 3 并发）

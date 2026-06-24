@@ -5,6 +5,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { Upload, FileDown, Scale, Loader2, CheckCircle, FileText } from 'lucide-react'
 import { MacOSToolbar, MacOSButton, MacOSCard, PageLayout, StatusBar } from '../components/MacOSLayout'
 import { api, API_BASE } from '../api'
+import type { ConvertStatus } from '../api'
 import { showConfirm, showAlert } from '../components/MacOSDialog'
 import { FileList, Step0Upload, Step1Extract, Step2Analyze, Preview } from './CaseDetailPage/components'
 import type { CaseFile, PreviewFile } from './CaseDetailPage/hooks/useCaseFiles'
@@ -27,9 +28,12 @@ export function CaseDetailPage() {
   const [optDeleteOriginal, setOptDeleteOriginal] = useState(true)
   const [crimeType, setCrimeType] = useState('')
   const processAbortRef = useRef<AbortController | null>(null)
-  const convertPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  /** 转换任务 SSE 订阅清理函数（取消订阅 + 超时定时器） */
+  const convertSubRef = useRef<(() => void) | null>(null)
   /** 证据提取 SSE 订阅清理函数（取消订阅 + 超时定时器） */
   const extractSubRef = useRef<(() => void) | null>(null)
+  /** 流水线进度 SSE 订阅清理函数 */
+  const pipelineSubRef = useRef<(() => void) | null>(null)
   const [analysisCompleted, setAnalysisCompleted] = useState(false)
 
   // 安全获取 caseId 的辅助函数
@@ -118,30 +122,74 @@ export function CaseDetailPage() {
     api.getAnalysisState(caseId).then(s => { if (s.state) { setAnalysisState(s.state); setNextStep(s.next_step) } }).catch(() => {})
   }, [caseId])
 
+  /**
+   * 订阅转换任务进度（SSE），返回 Promise。
+   * - completed → resolve(status)
+   * - failed/cancelled/interrupted → reject(Error)
+   * - running → 调用 onProgress(status)
+   * 超时（2h）→ reject。订阅清理存入 convertSubRef。
+   */
+  const streamConvert = useCallback(async (
+    onProgress: (sd: ConvertStatus) => void,
+  ): Promise<ConvertStatus> => {
+    if (!caseId) throw new Error('案件 ID 无效')
+    return new Promise<ConvertStatus>((resolve, reject) => {
+      if (convertSubRef.current) { convertSubRef.current(); convertSubRef.current = null }
+      const unsubscribe = api.subscribeConvertStatus(
+        caseId,
+        (sd) => {
+          if (sd.status === 'running' || sd.status === 'pending') {
+            onProgress(sd)
+          } else if (sd.status === 'completed') {
+            if (convertSubRef.current) { convertSubRef.current(); convertSubRef.current = null }
+            resolve(sd)
+          } else if (sd.status === 'failed' || sd.status === 'cancelled') {
+            if (convertSubRef.current) { convertSubRef.current(); convertSubRef.current = null }
+            // 优先用结构化错误详情
+            const errDetail = sd.error_details as any
+            const errMsg = errDetail && typeof errDetail === 'object'
+              ? (errDetail.message || errDetail.raw || sd.message || '转换失败')
+              : (typeof errDetail === 'string' && errDetail ? errDetail : (sd.message || '转换失败'))
+            reject(new Error(errMsg))
+          } else if (sd.status === 'interrupted') {
+            if (convertSubRef.current) { convertSubRef.current(); convertSubRef.current = null }
+            reject(new Error('上次任务被中断，请点击「转换并提取」重新开始'))
+          }
+        },
+        () => { /* EventSource 自动重连，忽略单次错误 */ },
+      )
+      const timeoutId = setTimeout(() => {
+        if (convertSubRef.current) { convertSubRef.current(); convertSubRef.current = null }
+        reject(new Error('转换超时（2小时），后端可能仍在运行'))
+      }, 7200000)
+      convertSubRef.current = () => { unsubscribe(); clearTimeout(timeoutId) }
+    })
+  }, [caseId])
+
   // === 步骤切换时轮询检测（恢复运行态）===
   useEffect(() => {
-    if (!caseId || currentStep === 0) return () => { stopExtractPolling(); if (convertPollRef.current) { clearInterval(convertPollRef.current); convertPollRef.current = null } }
+    if (!caseId || currentStep === 0) return () => { stopExtractPolling(); if (convertSubRef.current) { convertSubRef.current(); convertSubRef.current = null } }
     checkExtractStatus().then(running => {
       if (running) {
         // 后端仍在提取，恢复 processing 状态（轮询由下方专用 useEffect 启动）
         setProcessing(true); setProgress('正在提取证据...')
         return
       }
-      // 检查转换轮询
+      // 检查转换任务是否在运行（SSE 恢复进度）
       if (currentStep >= 1) {
-        fetch(`${API_BASE}/tasks/${caseId}/convert-status`).then(r => r.json()).then(d => {
+        fetch(`${API_BASE}/tasks/${caseId}/convert-status`).then(r => r.json()).then(async (d) => {
           if (d.status === 'running' || d.status === 'pending') {
             setProcessing(true)
-            convertPollRef.current = setInterval(async () => {
-              try {
-                const sr = await fetch(`${API_BASE}/tasks/${caseId}/convert-status`); const sd = await sr.json()
-                if (sd.status === 'running') { const c = sd.current || 0, t = sd.total || 0; setProgress(`转换中：${c}/${t} (${t > 0 ? Math.round(c/t*100) : 0}%)`) }
-                else if (sd.status === 'completed') { clearInterval(convertPollRef.current!); convertPollRef.current = null; setProcessing(false); setProgress('') }
-                else if (sd.status === 'failed' || sd.status === 'cancelled') { clearInterval(convertPollRef.current!); convertPollRef.current = null; setProcessing(false); setError(sd.message || '转换失败') }
-                else if (sd.status === 'interrupted') { clearInterval(convertPollRef.current!); convertPollRef.current = null; setProcessing(false); setError('上次任务被中断，请点击「转换并提取」重新开始') }
-                // pending 或 idle 状态继续等待
-              } catch { clearInterval(convertPollRef.current!); convertPollRef.current = null; setProcessing(false) }
-            }, 2000)
+            try {
+              await streamConvert((sd) => {
+                const c = sd.current || 0, t = sd.total || 0
+                setProgress(`转换中：${c}/${t} (${t > 0 ? Math.round(c/t*100) : 0}%)`)
+              })
+              setProcessing(false); setProgress('')
+            } catch (e) {
+              setProcessing(false)
+              setError(e instanceof Error ? e.message : '转换失败')
+            }
           } else if (d.status === 'interrupted') {
             // 显示提示让用户知道需要重新转换
             setError('上次转换任务被中断，请点击「转换并提取」重新开始')
@@ -149,19 +197,21 @@ export function CaseDetailPage() {
         }).catch(() => {})
       }
     })
-    return () => { stopExtractPolling(); if (convertPollRef.current) { clearInterval(convertPollRef.current); convertPollRef.current = null } }
-  }, [currentStep, caseId])
+    return () => { stopExtractPolling(); if (convertSubRef.current) { convertSubRef.current(); convertSubRef.current = null } }
+  }, [currentStep, caseId, streamConvert])
 
   // === 步骤 2 加载流水线状态 ===
   useEffect(() => { if (currentStep === 2 && caseId) loadPipelineState() }, [currentStep, caseId, loadPipelineState])
 
-  // === 流水线实时进度轮询 ===
+  // === 流水线实时进度（SSE 推送） ===
   useEffect(() => {
     if (!pipelineRunning || !caseId || currentPipelineStep < 2) return
-    const t = setInterval(async () => {
-      try { const p = await api.getPipelineProgress(caseId); if (p.running) setLiveProgress({ message: p.message, current: p.current, total: p.total, elapsed: p.elapsed_seconds || 0 }) } catch { }
-    }, 2000)
-    return () => clearInterval(t)
+    if (pipelineSubRef.current) { pipelineSubRef.current(); pipelineSubRef.current = null }
+    pipelineSubRef.current = api.subscribePipelineProgress(
+      caseId,
+      (p) => { if (p.running) setLiveProgress({ message: p.message || '', current: p.current || 0, total: p.total || 0, elapsed: p.elapsed_seconds || 0 }) },
+    )
+    return () => { if (pipelineSubRef.current) { pipelineSubRef.current(); pipelineSubRef.current = null } }
   }, [pipelineRunning, caseId, currentPipelineStep])
 
   // === Wiki 和证据数据加载 ===
@@ -175,25 +225,32 @@ export function CaseDetailPage() {
   // === 分析进度轮询 ===
   const pollAnalysisProgress = useCallback(() => {
     if (!caseId) return () => {}
-    let pc = 0
-    const pi = setInterval(async () => {
-      pc++; if (pc > 600) { clearInterval(pi); setProcessing(false); setProgress(''); setError('分析耗时过长'); return }
-      try {
-        const pr = await api.getStageProgress(caseId)
+    let finished = false
+    // SSE 推送 {progress, task} 合并对象，一次拿到进度与任务终态
+    const unsubscribe = api.subscribeStageProgress(
+      caseId,
+      async (data) => {
+        if (finished) return
+        const pr = data.progress
+        const task = data.task
         if (pr.running) { setProgress(pr.message || ''); return }
-        const st = await api.getStageStatus(caseId)
-        if (st?.task?.status === 'completed') {
-          clearInterval(pi); setAnalysisCompleted(true); setProgress('6 阶段分析全部完成！'); setProcessing(false)
+        // progress 不运行时查 status 判断阶段完成（task 终态或 stage_53 完成）
+        const st = await api.getStageStatus(caseId).catch(() => null)
+        if (task?.status === 'completed' || (st?.status || {}).stage_53?.completed) {
+          finished = true; unsubscribe(); clearTimeout(timeoutId)
+          setAnalysisCompleted(true); setProgress('6 阶段分析全部完成！'); setProcessing(false)
           setTimeout(() => navigate(`/case/${caseId}/report`), 1500)
-        } else if (st?.task?.status === 'error') {
-          clearInterval(pi); setError(st?.task?.error || '分析出错'); setProgress(''); setProcessing(false)
-        } else if ((st?.status || {}).stage_53?.completed) {
-          clearInterval(pi); setAnalysisCompleted(true); setProgress('6 阶段分析全部完成！'); setProcessing(false)
-          setTimeout(() => navigate(`/case/${caseId}/report`), 1500)
+        } else if (task?.status === 'error') {
+          finished = true; unsubscribe(); clearTimeout(timeoutId)
+          setError(task?.error || '分析出错'); setProgress(''); setProcessing(false)
         }
-      } catch { }
-    }, 3000)
-    return () => clearInterval(pi)
+      },
+    )
+    // 超时保护（30 分钟，原 600 次 * 3s）
+    const timeoutId = setTimeout(() => {
+      if (!finished) { finished = true; unsubscribe(); setProcessing(false); setProgress(''); setError('分析耗时过长') }
+    }, 1800000)
+    return () => { finished = true; unsubscribe(); clearTimeout(timeoutId) }
   }, [caseId, navigate])
 
   // === 业务操作 ===
@@ -205,30 +262,20 @@ export function CaseDetailPage() {
       const res = await fetch(`${API_BASE}/tasks/${caseId}/convert-all-to-md`, { method: 'POST' })
       const data = await res.json()
       if (!res.ok) throw new Error(data.detail || '转换失败')
-      convertPollRef.current = setInterval(async () => {
-        try {
-          const sr = await fetch(`${API_BASE}/tasks/${caseId}/convert-status`); const sd = await sr.json()
-          if (sd.status === 'running') { const c = sd.current || 0, t = sd.total || 0; setProgress(`转换中：${c}/${t} (${t > 0 ? Math.round(c/t*100) : 0}%)${sd.message ? ' — ' + sd.message : ''}`) }
-          else if (sd.status === 'completed') {
-            clearInterval(convertPollRef.current!); convertPollRef.current = null
-            const sc = sd.results?.filter((r: any) => r.success).length || 0
-            setProgress(`已转换 ${sc}/${sd.total || 0} 个文件，请点击「提取证据」继续`); setProcessing(false)
-            const fd = await api.getStepFiles(caseId, 2)
-            if (Array.isArray(fd)) refreshFiles()
-          } else if (sd.status === 'failed' || sd.status === 'cancelled') {
-            clearInterval(convertPollRef.current!); convertPollRef.current = null
-            throw new Error(sd.message || '转换任务失败')
-          } else if (sd.status === 'interrupted') {
-            clearInterval(convertPollRef.current!); convertPollRef.current = null
-            setProcessing(false); setError('上次任务被中断，请点击「转换并提取」重新开始')
-            return // 直接返回，不再 throw
-          }
-          // pending 或 idle 状态继续等待
-        } catch (e) { clearInterval(convertPollRef.current!); convertPollRef.current = null; setProcessing(false); setError(e instanceof Error ? e.message : '转换失败') }
-      }, 2000)
-      setTimeout(() => { if (convertPollRef.current) { clearInterval(convertPollRef.current); convertPollRef.current = null; setProcessing(false); setProgress('⚠️ 转换超时（2小时），后端可能仍在运行，请稍后刷新查看结果') } }, 7200000)
-    } catch (err) { setError(err instanceof Error ? err.message : '转换失败'); setProgress(''); setProcessing(false) }
-  }, [caseId])
+      const sd = await streamConvert((d) => {
+        const c = d.current || 0, t = d.total || 0
+        setProgress(`转换中：${c}/${t} (${t > 0 ? Math.round(c/t*100) : 0}%)${d.message ? ' — ' + d.message : ''}`)
+      })
+      const sc = sd.results?.filter((r: any) => r.success).length || 0
+      setProgress(`已转换 ${sc}/${sd.total || 0} 个文件，请点击「提取证据」继续`); setProcessing(false)
+      const fd = await api.getStepFiles(caseId, 2)
+      if (Array.isArray(fd)) refreshFiles()
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '转换失败'
+      if (msg.includes('被中断')) { setProcessing(false); setError(msg); setProgress('') }
+      else { setError(msg); setProgress(''); setProcessing(false) }
+    }
+  }, [caseId, streamConvert, refreshFiles])
 
   // 检查模型是否支持证据提取/分析（仅显示警告，不阻止操作）
   const checkModelSupport = useCallback(async () => {
@@ -281,6 +328,13 @@ export function CaseDetailPage() {
     }
   }, [caseId, handleConvertAllToMd, checkModelSupport])
 
+  /**
+   * 订阅转换任务进度（SSE），返回 Promise。
+   * - completed → resolve(status)
+   * - failed/cancelled/interrupted → reject(Error)
+   * - running → 调用 onProgress(status)
+   * 超时（2h）→ reject。订阅清理存入 convertSubRef。
+   */
   const extractUserStoppedRef = useRef(false)
   const extractPollFailuresRef = useRef(0)
   const startExtractPoll = useCallback(() => {
@@ -406,60 +460,42 @@ export function CaseDetailPage() {
       const cr = await fetch(`${API_BASE}/tasks/${caseId}/convert-all-to-md`, { method: 'POST' })
       const cd = await cr.json()
       if (!cr.ok) throw new Error(cd.detail || '转换失败')
-      await new Promise<void>((resolve, reject) => {
-        const pi = setInterval(async () => {
-          try {
-            const sr = await fetch(`${API_BASE}/tasks/${caseId}/convert-status`); const sd = await sr.json()
-            if (sd.status === 'running') {
-              const c = sd.current || 0, t = sd.total || 0
-              const pct = t > 0 ? Math.round(c/t*100) : 0
-              const parts: string[] = [`正在转换并提取证据（第 1/2 步）${c}/${t} (${pct}%)`]
-              // 展示当前文件名
-              if (sd.current_file) {
-                const fname = typeof sd.current_file === 'string' ? sd.current_file : (Array.isArray(sd.current_file) && sd.current_file[0]) || ''
-                if (fname) {
-                  const shortName = fname.length > 35 ? fname.slice(0, 32) + '...' : fname
-                  parts.push(`当前: ${shortName}`)
-                }
-              }
-              // 展示后端 message（含成功/失败计数）
-              if (sd.message) parts.push(sd.message)
-              setProgress(parts.join(' · '))
-            }
-            else if (sd.status === 'completed') { clearInterval(pi); resolve() }
-            else if (sd.status === 'failed' || sd.status === 'cancelled') {
-              clearInterval(pi)
-              // 优先用结构化错误详情
-              const errDetail = sd.error_details
-              const errMsg = errDetail && typeof errDetail === 'object'
-                ? (errDetail.message || errDetail.raw || sd.message || '转换失败')
-                : (typeof errDetail === 'string' && errDetail ? errDetail : (sd.message || '转换失败'))
-              reject(new Error(errMsg))
-            }
-            else if (sd.status === 'interrupted') { clearInterval(pi); reject(new Error('上次任务被中断，请点击「转换并提取」重新开始')) }
-            // pending 或 idle 状态继续等待
-          } catch (e) { clearInterval(pi); reject(e) }
-        }, 2000)
-        setTimeout(() => { clearInterval(pi); reject(new Error('转换超时（2小时），后端可能仍在运行')) }, 7200000)
+      await streamConvert((sd) => {
+        const c = sd.current || 0, t = sd.total || 0
+        const pct = t > 0 ? Math.round(c/t*100) : 0
+        const parts: string[] = [`正在转换并提取证据（第 1/2 步）${c}/${t} (${pct}%)`]
+        // 展示当前文件名
+        if (sd.current_file) {
+          const fname = typeof sd.current_file === 'string' ? sd.current_file : (Array.isArray(sd.current_file) && sd.current_file[0]) || ''
+          if (fname) {
+            const shortName = fname.length > 35 ? fname.slice(0, 32) + '...' : fname
+            parts.push(`当前: ${shortName}`)
+          }
+        }
+        // 展示后端 message（含成功/失败计数）
+        if (sd.message) parts.push(sd.message)
+        setProgress(parts.join(' · '))
       })
       setProgress('正在转换并提取证据（第 2/2 步：提取证据）...')
       await api.extractEvidence(caseId)
       await new Promise<void>((resolve, reject) => {
-        const pi = setInterval(async () => {
-          try {
-            const st = await api.getExtractStatus(caseId)
-            if (st.status !== 'running') {
-              clearInterval(pi); const d = await api.getEvidenceIndex(caseId)
+        const unsubscribe = api.subscribeExtractStatus(
+          caseId,
+          async (st) => {
+            if (st.status !== 'running' && st.status !== 'idle') {
+              unsubscribe()
+              clearTimeout(timeoutId)
+              const d = await api.getEvidenceIndex(caseId)
               if (d.total_evidence > 0) { setEvidenceList(d.evidence || []); setEvidenceExtracted(true) }
               resolve()
             }
-          } catch { }
-        }, 3000)
-        setTimeout(() => { clearInterval(pi); reject(new Error('提取超时（2小时），后端可能仍在运行')) }, 7200000)
+          },
+        )
+        const timeoutId = setTimeout(() => { unsubscribe(); reject(new Error('提取超时（2小时），后端可能仍在运行')) }, 7200000)
       })
       setCurrentStep(2); setProcessing(false)
     } catch (err) { setError(err instanceof Error ? err.message : '操作失败'); setProgress(''); setProcessing(false) }
-  }, [caseId, checkModelSupport])
+  }, [caseId, checkModelSupport, streamConvert])
 
   const handleRunAnalysis = useCallback(async () => {
     if (!caseId) { setError('案件 ID 无效'); return }

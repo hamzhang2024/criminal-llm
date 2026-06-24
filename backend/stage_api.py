@@ -370,6 +370,32 @@ async def get_progress(case_id: str):
     return {"case_id": case_id, "running": True, **progress}
 
 
+@router.get("/{case_id}/progress/stream")
+async def stream_progress(case_id: str):
+    """阶段分析进度 SSE 推送（替代前端轮询）
+
+    推送 {progress, task} 合并对象：progress 为细粒度进度，task 为任务终态。
+    task.status 进入 completed/error 时推送最终状态并关闭流。
+    """
+    from sse_starlette.sse import EventSourceResponse
+
+    async def event_generator():
+        while True:
+            progress = STAGE_PROGRESS.get(case_id)
+            progress_data = {"case_id": case_id, "running": bool(progress)}
+            if progress:
+                progress_data.update(progress)
+            task = ANALYSIS_TASKS.get(case_id)
+            payload = {"progress": progress_data, "task": task}
+            yield {"event": "status", "data": json.dumps(payload, ensure_ascii=False)}
+            # task 进入终态（completed/error）后关闭流
+            if task and task.get("status") in ("completed", "error"):
+                return
+            await asyncio.sleep(1)
+
+    return EventSourceResponse(event_generator())
+
+
 @router.get("/{case_id}/status")
 async def get_status(case_id: str):
     """获取各阶段完成状态（含 51/52/53 子阶段）+ 任务运行状态"""
@@ -596,9 +622,8 @@ async def review_evidence(case_id: str):
     return {"case_id": case_id, "status": "running", "message": "审查任务已启动，请轮询状态"}
 
 
-@router.get("/{case_id}/review-evidence-status")
-async def get_review_evidence_status(case_id: str):
-    """获取证据审查任务状态（供前端轮询）"""
+def _build_review_status(case_id: str) -> dict:
+    """构建证据审查任务状态（供轮询与 SSE 共用）"""
     task = REVIEW_TASKS.get(case_id)
     if not task:
         # 检查结果文件是否已存在（历史已完成任务）
@@ -619,6 +644,31 @@ async def get_review_evidence_status(case_id: str):
             "error": task.get("error"),
         }
     return {"case_id": case_id, "status": "idle"}
+
+
+@router.get("/{case_id}/review-evidence-status")
+async def get_review_evidence_status(case_id: str):
+    """获取证据审查任务状态（供前端轮询）"""
+    return _build_review_status(case_id)
+
+
+@router.get("/{case_id}/review-evidence-status/stream")
+async def stream_review_evidence_status(case_id: str):
+    """证据审查任务状态 SSE 推送（替代前端轮询）
+
+    review/notes/crossExam 三类审查任务共用此状态流，终态（completed/error）后关闭。
+    """
+    from sse_starlette.sse import EventSourceResponse
+
+    async def event_generator():
+        while True:
+            status = _build_review_status(case_id)
+            yield {"event": "status", "data": json.dumps(status, ensure_ascii=False)}
+            if status.get("status") in ("completed", "error"):
+                return
+            await asyncio.sleep(1)
+
+    return EventSourceResponse(event_generator())
 
 
 @router.get("/{case_id}/evidence-review")

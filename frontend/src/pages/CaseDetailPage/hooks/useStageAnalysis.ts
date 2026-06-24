@@ -5,6 +5,28 @@ import { useNavigate } from 'react-router-dom'
 import { api, API_BASE } from '../../../api'
 import { showAlert } from '../../../components/MacOSDialog'
 
+/**
+ * 订阅指定阶段的实时进度消息（SSE），返回取消订阅函数。
+ * 仅当 progress 运行且 stage 匹配时回调；否则不触发。
+ */
+function subscribeStageMessages(
+  caseId: string,
+  stageNum: number,
+  onMessage: (msg: string) => void,
+): () => void {
+  const stage = STAGES.find(s => s.num === stageNum)
+  return api.subscribeStageProgress(caseId, (data) => {
+    const d = data.progress
+    if (d.running && d.stage === stageNum) {
+      const parts: string[] = []
+      if (d.message) parts.push(d.message)
+      if (d.substage) parts.push(`(${d.substage})`)
+      if (d.total && d.current) parts.push(`${d.current}/${d.total}`)
+      onMessage(parts.join(' · ') || `正在执行：${stage?.name}...`)
+    }
+  })
+}
+
 export const STAGES = [
   { num: 1, name: '指控要素', desc: '读取起诉书，提取指控要素' },
   { num: 2, name: '人物关系', desc: '构建人物关系图谱' },
@@ -79,25 +101,14 @@ export function useStageAnalysis(caseId: string | undefined, defendant: string, 
     const controller = new AbortController()
     stageAbortRef.current[stageNum] = controller
 
-    // 在阶段执行期间轮询后端 progress，更新实时消息
-    const progressPoll = setInterval(async () => {
-      try {
-        const r = await fetch(`${API_BASE}/stage-analysis/${caseId}/progress`)
-        const d = await r.json()
-        if (d.running && d.stage === stageNum) {
-          const stage = STAGES.find(s => s.num === stageNum)
-          const parts: string[] = []
-          if (d.message) parts.push(d.message)
-          if (d.substage) parts.push(`(${d.substage})`)
-          if (d.total && d.current) parts.push(`${d.current}/${d.total}`)
-          setStageMessages(prev => ({ ...prev, [stageNum]: parts.join(' · ') || `正在执行：${stage?.name}...` }))
-        }
-      } catch {}
-    }, 2000)
+    // 阶段执行期间订阅 SSE progress，更新实时消息
+    const stopProgress = subscribeStageMessages(caseId, stageNum, (msg) => {
+      setStageMessages(prev => ({ ...prev, [stageNum]: msg }))
+    })
 
     try {
       const result = await api.runSingleStage(caseId, stageNum, defendant, crimeType || undefined)
-      clearInterval(progressPoll)
+      stopProgress()
       if (!result.success) throw new Error(result.detail || result.error || '阶段执行失败')
 
       setStageStatus(prev => ({ ...prev, [stageNum]: 'completed' }))
@@ -112,7 +123,7 @@ export function useStageAnalysis(caseId: string | undefined, defendant: string, 
         setTimeout(() => navigate(`/case/${caseId}/report`), 2000)
       }
     } catch (err) {
-      clearInterval(progressPoll)
+      stopProgress()
       if (err instanceof Error && err.name === 'AbortError') {
         await handleClearStage(stageNum)
         setStageStatus(prev => ({ ...prev, [stageNum]: 'idle' }))
@@ -151,28 +162,18 @@ export function useStageAnalysis(caseId: string | undefined, defendant: string, 
       setStageMessages(prev => ({ ...prev, [i]: `正在执行：${stage?.name}...` }))
       setRunningStage(i)
 
-      // 在阶段执行期间轮询后端 progress，更新实时消息
-      const progressPoll = setInterval(async () => {
-        try {
-          const r = await fetch(`${API_BASE}/stage-analysis/${caseId}/progress`)
-          const d = await r.json()
-          if (d.running && d.stage === i) {
-            const parts: string[] = []
-            if (d.message) parts.push(d.message)
-            if (d.substage) parts.push(`(${d.substage})`)
-            if (d.total && d.current) parts.push(`${d.current}/${d.total}`)
-            setStageMessages(prev => ({ ...prev, [i]: parts.join(' · ') || `正在执行：${stage?.name}...` }))
-          }
-        } catch {}
-      }, 2000)
+      // 阶段执行期间订阅 SSE progress，更新实时消息
+      const stopProgress = subscribeStageMessages(caseId, i, (msg) => {
+        setStageMessages(prev => ({ ...prev, [i]: msg }))
+      })
 
       try {
         const result = await api.runSingleStage(caseId, i, defendant, crimeType || undefined)
-        clearInterval(progressPoll)
+        stopProgress()
         if (!result.success) throw new Error(result.detail || result.error || '阶段执行失败')
         setStageStatus(prev => ({ ...prev, [i]: 'completed' }))
       } catch (err) {
-        clearInterval(progressPoll)
+        stopProgress()
         setStageStatus(prev => ({ ...prev, [i]: 'error' }))
         setStageErrors(prev => ({ ...prev, [i]: err instanceof Error ? err.message : '阶段执行失败' }))
         setRunningStage(null)

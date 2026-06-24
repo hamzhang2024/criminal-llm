@@ -1,6 +1,6 @@
 // 分析流水线 API
 
-import { API_BASE } from './client'
+import { API_BASE, subscribeSSE } from './client'
 
 export async function runPipelineStep(caseId: string, step: number, defendant: string, crimeType?: string, indictmentFile?: string): Promise<any> {
   const controller = new AbortController()
@@ -32,6 +32,54 @@ export async function getPipelineStatus(caseId: string): Promise<any> {
 export async function getPipelineProgress(caseId: string): Promise<any> {
   const res = await fetch(`${API_BASE}/pipeline/${caseId}/progress`)
   return res.json()
+}
+
+/** 流水线进度（SSE 推送 payload） */
+export interface PipelineProgressStream {
+  case_id: string
+  running: boolean
+  message?: string
+  current?: number
+  total?: number
+  elapsed_seconds?: number
+}
+
+/**
+ * 订阅流水线进度（SSE 推送，替代轮询）。
+ * 持续推送当前进度，由调用方控制订阅生命周期（任务结束时主动关闭）。
+ */
+export function subscribePipelineProgress(
+  caseId: string,
+  onStatus: (status: PipelineProgressStream) => void,
+  onError?: (error: Event) => void,
+): () => void {
+  return subscribeSSE<PipelineProgressStream>(
+    `${API_BASE}/pipeline/${caseId}/progress/stream`,
+    onStatus,
+    onError,
+  )
+}
+
+/** 辩护意见子阶段状态（SSE 推送 payload） */
+export interface DefenseStagesStream {
+  case_id: string
+  stages: Record<string, string>
+  full_report: boolean
+  defense_dir: string | null
+  error?: string
+}
+
+/** 订阅辩护意见子阶段状态（SSE）。全部完成或完整报告生成后流自动关闭。 */
+export function subscribeDefenseStages(
+  caseId: string,
+  onStatus: (status: DefenseStagesStream) => void,
+  onError?: (error: Event) => void,
+): () => void {
+  return subscribeSSE<DefenseStagesStream>(
+    `${API_BASE}/pipeline/${caseId}/defense-stages/stream`,
+    onStatus,
+    onError,
+  )
 }
 
 export async function getStepResult(caseId: string, step: number): Promise<any> {

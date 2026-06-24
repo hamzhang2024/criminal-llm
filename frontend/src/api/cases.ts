@@ -1,6 +1,32 @@
 // 案件管理 API
 
-import { API_BASE, safeFetch, isTauri, tauriInvoke } from './client'
+import { API_BASE, safeFetch, subscribeSSE, isTauri, tauriInvoke } from './client'
+
+/** 转换任务状态（对应后端 background_tasks._task_states） */
+export interface ConvertStatus {
+  status: string
+  message?: string
+  total?: number
+  current?: number
+  current_file?: string
+  results?: Array<{ success: boolean; [k: string]: unknown }>
+  error_details?: unknown
+  stopped_by_user?: boolean
+  recoverable?: boolean
+}
+
+/** 订阅转换任务进度（SSE 推送，替代轮询） */
+export function subscribeConvertStatus(
+  caseId: string,
+  onStatus: (status: ConvertStatus) => void,
+  onError?: (error: Event) => void,
+): () => void {
+  return subscribeSSE<ConvertStatus>(
+    `${API_BASE}/tasks/${caseId}/convert-status/stream`,
+    onStatus,
+    onError,
+  )
+}
 
 export interface Thumbnail { page: number; data: string }
 export interface SplitItem {

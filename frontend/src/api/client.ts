@@ -65,6 +65,39 @@ export async function safeFetch(url: string, init?: RequestInit): Promise<Respon
   }
 }
 
+/**
+ * 通用 SSE 订阅：连接后端的 Server-Sent Events 流。
+ *
+ * 后端在状态变化时推送 `status` 事件，任务终态后自动关闭流。
+ * EventSource 内置自动重连，无需手动处理。
+ *
+ * @param url SSE 端点完整 URL
+ * @param onStatus 收到状态事件的回调
+ * @param onError 连接错误回调（可选，EventSource 会自动重连）
+ * @returns 关闭订阅的函数（组件卸载时调用）
+ */
+export function subscribeSSE<T = unknown>(
+  url: string,
+  onStatus: (status: T) => void,
+  onError?: (error: Event) => void,
+): () => void {
+  const source = new EventSource(url)
+
+  source.addEventListener('status', (e: MessageEvent) => {
+    try {
+      onStatus(JSON.parse(e.data) as T)
+    } catch {
+      // 解析失败忽略，下一条事件会覆盖
+    }
+  })
+
+  if (onError) {
+    source.onerror = onError
+  }
+
+  return () => source.close()
+}
+
 /** 打开外部链接（Tauri 环境下调用 shell.open，浏览器降级 window.open） */
 export function openUrl(url: string): void {
   if (isTauri()) {

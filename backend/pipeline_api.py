@@ -8,6 +8,7 @@
 4. 案件 Wiki 构建（LLM Wiki 模式）
 5. 辩护意见生成
 """
+import asyncio
 import json
 import shutil
 import time
@@ -155,6 +156,26 @@ async def get_pipeline_progress(case_id: str):
     if not progress:
         return {"case_id": case_id, "running": False}
     return {"case_id": case_id, "running": True, **progress}
+
+
+@router.get("/{case_id}/progress/stream")
+async def stream_pipeline_progress(case_id: str):
+    """流水线进度 SSE 推送（替代前端轮询）
+
+    持续推送当前进度，由前端控制订阅生命周期（pipelineRunning 为 false 时关闭）。
+    """
+    from sse_starlette.sse import EventSourceResponse
+
+    async def event_generator():
+        while True:
+            progress = PIPELINE_PROGRESS.get(case_id)
+            payload = {"case_id": case_id, "running": bool(progress)}
+            if progress:
+                payload.update(progress)
+            yield {"event": "status", "data": json.dumps(payload, ensure_ascii=False)}
+            await asyncio.sleep(1)
+
+    return EventSourceResponse(event_generator())
 
 
 @router.get("/{case_id}/status")
@@ -429,12 +450,11 @@ async def clear_wiki(case_id: str):
 
 # ========== 辩护意见子阶段 API ==========
 
-@router.get("/{case_id}/defense-stages")
-async def get_defense_stages(case_id: str):
-    """返回辩护意见各子阶段完成状态"""
+def _build_defense_stages(case_id: str) -> dict | None:
+    """构建辩护意见各子阶段状态（供轮询与 SSE 共用）。案件不存在返回 None。"""
     case_path = find_case_path(case_id)
     if not case_path:
-        raise HTTPException(status_code=404, detail="案件不存在")
+        return None
 
     defense_dir = case_path / "analysis" / "05-辩护意见"
     stages = {
@@ -461,6 +481,39 @@ async def get_defense_stages(case_id: str):
         "full_report": full_report_exists,
         "defense_dir": str(defense_dir) if defense_dir.exists() else None,
     }
+
+
+@router.get("/{case_id}/defense-stages")
+async def get_defense_stages(case_id: str):
+    """返回辩护意见各子阶段完成状态"""
+    data = _build_defense_stages(case_id)
+    if data is None:
+        raise HTTPException(status_code=404, detail="案件不存在")
+    return data
+
+
+@router.get("/{case_id}/defense-stages/stream")
+async def stream_defense_stages(case_id: str):
+    """辩护意见子阶段状态 SSE 推送（替代前端轮询）
+
+    全部子阶段完成或完整报告生成后推送最终状态并关闭流。
+    """
+    from sse_starlette.sse import EventSourceResponse
+
+    async def event_generator():
+        while True:
+            data = _build_defense_stages(case_id)
+            if data is None:
+                yield {"event": "status", "data": json.dumps({"error": "案件不存在"}, ensure_ascii=False)}
+                return
+            yield {"event": "status", "data": json.dumps(data, ensure_ascii=False)}
+            # 全部子阶段完成 或 完整报告已生成 → 终态
+            all_done = all(s == "done" for s in data["stages"].values())
+            if all_done or data.get("full_report"):
+                return
+            await asyncio.sleep(2)
+
+    return EventSourceResponse(event_generator())
 
 
 @router.get("/{case_id}/defense-stage/{stage_name}")

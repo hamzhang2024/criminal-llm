@@ -1,6 +1,6 @@
 // 证据提取 API
 
-import { API_BASE, safeFetch, isTauri, tauriInvoke } from './client'
+import { API_BASE, safeFetch, subscribeSSE, isTauri, tauriInvoke } from './client'
 
 let _extractController: AbortController | null = null
 
@@ -92,22 +92,11 @@ export function subscribeExtractStatus(
   onStatus: (status: ExtractStatus) => void,
   onError?: (error: Event) => void,
 ): () => void {
-  const url = `${API_BASE}/cases/${caseId}/extract-status/stream`
-  const source = new EventSource(url)
-
-  source.addEventListener('status', (e: MessageEvent) => {
-    try {
-      onStatus(JSON.parse(e.data) as ExtractStatus)
-    } catch {
-      // 解析失败忽略，下一条事件会覆盖
-    }
-  })
-
-  if (onError) {
-    source.onerror = onError
-  }
-
-  return () => source.close()
+  return subscribeSSE<ExtractStatus>(
+    `${API_BASE}/cases/${caseId}/extract-status/stream`,
+    onStatus,
+    onError,
+  )
 }
 
 export async function getEvidenceSummary(caseId: string, filename: string): Promise<any> {

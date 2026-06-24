@@ -237,24 +237,23 @@ export function ReportPage() {
   useEffect(() => {
     if (!caseId) return
     loadDefenseStages().catch(() => { /* ignore */ })
-    const interval = setInterval(() => {
-      loadDefenseStages().then(() => {
-        // 如果所有阶段都完成，停止轮询
-        setCompletedStages(prev => {
-          if (prev.size >= 5) {
-            setAnalysisRunning(false)
-          }
-          return prev
-        })
-        setNextStep(prev => {
-          if (prev === null) {
-            setAnalysisRunning(false)
-          }
-          return prev
-        })
-      }).catch(() => { /* ignore */ })
-    }, 3000)
-    return () => clearInterval(interval)
+    // SSE 订阅辩护阶段状态，收到推送即刷新（流在全部完成时自动关闭）
+    const unsubscribe = api.subscribeDefenseStages(
+      caseId,
+      () => {
+        loadDefenseStages().then(() => {
+          setCompletedStages(prev => {
+            if (prev.size >= 5) setAnalysisRunning(false)
+            return prev
+          })
+          setNextStep(prev => {
+            if (prev === null) setAnalysisRunning(false)
+            return prev
+          })
+        }).catch(() => { /* ignore */ })
+      },
+    )
+    return () => unsubscribe()
   }, [caseId, loadDefenseStages])
 
   // Panels
@@ -510,15 +509,37 @@ export function ReportPage() {
     } catch { /* ignore */ }
   }, [caseId])
 
-  // 触发三性审查（异步任务模式：触发后轮询状态，切页面不丢失）
-  const reviewPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  // 触发三性审查（异步任务模式：触发后 SSE 订阅状态，切页面不丢失）
+  /** 审查任务 SSE 订阅清理函数（review/notes/crossExam 共用，互斥） */
+  const reviewSubRef = useRef<(() => void) | null>(null)
+
+  /** 订阅审查任务状态（SSE），completed resolve、error reject。订阅清理存入 reviewSubRef。 */
+  const awaitReviewTask = useCallback(async (): Promise<void> => {
+    if (!caseId) throw new Error('案件 ID 无效')
+    return new Promise<void>((resolve, reject) => {
+      if (reviewSubRef.current) { reviewSubRef.current(); reviewSubRef.current = null }
+      const unsubscribe = api.subscribeReviewTaskStatus(
+        caseId,
+        (st) => {
+          if (st.status === 'completed') {
+            if (reviewSubRef.current) { reviewSubRef.current(); reviewSubRef.current = null }
+            resolve()
+          } else if (st.status === 'error') {
+            if (reviewSubRef.current) { reviewSubRef.current(); reviewSubRef.current = null }
+            reject(new Error(st.error || '审查过程中出错'))
+          }
+        },
+      )
+      reviewSubRef.current = unsubscribe
+    })
+  }, [caseId])
 
   const handleRunEvidenceReview = useCallback(async () => {
     if (!caseId || evidenceReviewLoading) return
     setEvidenceReviewLoading(true)
 
-    // 清理旧轮询
-    if (reviewPollRef.current) clearInterval(reviewPollRef.current)
+    // 清理旧订阅
+    if (reviewSubRef.current) { reviewSubRef.current(); reviewSubRef.current = null }
 
     try {
       // 触发异步任务
@@ -533,34 +554,23 @@ export function ReportPage() {
       return
     }
 
-    // 轮询任务状态
-    reviewPollRef.current = setInterval(async () => {
-      try {
-        const st = await getReviewTaskStatus(caseId)
-        if (st.status === 'completed') {
-          if (reviewPollRef.current) { clearInterval(reviewPollRef.current); reviewPollRef.current = null }
-          // 加载最终结果
-          const result = await getEvidenceReview(caseId)
-          setEvidenceReview(result)
-          setEvidenceReviewLoading(false)
-          if (result.error) {
-            showAlert({ title: '审查完成（有警告）', message: result.error, variant: 'warning' })
-          }
-        } else if (st.status === 'error') {
-          if (reviewPollRef.current) { clearInterval(reviewPollRef.current); reviewPollRef.current = null }
-          setEvidenceReviewLoading(false)
-          showAlert({
-            title: '审查失败',
-            message: st.error || '证据审查过程中出错',
-            variant: 'danger',
-          })
-        }
-        // running 状态继续轮询
-      } catch {
-        // 轮询失败不立即停止，连续失败由 React 自动清理
+    // SSE 订阅任务状态
+    awaitReviewTask().then(async () => {
+      const result = await getEvidenceReview(caseId)
+      setEvidenceReview(result)
+      setEvidenceReviewLoading(false)
+      if (result.error) {
+        showAlert({ title: '审查完成（有警告）', message: result.error, variant: 'warning' })
       }
-    }, 3000)
-  }, [caseId, evidenceReviewLoading])
+    }).catch((e: unknown) => {
+      setEvidenceReviewLoading(false)
+      showAlert({
+        title: '审查失败',
+        message: e instanceof Error ? e.message : '证据审查过程中出错',
+        variant: 'danger',
+      })
+    })
+  }, [caseId, evidenceReviewLoading, awaitReviewTask])
 
   // 切换到证据中心 tab 时加载三性审查结果
   useEffect(() => {
@@ -587,27 +597,20 @@ export function ReportPage() {
       if (cancelled) return
       if (st.status === 'running') {
         setEvidenceReviewLoading(true)
-        // 恢复轮询
-        if (reviewPollRef.current) clearInterval(reviewPollRef.current)
-        reviewPollRef.current = setInterval(async () => {
-          try {
-            const s = await getReviewTaskStatus(caseId)
-            if (s.status === 'completed') {
-              if (reviewPollRef.current) { clearInterval(reviewPollRef.current); reviewPollRef.current = null }
-              const result = await getEvidenceReview(caseId)
-              setEvidenceReview(result)
-              setEvidenceReviewLoading(false)
-            } else if (s.status === 'error') {
-              if (reviewPollRef.current) { clearInterval(reviewPollRef.current); reviewPollRef.current = null }
-              setEvidenceReviewLoading(false)
-              showAlert({ title: '审查失败', message: s.error || '出错', variant: 'danger' })
-            }
-          } catch { /* ignore */ }
-        }, 3000)
+        // 恢复 SSE 订阅
+        if (reviewSubRef.current) { reviewSubRef.current(); reviewSubRef.current = null }
+        awaitReviewTask().then(async () => {
+          const result = await getEvidenceReview(caseId)
+          setEvidenceReview(result)
+          setEvidenceReviewLoading(false)
+        }).catch((e: unknown) => {
+          setEvidenceReviewLoading(false)
+          showAlert({ title: '审查失败', message: e instanceof Error ? e.message : '出错', variant: 'danger' })
+        })
       }
     }).catch(() => {})
     return () => { cancelled = true }
-  }, [caseId])
+  }, [caseId, awaitReviewTask])
 
   // 加载阅卷笔录
   const loadReviewNotes = useCallback(async () => {
@@ -622,12 +625,10 @@ export function ReportPage() {
 
   // 生成阅卷笔录
   // 生成阅卷笔录（异步任务模式）
-  const reviewNotesPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
-
   const handleGenerateReviewNotes = useCallback(async () => {
     if (!caseId || reviewNotesLoading) return
     setReviewNotesLoading(true)
-    if (reviewNotesPollRef.current) clearInterval(reviewNotesPollRef.current)
+    if (reviewSubRef.current) { reviewSubRef.current(); reviewSubRef.current = null }
 
     try {
       await generateReviewNotes(caseId)
@@ -641,26 +642,19 @@ export function ReportPage() {
       return
     }
 
-    reviewNotesPollRef.current = setInterval(async () => {
-      try {
-        const st = await getReviewTaskStatus(caseId)
-        if (st.status === 'completed') {
-          if (reviewNotesPollRef.current) { clearInterval(reviewNotesPollRef.current); reviewNotesPollRef.current = null }
-          const result = await getReviewNotes(caseId)
-          setReviewNotes(result.content || '')
-          setReviewNotesLoading(false)
-        } else if (st.status === 'error') {
-          if (reviewNotesPollRef.current) { clearInterval(reviewNotesPollRef.current); reviewNotesPollRef.current = null }
-          setReviewNotesLoading(false)
-          showAlert({
-            title: '生成失败',
-            message: st.error || '阅卷笔录生成过程中出错',
-            variant: 'danger',
-          })
-        }
-      } catch { /* 轮询失败忽略 */ }
-    }, 3000)
-  }, [caseId, reviewNotesLoading])
+    awaitReviewTask().then(async () => {
+      const result = await getReviewNotes(caseId)
+      setReviewNotes(result.content || '')
+      setReviewNotesLoading(false)
+    }).catch((e: unknown) => {
+      setReviewNotesLoading(false)
+      showAlert({
+        title: '生成失败',
+        message: e instanceof Error ? e.message : '阅卷笔录生成过程中出错',
+        variant: 'danger',
+      })
+    })
+  }, [caseId, reviewNotesLoading, awaitReviewTask])
 
   // 加载质证意见
   const loadCrossExamination = useCallback(async () => {
@@ -681,12 +675,10 @@ export function ReportPage() {
   }, [activeTab, caseId, crossExamination, loadCrossExamination])
 
   // 生成质证意见（异步任务模式）
-  const crossExamPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
-
   const handleGenerateCrossExamination = useCallback(async () => {
     if (!caseId || crossExaminationLoading) return
     setCrossExaminationLoading(true)
-    if (crossExamPollRef.current) clearInterval(crossExamPollRef.current)
+    if (reviewSubRef.current) { reviewSubRef.current(); reviewSubRef.current = null }
 
     try {
       await generateCrossExamination(caseId)
@@ -700,29 +692,22 @@ export function ReportPage() {
       return
     }
 
-    crossExamPollRef.current = setInterval(async () => {
-      try {
-        const st = await getReviewTaskStatus(caseId)
-        if (st.status === 'completed') {
-          if (crossExamPollRef.current) { clearInterval(crossExamPollRef.current); crossExamPollRef.current = null }
-          const result = await getCrossExamination(caseId)
-          setCrossExamination(result.content || '')
-          setCrossExaminationLoading(false)
-          if (result.error) {
-            showAlert({ title: '提示', message: result.error, variant: 'warning' })
-          }
-        } else if (st.status === 'error') {
-          if (crossExamPollRef.current) { clearInterval(crossExamPollRef.current); crossExamPollRef.current = null }
-          setCrossExaminationLoading(false)
-          showAlert({
-            title: '生成失败',
-            message: st.error || '质证意见生成过程中出错',
-            variant: 'danger',
-          })
-        }
-      } catch { /* 轮询失败忽略 */ }
-    }, 3000)
-  }, [caseId, crossExaminationLoading])
+    awaitReviewTask().then(async () => {
+      const result = await getCrossExamination(caseId)
+      setCrossExamination(result.content || '')
+      setCrossExaminationLoading(false)
+      if (result.error) {
+        showAlert({ title: '提示', message: result.error, variant: 'warning' })
+      }
+    }).catch((e: unknown) => {
+      setCrossExaminationLoading(false)
+      showAlert({
+        title: '生成失败',
+        message: e instanceof Error ? e.message : '质证意见生成过程中出错',
+        variant: 'danger',
+      })
+    })
+  }, [caseId, crossExaminationLoading, awaitReviewTask])
 
   // 切换到质证意见 tab 时加载
   useEffect(() => {

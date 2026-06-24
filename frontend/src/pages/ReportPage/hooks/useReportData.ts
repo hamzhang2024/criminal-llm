@@ -118,22 +118,25 @@ export function useReportData(caseId: string | undefined) {
       .finally(() => setLoading(false))
   }, [caseId, loadCaseInfo, loadEvidenceList, loadDefenseStages])
 
-  // 轮询分析状态
+  // 订阅分析状态（SSE，analysisRunning 时订阅，全部完成时流自动关闭）
   useEffect(() => {
     if (!caseId || !analysisRunning) return
-    const interval = setInterval(() => {
-      loadDefenseStages().then(() => {
-        setCompletedStages(prev => {
-          if (prev.size >= 5) setAnalysisRunning(false)
-          return prev
-        })
-        setNextStep(prev => {
-          if (prev === null) setAnalysisRunning(false)
-          return prev
-        })
-      }).catch(() => { /* ignore */ })
-    }, 3000)
-    return () => clearInterval(interval)
+    const unsubscribe = api.subscribeDefenseStages(
+      caseId,
+      () => {
+        loadDefenseStages().then(() => {
+          setCompletedStages(prev => {
+            if (prev.size >= 5) setAnalysisRunning(false)
+            return prev
+          })
+          setNextStep(prev => {
+            if (prev === null) setAnalysisRunning(false)
+            return prev
+          })
+        }).catch(() => { /* ignore */ })
+      },
+    )
+    return () => unsubscribe()
   }, [caseId, analysisRunning, loadDefenseStages])
 
   return {
