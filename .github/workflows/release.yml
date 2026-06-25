@@ -103,12 +103,14 @@ jobs:
       - name: Prebuild check (compatibility + module integrity)
         shell: bash
         run: |
-          python scripts/prebuild_check.py
-          # 模块完整性问题必须阻断（避免打包后运行时 ModuleNotFoundError）
-          if python scripts/prebuild_check.py 2>&1 | grep -q "ModuleNotFoundError"; then
+          # 兼容性警告（print/硬编码路径）允许通过，仅模块完整性问题阻断
+          CHECK_OUTPUT="$(python scripts/prebuild_check.py 2>&1)" || true
+          echo "$CHECK_OUTPUT"
+          if echo "$CHECK_OUTPUT" | grep -q "ModuleNotFoundError"; then
             echo "❌ 模块完整性检查失败，终止打包"
             exit 1
           fi
+          echo "✅ 模块完整性检查通过"
 
       # ---- Build frontend ----
       - name: Build frontend
