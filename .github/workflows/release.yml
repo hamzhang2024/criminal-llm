@@ -98,6 +98,8 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install -r backend/requirements-lock.txt
+          # pyinstaller 是打包工具，不进运行时锁文件，单独安装
+          pip install "pyinstaller>=6.20.0"
 
       # ---- 打包前校验：兼容性 + 模块完整性 ----
       - name: Prebuild check (compatibility + module integrity)
