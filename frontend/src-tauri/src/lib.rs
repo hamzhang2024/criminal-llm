@@ -156,7 +156,7 @@ pub fn run() {
                         cmd.creation_flags(CREATE_NO_WINDOW);
                     }
 
-                    let mut child = cmd.spawn().map_err(|e| format!("启动后端失败: {}", e))?;
+                    let child = cmd.spawn().map_err(|e| format!("启动后端失败: {}", e))?;
 
                     let pid = child.id();
                     eprintln!("[OK] 后端 PID: {}", pid);
@@ -164,65 +164,12 @@ pub fn run() {
                     let backend_pid = app.state::<BackendPid>();
                     *backend_pid.0.lock().unwrap() = Some(pid);
 
-                    // 等待后端就绪
-                    let client = reqwest::blocking::Client::builder()
-                        .timeout(std::time::Duration::from_secs(5))
-                        .build()
-                        .unwrap();
-
-                    let max_attempts = 120; // 120 次 * 500ms = 60 秒（Windows PyInstaller 首次启动较慢）
-                    let mut backend_ready = false;
-
-                    for i in 1..=max_attempts {
-                        match client.get("http://127.0.0.1:8080/api/health").send() {
-                            Ok(res) if res.status().is_success() => {
-                                eprintln!("[OK] 后端已就绪（{}秒）", i / 2);
-                                backend_ready = true;
-                                break;
-                            }
-                            Ok(res) => {
-                                eprintln!("[WARN] 后端响应非 200: {} (尝试 {}/{})", res.status(), i, max_attempts);
-                            }
-                            Err(e) => {
-                                if i % 10 == 0 {
-                                    eprintln!("[WAIT] 后端未就绪，继续等待... ({}/{}) 错误: {}", i, max_attempts, e);
-                                }
-                            }
-                        }
-                        std::thread::sleep(std::time::Duration::from_millis(500));
-                    }
-
-                    if !backend_ready {
-                        // 检测后端进程是否还活着——直接区分「后端崩了」和「网络层不通」
-                        match child.try_wait() {
-                            Ok(Some(status)) => {
-                                eprintln!(
-                                    "[ERROR] 后端启动超时（60秒）：后端进程已退出（状态: {}），说明后端启动后崩溃，请重点检查 backend_stderr.log 的 traceback",
-                                    status
-                                );
-                            }
-                            Ok(None) => {
-                                eprintln!(
-                                    "[ERROR] 后端启动超时（60秒）：后端进程仍在运行但 health check 失败，说明是网络层问题（防火墙拦截/端口未监听），而非后端崩溃"
-                                );
-                            }
-                            Err(e) => {
-                                eprintln!("[ERROR] 后端启动超时（60秒）：无法检测后端进程状态: {}", e);
-                            }
-                        }
-                        // 读取 stderr 日志，把实际错误信息留下供排查
-                        let stderr_log = backend_dir.join("backend_stderr.log");
-                        if stderr_log.exists() {
-                            match std::fs::read_to_string(&stderr_log) {
-                                Ok(content) if !content.is_empty() => {
-                                    eprintln!("[BACKEND STDERR] 后端错误输出:\n{}", content);
-                                }
-                                _ => {
-                                    eprintln!("[BACKEND STDERR] 日志为空（后端可能被防火墙拦截或端口被占用）");
-                                }
-                            }
-                        }
-                    }
+                    // 不在此处阻塞等待后端——就绪检测由前端 HomePage 的 waitForBackend 轮询负责
+                    // （带 loading 转圈）。历史版本在此同步轮询 health check 最多 60 秒，导致 Tauri
+                    // setup 阻塞、窗口迟迟不弹出（mac 启动体感明显变慢）。
+                    // 现在 spawn 后立即返回，窗口先弹出，前端继续轮询后端是否就绪。
+                    // 后端崩溃的 traceback 仍写入 backend_stderr.log（spawn 前 stderr 已重定向），
+                    // 前端超时会显示真实错误原因。
                 }
             }
 
