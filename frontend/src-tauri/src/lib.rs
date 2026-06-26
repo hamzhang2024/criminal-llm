@@ -106,6 +106,26 @@ pub fn run() {
                 } else {
                     eprintln!("[START] 启动后端: {:?}", backend_exe);
 
+                    // 启动前先杀掉可能残留的旧后端进程（占 8080 端口）
+                    // 场景：上次应用异常退出（崩溃/任务管理器杀），后端进程没被清理，
+                    // 残留进程占用 8080 导致新后端启动失败卡住（Windows 常见）
+                    #[cfg(windows)]
+                    {
+                        // 用 taskkill 杀占 8080 的进程（比 PowerShell 更可靠且不弹窗）
+                        let _ = std::process::Command::new("cmd")
+                            .args(["/C", "for /f \"tokens=5\" %a in ('netstat -ano ^| findstr :8080 ^| findstr LISTENING') do taskkill /F /PID %a 2>nul"])
+                            .stdout(std::process::Stdio::null())
+                            .stderr(std::process::Stdio::null())
+                            .output();
+                        eprintln!("[CLEANUP] 已清理可能残留的 8080 端口进程");
+                    }
+                    #[cfg(unix)]
+                    {
+                        let _ = std::process::Command::new("sh")
+                            .args(["-c", "lsof -ti:8080 | xargs kill -9 2>/dev/null"])
+                            .output();
+                    }
+
                     // 设置工作目录为后端所在目录（确保能找到 legal_db 等资源）
                     let backend_dir = backend_exe.parent().unwrap().to_path_buf();
 
