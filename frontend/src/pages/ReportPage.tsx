@@ -948,7 +948,7 @@ export function ReportPage() {
       }
       const updateMsg = `请结合全部已有分析结果，按以下意见修改三阶层分析报告：\n${instruction}`
 
-      const response = await fetch('http://localhost:8080/api/analyze-case/chat/update', {
+      const response = await fetch('http://127.0.0.1:8080/api/analyze-case/chat/update', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1022,7 +1022,7 @@ export function ReportPage() {
       }
       const evidenceContext = evidenceParts.join('\n\n').substring(0, 30000)
 
-      const response = await fetch('http://localhost:8080/api/analyze-case/chat/report', {
+      const response = await fetch('http://127.0.0.1:8080/api/analyze-case/chat/report', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

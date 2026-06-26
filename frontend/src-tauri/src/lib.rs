@@ -174,7 +174,7 @@ pub fn run() {
                     let mut backend_ready = false;
 
                     for i in 1..=max_attempts {
-                        match client.get("http://localhost:8080/api/health").send() {
+                        match client.get("http://127.0.0.1:8080/api/health").send() {
                             Ok(res) if res.status().is_success() => {
                                 eprintln!("[OK] 后端已就绪（{}秒）", i / 2);
                                 backend_ready = true;

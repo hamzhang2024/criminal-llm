@@ -18,7 +18,7 @@ export async function tauriOpen(url: string): Promise<void> {
 }
 
 /** API 基础地址：开发模式走 Vite 代理，生产模式直连后端 */
-export const API_BASE = import.meta.env.PROD ? 'http://localhost:8080/api' : '/api'
+export const API_BASE = import.meta.env.PROD ? 'http://127.0.0.1:8080/api' : '/api'
 
 /** AbortSignal.timeout polyfill（兼容旧版浏览器） */
 export function timeoutSignal(ms: number): AbortSignal {

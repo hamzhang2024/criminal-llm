@@ -44,7 +44,7 @@ export function HomePage() {
     if (!backendReady) return
     const checkConfig = async () => {
       try {
-        const res = await fetch('http://localhost:8080/api/config')
+        const res = await fetch('http://127.0.0.1:8080/api/config')
         const data = await res.json()
         const missing: string[] = []
         if (!data.mineru_token) missing.push('MinerU Token')

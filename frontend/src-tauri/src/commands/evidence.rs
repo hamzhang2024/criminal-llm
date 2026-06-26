@@ -2,7 +2,7 @@ use crate::state::BackendClient;
 use tauri::State;
 
 /// Backend 服务器地址
-const BACKEND_URL: &str = "http://localhost:8080";
+const BACKEND_URL: &str = "http://127.0.0.1:8080";
 
 /// 证据提取
 #[tauri::command]
