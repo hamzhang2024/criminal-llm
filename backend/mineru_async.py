@@ -352,6 +352,12 @@ class AsyncMinerUConverter:
                 u = owner_units[0]
                 text, images_dir = unit_results.get(u.data_id, (None, None))
                 if text:
+                    # 修正图片路径：MinerU 原文引用 images/，但物理目录已被
+                    # _download_and_parse 改名为 <stem>_images/，需同步替换 MD 引用。
+                    # 分段路径在 else 分支用正则统一处理，此处只对单文件生效。
+                    if images_dir:
+                        text = text.replace("images/", f"./{pdf.stem}_images/")
+                        text = text.replace('src="images/', f'src="./{pdf.stem}_images/')
                     # 落盘 MD（生产流程的证据提取依赖 MD 文件存在）
                     target_md = output_dir / f"{pdf.stem}.md"
                     target_md.write_text(text, encoding="utf-8")
@@ -401,6 +407,24 @@ class AsyncMinerUConverter:
                 final_results.append(ConvertResult(
                     file_name=pdf.name, success=True, text=merged_text, images_dir=merged_images_dir
                 ))
+                # 清理 chunk 残留的结构化 JSON（_download_and_parse 对每个 chunk unit
+                # 直接写到 output_dir，合并后无用且污染 md/ 目录；原文件级 <stem>_layout.json
+                # 不含 _chunk_ 前缀，绝不会误删）
+                for stale in output_dir.glob("_chunk_*_layout.json"):
+                    try:
+                        stale.unlink()
+                    except OSError:
+                        pass
+                for stale in output_dir.glob("_chunk_*_content_list.json"):
+                    try:
+                        stale.unlink()
+                    except OSError:
+                        pass
+                for stale in output_dir.glob("_chunk_*_middle.json"):
+                    try:
+                        stale.unlink()
+                    except OSError:
+                        pass
 
             async with progress_lock:
                 progress.completed += 1
