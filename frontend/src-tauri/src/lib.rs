@@ -109,10 +109,24 @@ pub fn run() {
                     // 设置工作目录为后端所在目录（确保能找到 legal_db 等资源）
                     let backend_dir = backend_exe.parent().unwrap().to_path_buf();
 
+                    // 将后端 stderr 重定向到文件（后端崩溃时 traceback 会留下，
+                    // 否则 Stdio::null() 会丢失所有错误信息，无法排查启动失败）
+                    let stderr_log = backend_dir.join("backend_stderr.log");
+
                     let mut cmd = std::process::Command::new(&backend_exe);
                     cmd.current_dir(&backend_dir);
                     cmd.stdout(std::process::Stdio::null());
-                    cmd.stderr(std::process::Stdio::null());
+
+                    // 尝试重定向 stderr 到文件；失败则丢弃（退回原行为）
+                    match std::fs::File::create(&stderr_log) {
+                        Ok(f) => {
+                            cmd.stderr(std::process::Stdio::from(f));
+                        }
+                        Err(e) => {
+                            eprintln!("[WARN] 无法创建 stderr 日志: {}, 错误: {}", stderr_log.display(), e);
+                            cmd.stderr(std::process::Stdio::null());
+                        }
+                    }
 
                     // Windows 上隐藏窗口
                     #[cfg(target_os = "windows")]
@@ -136,7 +150,7 @@ pub fn run() {
                         .build()
                         .unwrap();
 
-                    let max_attempts = 60; // 60 次 * 500ms = 30 秒
+                    let max_attempts = 120; // 120 次 * 500ms = 60 秒（Windows PyInstaller 首次启动较慢）
                     let mut backend_ready = false;
 
                     for i in 1..=max_attempts {
@@ -160,6 +174,18 @@ pub fn run() {
 
                     if !backend_ready {
                         eprintln!("[ERROR] 后端启动超时（30秒），请检查后端日志");
+                        // 读取 stderr 日志，把实际错误信息留下供排查
+                        let stderr_log = backend_dir.join("backend_stderr.log");
+                        if stderr_log.exists() {
+                            match std::fs::read_to_string(&stderr_log) {
+                                Ok(content) if !content.is_empty() => {
+                                    eprintln!("[BACKEND STDERR] 后端错误输出:\n{}", content);
+                                }
+                                _ => {
+                                    eprintln!("[BACKEND STDERR] 日志为空（后端可能被防火墙拦截或端口被占用）");
+                                }
+                            }
+                        }
                     }
                 }
             }
