@@ -10,6 +10,13 @@ import re
 
 from _bootstrap import DATA_DIR
 
+# 必须在 import logging / uvicorn 之前：PyInstaller --windowed（Windows 无控制台）打包后
+# sys.stdout/stderr/stdin 可能为 None，uvicorn 初始化日志 formatter 时调用
+# sys.stderr.isatty() 会直接崩溃，导致后端启动即退出、8080 永不监听。
+from _stdio_guard import ensure_stdio
+
+ensure_stdio(DATA_DIR)
+
 # 加载 .env 文件（此时不能 import config，避免循环依赖）
 _env_file = DATA_DIR / ".env"
 if _env_file.exists():
