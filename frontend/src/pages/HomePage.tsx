@@ -25,12 +25,12 @@ export function HomePage() {
   useEffect(() => {
     const waitBackend = async () => {
       setLoading(true)
-      const ready = await waitForBackend(90000, 1000)
+      const { ready, lastError } = await waitForBackend(90000, 1000)
       setBackendReady(ready)
       if (!ready) {
         showAlert({
           title: '后端启动超时',
-          message: '后端服务启动超时（已等待90秒）。请尝试：\n1. 重新启动应用\n2. 检查 Windows 防火墙是否拦截\n3. 检查 8080 端口是否被占用\n\n如问题持续，请将安装目录下的 backend_stderr.log 文件发送给技术支持。',
+          message: `后端服务启动超时（已等待90秒）。\n实际错误：${lastError ?? '未知'}\n\n请尝试：\n1. 重新启动应用\n2. 检查 Windows 防火墙是否拦截\n3. 检查 8080 端口是否被占用\n\n如问题持续，请将安装目录下的 backend_stderr.log 文件发送给技术支持。`,
           variant: 'danger',
         })
       }

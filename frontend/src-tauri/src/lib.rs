@@ -156,7 +156,7 @@ pub fn run() {
                         cmd.creation_flags(CREATE_NO_WINDOW);
                     }
 
-                    let child = cmd.spawn().map_err(|e| format!("启动后端失败: {}", e))?;
+                    let mut child = cmd.spawn().map_err(|e| format!("启动后端失败: {}", e))?;
 
                     let pid = child.id();
                     eprintln!("[OK] 后端 PID: {}", pid);
@@ -193,7 +193,23 @@ pub fn run() {
                     }
 
                     if !backend_ready {
-                        eprintln!("[ERROR] 后端启动超时（30秒），请检查后端日志");
+                        // 检测后端进程是否还活着——直接区分「后端崩了」和「网络层不通」
+                        match child.try_wait() {
+                            Ok(Some(status)) => {
+                                eprintln!(
+                                    "[ERROR] 后端启动超时（60秒）：后端进程已退出（状态: {}），说明后端启动后崩溃，请重点检查 backend_stderr.log 的 traceback",
+                                    status
+                                );
+                            }
+                            Ok(None) => {
+                                eprintln!(
+                                    "[ERROR] 后端启动超时（60秒）：后端进程仍在运行但 health check 失败，说明是网络层问题（防火墙拦截/端口未监听），而非后端崩溃"
+                                );
+                            }
+                            Err(e) => {
+                                eprintln!("[ERROR] 后端启动超时（60秒）：无法检测后端进程状态: {}", e);
+                            }
+                        }
                         // 读取 stderr 日志，把实际错误信息留下供排查
                         let stderr_log = backend_dir.join("backend_stderr.log");
                         if stderr_log.exists() {

@@ -31,13 +31,21 @@ export function timeoutSignal(ms: number): AbortSignal {
   return controller.signal
 }
 
+/** 后端就绪检测结果 */
+export interface BackendReadyResult {
+  ready: boolean
+  /** 最后一次探测的错误信息（ready=true 时为 null）。供 UI 展示真实失败原因。 */
+  lastError: string | null
+}
+
 /** 后端就绪检测：轮询 /api/health 直到后端启动完成
  * @param timeout 最大等待时间（毫秒），默认 30 秒
  * @param interval 轮询间隔（毫秒），默认 500ms
- * @returns Promise<boolean> 后端是否就绪
+ * @returns Promise<BackendReadyResult> 含就绪状态与最后一次错误信息
  */
-export async function waitForBackend(timeout = 30000, interval = 500): Promise<boolean> {
+export async function waitForBackend(timeout = 30000, interval = 500): Promise<BackendReadyResult> {
   const startTime = Date.now()
+  let lastError: string | null = null
 
   while (Date.now() - startTime < timeout) {
     try {
@@ -45,15 +53,31 @@ export async function waitForBackend(timeout = 30000, interval = 500): Promise<b
         signal: timeoutSignal(2000)
       })
       if (res.ok) {
-        return true
+        return { ready: true, lastError: null }
       }
-    } catch {
-      // 后端未就绪，继续等待
+      // 非 2xx：连上了但应用层异常，记录状态码
+      lastError = `后端响应 HTTP ${res.status}`
+    } catch (e) {
+      // 捕获真实错误并归一化为可读中文，避免空 catch 吞掉诊断信号
+      lastError = normalizeBackendError(e)
     }
     await new Promise(resolve => setTimeout(resolve, interval))
   }
 
-  return false
+  return { ready: false, lastError }
+}
+
+/** 将 fetch 探测的网络错误归一化为可读中文 */
+function normalizeBackendError(e: unknown): string {
+  if (e instanceof DOMException && e.name === 'TimeoutError') {
+    return '连接超时（2 秒内后端无响应，可能后端启动极慢或请求被丢弃）'
+  }
+  const msg = e instanceof Error ? e.message : String(e)
+  // 浏览器 fetch 无法区分「连接被拒绝/进程已退出」与「防火墙拦截」，统一归为连接失败
+  if (msg.includes('Failed to fetch') || msg.includes('NetworkError') || msg.includes('Load failed')) {
+    return '无法连接到后端（连接被拒绝或被拦截——常见于后端进程已退出、防火墙拦截或端口未监听）'
+  }
+  return msg
 }
 
 /** 安全的 fetch 包装：将网络错误转为友好的中文提示 */
