@@ -10,6 +10,7 @@
 # ---- Web 框架 ----
 fastapi==0.129.0
 starlette==0.52.1
+sse-starlette==3.4.4  # SSE 实时推送（进度条/状态，缺失则所有 SSE 端点 500）
 uvicorn==0.40.0
 python-multipart==0.0.22
 

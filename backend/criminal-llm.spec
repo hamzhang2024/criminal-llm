@@ -61,6 +61,8 @@ hiddenimports = [
     'uvicorn.protocols.websockets.auto',
     'uvicorn.lifespan.on',
     'python_multipart',
+    'sse_starlette',
+    'sse_starlette.sse',
     'pydantic.networks',
     'pydantic_core.core_schema',
     'aiohttp.client',
