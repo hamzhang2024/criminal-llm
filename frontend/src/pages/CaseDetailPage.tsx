@@ -438,13 +438,32 @@ export function CaseDetailPage() {
   useEffect(() => {
     if (!caseId || currentStep === 0) return
     let cancelled = false
-    checkExtractStatus().then(running => {
-      if (cancelled || !running) return
-      // 后端在跑但本地没有订阅，启动 SSE 订阅恢复进度
-      if (!extractSubRef.current) {
-        setProcessing(true)
-        setProgress('正在提取证据...')
-        startExtractPoll()
+    checkExtractStatus().then(async (running) => {
+      if (cancelled) return
+      if (running) {
+        // 后端在跑但本地没有订阅，启动 SSE 订阅恢复进度
+        if (!extractSubRef.current) {
+          setProcessing(true)
+          setProgress('正在提取证据...')
+          startExtractPoll()
+        }
+        return
+      }
+      // 提取未运行。若转换已完成但证据尚未提取（「转换并提取」的自动串联
+      // 可能因页面刷新/切步骤被中断），在此补触发，避免卡在"正在转换并提取"无进展
+      if (currentStep >= 1) {
+        try {
+          const ev = await api.getEvidenceIndex(caseId)
+          if (ev.total_evidence === 0) {
+            const cs = await fetch(`${API_BASE}/tasks/${caseId}/convert-status`).then((r) => r.json()).catch(() => null)
+            if (cs && cs.status === 'completed') {
+              setProcessing(true)
+              setProgress('正在转换并提取证据（第 2/2 步：提取证据）...')
+              await api.extractEvidence(caseId)
+              startExtractPoll()
+            }
+          }
+        } catch { /* 忽略，用户可手动点提取 */ }
       }
     }).catch(() => {})
     return () => { cancelled = true }
