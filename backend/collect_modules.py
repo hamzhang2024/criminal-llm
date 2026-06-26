@@ -32,8 +32,8 @@ def collect_local_modules(backend_dir: Path) -> list[str]:
     modules = []
     for py in sorted(backend_dir.glob("*.py")):
         name = py.stem
-        if name.startswith("_") and name != "_bootstrap":
-            # 跳过 __init__ 等，但保留 _bootstrap（bootstrap 模块）
+        if name.startswith("_") and name not in ("_bootstrap", "_stdio_guard"):
+            # 跳过 __init__ 等，但保留 _bootstrap（bootstrap）、_stdio_guard（stdio 兜底，被 main.py import）
             continue
         if name in _EXCLUDE_MODULES:
             continue
