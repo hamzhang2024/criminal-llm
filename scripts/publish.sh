@@ -43,9 +43,22 @@ ssh -o BatchMode=yes -o ConnectTimeout=8 "$SSH_HOST" true 2>/dev/null \
 # ---- 3. 下载 Release 安装包 ----
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
-echo "⬇️  下载安装包..."
-gh release download "v$VER" --repo "$REMOTE" --dir "$TMP" \
-  --pattern '*.msi' --pattern '*.dmg' --pattern '*.deb' --clobber
+echo "⬇️  下载安装包（gh-proxy 镜像优先，失败回退 gh）..."
+# gh release download 在国内网络常卡死，优先用 gh-proxy 镜像加速下载
+BASE="https://gh-proxy.com/https://github.com/$REMOTE/releases/download/v$VER"
+FILES=(
+  "Criminal-Case-Analyzer_${VER}_x64_zh-CN.msi"
+  "Criminal-Case-Analyzer_${VER}_aarch64.dmg"
+  "Criminal-Case-Analyzer_${VER}_amd64.deb"
+)
+for fname in "${FILES[@]}"; do
+  if curl -fL --max-time 180 -o "$TMP/$fname" "$BASE/$fname" 2>/dev/null; then
+    echo "   ✓ 镜像 $fname"
+  else
+    echo "   ⚠ 镜像失败，回退 gh: $fname"
+    gh release download "v$VER" --repo "$REMOTE" --dir "$TMP" --pattern "$fname" --clobber
+  fi
+done
 ls -1 "$TMP" | sed 's/^/   /'
 
 # ---- 4. scp 直传到官网 uploads(绕过 upload API 的 .deb 白名单限制)----
