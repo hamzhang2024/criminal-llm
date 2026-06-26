@@ -132,6 +132,93 @@ def check_module_integrity() -> list:
     return issues
 
 
+# 第三方包 import 名 → requirements 包名（处理两者不一致的常见情况）
+_IMPORT_PKG_ALIASES = {
+    "fitz": "PyMuPDF",
+    "PIL": "Pillow",
+    "dotenv": "python-dotenv",
+    "multipart": "python-multipart",
+    "python_multipart": "python-multipart",
+    "sse_starlette": "sse-starlette",
+    "pydantic_core": "pydantic-core",
+}
+
+
+def _norm_pkg(name: str) -> str:
+    """规范化包名用于比较（PEP 503：连字符/下划线/点等价，小写）。"""
+    return name.lower().replace("-", "_").replace(".", "_")
+
+
+def check_third_party_deps() -> list:
+    """检查第三方依赖完整性：代码 import 的第三方库是否都在 requirements.txt。
+
+    collect_modules / check_module_integrity 只覆盖「本地模块」；第三方依赖（如
+    sse_starlette）若漏进 requirements，打包后运行时 ModuleNotFoundError（v1.6.6
+    之前的 SSE 500 即此问题）。本函数扫描所有 import（含函数内），排除本地模块 +
+    标准库，确认剩余第三方都在 requirements.txt。
+    """
+    issues = []
+
+    # 只扫描「会被打包」的本地模块（collect_modules 已排除死代码如 ocr_acceleration，
+    # 否则死代码里的 onnxruntime/rapidocr 等可选依赖会误报）
+    collect_script = BACKEND_DIR / "collect_modules.py"
+    result = subprocess.run(
+        [sys.executable, str(collect_script)],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        return issues  # collect_modules 失败由 check_module_integrity 单独报
+    scan_modules = set(result.stdout.split())
+
+    import_re = re.compile(r'^\s*(?:from\s+([\w.]+)\s+import|import\s+([\w.]+))', re.MULTILINE)
+    imported = set()
+    for mod in scan_modules:
+        py_file = BACKEND_DIR / f"{mod}.py"
+        if not py_file.exists():
+            continue
+        try:
+            content = py_file.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        for m in import_re.finditer(content):
+            name = m.group(1) or m.group(2)
+            if name and not name.startswith("."):
+                imported.add(name.split(".")[0])
+
+    # 本地：会被打包的模块 + backend 下的子包目录（utils/、legal_db/ 等）
+    local_modules = set(scan_modules)
+    for d in BACKEND_DIR.iterdir():
+        if d.is_dir() and d.name != "__pycache__":
+            local_modules.add(d.name)
+    stdlib = set(getattr(sys, "stdlib_module_names", set()))
+
+    req_names = set()
+    req_file = BACKEND_DIR / "requirements.txt"
+    if req_file.exists():
+        for line in req_file.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line and not line.startswith("#"):
+                pkg = re.split(r"[>=<\[!~;]", line)[0].strip()
+                if pkg:
+                    req_names.add(_norm_pkg(pkg))
+
+    missing = []
+    for mod in sorted(imported - local_modules - stdlib):
+        pkg = _IMPORT_PKG_ALIASES.get(mod, mod)
+        if _norm_pkg(pkg) not in req_names:
+            missing.append(mod if pkg == mod else f"{mod}（包名 {pkg}）")
+
+    if missing:
+        issues.append({
+            "file": "backend/requirements.txt",
+            "line": 0,
+            "match": f"import {missing[0].split('（')[0]}",
+            "message": f"第三方依赖被 import 但未列入 requirements.txt: {', '.join(missing)} —— 打包后会 ModuleNotFoundError",
+        })
+
+    return issues
+
+
 def run_checks():
     """运行所有检查"""
     all_issues = []
@@ -147,6 +234,9 @@ def run_checks():
 
     # 模块完整性检查
     all_issues.extend(check_module_integrity())
+
+    # 第三方依赖完整性检查（堵住 sse_starlette 那类第三方遗漏）
+    all_issues.extend(check_third_party_deps())
 
     return all_issues
 
@@ -179,6 +269,7 @@ def print_report(issues: list):
     print("2. 外部命令 → 预检 shutil.which() 后再调用")
     print("3. print() → 改用 logging.getLogger(__name__)")
     print("4. 模块未收集 → 确认 backend/collect_modules.py 的 _EXCLUDE_MODULES 是否误排除")
+    print("5. 第三方依赖未列入 → 加到 backend/requirements.txt（并确认 spec hiddenimports/collect_all 收集，函数内 import 尤其注意）")
 
     return 1
 
