@@ -586,11 +586,9 @@ async def startup():
         try:
             from pdf_processor import _get_fitz, _get_pdf2image
             from watermark_remover import _get_fitz as _get_wm_fitz
-            from mineru_async import _get_aiohttp
-            from paddleocr_async import _get_aiohttp as _get_paddle_aiohttp
             await asyncio.sleep(2)  # 让 startup complete 先生效，再预热
             _get_fitz(); _get_pdf2image(); _get_wm_fitz()
-            _get_aiohttp(); _get_paddle_aiohttp()
+            # aiohttp 已在 mineru_async 顶部 import（转换时随该模块加载），无需预热
             logging.info("[预加载] 重依赖后台预热完成（首次转换/OCR 无需等待加载）")
         except Exception as e:
             logging.warning(f"[预加载] 重依赖预热失败（不影响功能，首次用时再加载）: {e}")

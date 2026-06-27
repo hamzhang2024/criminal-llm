@@ -25,7 +25,7 @@ export function HomePage() {
   useEffect(() => {
     const waitBackend = async () => {
       setLoading(true)
-      const { ready, lastError } = await waitForBackend(90000, 1000)
+      const { ready, lastError } = await waitForBackend(240000, 1000)
       setBackendReady(ready)
       if (!ready) {
         showAlert({
