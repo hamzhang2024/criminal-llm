@@ -29,7 +29,9 @@ jobs:
             tauri-args: "--target aarch64-apple-darwin"
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
-            tauri-args: ""
+            # 禁用 AppImage：v1.6.11 onedir 打包后 linuxdeploy 失败，
+            # 导致整个 Linux job fail、deb/rpm 也无法上传。用户用 deb/rpm 即可。
+            tauri-args: "--bundles deb,rpm"
 
     runs-on: ${{ matrix.platform.os }}
     steps:
@@ -101,18 +103,22 @@ jobs:
           # pyinstaller 是打包工具，不进运行时锁文件，单独安装
           pip install "pyinstaller>=6.20.0"
 
-      # ---- 打包前校验：兼容性 + 模块完整性 ----
-      - name: Prebuild check (compatibility + module integrity)
+      # ---- 打包前校验：兼容性 + 模块完整性 + lazy import 安全 ----
+      - name: Prebuild check (compatibility + module integrity + lazy import safety)
         shell: bash
         run: |
-          # 兼容性警告（print/硬编码路径）允许通过，仅模块完整性问题阻断
+          # prebuild_check 区分两类：
+          #   ⚠️ warning（兼容性：硬编码路径/外部命令/print）—— 不阻断
+          #   ❌ fatal（模块完整性/第三方依赖/PEP562 lazy NameError）—— 阻断
+          # 旧逻辑只 grep ModuleNotFoundError，会漏掉 lazy import 类致命问题；
+          # 现改为：输出含 ❌ 即 exit 1。|| true 防止 python 异常直接 fail（grep 兜底）。
           CHECK_OUTPUT="$(python scripts/prebuild_check.py 2>&1)" || true
           echo "$CHECK_OUTPUT"
-          if echo "$CHECK_OUTPUT" | grep -q "ModuleNotFoundError"; then
-            echo "❌ 模块完整性检查失败，终止打包"
+          if echo "$CHECK_OUTPUT" | grep -q "❌"; then
+            echo "❌ 打包前致命检查失败，终止打包（见上方 ❌ 标记）"
             exit 1
           fi
-          echo "✅ 模块完整性检查通过"
+          echo "✅ 打包前致命检查通过（兼容性警告 ⚠️ 不阻断）"
 
       # ---- Build frontend ----
       - name: Build frontend
@@ -224,7 +230,130 @@ jobs:
           echo ""
           echo "=== 全部完整性检查通过 ==="
 
-      # ---- Tauri build ----
+      # ---- 运行时冒烟测试：真启动打包后的后端，抓启动崩溃 / SSE 500 / NameError ----
+      # 防 v1.6.8（aiohttp NameError）/ v1.6.11（sse_starlette 500）类漏网：
+      # 静态检查覆盖不到的运行时问题，由本步骤兜底。
+      - name: Runtime smoke test (backend boot + SSE health)
+        shell: bash
+        run: |
+          set +e  # 整个步骤手动判定，不因单条命令非零退出
+          RES_DIR="frontend/src-tauri/resources/backend"
+          if [ "${{ matrix.platform.os }}" = "windows-latest" ]; then
+            EXEC="$RES_DIR/criminal-llm.exe"
+          else
+            EXEC="$RES_DIR/criminal-llm"
+          fi
+
+          echo "=== 运行时冒烟测试 ==="
+          if [ ! -f "$EXEC" ]; then
+            echo "❌ 后端可执行文件不存在: $EXEC"
+            exit 1
+          fi
+          echo "启动后端: $EXEC"
+
+          # 后台启动后端，cwd = exe 所在目录（onedir 模式 bootloader 自动找 _internal/）
+          # 日志重定向到 /tmp/be.log 便于失败排查
+          (
+            cd "$RES_DIR" || exit 1
+            if [ "${{ matrix.platform.os }}" = "windows-latest" ]; then
+              # Windows git bash: & 后台启动；stdout/stderr 重定向
+              ./criminal-llm.exe > /tmp/be.log 2>&1 &
+            else
+              ./criminal-llm > /tmp/be.log 2>&1 &
+            fi
+            echo $! > /tmp/be.pid
+          )
+
+          # 等 health 就绪（最多 30s）
+          HEALTH_OK=0
+          for i in $(seq 1 60); do
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 2 http://127.0.0.1:8080/api/health 2>/dev/null || echo "000")
+            if [ "$CODE" = "200" ]; then
+              HEALTH_OK=1
+              echo "✅ 后端 health 就绪（等待 $((i/2))s）"
+              break
+            fi
+            sleep 0.5
+          done
+
+          if [ "$HEALTH_OK" != "1" ]; then
+            echo "❌ 后端 /api/health 30s 内未就绪（最后 HTTP code: $CODE）"
+            echo "=== 后端启动日志 ==="
+            cat /tmp/be.log 2>/dev/null || echo "(无日志)"
+            # 内联 kill（cleanup 步骤会再兜底）
+            if [ -f /tmp/be.pid ]; then
+              PID=$(cat /tmp/be.pid 2>/dev/null)
+              if [ -n "$PID" ]; then
+                if [ "${{ matrix.platform.os }}" = "windows-latest" ]; then
+                  taskkill //F //PID "$PID" 2>/dev/null || true
+                else
+                  kill -9 "$PID" 2>/dev/null || true
+                fi
+              fi
+            fi
+            exit 1
+          fi
+
+          # SSE 端点冒烟：500 = sse_starlette 缺失 / 路由内 NameError；200/404 都算 OK
+          # --max-time 3：SSE 是流式，3s 后强制断开取状态码
+          SSE_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 \
+            http://127.0.0.1:8080/api/tasks/_smoke/convert-status/stream 2>/dev/null || echo "000")
+          echo "SSE 端点 HTTP code: $SSE_CODE"
+          if [ "$SSE_CODE" = "500" ]; then
+            echo "❌ SSE 端点返回 500（疑似 sse_starlette 缺失或路由内 NameError）"
+            echo "=== 后端日志（最后 50 行）==="
+            tail -50 /tmp/be.log 2>/dev/null || echo "(无日志)"
+            if [ -f /tmp/be.pid ]; then
+              PID=$(cat /tmp/be.pid 2>/dev/null)
+              if [ -n "$PID" ]; then
+                if [ "${{ matrix.platform.os }}" = "windows-latest" ]; then
+                  taskkill //F //PID "$PID" 2>/dev/null || true
+                else
+                  kill -9 "$PID" 2>/dev/null || true
+                fi
+              fi
+            fi
+            exit 1
+          fi
+          # 200 或 404 都算通过（404 = 端点存在性差异，不是运行时崩溃）
+          if [ "$SSE_CODE" = "200" ] || [ "$SSE_CODE" = "404" ]; then
+            echo "✅ SSE 端点正常（$SSE_CODE）"
+          else
+            echo "⚠️ SSE 端点返回非预期 code: $SSE_CODE（仅告警，不阻断）"
+          fi
+
+          echo "=== 冒烟测试通过 ==="
+
+          # 成功路径也要 kill 后端，避免残留进程干扰后续 Tauri build
+          if [ -f /tmp/be.pid ]; then
+            PID=$(cat /tmp/be.pid 2>/dev/null)
+            if [ -n "$PID" ]; then
+              if [ "${{ matrix.platform.os }}" = "windows-latest" ]; then
+                taskkill //F //PID "$PID" 2>/dev/null || true
+              else
+                kill -9 "$PID" 2>/dev/null || true
+              fi
+            fi
+            rm -f /tmp/be.pid
+          fi
+
+      # 兜底清理：即使冒烟测试步骤被 cancel/失败，也确保后端进程不残留
+      - name: Runtime smoke test cleanup
+        if: always()
+        shell: bash
+        run: |
+          # 兜底清理：确保后端进程不残留（即使上一步失败）
+          if [ -f /tmp/be.pid ]; then
+            PID=$(cat /tmp/be.pid 2>/dev/null)
+            if [ -n "$PID" ]; then
+              if [ "${{ matrix.platform.os }}" = "windows-latest" ]; then
+                taskkill //F //PID "$PID" 2>/dev/null || true
+              else
+                kill -9 "$PID" 2>/dev/null || true
+              fi
+            fi
+            rm -f /tmp/be.pid
+          fi
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
