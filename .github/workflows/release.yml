@@ -136,8 +136,8 @@ jobs:
 
           # 复制 PyInstaller 输出
           if [ "${{ matrix.platform.os }}" = "windows-latest" ]; then
-            # Windows: PyInstaller 生成单个 exe
-            cp backend/dist/criminal-llm.exe "$RES_DIR/" 2>/dev/null || true
+            # Windows: PyInstaller onedir 生成 dist/criminal-llm/ 目录（exe + _internal/）
+            cp -r backend/dist/criminal-llm/* "$RES_DIR/" 2>/dev/null || true
           else
             # macOS/Linux: PyInstaller 生成 dist/criminal-llm 目录
             if [ -d "backend/dist/criminal-llm" ]; then
