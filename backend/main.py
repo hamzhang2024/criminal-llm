@@ -5,6 +5,7 @@
 简化版：移除 pydantic 依赖，使用原生类型
 """
 # 初始化环境：加载 DATA_DIR/.env（必须在所有 import 之前）
+import asyncio
 import os
 import re
 
@@ -553,22 +554,31 @@ async def startup():
     except Exception as e:
         logging.error(f"[CONFIG] 读取配置失败: {e}")
 
+    # 恢复后台任务状态（轻量：仅读 JSON，保留同步）
     from background_tasks import init_tasks
     init_tasks()
 
-    logging.info("[CLEANUP] 检查并清理超过 7 天的文件...")
-    stats = cleanup_old_files()
-    if stats["deleted_files"] > 0:
-        logging.info(f"   已清理 {stats['deleted_files']} 个任务，释放 {stats['freed_size']}")
-    else:
-        logging.info("   无需清理")
+    # 清理任务丢到后台异步执行，不阻塞 Application startup complete
+    # （前端 health check 可更早拿到响应；清理本身可延迟完成）
+    async def _background_cleanup():
+        try:
+            logging.info("[CLEANUP] 检查并清理超过 7 天的文件...")
+            stats = cleanup_old_files()
+            if stats["deleted_files"] > 0:
+                logging.info(f"   已清理 {stats['deleted_files']} 个任务，释放 {stats['freed_size']}")
+            else:
+                logging.info("   无需清理")
 
-    logging.info("[TRASH] 检查回收站...")
-    cleaned = cleanup_trash()
-    if cleaned:
-        logging.info(f"   已彻底删除 {len(cleaned)} 个过期案件")
-    else:
-        logging.info("   回收站无需清理")
+            logging.info("[TRASH] 检查回收站...")
+            cleaned = cleanup_trash()
+            if cleaned:
+                logging.info(f"   已彻底删除 {len(cleaned)} 个过期案件")
+            else:
+                logging.info("   回收站无需清理")
+        except Exception as e:
+            logging.error(f"[CLEANUP] 后台清理任务异常: {e}")
+
+    asyncio.create_task(_background_cleanup())
 
 
 @app.on_event("shutdown")

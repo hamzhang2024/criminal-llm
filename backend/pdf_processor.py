@@ -11,8 +11,30 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import fitz
-from pdf2image import convert_from_path
+# 性能优化：fitz(PyMuPDF) 与 pdf2image 是重 native 依赖，
+# 启动时不需要立即加载（仅缩略图/文本提取/拆分时才用）。
+# 采用模块级 lazy 加载模式：首次实际使用时才 import，后续走 sys.modules 缓存。
+_fitz = None  # PyMuPDF
+_convert_from_path = None  # pdf2image.convert_from_path
+
+
+def _get_fitz():
+    """惰性加载 PyMuPDF，避免启动时加载重依赖"""
+    global _fitz
+    if _fitz is None:
+        import fitz as _f  # noqa: WPS433
+        _fitz = _f
+    return _fitz
+
+
+def _get_pdf2image():
+    """惰性加载 pdf2image，避免启动时加载重依赖"""
+    global _convert_from_path
+    if _convert_from_path is None:
+        from pdf2image import convert_from_path as _c  # noqa: WPS433
+        _convert_from_path = _c
+    return _convert_from_path
+
 
 from config import CACHE_DIR, OUTPUT_DIR, THUMBNAIL_DPI, THUMBNAIL_WIDTH, UPLOAD_DIR
 
@@ -68,7 +90,8 @@ class PDFProcessor:
         
         thumbnails = []
         
-        # 使用 pdf2image 转换
+        # 使用 pdf2image 转换（惰性加载）
+        convert_from_path = _get_pdf2image()
         images = convert_from_path(
             pdf_path,
             dpi=THUMBNAIL_DPI,
@@ -104,6 +127,7 @@ class PDFProcessor:
             页码 -> 文本内容的映射
         """
         texts = {}
+        fitz = _get_fitz()
         doc = fitz.open(str(pdf_path))
         total_pages = len(doc)
 
@@ -121,6 +145,7 @@ class PDFProcessor:
 
     def get_page_count(self, pdf_path: Path) -> int:
         """获取 PDF 页数"""
+        fitz = _get_fitz()
         doc = fitz.open(str(pdf_path))
         count = len(doc)
         doc.close()
@@ -144,6 +169,7 @@ class PDFProcessor:
             拆分结果列表
         """
         results = []
+        fitz = _get_fitz()
         doc = fitz.open(str(pdf_path))
         total_pages = len(doc)
 

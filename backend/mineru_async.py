@@ -15,6 +15,10 @@ MinerU 异步批量转换模块
     results = await converter.convert_batch([pdf1, pdf2, pdf3])
 """
 
+# 延迟求值注解：使 `aiohttp.ClientSession` 等类型注解在 def 时不触发 import，
+# 配合下方 _get_aiohttp() 才能让顶部不再 import aiohttp。
+from __future__ import annotations
+
 import asyncio
 import logging
 import re
@@ -23,7 +27,30 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-import aiohttp
+# 性能优化：aiohttp 是重 native 依赖，启动时不需要立即加载
+# （转换 PDF 时才用到）。采用模块级 lazy 加载：首次实际使用时才 import。
+_aiohttp = None
+
+
+def _get_aiohttp():
+    """惰性加载 aiohttp，避免启动时加载重依赖"""
+    global _aiohttp
+    if _aiohttp is None:
+        import aiohttp as _a  # noqa: WPS433
+        _aiohttp = _a
+    return _aiohttp
+
+
+def __getattr__(name):
+    """模块级 lazy：当代码引用 `aiohttp.X` 时，先取到 aiohttp 模块对象。
+
+    这样模块内所有 `aiohttp.ClientSession` 等引用无需在每个函数里单独 import，
+    启动时也不触发 aiohttp 加载（仅首次运行时才加载）。
+    """
+    if name == "aiohttp":
+        return _get_aiohttp()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 # 配置日志（PyInstaller --noconsole 模式下 print() 不可见，必须用 logger）
 logger = logging.getLogger(__name__)

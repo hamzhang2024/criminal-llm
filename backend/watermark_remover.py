@@ -14,7 +14,21 @@ import subprocess
 import tempfile
 from typing import Any
 
-import fitz
+# 性能优化：fitz(PyMuPDF) 是重 native 依赖，启动时不需要立即加载
+# （水印移除是用户主动触发的操作，延迟到真正调用时再加载）。
+# 采用模块级 lazy 加载：首次使用时 import，后续走 sys.modules 缓存。
+_fitz = None
+
+
+def _get_fitz():
+    """惰性加载 PyMuPDF，避免启动时加载重依赖"""
+    global _fitz
+    if _fitz is None:
+        import fitz as _f  # noqa: WPS433
+        _fitz = _f
+    return _fitz
+
+
 from pipeline_errors import PDFProcessingError
 
 logger = logging.getLogger(__name__)
@@ -52,8 +66,12 @@ def _try_fix_with_qpdf(input_path: str) -> str | None:
         return None
 
 
-def _open_pdf_with_repair(input_path: str, password: str | None = None) -> fitz.Document | None:
-    """打开 PDF，必要时自动修复损坏的文件"""
+def _open_pdf_with_repair(input_path: str, password: str | None = None) -> Any:
+    """打开 PDF，必要时自动修复损坏的文件
+
+    返回类型注解用 Any 而非 fitz.Document，避免在模块顶部 import fitz。
+    """
+    fitz = _get_fitz()
     try:
         doc = fitz.open(input_path)
         return doc
