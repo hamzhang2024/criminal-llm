@@ -180,11 +180,14 @@ jobs:
           if [ -f "$EXEC" ]; then
             SIZE=$(stat -f%z "$EXEC" 2>/dev/null || stat -c%s "$EXEC" 2>/dev/null)
             echo "后端可执行文件: $EXEC ($SIZE bytes)"
-            if [ "$SIZE" -lt 10485760 ]; then
-              echo "❌ 后端可执行文件小于 10MB，可能打包不完整"
+            # onedir 打包：exe 只含 bootloader（~10MB），依赖在同级 _internal/ 目录
+            if [ -d "$RES_DIR/_internal" ]; then
+              echo "✅ onedir _internal/ 依赖目录存在"
+            elif [ "$SIZE" -lt 10485760 ]; then
+              echo "❌ 可执行文件小于 10MB 且无 _internal/ 目录，打包可能不完整"
               exit 1
             fi
-            echo "✅ 后端可执行文件大小正常"
+            echo "✅ 后端构建产物正常"
           else
             echo "❌ 后端可执行文件缺失: $EXEC"
             echo "📋 当前后端资源目录:"
