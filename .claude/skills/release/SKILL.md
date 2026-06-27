@@ -1,67 +1,44 @@
 ---
 name: release
-description: 发布新版本（bump → build → tag → push 触发 CI 多平台构建）
-disable-model-invocation: true
+description: criminal-llm 发版清单——从代码改动到三平台上线，防漏步骤
 ---
 
-# 发布流程
-
-完整发版流程：递增版本号 → 构建验证 → 打标签 → 推送触发 GitHub Actions。
+# 发版清单（criminal-llm）
 
 ## 前置检查
+1. `python3 scripts/prebuild_check.py` 通过（0 fatal）
+2. `cd frontend && npx tsc --noEmit` 通过
+3. 确认改动已 commit（工作区干净、在 main 分支、与远程同步）
 
-1. 确认工作区干净：`git status` 无未提交变更
-2. 确认在 main 分支：`git branch --show-current`
-3. 确认与远程同步：`git pull origin main`
-
-## 执行步骤
-
-### 1. 递增版本号
-
-```bash
-cd frontend && python3 bump-version.py
-```
-
-### 2. 前端构建验证
-
-```bash
-cd frontend && npm run build
-```
-
-构建失败则中止，修复后重新开始。
-
-### 3. 提交版本号变更
-
-```bash
-git add frontend/package.json frontend/src-tauri/tauri.conf.json
-git commit -m "chore: 版本号更新至 <新版本号>"
-```
-
-### 4. 打标签并推送
-
-```bash
-git tag v<新版本号>
-git push origin main --tags
-```
-
-推送后 GitHub Actions 自动触发三平台构建（Windows + macOS Intel + macOS Apple Silicon）。
-
-### 5. 确认 CI
-
-```bash
-gh run list --limit 1
-```
-
-查看构建状态。构建完成后产物自动发布到 GitHub Release。
+## 发版流程
+1. `cd frontend && python3 bump-version.py`（递增 patch；minor/major 手动改 package.json + tauri.conf.json）
+2. `cd frontend && npm run build` 前端构建验证（失败则中止）
+3. `git add -A && git commit -m "chore: 版本号更新至 X.Y.Z"`
+4. `git tag vX.Y.Z`
+5. `git push origin main && git push origin vX.Y.Z`（触发 CI）
+6. 等 CI 三平台全绿（`gh run watch` / `gh run list --limit 1`）
+7. CI 绿后发布到官网：
+   - `gh release download vX.Y.Z`（**不要用 gh-proxy**，大文件截断）
+   - **校验下载文件大小** vs GitHub Release `.size`（`stat -f "%z"`）
+   - `scp` 三平台包到 `root@118.196.83.43:/opt/criminal-llm-auth/data/uploads/`
+   - SSH 写 release_notes（`data/release_notes.json`）
+   - curl `/api/latest-version` 验证
+8. 测 Mac（本机装 dmg + 启动 + 转换）+ Windows（如有用户反馈）
 
 ## CI 产物
-
 | 平台 | 产物 |
 |------|------|
-| Windows | `.exe` / `.msi` |
+| Windows | `.exe` / `.msi`（onedir: exe + `_internal/`） |
 | macOS (Apple Silicon) | `.dmg` / `.app.tar.gz` |
+| macOS (Intel) | `.dmg` |
 
 ## 中止/回滚
-
-- 标签推送前可随时 `git reset HEAD~1` 撤销提交
+- 标签推送前可 `git reset HEAD~1` 撤销提交
 - 标签推送后需 `git tag -d v<版本号> && git push origin :refs/tags/v<版本号>` 删除远程标签
+
+## 常见坑
+- CI 没绿就 tag → 发版失败，要删 tag 重打
+- gh-proxy 下大文件截断 → 用 `gh release download`（GitHub 直连）
+- prebuild_check 只 grep ModuleNotFoundError → v1.7.0 改为 grep ❌（含 lazy 规则）
+- onedir 后 Verify 不能检查 exe >10MB（exe 只含 bootloader ~10MB），要检查 `_internal/` 存在
+- Linux AppImage 可能 linuxdeploy 失败 → `--bundles deb,rpm` 跳过 AppImage

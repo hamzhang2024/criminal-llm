@@ -5,6 +5,11 @@
         "matcher": "Write|Edit",
         "command": "cd frontend && npx tsc --noEmit --pretty false 2>&1 | head -20",
         "description": "TypeScript 类型检查"
+      },
+      {
+        "matcher": "Edit|Write",
+        "command": "FILE=\"$CLAUDE_FILE_PATH\"; if [[ \"$FILE\" == *.py ]]; then python3 -m py_compile \"$FILE\" 2>&1 || echo \"⚠️ 语法错误: $FILE\"; fi",
+        "description": "Python 语法/导入检查（编辑 .py 后自动 py_compile）"
       }
     ],
     "Stop": [

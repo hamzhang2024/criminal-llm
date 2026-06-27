@@ -422,6 +422,34 @@ python3 -m uvicorn main:app --host 0.0.0.0 --port 8000
 
 ---
 
+## 🔍 调试规则
+
+> 这几条是 v1.6.x–v1.7.0 反复踩坑后总结的，违反即大概率引入回归。
+
+1. **禁止 PEP 562 模块级 `__getattr__` 做 lazy import**：它对函数内 `LOAD_GLOBAL` 不生效，运行时 NameError（v1.6.8 aiohttp bug、paddleocr_async 同类）。需要延迟加载就用 `_get_xxx()` 函数 + 调用方显式获取，或直接顶部 import。
+2. **改 async/转换逻辑后，必须跑一次完整转换管道**（不能只 `import` 验证）——v1.6.8 只测了启动没测转换，漏了 aiohttp NameError。
+3. **外部 API 集成先读文档/最小脚本测试**，不要猜端点名/参数名/响应格式（MinerU /file_parse vs /tasks、file vs files 字段名——至少 6 个会话在试错）。
+4. **aiohttp 上传注意 Content-Type**：显式设置或完全省略，避免自动添加导致 OSS 签名不匹配。
+5. **任何代码改动后，先验证（import / py_compile / tsc）再继续下一步**，不要堆改动。
+6. **前端改了必须重建 Tauri**（`npx tauri build`），没有热重载。
+7. **lazy import 验证不能只看 `sys.modules`**，必须真跑用到该依赖的功能。
+
+---
+
+## 📦 发布与部署（防发版问题）
+
+1. **后端启动用 `python3` 不是 `python`**（macOS/Linux）
+2. **CI 三平台全绿后再 tag 发版**（不要 tag 后才发现 CI 挂）
+3. **PyInstaller onedir 模式**（v1.7.0+）：产物是 `dist/criminal-llm/`（exe + `_internal/`），不是单 exe
+4. **publish 时校验下载文件大小**：`stat -f "%z"` vs GitHub Release API `.size`，不匹配就重下（v1.7.0 曾因 gh-proxy 截断传了 16MB 残包）
+5. **用 `gh release download` 下载安装包**（GitHub 直连），不要用 gh-proxy（大文件会截断）
+6. **GitHub 仓库必须 public**（免费 CI 分钟数）
+7. **发版后测 Mac + Windows**（至少启动 + 转换一个文件）
+
+> 详细发版步骤见 `/release` skill（`.claude/skills/release/SKILL.md`）。
+
+---
+
 ## ⚠️ 已知问题
 
 1. **MinerU 配额** — 每日 1000 页免费，超额后需排队；转换超时设为 1 小时（3600 秒）
