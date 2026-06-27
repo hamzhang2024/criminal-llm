@@ -20,6 +20,7 @@ MinerU 异步批量转换模块
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 import shutil
@@ -89,6 +90,162 @@ __all__ = [
     "BatchProgress",
     "convert_batch_sync",
 ]
+
+
+# ═══════════════════════════════════════════════════════════
+# 分段(chunk)结构化 JSON 合并
+# ═══════════════════════════════════════════════════════════
+def _read_chunk_json(
+    layout_path: Path,
+    content_path: Path,
+) -> tuple[list[dict[str, Any]] | None, list[dict[str, Any]] | None, dict[str, Any]]:
+    """读取单个 chunk 的 layout.json / content_list.json。
+
+    Returns:
+        (content_list_objs, layout_pdf_info_objs, layout_top_fields)
+        任一文件缺失或解析失败，对应返回 None，layout_top_fields 为空 dict。
+    """
+    content_objs: list[dict[str, Any]] | None = None
+    layout_pdf_info: list[dict[str, Any]] | None = None
+    layout_top: dict[str, Any] = {}
+
+    try:
+        if content_path.exists():
+            raw = json.loads(content_path.read_text(encoding="utf-8"))
+            if isinstance(raw, list):
+                content_objs = raw
+    except (OSError, ValueError, TypeError) as e:
+        logger.warning(f"[MinerU-合并JSON] 读取 content_list 失败 {content_path}: {e}")
+
+    try:
+        if layout_path.exists():
+            raw_layout = json.loads(layout_path.read_text(encoding="utf-8"))
+            if isinstance(raw_layout, dict):
+                pdf_info = raw_layout.get("pdf_info", [])
+                if isinstance(pdf_info, list):
+                    layout_pdf_info = pdf_info
+                    # 顶层其他字段（_backend/_version_name 等）
+                    layout_top = {k: v for k, v in raw_layout.items() if k != "pdf_info"}
+    except (OSError, ValueError, TypeError) as e:
+        logger.warning(f"[MinerU-合并JSON] 读取 layout 失败 {layout_path}: {e}")
+
+    return content_objs, layout_pdf_info, layout_top
+
+
+def _merge_chunk_structured_jsons(
+    chunk_specs: list[tuple[Any, Any, int]],
+    output_dir: Path,
+    final_stem: str,
+    _read_fn: Callable[[Path, Path], tuple[Any, Any, dict[str, Any]]] = _read_chunk_json,
+) -> None:
+    """合并各 chunk 的 layout.json / content_list.json 成原文件级 JSON。
+
+    分段转换时，每个 chunk 由 MinerU 独立产出一份 layout/content_list，
+    page_idx 在每个 chunk 内部从 0 开始。合并时需按 chunk 的 start_page 顺序
+    拼接，并把 page_idx 修正为原 PDF 的绝对页码（加上该 chunk 的 start_page 偏移）。
+
+    chunk_specs 支持两种形态（由 _read_fn 决定如何取数据）：
+      - 路径形态（默认 _read_fn=_read_chunk_json）：[(layout_path, content_path, start_page), ...]
+        调用合并时所有路径必须仍存在。
+      - 内存形态（_read_fn 返回已加载对象）：[(content_objs, layout_pdf_info, start_page), ...]
+        用于 chunk 临时目录已删除、对象已在内存中的场景（_convert_chunks 路径）。
+
+    容错：任何 JSON 读/合并/写异常都 try/except，fallback 到「不生成原文件级
+    JSON」（不破坏现有转换），log warning。绝不能因合并 JSON 失败导致转换整体失败。
+    """
+    try:
+        merged_content_list: list[dict[str, Any]] = []
+        merged_pdf_info: list[dict[str, Any]] = []
+        layout_top: dict[str, Any] = {}
+        have_content = False
+        have_layout = False
+
+        for a, b, start_page in chunk_specs:
+            content_objs, layout_pdf_info, chunk_top = _read_fn(_as_path(a), _as_path(b))
+            # a/b 既可能是 Path 也可能是已加载对象；_read_fn 按 Path 处理，
+            # 对内存形态我们用一个 identity reader 覆盖默认 _read_fn。
+
+            # ── 合并 content_list.json：MinerU 扁平 list of block，每个 block 有 page_idx ──
+            if isinstance(content_objs, list):
+                for block in content_objs:
+                    if isinstance(block, dict) and "page_idx" in block:
+                        # 修正为原 PDF 绝对页码（不可变：构造新 dict）
+                        block = {**block, "page_idx": block["page_idx"] + start_page}
+                    merged_content_list.append(block)
+                have_content = True
+
+            # ── 合并 layout.json 的 pdf_info：page_obj 有 page_idx ──
+            if isinstance(layout_pdf_info, list):
+                for page_obj in layout_pdf_info:
+                    if isinstance(page_obj, dict) and "page_idx" in page_obj:
+                        # 修正为原 PDF 绝对页码（不可变：构造新 dict）
+                        page_obj = {**page_obj, "page_idx": page_obj["page_idx"] + start_page}
+                    merged_pdf_info.append(page_obj)
+                # 顶层其他字段（_backend/_version_name 等）取第一个有效 chunk 的
+                if not layout_top and chunk_top:
+                    layout_top = dict(chunk_top)
+                have_layout = True
+
+        # ── 写盘 ──
+        if have_content:
+            target = output_dir / f"{final_stem}_content_list.json"
+            try:
+                target.write_text(
+                    json.dumps(merged_content_list, ensure_ascii=False), encoding="utf-8"
+                )
+                logger.info(
+                    f"[MinerU-合并JSON] 已合并 content_list → {target.name} "
+                    f"({len(merged_content_list)} blocks)"
+                )
+            except OSError as e:
+                logger.warning(f"[MinerU-合并JSON] 写 content_list 失败 {target}: {e}")
+
+        if have_layout:
+            layout_top["pdf_info"] = merged_pdf_info
+            target = output_dir / f"{final_stem}_layout.json"
+            try:
+                target.write_text(
+                    json.dumps(layout_top, ensure_ascii=False), encoding="utf-8"
+                )
+                logger.info(
+                    f"[MinerU-合并JSON] 已合并 layout → {target.name} "
+                    f"({len(merged_pdf_info)} pages)"
+                )
+            except OSError as e:
+                logger.warning(f"[MinerU-合并JSON] 写 layout 失败 {target}: {e}")
+
+        if not have_content and not have_layout:
+            logger.debug(
+                f"[MinerU-合并JSON] 无可用 chunk JSON，跳过 {final_stem}_* 合并"
+            )
+    except Exception as e:  # noqa: BLE001 — 合并是增强功能，绝不能因之失败
+        logger.warning(
+            f"[MinerU-合并JSON] 合并 {final_stem}_* 异常（跳过，不影响转换）: {e}"
+        )
+
+
+def _as_path(x: Any) -> Path:
+    """把对象当作 Path 透传（若已是 Path 则原样返回，否则强转）。"""
+    return x if isinstance(x, Path) else Path(str(x))
+
+
+def _identity_read(
+    a: Path,  # 实际传入的是已加载对象（content_objs / layout_pdf_info）
+    b: Path,
+) -> tuple[Any, Any, dict[str, Any]]:
+    """内存形态 reader：chunk_specs 里直接放已加载对象，reader 原样返回。
+
+    约定：a = content_objs（list 或 None），b = layout_pdf_info（list 或 None）。
+    layout_top 字段在内存形态下为空（layout 顶层元数据不跨 chunk 合并，已可接受）。
+    """
+    top: dict[str, Any] = {}
+    # 若 b 是带 pdf_info 的完整 layout dict（路径2收集时可能直接存整份 layout），提取 pdf_info 和 top
+    if isinstance(b, dict):
+        pdf_info = b.get("pdf_info")
+        if isinstance(pdf_info, list):
+            top = {k: v for k, v in b.items() if k != "pdf_info"}
+            return a, pdf_info, top
+    return a, b, top
 
 
 # ═══════════════════════════════════════════════════════════
@@ -417,6 +574,10 @@ class AsyncMinerUConverter:
                     r'\2/',
                     merged_text
                 )
+                # 修正 chunk MD 里的 images/ 引用（MinerU 默认引用 images/，但合并后
+                # 图片已集中到 <stem>_images/；原正则只匹配 ./_chunk_..._images/，漏了 images/）
+                merged_text = re.sub(r'(\!\[[^\]]*\]\()images/', rf'\1./{pdf.stem}_images/', merged_text)
+                merged_text = re.sub(r'(src=["\'])images/', rf'\1./{pdf.stem}_images/', merged_text)
                 merged_text = _protect_signatures_as_images(merged_text)
                 merged_text = _fix_ocr_errors(merged_text)
                 merged_text, _ = _fold_consecutive_images(merged_text)
@@ -434,6 +595,28 @@ class AsyncMinerUConverter:
                 final_results.append(ConvertResult(
                     file_name=pdf.name, success=True, text=merged_text, images_dir=merged_images_dir
                 ))
+                # 合并各 chunk 的结构化 JSON 成原文件级（必须在清理 _chunk_* 之前，
+                # 否则读不到）。按 chunk 的 start_page 排序后传入，page_idx 会修正为
+                # 原 PDF 绝对页码。失败仅 warning，不影响转换。
+                try:
+                    sorted_chunk_units = sorted(
+                        [u for u in owner_units if u.is_chunk],
+                        key=lambda x: x.start_page,
+                    )
+                    chunk_json_specs = [
+                        (
+                            output_dir / f"{u.data_id}_layout.json",
+                            output_dir / f"{u.data_id}_content_list.json",
+                            u.start_page,
+                        )
+                        for u in sorted_chunk_units
+                    ]
+                    _merge_chunk_structured_jsons(chunk_json_specs, output_dir, pdf.stem)
+                except Exception as _merge_err:  # noqa: BLE001
+                    logger.warning(
+                        f"[MinerU-批量] 合并 chunk JSON 失败 {pdf.name}（跳过）: {_merge_err}"
+                    )
+
                 # 清理 chunk 残留的结构化 JSON（_download_and_parse 对每个 chunk unit
                 # 直接写到 output_dir，合并后无用且污染 md/ 目录；原文件级 <stem>_layout.json
                 # 不含 _chunk_ 前缀，绝不会误删）
@@ -795,6 +978,8 @@ class AsyncMinerUConverter:
 
         chunk_results = []
         all_images_dirs = []
+        # 收集各 chunk 的结构化 JSON 路径（在 rmtree 之前收集，rmtree 后读不到）
+        chunk_json_specs: list[tuple[Path, Path, int]] = []
         temp_prefix = f"_temp_{original_pdf.stem}"
 
         for i, (chunk_path, start_page, end_page) in enumerate(chunks):
@@ -817,6 +1002,22 @@ class AsyncMinerUConverter:
                 logger.info(f"[分段转换] chunk {i} 成功 (第{start_page}-{end_page}页)")
             else:
                 logger.info(f"[分段转换] chunk {i} 失败: {result.error}")
+
+            # 收集该 chunk 的结构化 JSON：rmtree 会删 chunk_output，先 copy 到 output_dir
+            # 临时文件，供循环后合并成原文件级（page_idx 偏移修正）
+            chunk_stem = chunk_path.stem
+            tmp_layout = output_dir / f"_tmpmerge_{i}_layout.json"
+            tmp_content = output_dir / f"_tmpmerge_{i}_content_list.json"
+            try:
+                src_layout = chunk_output / f"{chunk_stem}_layout.json"
+                src_content = chunk_output / f"{chunk_stem}_content_list.json"
+                if src_layout.exists():
+                    shutil.copy2(src_layout, tmp_layout)
+                if src_content.exists():
+                    shutil.copy2(src_content, tmp_content)
+            except OSError as e:
+                logger.warning(f"[分段转换] chunk {i} JSON 临时 copy 失败: {e}")
+            chunk_json_specs.append((tmp_layout, tmp_content, start_page))
 
             # 清理临时目录
             shutil.rmtree(chunk_output, ignore_errors=True)
@@ -844,6 +1045,9 @@ class AsyncMinerUConverter:
             r'\2/',
             merged_text
         )
+        # 修正 chunk MD 里的 images/ 引用（MinerU 默认引用 images/，但合并后图片在 <stem>_images/）
+        merged_text = re.sub(r'(\!\[[^\]]*\]\()images/', rf'\1./{original_pdf.stem}_images/', merged_text)
+        merged_text = re.sub(r'(src=["\'])images/', rf'\1./{original_pdf.stem}_images/', merged_text)
         merged_text = _protect_signatures_as_images(merged_text)
         merged_text = _fix_ocr_errors(merged_text)
         merged_text, _ = _fold_consecutive_images(merged_text)
@@ -862,6 +1066,15 @@ class AsyncMinerUConverter:
         target_md.write_text(merged_text, encoding="utf-8")
 
         logger.info(f"[MinerU] 分段转换完成 {original_pdf.name}: {len(merged_text)} 字符")
+
+        # 合并各 chunk 的结构化 JSON 成原文件级（content_list/layout，page_idx 偏移修正）
+        _merge_chunk_structured_jsons(chunk_json_specs, output_dir, original_pdf.stem)
+        # 清理临时 copy
+        for tmp in output_dir.glob("_tmpmerge_*"):
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
 
         return ConvertResult(
             file_name=original_pdf.name,
