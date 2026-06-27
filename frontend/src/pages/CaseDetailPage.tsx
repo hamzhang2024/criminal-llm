@@ -501,7 +501,8 @@ export function CaseDetailPage() {
         const unsubscribe = api.subscribeExtractStatus(
           caseId,
           async (st) => {
-            if (st.status !== 'running' && st.status !== 'idle') {
+            // 后端提取完成时状态为 idle（pop 任务，不发 completed），故 idle 即终态
+            if (st.status !== 'running') {
               unsubscribe()
               clearTimeout(timeoutId)
               const d = await api.getEvidenceIndex(caseId)
@@ -510,7 +511,18 @@ export function CaseDetailPage() {
             }
           },
         )
-        const timeoutId = setTimeout(() => { unsubscribe(); reject(new Error('提取超时（2小时），后端可能仍在运行')) }, 7200000)
+        // 兜底：订阅建立后立即查一次当前状态，防 SSE 首帧错过（后端提取可能已结束）
+        api.getExtractStatus(caseId).then(async (cur) => {
+          if (cur.status !== 'running') {
+            unsubscribe(); clearTimeout(timeoutId)
+            try {
+              const d = await api.getEvidenceIndex(caseId)
+              if (d.total_evidence > 0) { setEvidenceList(d.evidence || []); setEvidenceExtracted(true) }
+            } catch { /* 忽略 */ }
+            resolve()
+          }
+        }).catch(() => { /* 忽略，SSE 仍会兜底 */ })
+        const timeoutId = setTimeout(() => { unsubscribe(); reject(new Error('提取超时（30分钟），请稍后刷新查看结果')) }, 1800000)
       })
       setCurrentStep(2); setProcessing(false)
     } catch (err) { setError(err instanceof Error ? err.message : '操作失败'); setProgress(''); setProcessing(false) }
