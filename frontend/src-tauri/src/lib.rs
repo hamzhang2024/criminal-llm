@@ -118,10 +118,8 @@ pub fn run() {
                     let is_local = scheme == "tauri"
                         || scheme == "file"
                         || scheme == "asset"
-                        || scheme == "http"
-                        || scheme == "https"
-                        || url.host_str() == Some("localhost")
-                        || url.host_str() == Some("127.0.0.1");
+                        || ((scheme == "http" || scheme == "https")
+                            && (url.host_str() == Some("localhost") || url.host_str() == Some("127.0.0.1")));
                     if is_local {
                         return true;
                     }
@@ -137,6 +135,15 @@ pub fn run() {
                     #[cfg(target_os = "windows")]
                     {
                         if let Err(e) = std::process::Command::new("explorer")
+                            .arg(url.as_str())
+                            .output()
+                        {
+                            eprintln!("打开外部链接失败: {}", e);
+                        }
+                    }
+                    #[cfg(target_os = "linux")]
+                    {
+                        if let Err(e) = std::process::Command::new("xdg-open")
                             .arg(url.as_str())
                             .output()
                         {

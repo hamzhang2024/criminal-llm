@@ -117,19 +117,8 @@ pub async fn list_cases(db: State<'_, AppDb>) -> Result<Value, String> {
                         if metadata_file.exists() {
                             if let Ok(content) = std::fs::read_to_string(&metadata_file) {
                                 if let Ok(mut meta) = serde_json::from_str::<Value>(&content) {
-                                    // 计数文件
-                                    let mut file_count = 0u64;
-                                    if let Ok(entries) = std::fs::read_dir(&sub_path) {
-                                        for entry in entries.flatten() {
-                                            let path = entry.path();
-                                            let ext = path.extension()
-                                                .and_then(|e| e.to_str())
-                                                .unwrap_or("");
-                                            if ext == "pdf" || ext == "md" {
-                                                file_count += 1;
-                                            }
-                                        }
-                                    }
+                                    // 递归计数文件（匹配 Python rglob 行为）
+                                    let file_count = count_files_recursive(&sub_path, &["pdf", "md"]);
 
                                     if let Value::Object(ref mut obj) = meta {
                                         obj.insert("file_count".to_string(), json!(file_count));
@@ -139,11 +128,11 @@ pub async fn list_cases(db: State<'_, AppDb>) -> Result<Value, String> {
                                         let processed = sub_path.join("processed");
                                         let original = sub_path.join("original");
 
-                                        let status = if has_entries(&md) {
+                                        let status = if count_files_recursive(&md, &["md"]) > 0 {
                                             "md_ready"
-                                        } else if has_entries(&processed) {
+                                        } else if count_files_recursive(&processed, &["pdf"]) > 0 {
                                             "processed"
-                                        } else if has_entries(&original) {
+                                        } else if count_files_recursive(&original, &["pdf"]) > 0 {
                                             "uploaded"
                                         } else {
                                             "new"
@@ -167,9 +156,23 @@ pub async fn list_cases(db: State<'_, AppDb>) -> Result<Value, String> {
     }))
 }
 
-/// 检查目录是否有条目
-fn has_entries(dir: &Path) -> bool {
-    dir.exists() && std::fs::read_dir(dir).map_or(false, |mut d| d.next().is_some())
+// 递归计数文件（匹配 Python rglob(*) 行为）
+fn count_files_recursive(dir: &Path, extensions: &[&str]) -> u64 {
+    let mut count = 0;
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                count += count_files_recursive(&path, extensions);
+            } else {
+                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                if extensions.contains(&ext) {
+                    count += 1;
+                }
+            }
+        }
+    }
+    count
 }
 
 // 以下是旧的 HTTP 代理命令，已重命名为纯 Rust 实现
