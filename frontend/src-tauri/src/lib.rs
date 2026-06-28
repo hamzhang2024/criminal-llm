@@ -1,5 +1,4 @@
 use reqwest::Client;
-use std::sync::Mutex;
 use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 mod commands;
@@ -8,7 +7,7 @@ mod state;
 mod worker;
 
 use db::AppDb;
-use state::{start_caffeinate, BackendClient, BackendPid, CaffeinateProcess};
+use state::BackendClient;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -18,8 +17,6 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .manage(BackendClient(Client::new()))
-        .manage(BackendPid(Mutex::new(None)))
-        .manage(CaffeinateProcess(Mutex::new(start_caffeinate())))
         .invoke_handler(tauri::generate_handler![
             // API Commands (IPC, 无 HTTP)
             commands::health,

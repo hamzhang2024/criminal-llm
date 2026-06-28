@@ -1,5 +1,4 @@
-use crate::state::{kill_backend_process, stop_caffeinate, CaffeinateProcess};
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 /// 打开文件（跨平台）
 #[tauri::command]
@@ -39,15 +38,8 @@ pub fn open_url(url: String) -> Result<bool, String> {
     Ok(true)
 }
 
-/// 强制退出应用（确认关闭时使用，绕过 prevent_close）
+/// 强制退出应用
 #[tauri::command]
 pub fn force_quit(app: AppHandle) {
-    kill_backend_process(&app);
-
-    let caff_state = app.state::<CaffeinateProcess>();
-    if let Some(caff_pid) = *caff_state.0.lock().unwrap() {
-        stop_caffeinate(caff_pid);
-    }
-
     app.exit(0);
 }
