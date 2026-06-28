@@ -180,12 +180,17 @@ pub fn run() {
                         }
                     }
 
-                    // Windows 上隐藏窗口
+                    // Windows 上隐藏窗口 + 脱离父进程 Job Object
+                    // Tauri v2 (WebView2) 会创建 Job Object 管理进程生命周期，
+                    // 子进程默认继承该 Job Object。如果 WebView 重启/崩溃，
+                    // Job Object 会连带杀死后端 Python 进程。
+                    // CREATE_BREAKAWAY_FROM_JOB 使后端独立运行，不受 Tauri 壳影响。
                     #[cfg(target_os = "windows")]
                     {
                         use std::os::windows::process::CommandExt;
                         const CREATE_NO_WINDOW: u32 = 0x08000000;
-                        cmd.creation_flags(CREATE_NO_WINDOW);
+                        const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x01000000;
+                        cmd.creation_flags(CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB);
                     }
 
                     let child = cmd.spawn().map_err(|e| format!("启动后端失败: {}", e))?;
