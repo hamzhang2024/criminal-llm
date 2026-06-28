@@ -5,6 +5,8 @@ use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 mod commands;
 mod db;
 mod state;
+mod http_server;
+mod config;
 
 use db::AppDb;
 use state::{start_caffeinate, BackendClient, BackendPid, CaffeinateProcess};
@@ -89,149 +91,67 @@ pub fn run() {
                 )?;
             }
 
-            // 生产模式：启动 Python 后端
-            if !cfg!(debug_assertions) {
-                let resource_path = app
-                    .path()
-                    .resolve("resources/backend", tauri::path::BaseDirectory::Resource)
-                    .map_err(|e| format!("无法解析资源路径: {}", e))?;
+            // 启动 Rust HTTP 服务器（替代 Python FastAPI）
+            let data_dir = app
+                .path()
+                .app_data_dir()
+                .map_err(|e| format!("获取数据目录失败: {}", e))?;
 
-                #[cfg(target_os = "windows")]
-                let backend_exe = resource_path.join("criminal-llm.exe");
-                #[cfg(not(target_os = "windows"))]
-                let backend_exe = resource_path.join("criminal-llm");
-
-                if !backend_exe.exists() {
-                    eprintln!("警告: 后端可执行文件不存在: {:?}", backend_exe);
-                } else {
-                    eprintln!("[START] 启动后端: {:?}", backend_exe);
-
-                    // 启动前先杀掉可能残留的旧后端进程（占 8080 端口）
-                    // 场景：上次应用异常退出（崩溃/任务管理器杀），后端进程没被清理，
-                    // 残留进程占用 8080 导致新后端启动失败卡住（Windows 常见）
-                    #[cfg(windows)]
-                    {
-                        // 分两步：用 netstat 找 PID 列表，再逐个 taskkill
-                        // （直接用 for /f 循环在 cmd /C 中可能因转义问题不生效）
-                        if let Ok(output) = std::process::Command::new("cmd")
-                            .args(["/C", "netstat -ano | findstr :8080 | findstr LISTENING"])
-                            .output()
-                        {
-                            let stdout = String::from_utf8_lossy(&output.stdout);
-                            for line in stdout.lines() {
-                                let parts: Vec<&str> = line.split_whitespace().collect();
-                                if let Some(pid_str) = parts.last() {
-                                    let pid = pid_str.trim();
-                                    if !pid.is_empty() && pid != "0" {
-                                        eprintln!("[CLEANUP] 清理旧后端进程 PID: {}", pid);
-                                        let _ = std::process::Command::new("taskkill")
-                                            .args(["/F", "/PID", pid])
-                                            .stdout(std::process::Stdio::null())
-                                            .stderr(std::process::Stdio::null())
-                                            .output();
-                                    }
-                                }
+            // 清理端口 8080 上的旧进程
+            #[cfg(windows)]
+            {
+                if let Ok(output) = std::process::Command::new("cmd")
+                    .args(["/C", "netstat -ano | findstr :8080 | findstr LISTENING"])
+                    .output()
+                {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    for line in stdout.lines() {
+                        let parts: Vec<&str> = line.split_whitespace().collect();
+                        if let Some(pid_str) = parts.last() {
+                            let pid = pid_str.trim();
+                            if !pid.is_empty() && pid != "0" {
+                                eprintln!("[CLEANUP] 清理旧进程 PID: {}", pid);
+                                let _ = std::process::Command::new("taskkill")
+                                    .args(["/F", "/PID", pid])
+                                    .stdout(std::process::Stdio::null())
+                                    .stderr(std::process::Stdio::null())
+                                    .output();
                             }
                         }
-                        // 等待 Windows 释放端口（TIME_WAIT 过渡期）
-                        std::thread::sleep(std::time::Duration::from_secs(2));
-                        eprintln!("[CLEANUP] 已清理可能残留的 8080 端口进程");
                     }
-                    #[cfg(unix)]
-                    {
-                        // macOS/Linux：先列 PID 再逐个 kill（比 xargs kill -9 更可靠）
-                        if let Ok(output) = std::process::Command::new("sh")
-                            .args(["-c", "lsof -ti:8080 2>/dev/null"])
-                            .output()
-                        {
-                            let stdout = String::from_utf8_lossy(&output.stdout);
-                            for pid in stdout.lines() {
-                                let pid = pid.trim();
-                                if !pid.is_empty() {
-                                    eprintln!("[CLEANUP] 清理旧后端进程 PID: {}", pid);
-                                    let _ = std::process::Command::new("kill")
-                                        .args(["-9", pid])
-                                        .output();
-                                }
-                            }
-                        }
-                        std::thread::sleep(std::time::Duration::from_secs(1));
-                    }
-
-                    // 设置工作目录为后端所在目录（确保能找到 legal_db 等资源）
-                    let backend_dir = backend_exe.parent().unwrap().to_path_buf();
-
-                    // 将后端 stderr 重定向到文件（后端崩溃时 traceback 会留下，
-                    // 否则 Stdio::null() 会丢失所有错误信息，无法排查启动失败）
-                    let stderr_log = backend_dir.join("backend_stderr.log");
-
-                    let mut cmd = std::process::Command::new(&backend_exe);
-                    cmd.current_dir(&backend_dir);
-
-                    // stdout + stderr 都重定向到同一日志文件
-                    // （uvicorn access log 走 stdout，之前 null 掉了，丢掉所有 API 请求记录）
-                    match std::fs::File::create(&stderr_log) {
-                        Ok(f) => {
-                            cmd.stderr(std::process::Stdio::from(
-                                f.try_clone().expect("clone stderr file handle"),
-                            ));
-                            cmd.stdout(std::process::Stdio::from(f));
-                        }
-                        Err(e) => {
-                            eprintln!("[WARN] 无法创建 stderr 日志: {}, 错误: {}", stderr_log.display(), e);
-                            cmd.stderr(std::process::Stdio::null());
-                            cmd.stdout(std::process::Stdio::null());
-                        }
-                    }
-
-                    // Windows 上隐藏窗口 + 脱离父进程 Job Object
-                    // Tauri v2 (WebView2) 会创建 Job Object 管理进程生命周期，
-                    // 子进程默认继承该 Job Object。如果 WebView 重启/崩溃，
-                    // Job Object 会连带杀死后端 Python 进程。
-                    // CREATE_BREAKAWAY_FROM_JOB 使后端独立运行，不受 Tauri 壳影响。
-                    #[cfg(target_os = "windows")]
-                    {
-                        use std::os::windows::process::CommandExt;
-                        const CREATE_NO_WINDOW: u32 = 0x08000000;
-                        const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x01000000;
-                        cmd.creation_flags(CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB);
-                    }
-
-                    let mut child = cmd.spawn().map_err(|e| format!("启动后端失败: {}", e))?;
-
-                    let pid = child.id();
-                    eprintln!("[OK] 后端 PID: {} (spawned, waiting for health check)", pid);
-
-                    // 诊断：2 秒后检查进程是否还活着
-                    std::thread::sleep(std::time::Duration::from_secs(2));
-                    match child.try_wait() {
-                        Ok(Some(status)) => {
-                            eprintln!("[DIAG] 后端已退出！exit code: {:?}", status.code());
-                        }
-                        Ok(None) => {
-                            eprintln!("[DIAG] 后端仍在运行（2s 后存活）");
-                        }
-                        Err(e) => {
-                            eprintln!("[DIAG] try_wait 失败: {}", e);
-                        }
-                    }
-
-                    // 写入 PID 文件供诊断使用（端口冲突时方便排查）
-                    if let Ok(data_dir) = app.path().app_data_dir() {
-                        let _ = std::fs::write(data_dir.join("backend.pid"), pid.to_string());
-                    }
-
-                    let backend_pid = app.state::<BackendPid>();
-                    *backend_pid.0.lock().unwrap() = Some(pid);
-
-                    // 不在此处阻塞等待后端——就绪检测由前端 HomePage 的 waitForBackend 轮询负责
-                    // （带 loading 转圈）。历史版本在此同步轮询 health check 最多 60 秒，导致 Tauri
-                    // setup 阻塞、窗口迟迟不弹出（mac 启动体感明显变慢）。
-                    // 现在 spawn 后立即返回，窗口先弹出，前端继续轮询后端是否就绪。
-                    // 后端崩溃的 traceback 仍写入 backend_stderr.log（spawn 前 stderr 已重定向），
-                    // 前端超时会显示真实错误原因。
                 }
+                std::thread::sleep(std::time::Duration::from_secs(1));
             }
+            #[cfg(unix)]
+            {
+                if let Ok(output) = std::process::Command::new("sh")
+                    .args(["-c", "lsof -ti:8080 2>/dev/null"])
+                    .output()
+                {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    for pid in stdout.lines() {
+                        let pid = pid.trim();
+                        if !pid.is_empty() {
+                            let _ = std::process::Command::new("kill").args(["-9", pid]).output();
+                        }
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_secs(1));
+            }
+
+            // 启动 Rust HTTP server（不再 spawn Python）
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                let rt = tokio::runtime::Runtime::new().expect("创建 tokio runtime 失败");
+                rt.block_on(async {
+                    eprintln!("[HTTP] 启动 Rust HTTP 服务器...");
+                    if let Err(e) = http_server::start_server(8080, data_dir).await {
+                        eprintln!("[HTTP] 服务器错误: {}", e);
+                        handle.exit(1);
+                    }
+                });
+            });
+            eprintln!("[HTTP] Rust HTTP 服务器已启动");
 
             // 拦截外部链接，用系统浏览器打开
             let url = if cfg!(debug_assertions) {
