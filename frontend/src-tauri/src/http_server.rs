@@ -1,6 +1,6 @@
 use axum::{
-    extract::{State, Json},
-    routing::{get, any},
+    extract::{State, Json, Multipart},
+    routing::{get, any, post},
     Router,
     response::IntoResponse,
 };
@@ -11,6 +11,7 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use axum::http::{StatusCode, Method};
 use tower_http::cors::{CorsLayer, Any};
+use tokio::io::AsyncWriteExt;
 
 use crate::config;
 
@@ -35,6 +36,7 @@ pub async fn start_server(port: u16, data_dir: PathBuf) -> Result<(), Box<dyn st
         .route("/api/config", any(config_handler))
         .route("/api/cases", get(cases_handler))
         .route("/api/data-dir", get(data_dir_handler))
+        .route("/api/upload", post(upload_handler))
         .layer(cors)
         .with_state(state);
 
@@ -121,27 +123,125 @@ async fn config_handler(
     }
 }
 
-/// GET /api/cases — 列出案件（扫描文件系统）
+/// GET /api/cases — 列出案件（匹配 Python scan_cases 格式）
 async fn cases_handler(
     State(state): State<Arc<HttpServerState>>,
 ) -> impl IntoResponse {
     let cases_dir = state.data_dir.join("cases");
-    let mut cases = Vec::new();
+    let mut cases: Vec<Value> = Vec::new();
 
-    if let Ok(mut dir) = tokio::fs::read_dir(&cases_dir).await {
-        while let Ok(Some(entry)) = dir.next_entry().await {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if entry.path().is_dir() {
-                cases.push(json!({
-                    "id": name,
-                    "name": name,
-                    "path": entry.path().to_string_lossy(),
-                }));
+    if cases_dir.exists() {
+        if let Ok(mut case_dirs) = tokio::fs::read_dir(&cases_dir).await {
+            while let Ok(Some(case_entry)) = case_dirs.next_entry().await {
+                let case_dir = case_entry.path();
+                if !case_dir.is_dir() {
+                    continue;
+                }
+                if let Ok(mut sub_dirs) = tokio::fs::read_dir(&case_dir).await {
+                    while let Ok(Some(sub_entry)) = sub_dirs.next_entry().await {
+                        let sub_path = sub_entry.path();
+                        if !sub_path.is_dir() {
+                            continue;
+                        }
+                        let metadata_file = sub_path.join("case.json");
+                        if metadata_file.exists() {
+                            // 读取 case.json
+                            if let Ok(content) = tokio::fs::read_to_string(&metadata_file).await {
+                                if let Ok(mut meta) = serde_json::from_str::<Value>(&content) {
+                                    // 计数文件
+                                    let mut file_count = 0u64;
+                                    for _ext in &["pdf", "md"] {
+                                        if let Ok(entries) = std::fs::read_dir(&sub_path) {
+                                            for entry in entries.flatten() {
+                                                let path = entry.path();
+                                                let extension = path.extension()
+                                                    .and_then(|e| e.to_str())
+                                                    .unwrap_or("");
+                                                if extension == "pdf" || extension == "md" {
+                                                    file_count += 1;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if let Value::Object(ref mut obj) = meta {
+                                        obj.insert("file_count".to_string(), json!(file_count));
+
+                                        // 确定状态
+                                        let original = sub_path.join("original");
+                                        let processed = sub_path.join("processed");
+                                        let md = sub_path.join("md");
+                                        let status = if md.exists() && md.read_dir().map_or(0, |d| d.count()) > 0 {
+                                            "md_ready"
+                                        } else if processed.exists() && processed.read_dir().map_or(0, |d| d.count()) > 0 {
+                                            "processed"
+                                        } else if original.exists() && original.read_dir().map_or(0, |d| d.count()) > 0 {
+                                            "uploaded"
+                                        } else {
+                                            "new"
+                                        };
+                                        obj.insert("status".to_string(), json!(status));
+                                    }
+                                    cases.push(meta);
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
 
     (StatusCode::OK, Json(json!({ "cases": cases, "total": cases.len() }))).into_response()
+}
+
+/// POST /api/upload — multipart 文件上传
+async fn upload_handler(
+    State(state): State<Arc<HttpServerState>>,
+    mut multipart: Multipart,
+) -> impl IntoResponse {
+    let upload_dir = state.data_dir.join("uploads");
+    let _ = tokio::fs::create_dir_all(&upload_dir).await;
+
+    let mut saved_files: Vec<Value> = Vec::new();
+
+    while let Ok(Some(mut field)) = multipart.next_field().await {
+        let filename = field
+            .file_name()
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        let file_path = upload_dir.join(&filename);
+
+        let mut file = match tokio::fs::File::create(&file_path).await {
+            Ok(f) => f,
+            Err(e) => return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": format!("Failed to create file: {}", e)})),
+            ).into_response(),
+        };
+
+        let mut total_bytes = 0u64;
+        while let Ok(Some(chunk)) = field.chunk().await {
+            if let Err(e) = file.write_all(&chunk).await {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": format!("Failed to write file: {}", e)})),
+                ).into_response();
+            }
+            total_bytes += chunk.len() as u64;
+        }
+
+        saved_files.push(json!({
+            "filename": filename,
+            "path": file_path.to_string_lossy(),
+            "size": total_bytes,
+        }));
+    }
+
+    (StatusCode::OK, Json(json!({
+        "success": true,
+        "files": saved_files,
+        "count": saved_files.len(),
+    }))).into_response()
 }
 
 /// GET /api/data-dir — 返回数据目录路径
