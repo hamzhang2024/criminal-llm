@@ -22,6 +22,11 @@ import json
 import sys
 import os
 import traceback
+import logging
+
+# 配置 logging（输出到 stderr）
+logging.basicConfig(level=logging.INFO, stream=sys.stderr, format='[%(levelname)s] %(message)s')
+logger = logging.getLogger(__name__)
 
 
 def setup_data_dir(data_dir: str) -> None:
@@ -187,7 +192,7 @@ def handle_config_test(req_id: str, params: dict) -> dict:
 
 def main():
     """Worker 主循环 — 读 stdin JSON, 写 stdout JSON"""
-    print("Criminal LLM Worker ready", file=sys.stderr, flush=True)
+    logger.info("Criminal LLM Worker ready")
 
     for line in sys.stdin:
         line = line.strip()
@@ -198,11 +203,13 @@ def main():
             request = json.loads(line)
         except json.JSONDecodeError as e:
             error_resp = json.dumps({"id": "", "error": f"JSON parse error: {e}"})
-            print(error_resp, flush=True)
+            sys.stdout.write(error_resp + "\n")
+            sys.stdout.flush()
             continue
 
         response = handle_request(request)
-        print(json.dumps(response, ensure_ascii=False), flush=True)
+        sys.stdout.write(json.dumps(response, ensure_ascii=False) + "\n")
+        sys.stdout.flush()
 
 
 if __name__ == "__main__":
