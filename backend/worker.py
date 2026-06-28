@@ -24,12 +24,6 @@ import os
 import traceback
 import logging
 
-# 可选模块（如果不存在则功能受限）
-try:
-    from case_splitter import suggest_split
-except ImportError:
-    suggest_split = None
-
 # 配置 logging（输出到 stderr）
 logging.basicConfig(level=logging.INFO, stream=sys.stderr, format='[%(levelname)s] %(message)s')
 logger = logging.getLogger(__name__)
@@ -73,9 +67,6 @@ def handle_request(request: dict) -> dict:
 
         elif method == "stop_extract":
             return handle_stop_extract(req_id, params)
-
-        elif method == "split_suggestion":
-            return handle_split_suggestion(req_id, params)
 
         elif method == "config_test":
             return handle_config_test(req_id, params)
@@ -157,18 +148,6 @@ def handle_stop_extract(req_id: str, params: dict) -> dict:
     except ImportError:
         # 如果无法导入，仍然标记为已停止
         return {"id": req_id, "result": {"stopped": True, "case_id": case_id, "note": "import fallback"}}
-
-
-def handle_split_suggestion(req_id: str, params: dict) -> dict:
-    """文书拆分建议"""
-    if suggest_split is None:
-        return {"id": req_id, "error": "case_splitter 模块未安装"}
-    try:
-        case_id = params.get("case_id", "")
-        result = suggest_split(case_id)
-        return {"id": req_id, "result": result}
-    except Exception as e:
-        return {"id": req_id, "error": f"拆分失败: {e}"}
 
 
 def handle_config_test(req_id: str, params: dict) -> dict:
