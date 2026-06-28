@@ -106,7 +106,7 @@ async def lifespan(app: FastAPI):
     """应用生命周期管理（替代弃用的 @app.on_event）"""
     # === startup ===
     logging.info("[START] Criminal PDF WebUI 启动中...")
-    logging.info(f"[VERSION] v1.7.2  (lifespan + port-detect)")
+    logging.info(f"[VERSION] v1.7.6  (lifespan + port-detect + job-object-fix)")
     logging.info(f"[DATA] 数据目录: {UPLOAD_DIR.parent}")
     logging.info(f"[API] http://{HOST}:{PORT}/api")
 

@@ -198,12 +198,6 @@ pub fn run() {
                     let pid = child.id();
                     eprintln!("[OK] 后端 PID: {} (spawned, waiting for health check)", pid);
 
-                    // forget child handle — 防止 Rust drop 误杀进程
-                    // std::process::Child 按理不会在 drop 时 kill，但 Windows 上
-                    // 某些 Tauri 插件可能持有 job object / handle 导致意外回收
-                    std::mem::forget(child);
-                    eprintln!("[OK] 后端 child handle 已释放（进程独立运行）");
-
                     // 写入 PID 文件供诊断使用（端口冲突时方便排查）
                     if let Ok(data_dir) = app.path().app_data_dir() {
                         let _ = std::fs::write(data_dir.join("backend.pid"), pid.to_string());
