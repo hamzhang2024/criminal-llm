@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use axum::http::{StatusCode, Method};
+use tower_http::cors::{CorsLayer, Any};
 
 use crate::config;
 
@@ -24,10 +25,17 @@ pub async fn start_server(port: u16, data_dir: PathBuf) -> Result<(), Box<dyn st
         data_dir,
     });
 
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(Any)
+        .allow_headers(Any);
+
     let app = Router::new()
         .route("/api/health", get(health_handler))
         .route("/api/config", any(config_handler))
         .route("/api/cases", get(cases_handler))
+        .route("/api/data-dir", get(data_dir_handler))
+        .layer(cors)
         .with_state(state);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
@@ -48,7 +56,8 @@ async fn health_handler() -> Json<Value> {
     }))
 }
 
-/// GET+PUT /api/config — 根据 HTTP method 分发
+/// GET /api/config — GET 返回配置状态（隐藏 token 明文）
+/// PUT /api/config — 保存配置 JSON body
 async fn config_handler(
     State(state): State<Arc<HttpServerState>>,
     method: Method,
@@ -59,7 +68,22 @@ async fn config_handler(
     match method {
         Method::GET => {
             match config::load_config(&config_path).await {
-                Ok(cfg) => (StatusCode::OK, Json(cfg)).into_response(),
+                Ok(cfg) => {
+                    // 返回配置状态（token 只返回是否配置，不返回明文）
+                    let status = json!({
+                        "mineru_token": !cfg.get("mineru_token").and_then(|v| v.as_str()).unwrap_or("").is_empty(),
+                        "mineru_mode": cfg.get("mineru_mode").and_then(|v| v.as_str()).unwrap_or("cloud"),
+                        "mineru_local_url": cfg.get("mineru_local_url").and_then(|v| v.as_str()).unwrap_or(""),
+                        "pdf_engine": cfg.get("pdf_engine").and_then(|v| v.as_str()).unwrap_or("mineru"),
+                        "llm_model": cfg.get("llm_model").and_then(|v| v.as_str()).unwrap_or(""),
+                        "llm_base_url": cfg.get("llm_base_url").and_then(|v| v.as_str()).unwrap_or(""),
+                        "llm_api_key": !cfg.get("llm_api_key").and_then(|v| v.as_str()).unwrap_or("").is_empty(),
+                        "evidence_concurrency": cfg.get("evidence_concurrency").and_then(|v| v.as_u64()).unwrap_or(3),
+                        "model_context_limit": cfg.get("model_context_limit").and_then(|v| v.as_u64()),
+                        "yuandian_token": !cfg.get("yuandian_token").and_then(|v| v.as_str()).unwrap_or("").is_empty(),
+                    });
+                    (StatusCode::OK, Json(status)).into_response()
+                }
                 Err(e) => (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(json!({"error": e.to_string()})),
@@ -118,4 +142,15 @@ async fn cases_handler(
     }
 
     (StatusCode::OK, Json(json!({ "cases": cases, "total": cases.len() }))).into_response()
+}
+
+/// GET /api/data-dir — 返回数据目录路径
+async fn data_dir_handler(
+    State(state): State<Arc<HttpServerState>>,
+) -> impl IntoResponse {
+    let data_dir = state.data_dir.to_string_lossy().to_string();
+    (StatusCode::OK, Json(json!({
+        "data_dir": data_dir,
+        "exists": state.data_dir.exists(),
+    }))).into_response()
 }
