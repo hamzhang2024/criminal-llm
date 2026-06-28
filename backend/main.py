@@ -12,6 +12,10 @@ import socket
 import sys
 import time
 from contextlib import asynccontextmanager
+from datetime import datetime
+
+import atexit
+import signal as signal_module
 
 from _bootstrap import DATA_DIR
 
@@ -62,6 +66,43 @@ logging.basicConfig(
     handlers=_handlers,
 )
 del _handlers  # _log_path 保留供 /api/logs/backend 端点使用
+
+# ===== 进程死亡诊断 =====
+
+def _on_process_exit():
+    """任何方式退出时记录（atexit 永远最后触发，只看是来了就有用）"""
+    logging.critical("[DEATH] 进程退出（atexit 触发，说明非 TerminateProcess 秒杀）")
+
+
+atexit.register(_on_process_exit)
+
+
+def _on_signal(sig_num, _frame):
+    """收到系统信号时记录"""
+    sig_name = signal_module.Signals(sig_num).name if hasattr(signal_module, 'Signals') else str(sig_num)
+    logging.critical(f"[DEATH] 收到信号: {sig_name} ({sig_num})")
+    sys.exit(128 + sig_num)
+
+
+for _sig_name in ("SIGTERM", "SIGINT", "SIGBREAK", "SIGABRT"):
+    _sig = getattr(signal_module, _sig_name, None)
+    if _sig is not None:
+        try:
+            signal_module.signal(_sig, _on_signal)
+        except Exception:
+            pass
+del _sig_name, _sig
+
+
+def _on_unhandled_exception(exc_type, exc_value, tb):
+    """未捕获的 Python 异常"""
+    logging.critical(f"[DEATH] 未捕获异常: {exc_type.__name__}: {exc_value}",
+                     exc_info=(exc_type, exc_value, tb))
+
+
+sys.excepthook = _on_unhandled_exception
+
+# ===== 结束死亡诊断 =====
 
 
 def is_port_in_use(host: str, port: int) -> bool:
@@ -158,6 +199,18 @@ async def lifespan(app: FastAPI):
             logging.warning(f"[预加载] 重依赖预热失败（不影响功能，首次用时再加载）: {e}")
 
     asyncio.create_task(_preload_heavy_deps())
+
+    # 心跳：每秒写入时间戳，诊断进程何时死亡
+    async def _heartbeat():
+        _heartbeat_file = DATA_DIR / "backend_heartbeat.log"
+        while True:
+            try:
+                _heartbeat_file.write_text(datetime.now().isoformat())
+            except Exception:
+                pass
+            await asyncio.sleep(1)
+
+    asyncio.create_task(_heartbeat())
 
     yield  # === 应用运行中 ===
 

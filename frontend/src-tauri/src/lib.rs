@@ -193,10 +193,24 @@ pub fn run() {
                         cmd.creation_flags(CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB);
                     }
 
-                    let child = cmd.spawn().map_err(|e| format!("启动后端失败: {}", e))?;
+                    let mut child = cmd.spawn().map_err(|e| format!("启动后端失败: {}", e))?;
 
                     let pid = child.id();
                     eprintln!("[OK] 后端 PID: {} (spawned, waiting for health check)", pid);
+
+                    // 诊断：2 秒后检查进程是否还活着
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                    match child.try_wait() {
+                        Ok(Some(status)) => {
+                            eprintln!("[DIAG] 后端已退出！exit code: {:?}", status.code());
+                        }
+                        Ok(None) => {
+                            eprintln!("[DIAG] 后端仍在运行（2s 后存活）");
+                        }
+                        Err(e) => {
+                            eprintln!("[DIAG] try_wait 失败: {}", e);
+                        }
+                    }
 
                     // 写入 PID 文件供诊断使用（端口冲突时方便排查）
                     if let Ok(data_dir) = app.path().app_data_dir() {

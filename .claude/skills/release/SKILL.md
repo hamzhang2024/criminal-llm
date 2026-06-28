@@ -18,29 +18,12 @@ description: criminal-llm 发版清单——从代码改动到三平台上线，
 5. `git push origin main && git push origin vX.Y.Z`（触发 CI）
 6. 等 CI 三平台全绿（`gh run watch` / `gh run list --limit 1`）
 7. CI 绿后发布到官网：
-   - `gh release download vX.Y.Z`（**不要用 gh-proxy**，大文件截断）
+   - `gh release edit vX.Y.Z --notes "## 修复\n- xxx\n- xxx"`（**写正儿八经的更新日志，不要用 auto-generated diff 敷衍**）
+   - `gh release download vX.Y.Z`（**大文件用 aria2c + gh-proxy 加速**：`aria2c -x4 -s4 -d /tmp https://gh.llkk.cc/https://github.com/...`）
    - **校验下载文件大小** vs GitHub Release `.size`（`stat -f "%z"`）
    - `scp` 三平台包到 `root@118.196.83.43:/opt/criminal-llm-auth/data/uploads/`
-   - **更新 release_notes**（服务器不会自动写，必须手动执行）：
-     ```bash
-     ssh root@118.196.83.43 'python3 -c "
-     import json
-     with open(\"/opt/criminal-llm-auth/data/release_notes.json\") as f:
-         data = json.load(f)
-     data[\"versions\"].insert(0, {
-         \"version\": \"X.Y.Z\",
-         \"date\": \"$(date +%Y-%m-%d)\",
-         \"notes\": [
-             \"【修复】xxx\",
-             \"【优化】xxx\"
-         ]
-     })
-     with open(\"/opt/criminal-llm-auth/data/release_notes.json\", \"w\") as f:
-         json.dump(data, f, ensure_ascii=False, indent=2)
-     print(\"OK\")
-     "'
-     ```
-   - curl `/api/latest-version` 验证（确认 version + release_notes 都正确）
+   - **release_notes 自动从 GitHub 拉取**（auth server 已部署自动同步，无需手动写 JSON）
+   - curl `/api/latest-version` 验证（确认 version + release_notes + download_url 都正确）
 8. 测 Mac（本机装 dmg + 启动 + 转换）+ Windows（如有用户反馈）
 
 ## CI 产物
