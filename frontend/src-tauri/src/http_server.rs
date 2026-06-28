@@ -101,7 +101,16 @@ async fn config_handler(
                 ).into_response(),
             };
 
-            if let Err(e) = config::save_config(&config_path, &payload).await {
+            // 合并已有配置（与 Python 行为一致：{**existing, **payload}）
+            let existing = config::load_config(&config_path).await.unwrap_or(config::default_config());
+            let mut merged = existing;
+            if let (Value::Object(ref mut merged_obj), Value::Object(payload_obj)) = (&mut merged, &payload) {
+                for (k, v) in payload_obj {
+                    merged_obj.insert(k.clone(), v.clone());
+                }
+            }
+
+            if let Err(e) = config::save_config(&config_path, &merged).await {
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(json!({"error": e.to_string()})),
