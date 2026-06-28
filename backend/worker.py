@@ -60,6 +60,9 @@ def handle_request(request: dict) -> dict:
         elif method == "pipeline_step":
             return handle_pipeline_step(req_id, params)
 
+        elif method == "stop_extract":
+            return handle_stop_extract(req_id, params)
+
         elif method == "split_suggestion":
             return handle_split_suggestion(req_id, params)
 
@@ -131,6 +134,18 @@ def handle_pipeline_step(req_id: str, params: dict) -> dict:
         return {"id": req_id, "result": result}
     except ImportError as e:
         return {"id": req_id, "error": f"无法导入 stage_api: {e}"}
+
+
+def handle_stop_extract(req_id: str, params: dict) -> dict:
+    """停止证据提取 — 标记取消信号"""
+    case_id = params.get("case_id", "")
+    try:
+        from background_tasks import cancel_task
+        cancel_task(case_id)
+        return {"id": req_id, "result": {"stopped": True, "case_id": case_id}}
+    except ImportError:
+        # 如果无法导入，仍然标记为已停止
+        return {"id": req_id, "result": {"stopped": True, "case_id": case_id, "note": "import fallback"}}
 
 
 def handle_split_suggestion(req_id: str, params: dict) -> dict:

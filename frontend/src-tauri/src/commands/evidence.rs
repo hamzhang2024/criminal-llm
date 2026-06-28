@@ -30,10 +30,22 @@ pub async fn get_extract_status(case_id: String, db: State<'_, AppDb>) -> Result
     }
 }
 
-/// 停止证据提取
+/// 停止证据提取（向 worker 发送 stop 信号）
 #[tauri::command]
-pub async fn stop_extract(_case_id: String) -> Result<Value, String> {
-    Ok(json!({"stopped": true}))
+pub async fn stop_extract(case_id: String, db: State<'_, AppDb>) -> Result<Value, String> {
+    let data_dir = db.data_dir().to_string_lossy().to_string();
+    let python = if cfg!(target_os = "windows") { "python.exe" } else { "python3" };
+
+    match worker::call_worker(
+        python,
+        &worker::get_worker_script(),
+        &data_dir,
+        "stop_extract",
+        json!({"case_id": case_id}),
+    ) {
+        Ok(_) => Ok(json!({"stopped": true, "case_id": case_id})),
+        Err(e) => Ok(json!({"stopped": false, "case_id": case_id, "error": e})),
+    }
 }
 
 /// 获取证据索引（纯文件系统读取）

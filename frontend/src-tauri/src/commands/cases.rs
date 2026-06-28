@@ -95,9 +95,9 @@ pub async fn get_data_dir(db: State<'_, AppDb>) -> Result<Value, String> {
     }))
 }
 
-/// GET /cases — 列出所有案件
+/// GET /cases — 列出所有案件（可选 owner 过滤）
 #[tauri::command]
-pub async fn list_cases(db: State<'_, AppDb>) -> Result<Value, String> {
+pub async fn list_cases(owner: Option<String>, db: State<'_, AppDb>) -> Result<Value, String> {
     let data_dir = db.data_dir();
     let cases_dir = data_dir.join("cases");
     let mut cases: Vec<Value> = Vec::new();
@@ -117,6 +117,15 @@ pub async fn list_cases(db: State<'_, AppDb>) -> Result<Value, String> {
                         if metadata_file.exists() {
                             if let Ok(content) = std::fs::read_to_string(&metadata_file) {
                                 if let Ok(mut meta) = serde_json::from_str::<Value>(&content) {
+                                    // owner 过滤
+                                    if let Some(ref owner_filter) = owner {
+                                        let case_owner = meta.get("owner")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("");
+                                        if !owner_filter.is_empty() && case_owner != owner_filter {
+                                            continue;
+                                        }
+                                    }
                                     // 递归计数文件（匹配 Python rglob 行为）
                                     let file_count = count_files_recursive(&sub_path, &["pdf", "md"]);
 
