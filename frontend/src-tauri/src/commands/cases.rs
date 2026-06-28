@@ -2,6 +2,7 @@ use tauri::State;
 use serde_json::{json, Value};
 use std::path::Path;
 use crate::db::AppDb;
+use crate::worker;
 
 /// GET /health — 直接返回（不走 HTTP）
 #[tauri::command]
@@ -243,33 +244,65 @@ where F: FnMut(&Value, &std::path::Path)
 }
 
 #[tauri::command]
-pub async fn batch_process() -> Result<Value, String> {
-    Err("待实现（需要 Python worker）".to_string())
+pub async fn batch_process(case_id: String, db: State<'_, AppDb>) -> Result<Value, String> {
+    call_python("convert_to_md", json!({"case_id": case_id}), db).await
 }
 
 #[tauri::command]
-pub async fn get_split_suggestion() -> Result<Value, String> {
-    Err("待实现（需要 Python worker）".to_string())
+pub async fn get_split_suggestion(case_id: String, db: State<'_, AppDb>) -> Result<Value, String> {
+    call_python("split_suggestion", json!({"case_id": case_id}), db).await
 }
 
 #[tauri::command]
-pub async fn execute_analysis() -> Result<Value, String> {
-    Err("待实现（需要 Python worker）".to_string())
+pub async fn execute_analysis(case_id: String, db: State<'_, AppDb>) -> Result<Value, String> {
+    call_python("analyze_case", json!({"case_id": case_id}), db).await
 }
 
 #[tauri::command]
-pub async fn chat_analysis() -> Result<Value, String> {
-    Err("待实现（需要 Python worker）".to_string())
+pub async fn chat_analysis(case_id: String, query: String, db: State<'_, AppDb>) -> Result<Value, String> {
+    call_python("chat_analysis", json!({"case_id": case_id, "query": query}), db).await
 }
 
 #[tauri::command]
-pub async fn convert_to_md() -> Result<Value, String> {
-    Err("待实现（需要 Python worker）".to_string())
+pub async fn convert_to_md(case_id: String, db: State<'_, AppDb>) -> Result<Value, String> {
+    call_python("convert_to_md", json!({"case_id": case_id}), db).await
 }
 
 #[tauri::command]
-pub async fn delete_case() -> Result<Value, String> {
-    Err("待实现（需要 Python worker）".to_string())
+pub async fn delete_case(case_id: String, db: State<'_, AppDb>) -> Result<Value, String> {
+    // 删除案件目录（Rust 直接操作）
+    let data_dir = db.data_dir();
+    let cases_dir = data_dir.join("cases").join(&case_id);
+    if cases_dir.exists() {
+        std::fs::remove_dir_all(&cases_dir)
+            .map_err(|e| format!("删除案件失败: {}", e))?;
+        Ok(json!({"deleted": true, "case_id": case_id}))
+    } else {
+        Err(format!("案件 '{}' 不存在", case_id))
+    }
+}
+
+/// 辅助：调用 Python worker
+async fn call_python(method: &str, params: Value, db: State<'_, AppDb>) -> Result<Value, String> {
+    let data_dir = db.data_dir().to_string_lossy().to_string();
+    let python = if cfg!(target_os = "windows") { "python.exe" } else { "python3" };
+
+    let worker_script = {
+        if let Ok(exe_path) = std::env::current_exe() {
+            if let Some(exe_dir) = exe_path.parent() {
+                let w = exe_dir.join("worker.py");
+                if w.exists() { w.to_string_lossy().to_string() }
+                else {
+                    let iw = exe_dir.join("_internal").join("worker.py");
+                    if iw.exists() { iw.to_string_lossy().to_string() }
+                    else { "../backend/worker.py".to_string() }
+                }
+            } else { "../backend/worker.py".to_string() }
+        } else { "../backend/worker.py".to_string() }
+    };
+
+    worker::call_worker(python, &worker_script, &data_dir, method, params)
+        .map_err(|e| format!("Python worker 调用失败: {}", e))
 }
 
 /// 获取指定案件的所有 MD 文件列表

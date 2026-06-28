@@ -60,6 +60,9 @@ def handle_request(request: dict) -> dict:
         elif method == "pipeline_step":
             return handle_pipeline_step(req_id, params)
 
+        elif method == "split_suggestion":
+            return handle_split_suggestion(req_id, params)
+
         elif method == "config_test":
             return handle_config_test(req_id, params)
 
@@ -128,6 +131,17 @@ def handle_pipeline_step(req_id: str, params: dict) -> dict:
         return {"id": req_id, "result": result}
     except ImportError as e:
         return {"id": req_id, "error": f"无法导入 stage_api: {e}"}
+
+
+def handle_split_suggestion(req_id: str, params: dict) -> dict:
+    """文书拆分建议"""
+    try:
+        from case_splitter import suggest_split
+        case_id = params.get("case_id", "")
+        result = suggest_split(case_id)
+        return {"id": req_id, "result": result}
+    except ImportError as e:
+        return {"id": req_id, "error": f"无法导入 case_splitter: {e}"}
 
 
 def handle_config_test(req_id: str, params: dict) -> dict:
