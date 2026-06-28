@@ -49,18 +49,26 @@ export async function setConfig(config: Record<string, unknown>): Promise<Record
   return apiCall<Record<string, unknown>>('set_config', config, { method: 'POST' })
 }
 
-/** 测试配置（Ping LLM / OCR API）— 需要 HTTP 调 Python worker */
+/** 测试配置（Ping LLM / OCR API）— 通过 Python worker */
 export async function testConfig(engine: 'llm' | 'mineru' | 'paddleocr', config: Record<string, unknown>): Promise<{ success: boolean, message?: string }> {
   if (isTauri()) {
-    // Tauri 环境：暂时通过 HTTP 测试（需要 Python worker）
-    const res = await fetch(`${API_BASE}/config/test`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ engine, ...config }),
-    })
-    return res.json()
+    try {
+      const result = await tauriInvoke<{ result?: { success: boolean, message?: string } }>('config_test', {
+        engine,
+        ...config,
+      })
+      return result?.result || result as unknown as { success: boolean, message?: string }
+    } catch (e) {
+      return { success: false, message: String(e) }
+    }
   }
-  return apiCall<{ success: boolean, message?: string }>('config/test', { engine, ...config }, { method: 'POST' })
+  // 浏览器开发模式 HTTP 降级
+  const res = await fetch(`${API_BASE}/config/test`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ engine, ...config }),
+  })
+  return res.json()
 }
 
 export { openUrl }

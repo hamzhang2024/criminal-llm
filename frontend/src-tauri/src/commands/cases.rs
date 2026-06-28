@@ -303,6 +303,16 @@ pub async fn delete_case(case_id: String, db: State<'_, AppDb>) -> Result<Value,
     }
 }
 
+/// PUT /config — 保存配置（合并）
+#[tauri::command]
+pub async fn config_test(case_id: Option<String>, engine: Option<String>, db: State<'_, AppDb>) -> Result<Value, String> {
+    let params = json!({
+        "case_id": case_id.unwrap_or_default(),
+        "engine": engine.unwrap_or_else(|| "llm".to_string()),
+    });
+    call_python("config_test", params, db).await
+}
+
 /// 辅助：调用 Python worker
 async fn call_python(method: &str, params: Value, db: State<'_, AppDb>) -> Result<Value, String> {
     let data_dir = db.data_dir().to_string_lossy().to_string();

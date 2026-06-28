@@ -22,6 +22,7 @@ pub fn run() {
             commands::health,
             commands::get_config,
             commands::set_config,
+            commands::config_test,
             commands::get_data_dir,
             // App
             commands::get_app_version,
