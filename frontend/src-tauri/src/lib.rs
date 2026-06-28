@@ -167,16 +167,20 @@ pub fn run() {
 
                     let mut cmd = std::process::Command::new(&backend_exe);
                     cmd.current_dir(&backend_dir);
-                    cmd.stdout(std::process::Stdio::null());
 
-                    // 尝试重定向 stderr 到文件；失败则丢弃（退回原行为）
+                    // stdout + stderr 都重定向到同一日志文件
+                    // （uvicorn access log 走 stdout，之前 null 掉了，丢掉所有 API 请求记录）
                     match std::fs::File::create(&stderr_log) {
                         Ok(f) => {
-                            cmd.stderr(std::process::Stdio::from(f));
+                            cmd.stderr(std::process::Stdio::from(
+                                f.try_clone().expect("clone stderr file handle"),
+                            ));
+                            cmd.stdout(std::process::Stdio::from(f));
                         }
                         Err(e) => {
                             eprintln!("[WARN] 无法创建 stderr 日志: {}, 错误: {}", stderr_log.display(), e);
                             cmd.stderr(std::process::Stdio::null());
+                            cmd.stdout(std::process::Stdio::null());
                         }
                     }
 
