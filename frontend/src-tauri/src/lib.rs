@@ -16,10 +16,6 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_single_instance::init(|_app, _args, _cwd| {
-            // 第二实例启动时：聚焦已有窗口，不重复 spawn 后端
-            // 避免端口 8080 冲突（WinError 10048）
-        }))
         .manage(BackendClient(Client::new()))
         .manage(BackendPid(Mutex::new(None)))
         .manage(CaffeinateProcess(Mutex::new(start_caffeinate())))
@@ -195,7 +191,13 @@ pub fn run() {
                     let child = cmd.spawn().map_err(|e| format!("启动后端失败: {}", e))?;
 
                     let pid = child.id();
-                    eprintln!("[OK] 后端 PID: {}", pid);
+                    eprintln!("[OK] 后端 PID: {} (spawned, waiting for health check)", pid);
+
+                    // forget child handle — 防止 Rust drop 误杀进程
+                    // std::process::Child 按理不会在 drop 时 kill，但 Windows 上
+                    // 某些 Tauri 插件可能持有 job object / handle 导致意外回收
+                    std::mem::forget(child);
+                    eprintln!("[OK] 后端 child handle 已释放（进程独立运行）");
 
                     // 写入 PID 文件供诊断使用（端口冲突时方便排查）
                     if let Ok(data_dir) = app.path().app_data_dir() {
