@@ -6,6 +6,19 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static WORKER_COUNTER: AtomicU64 = AtomicU64::new(1);
 
+/// 获取 Python worker 脚本路径
+pub fn get_worker_script() -> String {
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let worker = exe_dir.join("worker.py");
+            if worker.exists() { return worker.to_string_lossy().to_string(); }
+            let internal = exe_dir.join("_internal").join("worker.py");
+            if internal.exists() { return internal.to_string_lossy().to_string(); }
+        }
+    }
+    "../backend/worker.py".to_string()
+}
+
 /// 子进程守卫 — 在 drop 时强制 kill
 struct ChildGuard(Option<Child>);
 impl ChildGuard {

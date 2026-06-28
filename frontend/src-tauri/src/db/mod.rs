@@ -143,6 +143,8 @@ impl AppDb {
     /// 创建表
     fn init_tables(&self) -> Result<(), String> {
         let conn = self.conn.lock().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;")
+            .map_err(|e| format!("启用外键约束失败: {}", e))?;
         conn.execute_batch(
             "
             CREATE TABLE IF NOT EXISTS workflows (

@@ -299,22 +299,13 @@ async fn call_python(method: &str, params: Value, db: State<'_, AppDb>) -> Resul
     let data_dir = db.data_dir().to_string_lossy().to_string();
     let python = if cfg!(target_os = "windows") { "python.exe" } else { "python3" };
 
-    let worker_script = {
-        if let Ok(exe_path) = std::env::current_exe() {
-            if let Some(exe_dir) = exe_path.parent() {
-                let w = exe_dir.join("worker.py");
-                if w.exists() { w.to_string_lossy().to_string() }
-                else {
-                    let iw = exe_dir.join("_internal").join("worker.py");
-                    if iw.exists() { iw.to_string_lossy().to_string() }
-                    else { "../backend/worker.py".to_string() }
-                }
-            } else { "../backend/worker.py".to_string() }
-        } else { "../backend/worker.py".to_string() }
-    };
-
-    worker::call_worker(python, &worker_script, &data_dir, method, params)
-        .map_err(|e| format!("Python worker 调用失败: {}", e))
+    worker::call_worker(
+        python,
+        &worker::get_worker_script(),
+        &data_dir,
+        method,
+        params,
+    ).map_err(|e| format!("Python worker 调用失败: {}", e))
 }
 
 /// 获取指定案件的所有 MD 文件列表

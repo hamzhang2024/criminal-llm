@@ -3,19 +3,6 @@ use tauri::State;
 use crate::db::AppDb;
 use crate::worker;
 
-/// 获取 Python worker 脚本路径
-fn get_worker_script() -> String {
-    if let Ok(exe_path) = std::env::current_exe() {
-        if let Some(exe_dir) = exe_path.parent() {
-            let worker = exe_dir.join("worker.py");
-            if worker.exists() { return worker.to_string_lossy().to_string(); }
-            let internal = exe_dir.join("_internal").join("worker.py");
-            if internal.exists() { return internal.to_string_lossy().to_string(); }
-        }
-    }
-    "../backend/worker.py".to_string()
-}
-
 /// 证据提取（Python worker JSON-RPC）
 #[tauri::command]
 pub async fn extract_evidence(case_id: String, db: State<'_, AppDb>) -> Result<Value, String> {
@@ -24,7 +11,7 @@ pub async fn extract_evidence(case_id: String, db: State<'_, AppDb>) -> Result<V
 
     worker::call_worker(
         python,
-        &get_worker_script(),
+        &worker::get_worker_script(),
         &data_dir,
         "extract_evidence",
         json!({"case_id": case_id}),
@@ -37,7 +24,7 @@ pub async fn get_extract_status(case_id: String, db: State<'_, AppDb>) -> Result
     let data_dir = db.data_dir().to_string_lossy().to_string();
     let python = if cfg!(target_os = "windows") { "python.exe" } else { "python3" };
 
-    match worker::call_worker(python, &get_worker_script(), &data_dir, "ping", json!({})) {
+    match worker::call_worker(python, &worker::get_worker_script(), &data_dir, "ping", json!({})) {
         Ok(_) => Ok(json!({"case_id": case_id, "status": "running"})),
         Err(e) => Ok(json!({"case_id": case_id, "status": "pending", "error": e})),
     }
