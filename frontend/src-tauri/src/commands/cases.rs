@@ -179,42 +179,95 @@ pub async fn health_check() -> Result<Value, String> {
     health().await
 }
 
+/// 获取案件详情（文件系统）
+#[tauri::command]
+pub async fn get_case_files(case_id: String, db: State<'_, AppDb>) -> Result<Value, String> {
+    let data_dir = db.data_dir();
+    let case_base_dir = data_dir.join("cases").join(&case_id);
+    let mut files: Vec<Value> = Vec::new();
+
+    if case_base_dir.exists() {
+        if let Ok(entries) = std::fs::read_dir(&case_base_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                    files.push(json!({"name": name, "path": path.to_string_lossy()}));
+                }
+            }
+        }
+    }
+    Ok(json!({"case_id": case_id, "files": files, "total": files.len()}))
+}
+
+/// 获取按步骤的文件列表（匹配 case.json 中的 step 字段）
+#[tauri::command]
+pub async fn get_step_files(case_id: String, step: u32, db: State<'_, AppDb>) -> Result<Value, String> {
+    let data_dir = db.data_dir();
+    let cases_dir = data_dir.join("cases").join(&case_id);
+    let mut step_files: Vec<Value> = Vec::new();
+
+    if cases_dir.exists() {
+        scan_case_dirs(&cases_dir, |meta, sub_path| {
+            if meta.get("step").and_then(|v| v.as_u64()).unwrap_or(0) == step as u64 {
+                let files: Vec<String> = std::fs::read_dir(sub_path)
+                    .map(|entries| entries.flatten()
+                        .filter_map(|e| e.path().extension().and_then(|ext| ext.to_str().map(|s| s.to_string())))
+                        .collect())
+                    .unwrap_or_default();
+                step_files.push(json!({"path": sub_path.to_string_lossy(), "files": files}));
+            }
+        });
+    }
+    Ok(json!({"case_id": case_id, "step": step, "files": step_files}))
+}
+
+/// 辅助：扫描案件子目录并调用回调
+fn scan_case_dirs<F>(cases_dir: &std::path::Path, mut callback: F)
+where F: FnMut(&Value, &std::path::Path)
+{
+    if let Ok(sub_dirs) = std::fs::read_dir(cases_dir) {
+        for sub_entry in sub_dirs.flatten() {
+            let sub_path = sub_entry.path();
+            if !sub_path.is_dir() { continue; }
+            let meta_file = sub_path.join("case.json");
+            if meta_file.exists() {
+                if let Ok(content) = std::fs::read_to_string(&meta_file) {
+                    if let Ok(meta) = serde_json::from_str::<Value>(&content) {
+                        callback(&meta, &sub_path);
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn batch_process() -> Result<Value, String> {
-    Err("待实现".to_string())
+    Err("待实现（需要 Python worker）".to_string())
 }
 
 #[tauri::command]
 pub async fn get_split_suggestion() -> Result<Value, String> {
-    Err("待实现".to_string())
+    Err("待实现（需要 Python worker）".to_string())
 }
 
 #[tauri::command]
 pub async fn execute_analysis() -> Result<Value, String> {
-    Err("待实现".to_string())
+    Err("待实现（需要 Python worker）".to_string())
 }
 
 #[tauri::command]
 pub async fn chat_analysis() -> Result<Value, String> {
-    Err("待实现".to_string())
+    Err("待实现（需要 Python worker）".to_string())
 }
 
 #[tauri::command]
 pub async fn convert_to_md() -> Result<Value, String> {
-    Err("待实现".to_string())
+    Err("待实现（需要 Python worker）".to_string())
 }
 
 #[tauri::command]
 pub async fn delete_case() -> Result<Value, String> {
-    Err("待实现".to_string())
-}
-
-#[tauri::command]
-pub async fn get_case_files() -> Result<Value, String> {
-    Err("待实现".to_string())
-}
-
-#[tauri::command]
-pub async fn get_step_files() -> Result<Value, String> {
-    Err("待实现".to_string())
+    Err("待实现（需要 Python worker）".to_string())
 }
