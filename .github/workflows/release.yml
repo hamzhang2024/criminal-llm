@@ -294,6 +294,29 @@ jobs:
             exit 1
           fi
 
+          # 30 秒存活测试：health 通过后再等 30 秒，确认后端没有悄悄死掉
+          # （v1.7.x 系列 bug：后端启动成功但几秒后被 Tauri Job Object 杀掉）
+          echo "⏳ 30 秒存活测试..."
+          sleep 30
+          SURVIVE_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 http://127.0.0.1:8080/api/health 2>/dev/null || echo "000")
+          if [ "$SURVIVE_CODE" != "200" ]; then
+            echo "❌ 后端在 30 秒内死掉了！（health HTTP code: $SURVIVE_CODE）"
+            echo "=== 后端完整日志 ==="
+            cat /tmp/be.log 2>/dev/null || echo "(无日志)"
+            if [ -f /tmp/be.pid ]; then
+              PID=$(cat /tmp/be.pid 2>/dev/null)
+              if [ -n "$PID" ]; then
+                if [ "${{ matrix.platform.os }}" = "windows-latest" ]; then
+                  taskkill //F //PID "$PID" 2>/dev/null || true
+                else
+                  kill -9 "$PID" 2>/dev/null || true
+                fi
+              fi
+            fi
+            exit 1
+          fi
+          echo "✅ 后端 30 秒存活测试通过"
+
           # SSE 端点冒烟：500 = sse_starlette 缺失 / 路由内 NameError；200/404 都算 OK
           # --max-time 3：SSE 是流式，3s 后强制断开取状态码
           SSE_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 \
