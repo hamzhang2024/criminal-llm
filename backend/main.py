@@ -54,11 +54,16 @@ del _handlers  # _log_path 保留供 /api/logs/backend 端点使用
 
 # Windows: 修复 stderr 中文乱码（cmd 默认 GBK 编码，Python logging 输出 UTF-8 导致乱码）
 if sys.platform == "win32":
-    import io as _io
     try:
-        sys.stderr = _io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+        # Python 3.7+ 的 reconfigure 比 TextIOWrapper 更可靠
+        # （Tauri 通过 Stdio::from(File) 重定向 stderr 时，TextIOWrapper 可能失败）
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     except Exception:
-        pass  # 非控制台模式（PyInstaller --windowed）可能无 stderr.buffer，忽略
+        try:
+            import io as _io
+            sys.stderr = _io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+        except Exception:
+            pass  # 兜底失败则保持原样
 
 
 def is_port_in_use(host: str, port: int) -> bool:
@@ -103,6 +108,7 @@ async def lifespan(app: FastAPI):
     """应用生命周期管理（替代弃用的 @app.on_event）"""
     # === startup ===
     logging.info("[START] Criminal PDF WebUI 启动中...")
+    logging.info(f"[VERSION] v1.7.2  (lifespan + port-detect)")
     logging.info(f"[DATA] 数据目录: {UPLOAD_DIR.parent}")
     logging.info(f"[API] http://{HOST}:{PORT}/api")
 

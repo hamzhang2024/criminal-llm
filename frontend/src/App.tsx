@@ -39,14 +39,21 @@ function checkUpdateSilent() {
     try {
       const info = await checkUpdate()
       if (info.has_update) {
+        // 将分号分隔的 release notes 转为换行显示
+        const notes = (info.release_notes || '')
+          .split('；')
+          .filter(Boolean)
+          .map((n) => `• ${n.trim()}`)
+          .join('\n')
+        const downloadUrl = info.download_url || 'http://casefix.cn/'
         const confirmed = await showConfirm({
           title: '发现新版本',
-          message: `当前版本：${info.current_version}\n最新版本：${info.latest_version}\n\n${info.release_notes || '前往下载页面获取更新'}`,
+          message: `当前版本：${info.current_version}\n最新版本：${info.latest_version}\n\n${notes || '前往 casefix.cn 下载更新'}`,
           confirmText: '前往下载',
           variant: 'info',
         })
         if (confirmed) {
-          window.open(info.download_url || 'http://118.196.83.43:8000/', '_blank')
+          window.open(downloadUrl, '_blank')
         }
       }
     } catch {
