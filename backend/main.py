@@ -8,6 +8,10 @@
 import asyncio
 import os
 import re
+import socket
+import sys
+import time
+from contextlib import asynccontextmanager
 
 from _bootstrap import DATA_DIR
 
@@ -48,6 +52,26 @@ logging.basicConfig(
 )
 del _handlers  # _log_path 保留供 /api/logs/backend 端点使用
 
+# Windows: 修复 stderr 中文乱码（cmd 默认 GBK 编码，Python logging 输出 UTF-8 导致乱码）
+if sys.platform == "win32":
+    import io as _io
+    try:
+        sys.stderr = _io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+    except Exception:
+        pass  # 非控制台模式（PyInstaller --windowed）可能无 stderr.buffer，忽略
+
+
+def is_port_in_use(host: str, port: int) -> bool:
+    """检测端口是否被占用（用于启动前检测旧进程是否已释放端口）"""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind((host, port))
+            return False
+        except OSError:
+            return True
+
+
 from pathlib import Path
 from typing import Any
 
@@ -71,11 +95,79 @@ from stage_api import router as stage_router
 
 from config import CACHE_DIR, DEBUG, HOST, MAX_FILE_SIZE, OUTPUT_DIR, PORT, UPLOAD_DIR, cleanup_old_files
 
+# ========== 生命周期 ==========
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """应用生命周期管理（替代弃用的 @app.on_event）"""
+    # === startup ===
+    logging.info("[START] Criminal PDF WebUI 启动中...")
+    logging.info(f"[DATA] 数据目录: {UPLOAD_DIR.parent}")
+    logging.info(f"[API] http://{HOST}:{PORT}/api")
+
+    try:
+        from config_manager import CONFIG_PATH, load_config
+        logging.info(f"[CONFIG] 配置文件路径: {CONFIG_PATH}")
+        if CONFIG_PATH.exists():
+            cfg = load_config()
+            logging.info(f"[CONFIG] llm_base_url={cfg.get('llm_base_url', '(未设置)')}, llm_model={cfg.get('llm_model', '(未设置)')}")
+        else:
+            logging.info("[CONFIG] 配置文件不存在，使用默认值")
+    except Exception as e:
+        logging.error(f"[CONFIG] 读取配置失败: {e}")
+
+    # 恢复后台任务状态（轻量：仅读 JSON，保留同步）
+    from background_tasks import init_tasks
+    init_tasks()
+
+    # 清理任务丢到后台异步执行，不阻塞 Application startup complete
+    async def _background_cleanup():
+        try:
+            logging.info("[CLEANUP] 检查并清理超过 7 天的文件...")
+            stats = cleanup_old_files()
+            if stats["deleted_files"] > 0:
+                logging.info(f"   已清理 {stats['deleted_files']} 个任务，释放 {stats['freed_size']}")
+            else:
+                logging.info("   无需清理")
+
+            logging.info("[TRASH] 检查回收站...")
+            cleaned = cleanup_trash()
+            if cleaned:
+                logging.info(f"   已彻底删除 {len(cleaned)} 个过期案件")
+            else:
+                logging.info("   回收站无需清理")
+        except Exception as e:
+            logging.error(f"[CLEANUP] 后台清理任务异常: {e}")
+
+    asyncio.create_task(_background_cleanup())
+
+    # 空闲预热：startup complete 后后台加载重依赖
+    async def _preload_heavy_deps():
+        try:
+            from pdf_processor import _get_fitz, _get_pdf2image
+            from watermark_remover import _get_fitz as _get_wm_fitz
+            await asyncio.sleep(2)  # 让 startup complete 先生效，再预热
+            _get_fitz(); _get_pdf2image(); _get_wm_fitz()
+            logging.info("[预加载] 重依赖后台预热完成（首次转换/OCR 无需等待加载）")
+        except Exception as e:
+            logging.warning(f"[预加载] 重依赖预热失败（不影响功能，首次用时再加载）: {e}")
+
+    asyncio.create_task(_preload_heavy_deps())
+
+    yield  # === 应用运行中 ===
+
+    # === shutdown ===
+    await close_llm_client()
+    logging.info("[SHUTDOWN] Criminal PDF WebUI 已关闭")
+
+
 # 创建 FastAPI 应用
 app = FastAPI(
     title="Criminal PDF WebUI",
     description="刑事案卷 PDF 智能拆分可视化工具",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan,
 )
 
 # CORS 配置（桌面应用，仅允许 localhost 来源）
@@ -534,75 +626,6 @@ async def storage_stats():
     }
 
 
-# ========== 生命周期 ==========
-
-@app.on_event("startup")
-async def startup():
-    """应用启动时初始化"""
-    logging.info("[START] Criminal PDF WebUI 启动中...")
-    logging.info(f"[DATA] 数据目录: {UPLOAD_DIR.parent}")
-    logging.info(f"[API] http://{HOST}:{PORT}/api")
-
-    try:
-        from config_manager import CONFIG_PATH, load_config
-        logging.info(f"[CONFIG] 配置文件路径: {CONFIG_PATH}")
-        if CONFIG_PATH.exists():
-            cfg = load_config()
-            logging.info(f"[CONFIG] llm_base_url={cfg.get('llm_base_url', '(未设置)')}, llm_model={cfg.get('llm_model', '(未设置)')}")
-        else:
-            logging.info("[CONFIG] 配置文件不存在，使用默认值")
-    except Exception as e:
-        logging.error(f"[CONFIG] 读取配置失败: {e}")
-
-    # 恢复后台任务状态（轻量：仅读 JSON，保留同步）
-    from background_tasks import init_tasks
-    init_tasks()
-
-    # 清理任务丢到后台异步执行，不阻塞 Application startup complete
-    # （前端 health check 可更早拿到响应；清理本身可延迟完成）
-    async def _background_cleanup():
-        try:
-            logging.info("[CLEANUP] 检查并清理超过 7 天的文件...")
-            stats = cleanup_old_files()
-            if stats["deleted_files"] > 0:
-                logging.info(f"   已清理 {stats['deleted_files']} 个任务，释放 {stats['freed_size']}")
-            else:
-                logging.info("   无需清理")
-
-            logging.info("[TRASH] 检查回收站...")
-            cleaned = cleanup_trash()
-            if cleaned:
-                logging.info(f"   已彻底删除 {len(cleaned)} 个过期案件")
-            else:
-                logging.info("   回收站无需清理")
-        except Exception as e:
-            logging.error(f"[CLEANUP] 后台清理任务异常: {e}")
-
-    asyncio.create_task(_background_cleanup())
-
-    # 空闲预热：startup complete 后后台加载重依赖（fitz/PIL/aiohttp/pdf2image），
-    # 让用户首次转换/OCR 时已就绪、无卡顿。health check 已先响应，不阻塞启动。
-    async def _preload_heavy_deps():
-        try:
-            from pdf_processor import _get_fitz, _get_pdf2image
-            from watermark_remover import _get_fitz as _get_wm_fitz
-            await asyncio.sleep(2)  # 让 startup complete 先生效，再预热
-            _get_fitz(); _get_pdf2image(); _get_wm_fitz()
-            # aiohttp 已在 mineru_async 顶部 import（转换时随该模块加载），无需预热
-            logging.info("[预加载] 重依赖后台预热完成（首次转换/OCR 无需等待加载）")
-        except Exception as e:
-            logging.warning(f"[预加载] 重依赖预热失败（不影响功能，首次用时再加载）: {e}")
-
-    asyncio.create_task(_preload_heavy_deps())
-
-
-@app.on_event("shutdown")
-async def shutdown():
-    """应用关闭时清理"""
-    await close_llm_client()
-    logging.info("[SHUTDOWN] Criminal PDF WebUI 已关闭")
-
-
 # ========== 静态资源回退（favicon 等） ==========
 # 必须在 SPA 回退之前，否则会被 index.html 覆盖
 
@@ -642,8 +665,22 @@ if __name__ == "__main__":
 ========================================
     """)
 
+    # 端口冲突检测：等待旧进程释放端口（最多 10 秒）
+    if is_port_in_use(HOST, PORT):
+        logging.warning(f"[PORT] 端口 {HOST}:{PORT} 被占用，等待旧进程释放（最多 10 秒）...")
+        for i in range(10):
+            time.sleep(1)
+            if not is_port_in_use(HOST, PORT):
+                logging.info(f"[PORT] 端口已释放（等待 {i + 1}s）")
+                break
+        else:
+            logging.error(
+                f"[PORT] 端口 {HOST}:{PORT} 10 秒后仍未释放。"
+                f"请手动关闭占用进程后重试。"
+            )
+            sys.exit(1)
+
     # PyInstaller 模式下直接传递 app 对象（不能通过模块名导入）
-    import sys
     if getattr(sys, 'frozen', False):
         uvicorn.run(app, host=HOST, port=PORT, reload=False)
     else:

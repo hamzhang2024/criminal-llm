@@ -16,6 +16,10 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_single_instance::init(|_app, _args, _cwd| {
+            // 第二实例启动时：聚焦已有窗口，不重复 spawn 后端
+            // 避免端口 8080 冲突（WinError 10048）
+        }))
         .manage(BackendClient(Client::new()))
         .manage(BackendPid(Mutex::new(None)))
         .manage(CaffeinateProcess(Mutex::new(start_caffeinate())))
@@ -111,19 +115,51 @@ pub fn run() {
                     // 残留进程占用 8080 导致新后端启动失败卡住（Windows 常见）
                     #[cfg(windows)]
                     {
-                        // 用 taskkill 杀占 8080 的进程（比 PowerShell 更可靠且不弹窗）
-                        let _ = std::process::Command::new("cmd")
-                            .args(["/C", "for /f \"tokens=5\" %a in ('netstat -ano ^| findstr :8080 ^| findstr LISTENING') do taskkill /F /PID %a 2>nul"])
-                            .stdout(std::process::Stdio::null())
-                            .stderr(std::process::Stdio::null())
-                            .output();
+                        // 分两步：用 netstat 找 PID 列表，再逐个 taskkill
+                        // （直接用 for /f 循环在 cmd /C 中可能因转义问题不生效）
+                        if let Ok(output) = std::process::Command::new("cmd")
+                            .args(["/C", "netstat -ano | findstr :8080 | findstr LISTENING"])
+                            .output()
+                        {
+                            let stdout = String::from_utf8_lossy(&output.stdout);
+                            for line in stdout.lines() {
+                                let parts: Vec<&str> = line.split_whitespace().collect();
+                                if let Some(pid_str) = parts.last() {
+                                    let pid = pid_str.trim();
+                                    if !pid.is_empty() && pid != "0" {
+                                        eprintln!("[CLEANUP] 清理旧后端进程 PID: {}", pid);
+                                        let _ = std::process::Command::new("taskkill")
+                                            .args(["/F", "/PID", pid])
+                                            .stdout(std::process::Stdio::null())
+                                            .stderr(std::process::Stdio::null())
+                                            .output();
+                                    }
+                                }
+                            }
+                        }
+                        // 等待 Windows 释放端口（TIME_WAIT 过渡期）
+                        std::thread::sleep(std::time::Duration::from_secs(2));
                         eprintln!("[CLEANUP] 已清理可能残留的 8080 端口进程");
                     }
                     #[cfg(unix)]
                     {
-                        let _ = std::process::Command::new("sh")
-                            .args(["-c", "lsof -ti:8080 | xargs kill -9 2>/dev/null"])
-                            .output();
+                        // macOS/Linux：先列 PID 再逐个 kill（比 xargs kill -9 更可靠）
+                        if let Ok(output) = std::process::Command::new("sh")
+                            .args(["-c", "lsof -ti:8080 2>/dev/null"])
+                            .output()
+                        {
+                            let stdout = String::from_utf8_lossy(&output.stdout);
+                            for pid in stdout.lines() {
+                                let pid = pid.trim();
+                                if !pid.is_empty() {
+                                    eprintln!("[CLEANUP] 清理旧后端进程 PID: {}", pid);
+                                    let _ = std::process::Command::new("kill")
+                                        .args(["-9", pid])
+                                        .output();
+                                }
+                            }
+                        }
+                        std::thread::sleep(std::time::Duration::from_secs(1));
                     }
 
                     // 设置工作目录为后端所在目录（确保能找到 legal_db 等资源）
@@ -160,6 +196,11 @@ pub fn run() {
 
                     let pid = child.id();
                     eprintln!("[OK] 后端 PID: {}", pid);
+
+                    // 写入 PID 文件供诊断使用（端口冲突时方便排查）
+                    if let Ok(data_dir) = app.path().app_data_dir() {
+                        let _ = std::fs::write(data_dir.join("backend.pid"), pid.to_string());
+                    }
 
                     let backend_pid = app.state::<BackendPid>();
                     *backend_pid.0.lock().unwrap() = Some(pid);

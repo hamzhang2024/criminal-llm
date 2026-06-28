@@ -88,7 +88,17 @@ class LLMClient:
         self.api_key = api_key
         self.model = default_model
         self.timeout = 600.0
-        self.client = httpx.AsyncClient(timeout=self.timeout, verify=_SSL_VERIFY)
+        # 连接池配置：限制并发连接和空闲连接，避免 Windows 上长时间运行连接堆积
+        _limits = httpx.Limits(
+            max_connections=20,           # 最大连接数（证据提取并发=3，不需要 100）
+            max_keepalive_connections=5,   # 最大空闲连接
+            keepalive_expiry=30.0,        # 空闲连接 30 秒后关闭
+        )
+        self.client = httpx.AsyncClient(
+            timeout=self.timeout,
+            limits=_limits,
+            verify=_SSL_VERIFY,
+        )
 
         # 缓存命中率统计（会话级别累计）
         self._cache_hit_tokens = 0
