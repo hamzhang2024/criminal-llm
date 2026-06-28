@@ -5,8 +5,6 @@ use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 mod commands;
 mod db;
 mod state;
-mod http_server;
-mod config;
 
 use db::AppDb;
 use state::{start_caffeinate, BackendClient, BackendPid, CaffeinateProcess};
@@ -96,71 +94,6 @@ pub fn run() {
                         .build(),
                 )?;
             }
-
-            // 启动 Rust HTTP 服务器（替代 Python FastAPI）
-            let data_dir = app
-                .path()
-                .app_data_dir()
-                .map_err(|e| format!("获取数据目录失败: {}", e))?;
-
-            // 清理端口 8080 上的旧进程
-            #[cfg(windows)]
-            {
-                if let Ok(output) = std::process::Command::new("cmd")
-                    .args(["/C", "netstat -ano | findstr :8080 | findstr LISTENING"])
-                    .output()
-                {
-                    let stdout = String::from_utf8_lossy(&output.stdout);
-                    for line in stdout.lines() {
-                        let parts: Vec<&str> = line.split_whitespace().collect();
-                        if let Some(pid_str) = parts.last() {
-                            let pid = pid_str.trim();
-                            if !pid.is_empty() && pid != "0" {
-                                eprintln!("[CLEANUP] 清理旧进程 PID: {}", pid);
-                                let _ = std::process::Command::new("taskkill")
-                                    .args(["/F", "/PID", pid])
-                                    .stdout(std::process::Stdio::null())
-                                    .stderr(std::process::Stdio::null())
-                                    .output();
-                            }
-                        }
-                    }
-                }
-                std::thread::sleep(std::time::Duration::from_secs(1));
-            }
-            #[cfg(unix)]
-            {
-                if let Ok(output) = std::process::Command::new("sh")
-                    .args(["-c", "lsof -ti:8080 2>/dev/null"])
-                    .output()
-                {
-                    let stdout = String::from_utf8_lossy(&output.stdout);
-                    for pid in stdout.lines() {
-                        let pid = pid.trim();
-                        if !pid.is_empty() {
-                            let _ = std::process::Command::new("kill").args(["-9", pid]).output();
-                        }
-                    }
-                }
-                std::thread::sleep(std::time::Duration::from_secs(1));
-            }
-
-            // [DEPRECATED] Rust HTTP server 已禁用 — 改用 Tauri IPC commands
-            // 前端通过 invoke('get_config', ...) 等直接调用 Rust handlers，无需 HTTP
-            /*
-            let handle = app.handle().clone();
-            std::thread::spawn(move || {
-                let rt = tokio::runtime::Runtime::new().expect("创建 tokio runtime 失败");
-                rt.block_on(async {
-                    eprintln!("[HTTP] 启动 Rust HTTP 服务器...");
-                    if let Err(e) = http_server::start_server(8080, data_dir).await {
-                        eprintln!("[HTTP] 服务器错误: {}", e);
-                        handle.exit(1);
-                    }
-                });
-            });
-            eprintln!("[HTTP] Rust HTTP 服务器已启动");
-            */
 
             // 拦截外部链接，用系统浏览器打开
             let url = if cfg!(debug_assertions) {
