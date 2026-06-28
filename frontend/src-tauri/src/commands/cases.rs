@@ -270,11 +270,20 @@ pub async fn convert_to_md(case_id: String, db: State<'_, AppDb>) -> Result<Valu
 
 #[tauri::command]
 pub async fn delete_case(case_id: String, db: State<'_, AppDb>) -> Result<Value, String> {
-    // 删除案件目录（Rust 直接操作）
     let data_dir = db.data_dir();
-    let cases_dir = data_dir.join("cases").join(&case_id);
-    if cases_dir.exists() {
-        std::fs::remove_dir_all(&cases_dir)
+    let cases_root = data_dir.join("cases");
+    let target = cases_root.join(&case_id);
+
+    // 防路径穿越：确保目标在 cases/ 子树内
+    let canonical = target.canonicalize()
+        .map_err(|e| format!("案件路径无效: {}", e))?;
+    let root_canonical = cases_root.canonicalize().unwrap_or(cases_root.clone());
+    if !canonical.starts_with(&root_canonical) {
+        return Err("非法案件路径".to_string());
+    }
+
+    if canonical.exists() {
+        std::fs::remove_dir_all(&canonical)
             .map_err(|e| format!("删除案件失败: {}", e))?;
         Ok(json!({"deleted": true, "case_id": case_id}))
     } else {

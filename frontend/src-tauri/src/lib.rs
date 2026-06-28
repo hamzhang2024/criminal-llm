@@ -26,7 +26,6 @@ pub fn run() {
             commands::get_config,
             commands::set_config,
             commands::get_data_dir,
-            commands::list_cases,
             // App
             commands::get_app_version,
             commands::check_update,

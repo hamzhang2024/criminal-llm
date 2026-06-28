@@ -35,14 +35,20 @@ pub fn list_legal_kb() -> Result<Value, String> {
 /// 获取单个法律条目内容
 #[tauri::command]
 pub fn get_legal_item(name: String) -> Result<Value, String> {
+    // 防路径穿越：仅允许纯文件名（无路径分隔符）
+    let safe_name = std::path::Path::new(&name);
+    if safe_name.components().count() != 1 {
+        return Err("非法文件名".to_string());
+    }
+
     let legal_dirs = vec![
-        Path::new("resources/legal_db"),
-        Path::new("../backend/legal_db"),
-        Path::new("legal_db"),
+        "resources/legal_db",
+        "../backend/legal_db",
+        "legal_db",
     ];
 
     for dir in &legal_dirs {
-        let file_path = dir.join(&name);
+        let file_path = std::path::Path::new(dir).join(&name);
         if file_path.exists() {
             let content = std::fs::read_to_string(&file_path)
                 .map_err(|e| format!("读取文件失败: {}", e))?;
