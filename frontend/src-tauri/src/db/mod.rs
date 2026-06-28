@@ -111,6 +111,7 @@ pub struct CaseFile {
 /// 数据库包装器
 pub struct AppDb {
     conn: Mutex<Connection>,
+    data_dir: PathBuf,
 }
 
 impl AppDb {
@@ -122,12 +123,21 @@ impl AppDb {
 
         let conn = Connection::open(&db_path).map_err(|e| format!("打开数据库失败: {}", e))?;
 
+        // 数据目录是 db 文件所在目录
+        let data_dir = db_path.parent().unwrap_or(&db_path).to_path_buf();
+
         let db = AppDb {
             conn: Mutex::new(conn),
+            data_dir,
         };
 
         db.init_tables()?;
         Ok(db)
+    }
+
+    /// 获取数据目录
+    pub fn data_dir(&self) -> &PathBuf {
+        &self.data_dir
     }
 
     /// 创建表

@@ -130,3 +130,44 @@ export function openUrl(url: string): void {
     window.open(url, '_blank')
   }
 }
+
+/** 统一 API 调用层 — 透明切换 Tauri IPC vs HTTP
+ *
+ * Tauri 环境：cmd 映射到 Tauri command（无 HTTP，进程内 IPC）
+ * 浏览器环境：cmd 转换为 HTTP 路径后 fetch
+ *
+ * @example
+ * // Tauri: invoke('list_cases', { owner: 'admin' })
+ * // HTTP:  GET /api/list-cases?owner=admin
+ * const result = await apiCall<CasesResponse>('list_cases', { owner: 'admin' })
+ */
+export async function apiCall<T>(
+  cmd: string,
+  args?: Record<string, unknown>,
+  options?: { method?: 'GET' | 'POST' | 'PUT' | 'DELETE'; body?: Record<string, unknown> }
+): Promise<T> {
+  if (isTauri()) {
+    // Tauri 环境：直接 invoke（无 HTTP）
+    return tauriInvoke<T>(cmd, args)
+  }
+
+  // 浏览器环境（开发用）：转换为 HTTP 调用
+  const cmdPath = cmd.replace(/_/g, '/').toLowerCase()
+  const url = `${API_BASE}/${cmdPath}`
+  const method = options?.method || 'GET'
+
+  const fetchOptions: RequestInit = {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+  }
+
+  if (method !== 'GET' && (args || options?.body)) {
+    fetchOptions.body = JSON.stringify(args || options?.body)
+  }
+
+  const res = await fetch(url, fetchOptions)
+  if (!res.ok) {
+    throw new Error(`API ${cmd} failed: ${res.status} ${res.statusText}`)
+  }
+  return res.json()
+}

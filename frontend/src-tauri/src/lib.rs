@@ -22,6 +22,12 @@ pub fn run() {
         .manage(BackendPid(Mutex::new(None)))
         .manage(CaffeinateProcess(Mutex::new(start_caffeinate())))
         .invoke_handler(tauri::generate_handler![
+            // API Commands (IPC, 无 HTTP)
+            commands::health,
+            commands::get_config,
+            commands::set_config,
+            commands::get_data_dir,
+            commands::list_cases,
             // App
             commands::get_app_version,
             commands::check_update,
@@ -139,7 +145,9 @@ pub fn run() {
                 std::thread::sleep(std::time::Duration::from_secs(1));
             }
 
-            // 启动 Rust HTTP server（不再 spawn Python）
+            // [DEPRECATED] Rust HTTP server 已禁用 — 改用 Tauri IPC commands
+            // 前端通过 invoke('get_config', ...) 等直接调用 Rust handlers，无需 HTTP
+            /*
             let handle = app.handle().clone();
             std::thread::spawn(move || {
                 let rt = tokio::runtime::Runtime::new().expect("创建 tokio runtime 失败");
@@ -152,6 +160,7 @@ pub fn run() {
                 });
             });
             eprintln!("[HTTP] Rust HTTP 服务器已启动");
+            */
 
             // 拦截外部链接，用系统浏览器打开
             let url = if cfg!(debug_assertions) {
