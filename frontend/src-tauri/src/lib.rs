@@ -5,6 +5,7 @@ use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 mod commands;
 mod db;
 mod state;
+mod worker;
 
 use db::AppDb;
 use state::{start_caffeinate, BackendClient, BackendPid, CaffeinateProcess};

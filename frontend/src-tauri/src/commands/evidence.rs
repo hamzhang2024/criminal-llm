@@ -1,17 +1,46 @@
 use serde_json::{json, Value};
 use tauri::State;
 use crate::db::AppDb;
+use crate::worker;
 
-/// 证据提取（需要 Python worker，Phase 2 实现 JSON-RPC 桥接）
-#[tauri::command]
-pub async fn extract_evidence(case_id: String) -> Result<Value, String> {
-    Err(format!("【待实现】证据提取需要 Python worker 处理 case '{}'。", case_id))
+/// 获取 Python worker 脚本路径
+fn get_worker_script() -> String {
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let worker = exe_dir.join("worker.py");
+            if worker.exists() { return worker.to_string_lossy().to_string(); }
+            let internal = exe_dir.join("_internal").join("worker.py");
+            if internal.exists() { return internal.to_string_lossy().to_string(); }
+        }
+    }
+    "../backend/worker.py".to_string()
 }
 
-/// 获取证据提取状态
+/// 证据提取（Python worker JSON-RPC）
 #[tauri::command]
-pub async fn get_extract_status(_case_id: String) -> Result<Value, String> {
-    Ok(json!({"status": "pending", "message": "Phase 2 migration"}))
+pub async fn extract_evidence(case_id: String, db: State<'_, AppDb>) -> Result<Value, String> {
+    let data_dir = db.data_dir().to_string_lossy().to_string();
+    let python = if cfg!(target_os = "windows") { "python.exe" } else { "python3" };
+
+    worker::call_worker(
+        python,
+        &get_worker_script(),
+        &data_dir,
+        "extract_evidence",
+        json!({"case_id": case_id}),
+    ).map_err(|e| format!("证据提取失败: {}", e))
+}
+
+/// 获取证据提取状态（ping worker）
+#[tauri::command]
+pub async fn get_extract_status(case_id: String, db: State<'_, AppDb>) -> Result<Value, String> {
+    let data_dir = db.data_dir().to_string_lossy().to_string();
+    let python = if cfg!(target_os = "windows") { "python.exe" } else { "python3" };
+
+    match worker::call_worker(python, &get_worker_script(), &data_dir, "ping", json!({})) {
+        Ok(_) => Ok(json!({"case_id": case_id, "status": "running"})),
+        Err(e) => Ok(json!({"case_id": case_id, "status": "pending", "error": e})),
+    }
 }
 
 /// 停止证据提取
@@ -20,13 +49,11 @@ pub async fn stop_extract(_case_id: String) -> Result<Value, String> {
     Ok(json!({"stopped": true}))
 }
 
-/// 获取证据索引（纯文件系统读取，无需 Python）
+/// 获取证据索引（纯文件系统读取）
 #[tauri::command]
 pub async fn get_evidence_index(case_id: String, db: State<'_, AppDb>) -> Result<Value, String> {
     let data_dir = db.data_dir();
     let cases_dir = data_dir.join("cases").join(&case_id);
-
-    // 扫描所有 case_xxx/案件_名称/ 子目录
     let mut evidence_files: Vec<Value> = Vec::new();
 
     if cases_dir.exists() {
@@ -34,11 +61,8 @@ pub async fn get_evidence_index(case_id: String, db: State<'_, AppDb>) -> Result
             for sub_entry in sub_dirs.flatten() {
                 let sub_path = sub_entry.path();
                 if !sub_path.is_dir() { continue; }
-
-                // 检查是否有 evidence/index.json
                 let evidence_dir = sub_path.join("evidence");
                 let index_file = evidence_dir.join("index.json");
-
                 if index_file.exists() {
                     if let Ok(content) = std::fs::read_to_string(&index_file) {
                         if let Ok(index_data) = serde_json::from_str::<Value>(&content) {
@@ -50,14 +74,11 @@ pub async fn get_evidence_index(case_id: String, db: State<'_, AppDb>) -> Result
                         }
                     }
                 }
-
-                // 也列出 evidence/ 目录中的 MD 文件
                 if evidence_dir.exists() {
                     if let Ok(entries) = std::fs::read_dir(&evidence_dir) {
                         for entry in entries.flatten() {
                             let path = entry.path();
-                            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-                            if ext == "md" {
+                            if path.extension().and_then(|e| e.to_str()).unwrap_or("") == "md" {
                                 let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
                                 evidence_files.push(json!({"file": name, "path": path.to_string_lossy()}));
                             }
@@ -67,6 +88,5 @@ pub async fn get_evidence_index(case_id: String, db: State<'_, AppDb>) -> Result
             }
         }
     }
-
     Ok(json!({"case_id": case_id, "evidence": evidence_files, "total": evidence_files.len()}))
 }
