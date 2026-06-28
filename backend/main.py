@@ -38,11 +38,22 @@ _log_path = DATA_DIR / "backend.log"
 DATA_DIR.mkdir(parents=True, exist_ok=True)  # 确保目录存在
 import logging
 
+# Windows: 修复 stderr 中文乱码（必须在 logging.basicConfig 之前！
+# 否则 StreamHandler 会捕获旧 GBK 编码的 stderr 引用，之后改 sys.stderr 无效）
+if sys.platform == "win32":
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        try:
+            import io as _io
+            sys.stderr = _io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
 _handlers = [logging.StreamHandler()]  # 开发模式输出控制台
 try:
     _handlers.insert(0, logging.FileHandler(str(_log_path), encoding="utf-8"))
 except (PermissionError, OSError):
-    # 文件被占用或无权限，降级为纯控制台输出
     pass
 
 logging.basicConfig(
@@ -51,19 +62,6 @@ logging.basicConfig(
     handlers=_handlers,
 )
 del _handlers  # _log_path 保留供 /api/logs/backend 端点使用
-
-# Windows: 修复 stderr 中文乱码（cmd 默认 GBK 编码，Python logging 输出 UTF-8 导致乱码）
-if sys.platform == "win32":
-    try:
-        # Python 3.7+ 的 reconfigure 比 TextIOWrapper 更可靠
-        # （Tauri 通过 Stdio::from(File) 重定向 stderr 时，TextIOWrapper 可能失败）
-        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-    except Exception:
-        try:
-            import io as _io
-            sys.stderr = _io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
-        except Exception:
-            pass  # 兜底失败则保持原样
 
 
 def is_port_in_use(host: str, port: int) -> bool:
