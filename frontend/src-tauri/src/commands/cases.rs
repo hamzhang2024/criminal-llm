@@ -271,3 +271,68 @@ pub async fn convert_to_md() -> Result<Value, String> {
 pub async fn delete_case() -> Result<Value, String> {
     Err("待实现（需要 Python worker）".to_string())
 }
+
+/// 获取指定案件的所有 MD 文件列表
+#[tauri::command]
+pub async fn get_md_files(case_id: String, db: State<'_, AppDb>) -> Result<Value, String> {
+    let data_dir = db.data_dir();
+    let cases_dir = data_dir.join("cases").join(&case_id);
+    let mut files: Vec<Value> = Vec::new();
+
+    if let Ok(sub_dirs) = std::fs::read_dir(&cases_dir) {
+        for sub_entry in sub_dirs.flatten() {
+            let sub_path = sub_entry.path();
+            if !sub_path.is_dir() { continue; }
+            let md_dir = sub_path.join("md");
+            if md_dir.exists() {
+                if let Ok(entries) = std::fs::read_dir(&md_dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.extension().and_then(|e| e.to_str()).unwrap_or("") == "md" {
+                            files.push(json!({
+                                "name": path.file_name().and_then(|n| n.to_str()).unwrap_or(""),
+                                "path": path.to_string_lossy(),
+                                "size": std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0),
+                            }));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(json!({"case_id": case_id, "md_files": files, "total": files.len()}))
+}
+
+/// 获取指定案件的所有 PDF 文件列表
+#[tauri::command]
+pub async fn get_pdf_files(case_id: String, db: State<'_, AppDb>) -> Result<Value, String> {
+    let data_dir = db.data_dir();
+    let cases_dir = data_dir.join("cases").join(&case_id);
+    let mut files: Vec<Value> = Vec::new();
+
+    if let Ok(sub_dirs) = std::fs::read_dir(&cases_dir) {
+        for sub_entry in sub_dirs.flatten() {
+            let sub_path = sub_entry.path();
+            if !sub_path.is_dir() { continue; }
+            for subdir in &["original", "processed"] {
+                let pdf_dir = sub_path.join(subdir);
+                if pdf_dir.exists() {
+                    if let Ok(entries) = std::fs::read_dir(&pdf_dir) {
+                        for entry in entries.flatten() {
+                            let path = entry.path();
+                            if path.extension().and_then(|e| e.to_str()).unwrap_or("") == "pdf" {
+                                files.push(json!({
+                                    "name": path.file_name().and_then(|n| n.to_str()).unwrap_or(""),
+                                    "path": path.to_string_lossy(),
+                                    "type": *subdir,
+                                    "size": std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0),
+                                }));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(json!({"case_id": case_id, "pdf_files": files, "total": files.len()}))
+}

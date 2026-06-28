@@ -41,6 +41,8 @@ pub fn run() {
             commands::list_cases,
             commands::get_case_files,
             commands::get_step_files,
+            commands::get_md_files,
+            commands::get_pdf_files,
             commands::batch_process,
             commands::get_split_suggestion,
             commands::execute_analysis,
@@ -75,6 +77,9 @@ pub fn run() {
             commands::get_files,
             commands::log_operation,
             commands::delete_workflow,
+            // Legal KB
+            commands::list_legal_kb,
+            commands::get_legal_item,
         ])
         .setup(|app| {
             // 初始化本地数据库
