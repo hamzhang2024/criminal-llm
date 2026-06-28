@@ -24,6 +24,12 @@ import os
 import traceback
 import logging
 
+# 可选模块（如果不存在则功能受限）
+try:
+    from case_splitter import suggest_split
+except ImportError:
+    suggest_split = None
+
 # 配置 logging（输出到 stderr）
 logging.basicConfig(level=logging.INFO, stream=sys.stderr, format='[%(levelname)s] %(message)s')
 logger = logging.getLogger(__name__)
@@ -155,13 +161,14 @@ def handle_stop_extract(req_id: str, params: dict) -> dict:
 
 def handle_split_suggestion(req_id: str, params: dict) -> dict:
     """文书拆分建议"""
+    if suggest_split is None:
+        return {"id": req_id, "error": "case_splitter 模块未安装"}
     try:
-        from case_splitter import suggest_split
         case_id = params.get("case_id", "")
         result = suggest_split(case_id)
         return {"id": req_id, "result": result}
-    except ImportError as e:
-        return {"id": req_id, "error": f"无法导入 case_splitter: {e}"}
+    except Exception as e:
+        return {"id": req_id, "error": f"拆分失败: {e}"}
 
 
 def handle_config_test(req_id: str, params: dict) -> dict:
