@@ -2023,6 +2023,52 @@ async def _do_extract_evidence(
         except Exception as ge:
             logger.warning(f"[证据提取] 证据分组失败: {ge}")
 
+        # ── 质量修复：对降级证据（needs_review / 空字段）触发二次提取 ──
+        fixed_count = 0
+        fixable_items = [e for e in all_evidence if e.get("needs_review") or not (e.get("summary_preview") or "").strip()]
+        if fixable_items:
+            logger.info(f"[证据提取] 发现 {len(fixable_items)} 份质量问题证据，启动二次修复提取...")
+            for ev in fixable_items:
+                try:
+                    # 从原始 source（md/ 目录下的文件）读取
+                    source_name = ev.get("source", "")
+                    if not source_name:
+                        continue
+                    orig_md = md_dir / source_name
+                    if not orig_md.exists():
+                        continue
+                    md_text = orig_md.read_text(encoding="utf-8")
+                    if not md_text.strip():
+                        continue
+                    # 二次提取：用源文件重新提取
+                    temp_fix = evidence_dir / "_temp_fix"
+                    temp_fix.mkdir(exist_ok=True)
+                    _, ev_list = await _extract_single_file(
+                        orig_md, md_text, temp_fix,
+                        summary_target="1000-2000字"
+                    )
+                    if ev_list and len(ev_list) > 0:
+                        # 用二次提取结果替换（只替换第一个）
+                        new_ev = ev_list[0]
+                        ev["type"] = new_ev.get("type", ev["type"])
+                        ev["persons"] = new_ev.get("persons", "")
+                        ev["related_entities"] = new_ev.get("related_entities", "")
+                        ev["contradiction_hints"] = new_ev.get("contradiction_hints", "")
+                        ev["key_facts"] = new_ev.get("key_facts", "")
+                        ev["summary"] = new_ev.get("summary", "")
+                        ev["summary_preview"] = new_ev.get("summary", "")[:200]
+                        ev["has_quotes"] = bool(new_ev.get("original_quotes", "").strip())
+                        ev["needs_review"] = False
+                        fixed_count += 1
+                        logger.info(f"[证据提取] 修复成功: {ev.get('name', '')}")
+                    # 清理临时文件
+                    if temp_fix.exists():
+                        import shutil
+                        shutil.rmtree(temp_fix)
+                except Exception as fix_err:
+                    logger.warning(f"[证据提取] 修复失败 {ev.get('name', '')}: {fix_err}")
+            logger.info(f"[证据提取] 二次修复完成：成功修复 {fixed_count}/{len(fixable_items)} 份")
+
         # ── 最终保存 ──
         index_data = {
             "case_id": case_id,
@@ -2030,6 +2076,7 @@ async def _do_extract_evidence(
             "evidence": all_evidence,
             "evidence_groups": evidence_groups,
             "dedup_status": dedup_status,
+            "auto_fixed_count": fixed_count,
             "generated_at": datetime.now().isoformat(),
         }
         # 如果提取结果为 0，记录可能的原因供前端展示
@@ -2037,7 +2084,7 @@ async def _do_extract_evidence(
             index_data["error_hint"] = "LLM 提取全部失败（详见后端日志），可能原因：API Key 无效、Base URL 不可达、模型名称错误、或所有 MD 文件解析失败"
         index_file.write_text(json.dumps(index_data, ensure_ascii=False, indent=2), encoding="utf-8")
 
-        # 运行质量门禁检查，生成 quality_report.json
+        # 运行质量门禁检查（自动修复后再次检查），生成 quality_report.json
         try:
             from evidence_quality_gate import run_quality_gate
             run_quality_gate(evidence_dir, case_id)
