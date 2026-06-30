@@ -50,6 +50,15 @@ export async function getEvidenceIndex(caseId: string): Promise<any> {
   return res.json()
 }
 
+/** 获取证据关联信息（结构化电话/微信号/银行卡等） */
+export async function getEvidenceEntities(caseId: string): Promise<any> {
+  const res = await safeFetch(`${API_BASE}/cases/${caseId}/evidence-entities`)
+  if (!res.ok) {
+    return { total_entities: 0, entities: [], summary: {} }
+  }
+  return res.json()
+}
+
 export async function getExtractStatus(caseId: string): Promise<any> {
   const res = await safeFetch(`${API_BASE}/cases/${caseId}/extract-status`)
   if (!res.ok) {

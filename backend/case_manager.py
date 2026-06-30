@@ -2127,6 +2127,20 @@ async def get_evidence_index(case_id: str):
     return json.loads(index_file.read_text(encoding="utf-8"))
 
 
+@router.get("/{case_id}/evidence-entities")
+async def get_evidence_entities(case_id: str):
+    """获取证据关联信息（结构化电话/微信号/银行卡等）"""
+    case_path = find_case_path(case_id)
+    if not case_path:
+        raise HTTPException(status_code=404, detail="案件不存在")
+
+    entities_file = case_path / "evidence" / "related_entities.json"
+    if not entities_file.exists():
+        return {"total_entities": 0, "entities": [], "summary": {}}
+
+    return json.loads(entities_file.read_text(encoding="utf-8"))
+
+
 class EvidenceReviewRequest(BaseModel):
     """证据校对请求体（带字段长度限制，防止滥用）"""
     name: str | None = None

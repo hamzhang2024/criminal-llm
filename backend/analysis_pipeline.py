@@ -741,11 +741,151 @@ class AnalysisPipeline:
                 progress_cb(idx, total, f"正在分析：{person}（{idx}/{total}）")
 
         if progress_cb:
-            progress_cb(total, total, f"完成！共分析 {total} 人矛盾")
+            progress_cb(total, total, f"完成！共分析 {total} 人内部矛盾")
+
+        # ===== 跨证据矛盾分析（不同人/不同证据类型之间的交叉对比）=====
+        cross_save_path = self.analysis_dir / "contradictions" / "00-跨证据矛盾分析.md"
+        cross_analysis = None
+        if not cross_save_path.exists():
+            logger.info("[步骤 3] 开始跨证据矛盾分析...")
+            if progress_cb:
+                progress_cb(total, total, "跨证据矛盾分析：对比不同人/不同证据类型的陈述差异")
+            try:
+                # 收集所有已完成的内部矛盾分析的摘要
+                contradiction_summaries = ""
+                for cf in self._list_contradiction_files():
+                    cc = self._load_contradiction_file(cf["filename"])
+                    if cc:
+                        contradiction_summaries += f"\n### {cf['displayName']}\n{cc[:2000]}\n"
+
+                # 收集合并的笔录信息（各人陈述的核心差异）
+                step1 = self._load_step_result(1)
+                merged_summary = ""
+                if step1:
+                    for mf in step1.get("merged_files", []):
+                        merged_summary += f"\n### {mf['person']}（{mf['type']}，共{mf['session_count']}次）\n"
+                        # 收集该人的矛盾提示（从 structured metadata）
+                        # 从 evidence 读取
+                    for oe in step1.get("other_evidence", []):
+                        merged_summary += f"\n### {oe['filename']}（{oe['type']}）\n"
+                        if oe.get("contradiction_hints"):
+                            merged_summary += f"矛盾提示：{oe['contradiction_hints'][:500]}\n"
+
+                if contradiction_summaries or merged_summary:
+                    cross_analysis = await self.llm.chat([
+                        {"role": "system", "content": "你是刑事案件的矛盾分析专家。你已分析了各人单独的内部矛盾，现在需要做跨证据、跨人的交叉矛盾分析——找出不同人和不同证据类型之间的陈述冲突。"},
+                        {"role": "user", "content": f"""## 各人内部矛盾分析摘要
+{contradiction_summaries[:15000] if contradiction_summaries else '无'}
+
+## 全部证据清单
+{merged_summary[:15000] if merged_summary else '无'}
+
+## 任务：跨证据矛盾分析
+
+对比**不同人之间**和**不同证据类型之间**的陈述差异，找出以下类型的矛盾：
+
+### 1. 犯罪事实描述矛盾
+不同人对同一事实的描述是否一致？例如：
+- 张三称"李四主谋" vs 李四称"张三主谋"
+- 王五供述的作案时间 vs 银行流水的时间
+
+### 2. 关键细节矛盾
+- 金额：各人供述的涉案金额是否一致？
+- 时间：各人描述的发案时间是否对应？
+- 地点：各人描述的作案地点是否一致？
+- 参与人：各人说的参与者是否一致？
+
+### 3. 口供与书证矛盾
+- 供述的金额 vs 银行流水记录
+- 供述的时间 vs 通话记录/微信记录
+- 供述的人物关系 vs 户籍信息/登记信息
+
+### 4. 同案人互相指认的矛盾
+- A指认B参与了某行为 vs B否认
+- 多人指认中的不一致（如三人说了三种版本）
+
+### 输出格式（JSON 数组）：
+
+```json
+[
+  {{
+    "id": 1,
+    "type": "事实描述矛盾",
+    "content": "张三称李四主谋开设赌场 vs 李四称张三主谋",
+    "persons": ["张三", "李四"],
+    "evidence_involved": ["讯问笔录(张三_第2次)", "讯问笔录(李四_第1次)"],
+    "analysis": "两人互相推卸主责，属于典型的共同犯罪中责任推诿",
+    "impact": "对认定主从犯有重大影响",
+    "resolution": "需结合银行流水、微信记录等客观证据判断"
+  }},
+  ...
+]
+```
+
+如果无明显跨证据矛盾，输出空数组 `[]`。
+"""},
+                    ])
+
+                    # 尝试解析 JSON
+                    import json
+                    cross_data = None
+                    m = __import__("re").search(r'```json\s*([\s\S]*?)\s*```', cross_analysis)
+                    if m:
+                        try:
+                            cross_data = json.loads(m.group(1))
+                        except Exception:
+                            pass
+                    if not cross_data:
+                        try:
+                            if cross_analysis.strip().startswith("["):
+                                cross_data = json.loads(cross_analysis.strip())
+                        except Exception:
+                            pass
+
+                    if cross_data:
+                        # 保存结构化 JSON
+                        cross_json_path = self.analysis_dir / "contradictions" / "00-跨证据矛盾.json"
+                        cross_json_path.write_text(
+                            json.dumps({
+                                "contradictions": cross_data,
+                                "total": len(cross_data),
+                                "generated_at": datetime.now().isoformat(),
+                            }, ensure_ascii=False, indent=2),
+                            encoding="utf-8",
+                        )
+                        # 保存 Markdown 版本
+                        md_text = "# 跨证据矛盾分析\n\n"
+                        if cross_data:
+                            for c in cross_data:
+                                md_text += f"## 矛盾{c['id']}：{c['type']}\n\n"
+                                md_text += f"**内容**：{c['content']}\n\n"
+                                md_text += f"**涉及人员**：{'、'.join(c.get('persons', []))}\n\n"
+                                md_text += f"**涉及证据**：{'、'.join(c.get('evidence_involved', []))}\n\n"
+                                md_text += f"**分析**：{c.get('analysis', '')}\n\n"
+                                md_text += f"**影响**：{c.get('impact', '')}\n\n"
+                                md_text += f"**解决方向**：{c.get('resolution', '')}\n\n"
+                                md_text += "---\n\n"
+                        else:
+                            md_text += "未发现明显跨证据矛盾。\n"
+                        cross_save_path.write_text(md_text, encoding="utf-8")
+                        logger.info(f"[步骤 3] 跨证据矛盾分析完成：发现 {len(cross_data)} 条矛盾")
+                    else:
+                        # JSON 解析失败，保存原始输出
+                        cross_save_path.write_text(cross_analysis, encoding="utf-8")
+                        logger.info("[步骤 3] 跨证据矛盾分析完成（JSON 解析失败，保存原始文本）")
+            except Exception as e:
+                logger.error(f"[步骤 3] 跨证据矛盾分析失败: {e}")
+                try:
+                    cross_save_path.write_text(f"分析失败：{e}", encoding="utf-8")
+                except Exception:
+                    pass
+        else:
+            logger.info("[步骤 3] 跳过跨证据矛盾分析（已存在）")
 
         result = {
             "contradictions": contradiction_results,
             "total_analyzed": len([r for r in contradiction_results if r.get("status") in ("done", "skipped")]),
+            "cross_evidence_contradiction": bool(cross_save_path.exists()),
         }
         self._save_step_result(3, result)
         self._mark_step_done(3)
