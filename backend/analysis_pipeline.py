@@ -34,6 +34,7 @@ DEFAULT_STATE = {
                 "4b": {},
                 "4c": "idle",
                 "4d": "idle",
+                "4e": "idle",
             },
         },
         "4.5": {
@@ -114,6 +115,14 @@ class AnalysisPipeline:
                                     "filepath": str(md_file),
                                     "text": text,
                                     "type": ev.get("type", infer_evidence_type(md_file.name)),
+                                    # 保留结构化元数据，供步骤 4/4.5 使用
+                                    "evidence_id": ev.get("id"),
+                                    "persons": ev.get("persons", ""),
+                                    "page_range": ev.get("page_range", ""),
+                                    "key_facts": ev.get("key_facts", ""),
+                                    "related_entities": ev.get("related_entities", ""),
+                                    "contradiction_hints": ev.get("contradiction_hints", ""),
+                                    "needs_review": ev.get("needs_review", False),
                                 })
                 except Exception:
                     pass
@@ -534,7 +543,17 @@ class AnalysisPipeline:
 
         self._save_preprocess_file("", "其他证据索引.md", other_index)
 
-        other_evidence_list = [{"filename": f["filename"], "type": f["type"]} for f in other_evidence]
+        other_evidence_list = [{
+            "filename": f["filename"],
+            "type": f["type"],
+            # 保留结构化元数据，供步骤 4/4.5 使用
+            "evidence_id": f.get("evidence_id"),
+            "persons": f.get("persons", ""),
+            "page_range": f.get("page_range", ""),
+            "key_facts": f.get("key_facts", ""),
+            "related_entities": f.get("related_entities", ""),
+            "contradiction_hints": f.get("contradiction_hints", ""),
+        } for f in other_evidence]
 
         result = {
             "merged_files": merged_files,
@@ -814,6 +833,10 @@ class AnalysisPipeline:
         if self._wiki_page_exists("", "06-综合结论.md"):
             idx += "- [综合结论](06-综合结论.md)\n"
 
+        idx += "\n## 07-证据链\n"
+        if self._wiki_page_exists("", "07-证据链.md"):
+            idx += "- [事实→证据映射](07-证据链.md)\n"
+
         return idx
 
     async def step4_build_case_wiki(self, defendant: str, crime_type: str | None = None, progress_cb=None) -> dict:
@@ -831,7 +854,7 @@ class AnalysisPipeline:
             (wiki_dir / subdir).mkdir(exist_ok=True)
 
         # 定义所有子步骤总数，用于进度报告
-        SUB_STEPS = ["4a-指控要素", "4b-证据摄入", "4c-法律依据", "4d-综合结论"]
+        SUB_STEPS = ["4a-指控要素", "4b-证据摄入", "4c-法律依据", "4d-综合结论", "4e-证据链"]
         sub_done = 0
         sub_total = len(SUB_STEPS)
         if progress_cb:
@@ -1086,7 +1109,154 @@ class AnalysisPipeline:
 
         sub_done = 4
         if progress_cb:
-            progress_cb(sub_done, sub_total, "完成！案件 Wiki 构建完成")
+            progress_cb(sub_done, sub_total, "步骤 4：生成证据链——事实归纳与证据映射")
+
+        # ===== 4e: 证据链归纳（事实→证据映射） =====
+        if not self._wiki_page_exists("", "07-证据链.md"):
+            logger.info("[步骤 4e] 构建证据链——从指控要素中提取事实并映射证据...")
+            try:
+                # 读取指控要素（事实来源）
+                indictment_content = self._load_wiki_page("", "01-指控要素.md")
+                # 读取所有证据分析
+                all_evidence_analysis = ""
+                for f in self._list_wiki_pages("03-证据分析"):
+                    content = self._load_wiki_page("03-证据分析", f)
+                    all_evidence_analysis += f"\n### {f}\n{content[:3000]}\n"
+                # 读取矛盾记录
+                contradiction_summary = self._load_wiki_page("", "05-矛盾记录.md")
+
+                # 读取结构化关联信息（如果有）
+                related_info = ""
+                rel_file = self.case_dir / "evidence" / "related_entities.json"
+                if rel_file.exists():
+                    try:
+                        import json
+                        rel_data = json.loads(rel_file.read_text(encoding="utf-8"))
+                        for etype, entries in rel_data.get("summary", {}).items():
+                            related_info += f"\n### {etype}\n"
+                            for entry in entries[:10]:
+                                persons = "、".join(entry.get("persons", []))
+                                related_info += f"- {entry['value']}（{persons}）出现在 {entry['evidence_count']} 份证据中\n"
+                    except Exception:
+                        pass
+
+                evidence_chain = await self.llm.chat([
+                    {"role": "system", "content": "你是刑事案件的证据链与事实分析专家。你的任务是：从指控要素中逐条提取独立的事实，然后为每条事实标注支撑证据和矛盾点。"},
+                    {"role": "user", "content": f"""## 指控要素（起诉书/起诉意见书内容）
+{indictment_content[:5000] if indictment_content else '（无起诉书）'}
+
+## 证据分析（03-证据分析目录）
+{all_evidence_analysis[:20000]}
+
+## 矛盾记录
+{contradiction_summary[:3000] if contradiction_summary else '无'}
+
+## 关联信息汇总（跨证据的关键实体）
+{related_info[:3000] if related_info else '无'}
+
+## 任务：提取事实清单并建立证据映射
+
+请从**起诉书的指控要素**中提取本案的全部核心事实，每条事实必须是一个独立的、可验证的具体事件或情节。
+
+### 输出格式（JSON 数组）：
+
+```json
+[
+  {{
+    "fact_id": 1,
+    "fact": "张三于2024年3月至5月在江阴市南闸街道XX小区XX室开设赌场，组织李四、王五等人以麻将形式赌博"，
+    "category": "犯罪事实",
+    "supporting_evidence": ["讯问笔录(张三_第1次)", "讯问笔录(李四_第1次)", "辨认笔录"],
+    "contradictions": ["张三供述'未组织' vs 李四供述'张三组织'"],
+    "related_persons": ["张三", "李四", "王五"],
+    "related_entities": ["13800138000", "苏BXXXXX"],
+    "evidence_strength": "强/中/弱"
+  }},
+  ...
+]
+```
+
+### 分类标准
+- **犯罪事实**：指控中的具体犯罪行为（每笔犯罪事实单独一条）
+- **主体身份**：相关人员的身份、角色、关系
+- **量刑情节**：自首、立功、从犯、退赃等
+- **程序事实**：管辖、立案、强制措施等程序节点
+- **背景事实**：案件背景、社会关系等
+
+### 要求
+1. 每条事实必须能从证据中找到直接支撑
+2. evidence_strength 评级标准：强（多人印证/书证支持）、中（单方陈述/间接证据）、弱（只有孤证/推论）
+3. contradictions 字段只填入有实际矛盾的，无矛盾填空数组 []
+4. related_entities 从提供的关联信息中引用
+"""},
+                ])
+
+                # 尝试解析 JSON，失败则保存原始文本
+                import json
+                chain_data = None
+                # 从 ```json ... ``` 块中提取
+                m = __import__("re").search(r'```json\s*([\s\S]*?)\s*```', evidence_chain)
+                if m:
+                    try:
+                        chain_data = json.loads(m.group(1))
+                    except Exception:
+                        pass
+                if not chain_data:
+                    # 尝试整个输出解析
+                    try:
+                        if evidence_chain.strip().startswith("["):
+                            chain_data = json.loads(evidence_chain.strip())
+                    except Exception:
+                        pass
+
+                # 同时保存 JSON 数据和 Markdown 展示
+                if chain_data:
+                    # 保存结构化 JSON 供前端使用
+                    chain_json_path = self._wiki_dir() / "07-证据链.json"
+                    chain_json_path.write_text(
+                        json.dumps({
+                            "facts": chain_data,
+                            "total_facts": len(chain_data),
+                            "generated_at": datetime.now().isoformat(),
+                        }, ensure_ascii=False, indent=2),
+                        encoding="utf-8",
+                    )
+                    # 保存 Markdown 展示版本
+                    md_output = "# 证据链：事实→证据映射\n\n"
+                    for fact in chain_data:
+                        md_output += f"## 事实{fact['fact_id']}：{fact['category']}\n\n"
+                        md_output += f"**事实描述**：{fact['fact']}\n\n"
+                        md_output += f"**证据强度**：{fact.get('evidence_strength', '未评级')}\n\n"
+                        md_output += "**支撑证据**：\n"
+                        for ev in fact.get("supporting_evidence", []):
+                            md_output += f"- {ev}\n"
+                        md_output += "\n"
+                        if fact.get("contradictions"):
+                            md_output += "**矛盾点**：\n"
+                            for c in fact["contradictions"]:
+                                md_output += f"- {c}\n"
+                            md_output += "\n"
+                        if fact.get("related_persons"):
+                            md_output += f"**涉及人员**：{'、'.join(fact['related_persons'])}\n\n"
+                        if fact.get("related_entities"):
+                            md_output += f"**关联信息**：{'、'.join(fact['related_entities'])}\n\n"
+                        md_output += "---\n\n"
+                    self._save_wiki_page("", "07-证据链.md", md_output)
+                else:
+                    # JSON 解析失败，保存原始 LLM 输出
+                    self._save_wiki_page("", "07-证据链.md", evidence_chain)
+
+                results_log["sub_steps"].append({"step": "4e", "name": "证据链归纳", "status": "done"})
+                logger.info("[步骤 4e] 完成证据链归纳")
+            except Exception as e:
+                self._save_wiki_page("", "07-证据链.md", f"分析失败：{e}")
+                results_log["sub_steps"].append({"step": "4e", "name": "证据链归纳", "status": "failed", "error": str(e)})
+        else:
+            results_log["sub_steps"].append({"step": "4e", "name": "证据链归纳", "status": "skipped"})
+
+        sub_done = 5
+        if progress_cb:
+            progress_cb(sub_done, 5, "完成！案件 Wiki 构建完成")
 
         # 更新索引
         self._save_wiki_page("", "00-index.md", self._build_wiki_index())

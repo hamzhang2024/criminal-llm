@@ -1273,6 +1273,7 @@ async def _extract_single_file(
             "page_range": ev_block.get("page_range", ""),
             "persons": ev_block.get("persons", ""),
             "related_entities": ev_block.get("related_entities", ""),
+            "contradiction_hints": ev_block.get("contradiction_hints", ""),
             "key_facts": ev_block.get("key_facts", ""),
             "summary": ev_block.get("summary", ""),
             "summary_preview": ev_block["summary"][:200],
@@ -1797,6 +1798,7 @@ async def _do_extract_evidence(
                             "page_range": b.get("page_range", ""),
                             "persons": b.get("persons", ""),
                             "related_entities": b.get("related_entities", ""),
+                            "contradiction_hints": b.get("contradiction_hints", ""),
                             "summary_preview": b["summary"][:200],
                             "has_quotes": bool(b.get("original_quotes", "").strip()),
                             "needs_review": b.get("needs_review", False),
@@ -1833,6 +1835,7 @@ async def _do_extract_evidence(
                         "page_range": ev_data.get("page_range", ""),
                         "persons": ev_data.get("persons", ""),
                         "related_entities": ev_data.get("related_entities", ""),
+                        "contradiction_hints": ev_data.get("contradiction_hints", ""),
                         "key_facts": ev_data.get("key_facts", ""),
                         "summary": ev_data.get("summary", ""),
                         "summary_preview": ev_data["summary_preview"],
@@ -2040,6 +2043,17 @@ async def _do_extract_evidence(
             run_quality_gate(evidence_dir, case_id)
         except Exception as qe:
             logger.warning(f"[证据提取] 质量门禁检查失败: {qe}")
+
+        # ── 生成结构化关联信息 JSON（供前端渲染 + 下游分析使用）──
+        try:
+            from evidence_entity_extractor import build_related_entities_json
+            rel_json = build_related_entities_json(all_evidence)
+            rel_json["case_id"] = case_id
+            rel_file = evidence_dir / "related_entities.json"
+            rel_file.write_text(json.dumps(rel_json, ensure_ascii=False, indent=2), encoding="utf-8")
+            logger.info(f"[证据提取] 关联信息 JSON 已生成: {len(rel_json['entities'])} 条关联实体")
+        except Exception as ee:
+            logger.warning(f"[证据提取] 关联信息提取失败: {ee}")
 
         # 清理临时文件（无论走哪个分支都清理）
         old_temp = evidence_dir / "_temp_extract"
