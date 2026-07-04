@@ -46,7 +46,7 @@ from typing import List, Optional, Dict, Any
 import uvicorn
 from pathlib import Path
 
-from config import HOST, PORT, DEBUG, CACHE_DIR, UPLOAD_DIR, OUTPUT_DIR, cleanup_old_files
+from config import HOST, PORT, PORT_RANGE, DEBUG, CACHE_DIR, UPLOAD_DIR, OUTPUT_DIR, cleanup_old_files
 from config_manager import load_config, save_config, get_config_status
 from case_manager import cleanup_trash
 from pdf_processor import create_job, get_processor, PDFProcessor

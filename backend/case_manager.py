@@ -2226,12 +2226,14 @@ async def serve_file(case_id: str, file_path: str, dir: Optional[str] = None):
     # 如果指定了 dir，直接在该子目录中查找
     if dir:
         target_dir = case_root / dir
-        if not target_dir.exists():
-            raise HTTPException(status_code=404, detail=f"目录不存在：{dir}")
-        # 在指定目录中递归搜索
-        matched = list(target_dir.rglob(target_name))
+        if target_dir.exists():
+            # 注意：rglob 把 [ ] 当通配符，需转义或直接遍历比较
+            matched = [f for f in target_dir.rglob("*") if f.name == target_name]
         if not matched:
-            raise HTTPException(status_code=404, detail=f"文件不存在：{target_name} (在 {dir} 目录)")
+            # fallback：指定目录找不到 → 全局搜索（evidence/ 等其他子目录）
+            matched = [f for f in case_root.rglob("*") if f.name == target_name]
+        if not matched:
+            raise HTTPException(status_code=404, detail=f"文件不存在：{target_name}")
     else:
         # 不指定 dir，递归搜索整个案件目录
         matched = list(case_root.rglob(target_name))
