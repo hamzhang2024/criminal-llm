@@ -1401,7 +1401,7 @@ async def _do_extract_evidence(
 
                     logger.info(f"[证据提取] 处理: {md_file.name}")
                     source_name, evidence_list = await _extract_single_file_with_tracking(
-                        md_file, md_text, file_temp_dir, semaphore, charges
+                        md_file, md_text, file_temp_dir, semaphore, case_charges
                     )
 
                     # 停止心跳
