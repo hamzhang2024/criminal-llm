@@ -679,20 +679,31 @@ class AsyncMinerUConverter:
         target_md = output_dir / f"{pdf_path.stem}.md"
         target_md.write_text(merged, encoding="utf-8")
 
-        # 清理 chunk 中间产物（{source_stem}__c*_images / _*.json）
+        # 清理 chunk 中间产物（保留 layout.json 供浏览）
+        # 1. 按新命名 {source_stem}__c{start}_* 清理
         for spec in sorted_specs:
             chunk_stem = self._stem_for_spec(spec)
             for intermediate in (
                 output_dir / f"{chunk_stem}_images",
-                output_dir / f"{chunk_stem}_layout.json",
                 output_dir / f"{chunk_stem}_content_list.json",
                 output_dir / f"{chunk_stem}_middle.json",
+                output_dir / f"{chunk_stem}.md",
             ):
                 if intermediate.exists():
                     if intermediate.is_dir():
                         shutil.rmtree(intermediate, ignore_errors=True)
                     else:
                         intermediate.unlink(missing_ok=True)
+
+        # 2. 按旧命名 _chunk_*_* 清理（兼容重构前的遗留文件，保留 _layout.json）
+        for chunk_file in output_dir.glob("_chunk_*"):
+            name = chunk_file.name
+            if name.endswith("_layout.json"):
+                continue  # 保留 layout.json
+            if chunk_file.is_dir():
+                shutil.rmtree(chunk_file, ignore_errors=True)
+            else:
+                chunk_file.unlink(missing_ok=True)
 
         if not all_ok:
             logger.warning(f"[MinerU] {pdf_path.name}: 部分 chunk 失败，已合并可用内容")
