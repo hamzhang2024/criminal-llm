@@ -26,7 +26,7 @@ try:
     )
 except ImportError:
     def get_legal_knowledge(): return ""
-    def get_dynamic_legal_knowledge(crime_type=None): return ""
+    def get_dynamic_legal_knowledge(charges=None): return ""
     THEORY_THREE_TIERS = ""
     CONSTITUTIVE_ELEMENT_ANALYSIS = ""
     EVIDENCE_REVIEW_TEMPLATES = {}

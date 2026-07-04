@@ -13,7 +13,7 @@ import json
 import logging
 import time
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Body, HTTPException
 
@@ -113,6 +113,35 @@ async def _run_sub_stage(engine, sub_stage_type: str, defendant: str, crime_type
     raise ValueError(f"未知子阶段类型: {sub_stage_type}")
 
 
+
+def _resolve_stage_path(case_path: Path, stage_num: int, charge: Optional[str] = None) -> Path:
+    """解析阶段 Markdown 文件的存储路径（共享层 vs 罪名层）
+
+    - 共享层(stage_1/2/3/51/52): analysis/stage_N/output.md
+    - 罪名层(stage_4/5/6): analysis/{charge}/stage_N/output.md
+    - stage_6 固定映射到 04.5-控辩对抗/对抗分析.md
+    - stage_5 完整报告映射到 full_defense_report.md
+    - 安全: 拒绝目录穿越字符
+    """
+    if charge and any(c in str(charge) for c in ('..', '/', chr(92), chr(0))):
+        raise HTTPException(status_code=400, detail="无效的罪名名称")
+
+    # 确定基础目录和文件名
+    if stage_num == 6:
+        filename = "对抗分析.md"
+        subdir = "04.5-控辩对抗"
+    elif stage_num == 5 and charge:  # 罪名层的 stage_5 完整报告
+        return case_path / "analysis" / charge / "full_defense_report.md"
+    else:
+        filename = "output.md"
+        subdir = f"stage_{stage_num}"
+
+    # 共享层走旧路径，罪名层走 analysis/{charge}/
+    if charge and stage_num not in (1, 2, 3, 51, 52):
+        return case_path / "analysis" / charge / subdir / filename
+    return case_path / "analysis" / subdir / filename
+
+
 def _read_stage_md(analysis_dir, stage: int) -> str:
     """读取指定阶段的 Markdown 输出"""
     from pathlib import Path
@@ -174,8 +203,12 @@ async def get_indictment_candidates(case_id: str):
 ANALYSIS_TASKS: dict = {}
 
 
-async def _execute_all_stages(case_id: str, defendant: str, crime_type: Optional[str], indictment_file: Optional[str] = None):
-    """后台执行全部 5 阶段分析"""
+async def _execute_all_stages(case_id: str, defendant: str, charges: list = None, indictment_file: Optional[str] = None):
+    """后台执行全部 5 阶段分析（支持多罪名）
+
+    共享层(stage_1/2/3/51/52)只跑一次 → analysis/_shared/
+    罪名层(stage_4/5)每个罪名独立跑 → analysis/{charge}/stage_N/
+    """
     try:
         case_path = find_case_path(case_id)
         if not case_path:
@@ -188,33 +221,36 @@ async def _execute_all_stages(case_id: str, defendant: str, crime_type: Optional
             ANALYSIS_TASKS[case_id] = {"status": "error", "error": "未提取证据，无法进行分析。请先完成证据提取。"}
             return
 
-        engine = AnalysisEngine(case_id, case_path, indictment_file=indictment_file)
-        _set_progress(case_id, 0, "开始 5 阶段分析...")
+        if not charges:
+            charges = []
 
-        # 阶段 1
+        engine = AnalysisEngine(case_id, case_path, indictment_file=indictment_file)
+        _set_progress(case_id, 0, "开始分析...")
+
+        # ── 共享层(stage_1/2/3): 案件事实,多罪名共用 ──
         ANALYSIS_TASKS[case_id] = {"status": "running", "current_stage": 1}
         _set_progress(case_id, 1, "正在分析起诉书，提取指控要素...")
-        r1 = await engine.stage_1_read_indictment(defendant, crime_type)
+        r1 = await engine.stage_1_read_indictment(defendant, charges[0] if charges else None)
 
-        # 阶段 2
         ANALYSIS_TASKS[case_id] = {"status": "running", "current_stage": 2}
         _set_progress(case_id, 2, "正在分析人物关系...")
-        r2 = await engine.stage_2_character_relations(defendant, crime_type)
+        r2 = await engine.stage_2_character_relations(defendant, charges[0] if charges else None)
 
-        # 阶段 3
         ANALYSIS_TASKS[case_id] = {"status": "running", "current_stage": 3}
         _set_progress(case_id, 3, "正在分析事件时间线和证据归组...")
-        r3 = await engine.stage_3_event_timeline(defendant, crime_type)
+        r3 = await engine.stage_3_event_timeline(defendant, charges[0] if charges else None)
 
-        # 阶段 4
-        ANALYSIS_TASKS[case_id] = {"status": "running", "current_stage": 4}
-        _set_progress(case_id, 4, f"正在梳理{crime_type or '涉案罪名'}相关法律法规...")
-        r4 = await engine.stage_4_legal_regulations(defendant, crime_type)
+        # ── 罪名层(stage_4/5): 每个罪名独立 ──
+        charge_count = len(charges) if charges else 1
+        for idx, charge in enumerate(charges or [None]):
+            charge_name = charge or "默认"
+            ANALYSIS_TASKS[case_id] = {"status": "running", "current_stage": 4}
+            _set_progress(case_id, 4, f"正在梳理{charge_name}相关法律法规 ({idx+1}/{charge_count})...")
+            await engine.stage_4_legal_regulations(defendant, charge)
 
-        # 阶段 5
-        ANALYSIS_TASKS[case_id] = {"status": "running", "current_stage": 5}
-        _set_progress(case_id, 5, "正在生成综合辩护分析报告...")
-        r5 = await engine.stage_5_full_defense(defendant, crime_type)
+            ANALYSIS_TASKS[case_id] = {"status": "running", "current_stage": 5}
+            _set_progress(case_id, 5, f"正在生成{charge_name}辩护分析报告 ({idx+1}/{charge_count})...")
+            await engine.stage_5_full_defense(defendant, charge)
 
         _clear_progress(case_id)
         ANALYSIS_TASKS[case_id] = {"status": "completed", "stages": 5}
@@ -231,6 +267,7 @@ async def _execute_all_stages(case_id: str, defendant: str, crime_type: Optional
 async def run_all_stages(
     case_id: str,
     defendant: str = Body(..., embed=True),
+    charges: List[str] = Body(default=[], embed=True),
     crime_type: Optional[str] = Body(default=None, embed=True),
     indictment_file: Optional[str] = Body(default=None, embed=True),
 ):
@@ -256,7 +293,9 @@ async def run_all_stages(
 
     # 后台执行，不阻塞
     import asyncio
-    asyncio.create_task(_execute_all_stages(case_id, defendant, crime_type, indictment_file=indictment_file))
+    # 兼容旧调用: crime_type 非空时包装为 charges
+    effective_charges = charges or ([crime_type] if crime_type else [])
+    asyncio.create_task(_execute_all_stages(case_id, defendant, effective_charges, indictment_file=indictment_file))
 
     return {
         "success": True,
@@ -414,8 +453,14 @@ async def get_stage_result(case_id: str, stage_num: int):
 
 
 @router.get("/{case_id}/stage/{stage_num}/markdown")
-async def get_stage_markdown(case_id: str, stage_num: int):
-    """获取指定阶段的 Markdown 输出（支持 1-6、6 控辩对抗、51/52/53 子阶段）"""
+async def get_stage_markdown(case_id: str, stage_num: int, charge: Optional[str] = None):
+    """获取指定阶段的 Markdown 输出（支持 1-6、6 控辩对抗、51/52/53 子阶段）
+
+    多罪名支持:
+    - charge 为 None 或 "" → 读旧路径 analysis/stage_N/output.md（兼容旧数据）
+    - charge 指定 → 读 analysis/{charge}/stage_N/output.md（罪名层）
+    - 共享层(stage_1/2/3/51/52)不受 charge 影响，读 _shared 路径
+    """
     valid_stages = set(range(1, 7)) | {51, 52, 53}
     if stage_num not in valid_stages:
         raise HTTPException(status_code=400, detail="无效阶段编号")
@@ -424,17 +469,15 @@ async def get_stage_markdown(case_id: str, stage_num: int):
     if not case_path:
         raise HTTPException(status_code=404, detail="案件不存在")
 
-    # 阶段 6 的路径特殊处理
-    if stage_num == 6:
-        md_file = case_path / "analysis" / "04.5-控辩对抗" / "对抗分析.md"
-    else:
-        md_file = case_path / "analysis" / f"stage_{stage_num}" / "output.md"
+    # 共享层(stage_1/2/3/51/52): 读 analysis/_shared/
+    # 罪名层(stage_4/5/6): 读 analysis/{charge}/
+    md_file = _resolve_stage_path(case_path, stage_num, charge)
 
     if not md_file.exists():
         raise HTTPException(status_code=404, detail=f"阶段 {stage_num} 的 Markdown 不存在")
 
     content = md_file.read_text(encoding="utf-8")
-    return {"case_id": case_id, "stage": stage_num, "content": content}
+    return {"case_id": case_id, "stage": stage_num, "content": content, "charge": charge}
 
 
 @router.get("/{case_id}/full-report")
@@ -457,8 +500,9 @@ async def save_stage_markdown(
     case_id: str,
     stage_num: int,
     content: str = Body(..., embed=True),
+    charge: Optional[str] = None,
 ):
-    """保存指定阶段的 Markdown 内容到磁盘"""
+    """保存指定阶段的 Markdown 内容到磁盘（多罪名：charge 参数指定罪名目录）"""
     valid_stages = set(range(1, 7)) | {51, 52, 53}
     if stage_num not in valid_stages:
         raise HTTPException(status_code=400, detail="无效阶段编号")
@@ -467,14 +511,8 @@ async def save_stage_markdown(
     if not case_path:
         raise HTTPException(status_code=404, detail="案件不存在")
 
-    if stage_num == 6:
-        md_file = case_path / "analysis" / "04.5-控辩对抗" / "对抗分析.md"
-    elif stage_num in (51, 52, 53):
-        md_file = case_path / "analysis" / f"stage_{stage_num}" / "output.md"
-    elif stage_num == 5:
-        md_file = case_path / "analysis" / "full_defense_report.md"
-    else:
-        md_file = case_path / "analysis" / f"stage_{stage_num}" / "output.md"
+    md_file = _resolve_stage_path(case_path, stage_num, charge)
+    md_file.parent.mkdir(parents=True, exist_ok=True)
 
     md_file.parent.mkdir(parents=True, exist_ok=True)
     md_file.write_text(content, encoding="utf-8")

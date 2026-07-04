@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { PlusCircle, FolderOpen, Trash2, Calendar, FileText, ArrowRight, Settings, AlertCircle, ChevronRight, ChevronDown, Loader2 } from 'lucide-react'
 import { MacOSTitlebar, MacOSToolbar, MacOSButton, MacOSCard, MacOSEmptyState, MacOSInput, PageLayout, InlineDialog } from '../components/MacOSLayout'
 import { api, getAuthEmail, waitForBackend } from '../api'
+import { initApiBase } from '../api/client'
 import type { Case } from '../api/types'
 import { showConfirm, showAlert } from '../components/MacOSDialog'
 
@@ -25,12 +26,13 @@ export function HomePage() {
   useEffect(() => {
     const waitBackend = async () => {
       setLoading(true)
-      const ready = await waitForBackend(60000, 1000)
+      await initApiBase()  // 从 Rust 拿后端端口
+      const ready = await waitForBackend(180000, 1000)
       setBackendReady(ready)
       if (!ready) {
         showAlert({
           title: '后端启动超时',
-          message: '后端服务启动超时，请尝试重新启动应用。如果问题持续，请检查防火墙设置或联系技术支持。',
+          message: '后端服务启动超时（已等待 3 分钟）。首次启动较慢，请完全退出应用（Cmd+Q）后重新打开；若仍失败，可手动运行应用包内的后端二进制，查看 ~/Documents/.criminal-llm-data/backend_stderr.log 排查。',
           variant: 'danger',
         })
       }

@@ -476,22 +476,56 @@ async def serve_spa(full_path: str):
 # ========== 启动入口 ==========
 
 if __name__ == "__main__":
+    import socket
+
+    # 端口探测：从 BASE_PORT 开始试，直到 PORT_RANGE 个端口
+    actual_port = PORT
+    for offset in range(PORT_RANGE):
+        test_port = PORT + offset
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(1)
+            result = s.connect_ex((HOST, test_port))
+            if result != 0:
+                actual_port = test_port
+                break
+
     print(f"""
 ========================================
   Criminal PDF WebUI v1.0.0
-  API:  http://{HOST}:{PORT}/api
-  Docs: http://{HOST}:{PORT}/docs
+  API:  http://{HOST}:{actual_port}/api
+  Docs: http://{HOST}:{actual_port}/docs
 ========================================
     """)
+
+    # 写端口到文件（供 Rust/Frontend 读取）
+    from config import DATA_DIR
+    port_file = DATA_DIR / "backend.port"
+    port_file.write_text(str(actual_port), encoding="utf-8")
+
+    # 清理旧任务文件中的不完整记录
+    tasks_file = DATA_DIR / "criminal-llm-tasks.json"
+    if tasks_file.exists():
+        try:
+            import json
+            tasks = json.loads(tasks_file.read_text(encoding="utf-8"))
+            # 删除缺少必要字段的任务
+            cleaned = {}
+            for tid, s in tasks.items():
+                if isinstance(s, dict) and s.get("case_id"):
+                    cleaned[tid] = s
+            tasks_file.write_text(json.dumps(cleaned, ensure_ascii=False, indent=2), encoding="utf-8")
+            logging.info(f"[启动] 清理任务文件: {len(tasks)}→{len(cleaned)} 条")
+        except Exception:
+            pass
 
     # PyInstaller 模式下直接传递 app 对象（不能通过模块名导入）
     import sys
     if getattr(sys, 'frozen', False):
-        uvicorn.run(app, host=HOST, port=PORT, reload=False)
+        uvicorn.run(app, host=HOST, port=actual_port, reload=False)
     else:
         uvicorn.run(
             "main:app",
             host=HOST,
-            port=PORT,
+            port=actual_port,
             reload=DEBUG
         )

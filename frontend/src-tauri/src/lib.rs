@@ -7,7 +7,7 @@ mod db;
 mod state;
 
 use db::AppDb;
-use state::{start_caffeinate, BackendClient, BackendPid, CaffeinateProcess};
+use state::{start_caffeinate, BackendClient, BackendPid, BackendPort, CaffeinateProcess};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -18,6 +18,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .manage(BackendClient(Client::new()))
         .manage(BackendPid(Mutex::new(None)))
+        .manage(BackendPort(Mutex::new(8080)))
         .manage(CaffeinateProcess(Mutex::new(start_caffeinate())))
         .invoke_handler(tauri::generate_handler![
             // App
@@ -50,6 +51,7 @@ pub fn run() {
             commands::open_file,
             commands::open_url,
             commands::force_quit,
+            commands::get_backend_port,
             // Dialog & Notification
             commands::pick_files,
             commands::pick_folder,
@@ -111,8 +113,21 @@ pub fn run() {
 
                     let mut cmd = std::process::Command::new(&backend_exe);
                     cmd.current_dir(&backend_dir);
-                    cmd.stdout(std::process::Stdio::null());
-                    cmd.stderr(std::process::Stdio::null());
+                    // stdio 重定向到文件（诊断：后端 uvicorn 输出与崩溃 traceback 可见）
+                    // main.py 的 _stdio_guard 假设"Rust 已把 stderr 重定向到文件"，
+                    // 之前设 null 违背该假设 → ensure_stdio 不兜底 → traceback 全丢。这里兑现。
+                    let data_dir = app.path().app_data_dir()
+                        .map_err(|e| format!("获取数据目录失败: {}", e))?;
+                    let stderr_file = std::fs::OpenOptions::new()
+                        .create(true).write(true).truncate(true)
+                        .open(data_dir.join("backend_stderr.log"))
+                        .map_err(|e| format!("打开 backend_stderr.log 失败: {e}"))?;
+                    let stdout_file = std::fs::OpenOptions::new()
+                        .create(true).write(true).truncate(true)
+                        .open(data_dir.join("backend_stdout.log"))
+                        .map_err(|e| format!("打开 backend_stdout.log 失败: {e}"))?;
+                    cmd.stdout(std::process::Stdio::from(stdout_file));
+                    cmd.stderr(std::process::Stdio::from(stderr_file));
 
                     // Windows 上隐藏窗口
                     #[cfg(target_os = "windows")]
@@ -130,37 +145,10 @@ pub fn run() {
                     let backend_pid = app.state::<BackendPid>();
                     *backend_pid.0.lock().unwrap() = Some(pid);
 
-                    // 等待后端就绪
-                    let client = reqwest::blocking::Client::builder()
-                        .timeout(std::time::Duration::from_secs(5))
-                        .build()
-                        .unwrap();
-
-                    let max_attempts = 60; // 60 次 * 500ms = 30 秒
-                    let mut backend_ready = false;
-
-                    for i in 1..=max_attempts {
-                        match client.get("http://localhost:8080/api/health").send() {
-                            Ok(res) if res.status().is_success() => {
-                                eprintln!("[OK] 后端已就绪（{}秒）", i / 2);
-                                backend_ready = true;
-                                break;
-                            }
-                            Ok(res) => {
-                                eprintln!("[WARN] 后端响应非 200: {} (尝试 {}/{})", res.status(), i, max_attempts);
-                            }
-                            Err(e) => {
-                                if i % 10 == 0 {
-                                    eprintln!("[WAIT] 后端未就绪，继续等待... ({}/{}) 错误: {}", i, max_attempts, e);
-                                }
-                            }
-                        }
-                        std::thread::sleep(std::time::Duration::from_millis(500));
-                    }
-
-                    if !backend_ready {
-                        eprintln!("[ERROR] 后端启动超时（30秒），请检查后端日志");
-                    }
+                    // 不再同步等待后端就绪：PyInstaller 冷启动可能 ~2 分钟，
+                    // 同步阻塞会导致窗口迟迟不出现。改为 setup 立即返回创建 webview，
+                    // 由前端 waitForBackend 探测 8080 就绪（超时 180s，余量充足）。
+                    // 后端进程独立运行，崩溃/就绪状态均记入 backend_stderr.log。
                 }
             }
 

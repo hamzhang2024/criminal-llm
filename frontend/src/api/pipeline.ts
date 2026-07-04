@@ -2,7 +2,7 @@
 
 import { API_BASE } from './client'
 
-export async function runPipelineStep(caseId: string, step: number, defendant: string, crimeType?: string, indictmentFile?: string): Promise<any> {
+export async function runPipelineStep(caseId: string, step: number, defendant: string, charges?: string[], indictmentFile?: string): Promise<any> {
   const controller = new AbortController()
   const timeoutMs = step >= 2 ? 7200000 : 600000
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
@@ -10,7 +10,7 @@ export async function runPipelineStep(caseId: string, step: number, defendant: s
     const res = await fetch(`${API_BASE}/pipeline/${caseId}/step/${step}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ defendant, crime_type: crimeType, indictment_file: indictmentFile }),
+      body: JSON.stringify({ defendant, charges: charges, indictment_file: indictmentFile }),
       signal: controller.signal
     })
     return res.json()
@@ -44,14 +44,14 @@ export async function getAnalysisState(caseId: string): Promise<any> {
   return res.json()
 }
 
-export async function resumePipeline(caseId: string, defendant: string, crimeType?: string, indictmentFile?: string): Promise<any> {
+export async function resumePipeline(caseId: string, defendant: string, charges?: string[], indictmentFile?: string): Promise<any> {
   const controller = new AbortController()
   const timeoutId = setTimeout(() => controller.abort(), 7200000)
   try {
     const res = await fetch(`${API_BASE}/pipeline/${caseId}/resume`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ defendant, crime_type: crimeType, indictment_file: indictmentFile }),
+      body: JSON.stringify({ defendant, charges: charges, indictment_file: indictmentFile }),
       signal: controller.signal
     })
     return res.json()

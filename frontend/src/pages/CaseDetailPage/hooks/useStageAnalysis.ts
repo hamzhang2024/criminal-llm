@@ -23,7 +23,7 @@ export const PIPELINE_STEPS = [
   { num: 5, name: '辩护意见', desc: '综合前 4 步形成辩护意见' },
 ]
 
-export function useStageAnalysis(caseId: string | undefined, defendant: string, crimeType: string) {
+export function useStageAnalysis(caseId: string | undefined, defendant: string, charges: string[]) {
   const navigate = useNavigate()
 
   // 6 阶段状态
@@ -80,7 +80,7 @@ export function useStageAnalysis(caseId: string | undefined, defendant: string, 
     stageAbortRef.current[stageNum] = controller
 
     try {
-      const result = await api.runSingleStage(caseId, stageNum, defendant, crimeType || undefined)
+      const result = await api.runSingleStage(caseId, stageNum, defendant, charges.length > 0 ? charges : [])
       if (!result.success) throw new Error(result.detail || result.error || '阶段执行失败')
 
       setStageStatus(prev => ({ ...prev, [stageNum]: 'completed' }))
@@ -105,7 +105,7 @@ export function useStageAnalysis(caseId: string | undefined, defendant: string, 
       setStageMessages(prev => ({ ...prev, [stageNum]: '' }))
       setRunningStage(null)
     }
-  }, [caseId, defendant, crimeType, navigate])
+  }, [caseId, defendant, charges, navigate])
 
   // 全部分析
   const handleRunAllAnalysis = useCallback(async () => {
@@ -134,7 +134,7 @@ export function useStageAnalysis(caseId: string | undefined, defendant: string, 
       setRunningStage(i)
 
       try {
-        const result = await api.runSingleStage(caseId, i, defendant, crimeType || undefined)
+        const result = await api.runSingleStage(caseId, i, defendant, charges.length > 0 ? charges : [])
         if (!result.success) throw new Error(result.detail || result.error || '阶段执行失败')
         setStageStatus(prev => ({ ...prev, [i]: 'completed' }))
       } catch (err) {
@@ -147,7 +147,7 @@ export function useStageAnalysis(caseId: string | undefined, defendant: string, 
     }
 
     setTimeout(() => navigate(`/case/${caseId}/report`), 2000)
-  }, [caseId, defendant, crimeType, navigate])
+  }, [caseId, defendant, charges, navigate])
 
   // 停止阶段
   const handleStopStage = useCallback((stageNum: number) => {
@@ -192,7 +192,7 @@ export function useStageAnalysis(caseId: string | undefined, defendant: string, 
     setPipelineRunning(true)
     setCurrentPipelineStep(step)
     try {
-      const result = await api.runPipelineStep(caseId, step, defendant, crimeType || undefined)
+      const result = await api.runPipelineStep(caseId, step, defendant, charges.length > 0 ? charges : [])
       if (!result.success) throw new Error(result.detail || result.error || `步骤 ${step} 执行失败`)
       setStepResults(prev => ({ ...prev, [step]: result.data }))
       setPipelineStatus(prev => ({ ...prev, [step]: true }))
@@ -204,7 +204,7 @@ export function useStageAnalysis(caseId: string | undefined, defendant: string, 
       setCurrentPipelineStep(0)
       setLiveProgress(null)
     }
-  }, [caseId, defendant, crimeType])
+  }, [caseId, defendant, charges])
 
   const executeAllSteps = useCallback(async () => {
     if (!defendant.trim() || !caseId) {
@@ -220,7 +220,7 @@ export function useStageAnalysis(caseId: string | undefined, defendant: string, 
         }
       }
     }
-  }, [caseId, defendant, crimeType, pipelineStatus, executePipelineStep, navigate])
+  }, [caseId, defendant, charges, pipelineStatus, executePipelineStep, navigate])
 
   const executeSingleStep = useCallback(async (step: number) => {
     if (pipelineStatus[step] || pipelineRunning) return
@@ -235,7 +235,7 @@ export function useStageAnalysis(caseId: string | undefined, defendant: string, 
     }
     setPipelineRunning(true)
     try {
-      const result = await api.resumePipeline(caseId, defendant, crimeType || undefined)
+      const result = await api.resumePipeline(caseId, defendant, charges.length > 0 ? charges : [])
       if (result.success) {
         if (result.all_done) {
           navigate(`/case/${caseId}/report`)
@@ -250,7 +250,7 @@ export function useStageAnalysis(caseId: string | undefined, defendant: string, 
       setCurrentPipelineStep(0)
       setLiveProgress(null)
     }
-  }, [caseId, defendant, crimeType, navigate])
+  }, [caseId, defendant, charges, navigate])
 
   // 加载流水线状态
   const loadPipelineState = useCallback(async () => {

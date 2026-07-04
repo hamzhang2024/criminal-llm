@@ -61,26 +61,33 @@ CRIME_ARTICLE_MAP = {
 }
 
 
-def get_dynamic_legal_knowledge(crime_type: Optional[str] = None) -> str:
-    """获取动态法律知识（内置 + 联网搜索 + 用户自定义知识库）
+def get_dynamic_legal_knowledge(charges: list = None) -> str:
+    """获取动态法律知识（内置 + 联网搜索 + 用户自定义知识库），支持多罪名
+
+    Args:
+        charges: 罪名列表（如 ["诈骗罪", "职务侵占罪"]），单个罪名可传 str 兼容旧调用
 
     合并三个来源：
     1. 内置法条（刑法、刑诉法全文 + 司法解释要点）
     2. LLM 联网搜索指引（引导模型从 flk.npc.gov.cn 检索）
     3. 用户自定义法律知识库（通过 legal_search.search_and_merge）
     """
-    # 基础方法论（保持硬编码）
+    # 兼容旧调用：str → [str]
+    if isinstance(charges, str):
+        charges = [charges]
+    if not charges:
+        return get_legal_knowledge()
+
     base_knowledge = get_legal_knowledge()
 
-    if not crime_type:
-        return base_knowledge
+    # 对每个罪名独立查法条和司法解释
+    parts = []
+    for crime in charges:
+        article = CRIME_ARTICLE_MAP.get(crime, "")
+        part = f"""
+## 罪名：{crime}{f'（刑法第{article}条）' if article else ''}
 
-    # 附加罪名提示，引导模型联网搜索
-    knowledge = base_knowledge + f"""
-
-## 当前案件罪名：{crime_type}
-
-请利用联网搜索能力，从以下来源获取「{crime_type}」相关的法律法规和司法解释：
+请利用联网搜索能力，从以下来源获取「{crime}」相关的法律法规和司法解释：
 
 1. **国家法律法规数据库**（https://flk.npc.gov.cn）— 搜索罪名名称，获取最新法律条文
 2. **最高人民法院司法解释** — 搜索该罪名相关的司法解释、量刑指导意见
@@ -88,17 +95,48 @@ def get_dynamic_legal_knowledge(crime_type: Optional[str] = None) -> str:
 
 注意：引用法条时必须确保条文编号和内容准确，不得虚构。
 """
+        # 合并用户自定义知识库
+        try:
+            from legal_search import search_and_merge
+            user_kb = search_and_merge(crime)
+            if user_kb:
+                part += f"\n\n### {crime} - 用户法律知识库\n\n{user_kb}"
+        except Exception:
+            pass
+        parts.append(part)
 
-    # 合并用户自定义知识库
-    try:
-        from legal_search import search_and_merge
-        user_kb = search_and_merge(crime_type)
-        if user_kb:
-            knowledge += "\n\n## 用户法律知识库\n\n" + user_kb
-    except Exception:
-        pass
-
+    knowledge = base_knowledge + "\n\n## 案件罪名\n" + "\n---\n".join(parts)
     return knowledge
+
+
+def get_cross_charge_comparison(charges: list) -> str:
+    """生成多罪名构成要件对照表（此罪彼罪辨析用）
+
+    Returns:
+        多罪名构成要件对比的 Markdown 文本，供 LLM 进行此罪彼罪辨析
+    """
+    if not charges or len(charges) < 2:
+        return ""
+
+    lines = ["## 多罪名构成要件对照表", ""]
+    lines.append("| 构成要件 | " + " | ".join(charges) + " |")
+    lines.append("|" + "---|" * (len(charges) + 1))
+
+    # 主体 / 主观 / 行为 / 结果 / 情节
+    aspects = ["犯罪主体", "主观方面", "客观行为", "犯罪结果", "量刑情节"]
+    for aspect in aspects:
+        row = [aspect]
+        for crime in charges:
+            article = CRIME_ARTICLE_MAP.get(crime, "?")
+            row.append(f"刑法第{article}条")
+        lines.append("| " + " | ".join(row) + " |")
+
+    lines.append("")
+    lines.append("请对照上述表格，分析本案事实更符合哪个罪名的构成要件。注意区分：")
+    lines.append("- 此罪与彼罪的界限（如诈骗罪 vs 合同诈骗罪、职务侵占罪 vs 贪污罪）")
+    lines.append("- 想象竞合 vs 法条竞合")
+    lines.append("- 同一行为是否同时触犯多个罪名")
+    return "\n".join(lines)
 
 # 法条构成要件拆解分析法（辩护分析核心方法论）
 CONSTITUTIVE_ELEMENT_ANALYSIS = """

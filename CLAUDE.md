@@ -18,7 +18,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | **桌面框架** | Tauri 2.x + React + TypeScript |
 | **前端** | React 18 + TypeScript + Vite 5.4 |
 | **后端** | FastAPI (Python 3.13) |
-| **模型** | bailian/qwen3.6-plus（阿里云百炼） |
+| **模型** | deepseek-v4-flash（可在设置页配置） |
 | **PDF 引擎** | MinerU / PaddleOCR（可切换，默认 MinerU） |
 | **UI 风格** | macOS 原生风格设计系统 |
 | **认证服务** | FastAPI + SQLite + JWT（远程部署） |
@@ -193,6 +193,23 @@ criminal-llm/
 - **渐进式报告**：步骤 5 拆分为 5a-5f 六个子阶段（案件概述→证据评估→矛盾利用→三阶层辩护→量刑情节→结论建议），每阶段独立保存。报告页轮询 `/api/pipeline/{caseId}/defense-stages` 检测完成状态，已完成的子阶段自动加载并组合展示，带进度条
 - **HTML 增强渲染**：`components/report/` 目录下包含 `ReportRenderer`、`ThreeTierCard`、`EvidenceContrastTable`、`SectionSkeleton`，支持 mermaid 内联渲染、矛盾表格红绿高亮、三阶层卡片布局
 
+### 多罪名支持
+
+系统支持多罪名案件。创建案件时可在前端填写多个罪名(如"诈骗罪" + "职务侵占罪"),回车添加。
+
+**证据提取**:
+- 提取 prompt 中传入 `当前案件指控罪名`,要求 LLM 为每条证据标注关联的罪名(`- **关联罪名**: [罪名1, 罪名2]`)
+- `evidence/index.json` 顶层加 `case_charges`,每条证据加 `charges` 字段
+
+**分析流水线**:
+- 共享层(stage_1/2/3/51/52, step1/2/3/4a/4b/4d):案件事实分析,多罪名共用
+- 罪名层(stage_4/5, step4c/4.5/5a-5f):每个罪名独立分析,结果存 `analysis/{charge}/`
+- 存储路径 `stage_N/output.md` → 罪名层改为 `analysis/{charge}/stage_N/output.md`
+
+**法律知识库**:
+- `get_dynamic_legal_knowledge(charges)` 接收罪名列表,对每个罪名独立查法条和司法解释
+- `get_cross_charge_comparison(charges)` 生成多罪名构成要件对照表(此罪彼罪辨析用)
+
 ### 两套分析系统
 
 项目同时存在两套分析 API，功能有重叠但接口不同：
@@ -216,7 +233,7 @@ criminal-llm/
 开发环境 Vite 将 `/api` 请求代理到 `http://localhost:8080`（FastAPI），无需额外 CORS 配置。生产环境需构建后由 Tauri 壳提供。
 
 ### 编码规则
-1. **写代码必须使用 qwen3.6-plus**（用户明确要求）
+1. **LLM 模型不强制**：可在设置页自由配置（当前默认 deepseek-v4-flash）
 2. **前端构建**：`cd frontend && npm run build`
 3. **前端类型检查**：`cd frontend && npx tsc --noEmit`
 4. **前端开发服务器**：`cd frontend && npm run dev`（默认端口 5173，host 0.0.0.0）
@@ -284,7 +301,7 @@ proxy: { '/api': { target: 'http://localhost:8080', changeOrigin: true } }
 | `pdf_engine` | string | `mineru` | PDF 引擎：`mineru` 或 `paddleocr` |
 | `llm_api_key` | string | - | LLM API Key |
 | `llm_base_url` | string | 百炼 URL | LLM 服务地址 |
-| `llm_model` | string | `qwen3.6-plus` | 模型名称 |
+| `llm_model` | string | `deepseek-v4-flash` | 模型名称（设置页可改） |
 | `evidence_concurrency` | int | `3` | 证据提取并发数（1-50） |
 
 **config.py 全局常量**：

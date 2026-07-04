@@ -13,7 +13,9 @@ if %ERRORLEVEL% NEQ 0 (
     echo PyInstaller failed
     exit /b 1
 )
-copy /Y dist\criminal-llm.exe ..\frontend\src-tauri\resources\backend\criminal-llm.exe
+REM onedir 模式：dist\criminal-llm\ 是目录（二进制 + _internal\），先清理旧产物再整目录复制
+del /s /q ..\frontend\src-tauri\resources\backend\* 2>nul
+xcopy /E /I /Y dist\criminal-llm\* ..\frontend\src-tauri\resources\backend\
 echo Backend packaged successfully
 
 echo === Step 3: Tauri build ===

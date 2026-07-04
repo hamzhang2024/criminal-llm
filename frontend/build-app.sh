@@ -15,7 +15,7 @@ pyinstaller criminal-llm.spec --noconfirm
 echo "=== 2/3 复制后端到 Tauri resources ==="
 rm -rf "$RESOURCES_DIR"
 mkdir -p "$RESOURCES_DIR"
-cp -R "$BACKEND_DIR/dist/criminal-llm/"* "$RESOURCES_DIR/"
+cp -r "$BACKEND_DIR/dist/criminal-llm/"* "$RESOURCES_DIR/"   # onedir:二进制 + _internal/
 
 echo "=== 3/3 Tauri build ==="
 cd "$TAURI_DIR"

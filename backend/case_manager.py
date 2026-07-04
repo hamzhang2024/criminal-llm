@@ -16,7 +16,7 @@ from typing import List, Dict, Optional
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
-from fastapi import APIRouter, UploadFile, File, HTTPException, Request
+from fastapi import APIRouter, UploadFile, File, HTTPException, Request, Body
 from fastapi.responses import JSONResponse
 import json
 import uuid
@@ -78,6 +78,7 @@ class CaseInfo(BaseModel):
     id: str
     name: str
     defendant: str
+    charges: list = []
     created_at: str
     status: str
     file_count: int = 0
@@ -88,6 +89,7 @@ class CreateCaseRequest(BaseModel):
     name: str
     defendant: str
     owner: Optional[str] = None  # 创建者邮箱
+    charges: List[str] = []  # 指控罪名列表（如 ["诈骗罪", "职务侵占罪"]）
 
 
 class PendingFolder(BaseModel):
@@ -118,6 +120,10 @@ def scan_cases(owner: Optional[str] = None) -> List[CaseInfo]:
                             case_owner = metadata.get("owner")
                             if owner and case_owner and case_owner != owner:
                                 continue
+
+                            # 补全缺失字段(兼容旧 case.json)
+                            if 'case_dir' not in metadata:
+                                metadata['case_dir'] = str(sub)
 
                             # 计算各阶段文件数量
                             file_count = sum(1 for _ in sub.rglob("*.pdf"))
@@ -297,6 +303,7 @@ async def create_case(request: CreateCaseRequest) -> CaseInfo:
         "id": case_id,
         "name": request.name,
         "defendant": request.defendant,
+        "charges": request.charges or [],
         "created_at": datetime.now().strftime("%Y-%m-%d"),
         "status": "new",
         "case_dir": str(case_path),
@@ -313,7 +320,7 @@ async def create_case(request: CreateCaseRequest) -> CaseInfo:
 
 
 @router.post("/import")
-async def import_folder(folder_path: str, name: str, defendant: str) -> CaseInfo:
+async def import_folder(folder_path: str, name: str, defendant: str, charges: List[str] = Body(default=[])) -> CaseInfo:
     """导入文件夹为合法案件"""
     import urllib.parse
     folder_path = urllib.parse.unquote(folder_path)
@@ -341,6 +348,7 @@ async def import_folder(folder_path: str, name: str, defendant: str) -> CaseInfo
         "id": case_id,
         "name": name,
         "defendant": defendant,
+        "charges": charges or [],
         "created_at": datetime.now().strftime("%Y-%m-%d"),
         "status": "uploaded",
         "case_dir": str(case_path),
@@ -967,6 +975,7 @@ _EVIDENCE_EXTRACTION_RULES = """
 - **详细摘要**：[尽可能详细的摘要。对讯问/询问笔录，用问答形式保留关键原文摘录（不少于5个问答对）；对书证，列明具体数据；对文书，概括核心内容]
 - **原文摘录**：[关键问答或关键原文的直接引用，不少于3-5段，标注页码或原文位置]
 - **矛盾提示**：[供述前后是否一致？有无自相矛盾之处？]
+- **关联罪名**：[从 {case_charges} 中选择与此证据相关的罪名，可多选。如无法判断则留空]
 - **关联信息**：[列出所有关键关联信息，见上方"关键关联信息提取"要求。如无则填"无"]
 
 **注意（起诉意见书/起诉书/多次供述专用）：**
@@ -990,6 +999,7 @@ async def _extract_single_file(
     md_file: Path,
     md_text: str,
     temp_dir: Path,
+    charges: list = None,
 ) -> tuple:
     """
     提取单个 MD 文件的证据（不含信号量和重试控制，由调用方管理）。
@@ -1003,6 +1013,11 @@ async def _extract_single_file(
     # 无重试的直接调用，超时由调用方控制
     timeout_seconds = 600  # 10 分钟
 
+    # 罪名上下文（传给 LLM 做证据-罪名关联）
+    charges_str = ""
+    if charges:
+        charges_str = f"当前案件指控罪名：{'、'.join(charges)}"
+
     # 截断超长文本（LLM 上下文限制）
     max_chars = 100000
     if len(md_text) > max_chars:
@@ -1014,7 +1029,7 @@ async def _extract_single_file(
             # system 消息：角色定义 + 完整提取规则（合并为一条，避免 assistant role 兼容性问题）
             {"role": "system", "content": _EVIDENCE_SYSTEM_PROMPT + "\n\n" + _EVIDENCE_EXTRACTION_RULES},
             # user 消息：文件名 + 文件内容（变化的部分，放在最后）
-            {"role": "user", "content": f"## 案卷文件：{md_file.name}\n\n{md_text}"},
+            {"role": "user", "content": f"## 案卷文件：{md_file.name}\n\n{charges_str}\n\n{md_text}"},
         ]),
         timeout=timeout_seconds,
     )
@@ -1079,6 +1094,7 @@ async def _extract_single_file(
             "page_range": ev_block.get("page_range", ""),
             "persons": ev_block.get("persons", ""),
             "related_entities": ev_block.get("related_entities", ""),
+            "charges": ev_block.get("charges", []),
             "summary_preview": ev_block["summary"][:200],
             "has_quotes": bool(ev_block.get("original_quotes", "").strip()),
             "md_file": ev_path.name,
@@ -1094,6 +1110,7 @@ async def _extract_single_file_with_tracking(
     md_text: str,
     temp_dir: Path,
     semaphore: asyncio.Semaphore,
+    charges: list = None,
 ) -> tuple:
     """
     包装 _extract_single_file，管理信号量和重试。
@@ -1106,7 +1123,7 @@ async def _extract_single_file_with_tracking(
         # 获取信号量，执行提取
         async with semaphore:
             try:
-                result = await _extract_single_file(md_file, md_text, temp_dir)
+                result = await _extract_single_file(md_file, md_text, temp_dir, charges)
                 return result
             except asyncio.TimeoutError:
                 last_error = f"LLM 调用超时（600s）"
@@ -1232,6 +1249,18 @@ async def _do_extract_evidence(
     else:
         logger.info(f"[证据提取] MD 目录不存在！")
 
+    # 读取案件 charges（多罪名支持）
+    case_charges = []
+    case_json = case_path / "case.json"
+    if case_json.exists():
+        try:
+            case_meta = json.loads(case_json.read_text(encoding="utf-8"))
+            case_charges = case_meta.get("charges", []) or []
+        except Exception:
+            pass
+    if case_charges:
+        logger.info(f"[证据提取] 案件罪名: {case_charges}")
+
     # 读取已提取的证据索引（断点续传：跳过已提取的 MD 文件）
     index_file = evidence_dir / "index.json"
     processed_sources = set()
@@ -1266,6 +1295,11 @@ async def _do_extract_evidence(
 
         # 排序辅助函数
         def _is_indictment(name: str) -> bool:
+            # 精确匹配：必须是独立的起诉书/起诉意见书文件,而不是名称中含有这些词的普通卷宗文件
+            # 排除明显是卷宗文件名的常见模式：含有"去水印"、"笔录"、"证言"、"陈述"、"鉴定"、"证据"、"报告"、"通知"、"决定"、"说明"、"清单"、"单"、"信"、"函"
+            _EXCLUDE_PATTERNS = ("去水印", "笔录", "证言", "陈述", "鉴定", "证据", "报告", "通知", "决定", "说明", "清单", "单", "信", "函")
+            if any(p in name for p in _EXCLUDE_PATTERNS):
+                return False
             return ("起诉书" in name and "意见" not in name) or "起诉意见书" in name
 
         def _parse_volume_sort_key(name: str) -> tuple:
@@ -1367,7 +1401,7 @@ async def _do_extract_evidence(
 
                     logger.info(f"[证据提取] 处理: {md_file.name}")
                     source_name, evidence_list = await _extract_single_file_with_tracking(
-                        md_file, md_text, file_temp_dir, semaphore
+                        md_file, md_text, file_temp_dir, semaphore, charges
                     )
 
                     # 停止心跳
@@ -1445,7 +1479,50 @@ async def _do_extract_evidence(
                     for f in files_to_extract
                 ]
 
-                # 用 asyncio.gather 并发执行
+                # ── 起诉意见书专用规则并发提取（和普通文件一起 gather，不再串行等最后）──
+                # 预分类：找出需要 LLM 提取的起诉意见书（非 standalone 直接复制）
+
+                # 内容判断辅助函数：读取文件内容，判断文书类型和处理方式
+                def _classify_indictment_doc(md_file: Path) -> dict:
+                    text = md_file.read_text(encoding="utf-8")
+                    head = text[:5000]
+                    has_police_number = bool(re.search(r'.+公(刑|治|行|刑立|刑强|刑诉)\w*字', head[:2000]))
+                    has_procuratorate_number = bool(re.search(r'.+检(刑诉|公诉|刑执)\w*字', head[:2000]))
+                    has_police_title = bool(re.search(r'起诉意见书', head[:1000]))
+                    has_procuratorate_title = bool(re.search(r'起\s*诉\s*书', head[:300]))
+                    is_police_doc = has_police_number or has_police_title
+                    is_procuratorate_doc = has_procuratorate_number or has_procuratorate_title
+                    if is_procuratorate_doc and not is_police_doc:
+                        return {"type": "procuratorate_standalone", "doc_name": "起诉书"}
+                    if is_procuratorate_doc and is_police_doc:
+                        return {"type": "procuratorate_mixed", "doc_name": "起诉书（混合文件）"}
+                    if "起诉书" in md_file.name and "意见" not in md_file.name:
+                        return {"type": "procuratorate_standalone", "doc_name": "起诉书"}
+                    return {"type": "police", "doc_name": "起诉意见书"}
+
+                indictment_llm_coros = []
+                indictment_llm_results = {}  # {md_file.name: Path}
+                for md_file in indictment_files:
+                    if md_file.name in processed_sources:
+                        continue
+                    classification = _classify_indictment_doc(md_file)
+                    is_standalone = classification["type"] == "procuratorate_standalone"
+                    if not is_standalone:
+                        md_text = md_file.read_text(encoding="utf-8")
+                        logger.info(f"[证据提取] {md_file.name} → LLM 提取并入并发池（{classification['doc_name']}）")
+
+                        async def _indictment_llm_coro(mf=md_file, mt=md_text, nid=next_id):
+                            """包装专用规则为并发 coro，返回 (source_name, evidence_dir, ev_path, classification)"""
+                            try:
+                                ev_path = await _process_indictment_single(mf, mt, evidence_dir, nid)
+                                return (mf.name, evidence_dir, ev_path, classification, None)
+                            except Exception as e:
+                                return (mf.name, evidence_dir, None, classification, str(e))
+
+                        coros.append(_indictment_llm_coro())
+                        indictment_llm_coros.append(len(coros) - 1)  # 记录 coros 中的索引
+
+                # 用 asyncio.gather 并发执行（普通文件 + 起诉意见书专用规则，一起跑）
                 gather_task = asyncio.gather(*coros, return_exceptions=True)
                 gather_results = await gather_task
 
@@ -1469,10 +1546,24 @@ async def _do_extract_evidence(
             # 合并结果：已完成的文件 + 新提取的文件
             # 按 pending_files 原始顺序，保证证据编号跟随卷号顺序
             extracted = {}
+            indictment_extracted = {}  # {md_file.name: (ev_path, classification, error)}
             success_count = 0
             fail_count = 0
             zero_count = 0
+            indictment_llm_indices = set(indictment_llm_coros)
             for i, result in enumerate(gather_results):
+                if i in indictment_llm_indices:
+                    # 起诉意见书专用规则结果：返回 (source_name, evidence_dir, ev_path, classification, error)
+                    if isinstance(result, Exception):
+                        logger.error(f"[证据提取] 起诉意见书并发提取异常: {result}")
+                        continue
+                    src_name, ev_dir, ev_path, classification, err = result
+                    if err or ev_path is None:
+                        logger.warning(f"[证据提取] {src_name}: 起诉意见书提取失败: {err}")
+                        continue
+                    indictment_extracted[src_name] = (ev_path, classification)
+                    continue
+
                 if i < len(files_to_extract):
                     f = files_to_extract[i]
                     extracted[f.name] = result
@@ -1490,7 +1581,8 @@ async def _do_extract_evidence(
                             zero_count += 1
                             logger.info(f"[证据提取] {f.name}: LLM 调用成功但返回 0 份证据（LLM 响应可能未按要求格式输出）")
 
-            logger.info(f"[证据提取] 提取汇总：成功 {success_count} 个文件，失败 {fail_count} 个文件，0 份证据 {zero_count} 个文件")
+            logger.info(f"[证据提取] 提取汇总：成功 {success_count} 个文件，失败 {fail_count} 个文件，0 份证据 {zero_count} 个文件"
+                        + (f"，起诉意见书 {len(indictment_extracted)} 个" if indictment_extracted else ""))
 
             # ── 按原始文件顺序分配编号（保持卷号顺序）──
             for md_file in pending_files:
@@ -1552,45 +1644,23 @@ async def _do_extract_evidence(
         else:
             logger.info("[证据提取] 所有文件已提取，跳过并发处理")
 
-        # ── 第2步：起诉书/起诉意见书处理（内容优先判断：单独 / 混合 / 公安文书）──
+        # ── 第2步：起诉意见书并发提取结果处理（已在 gather 中完成）──
+        for src_name, (ev_path, classification) in indictment_extracted.items():
+            ev_text = ev_path.read_text(encoding="utf-8")
+            all_evidence.append({
+                "name": ev_path.stem.split("_", 1)[1] if "_" in ev_path.stem else ev_path.stem,
+                "type": classification.get("doc_name", "起诉意见书"),
+                "source": src_name,
+                "page_range": "",
+                "persons": "",
+                "related_entities": "",
+                "summary_preview": ev_text[:200],
+                "has_quotes": True,
+                "md_file": ev_path.name,
+            })
+
+        # ── 第3步：起诉书处理（仅 standalone 直接复制，LLM 提取已在 gather 中完成）──
         indictment_files.sort(key=lambda f: (0 if "起诉意见书" not in f.name else 1))
-
-        # 内容判断辅助函数：读取文件内容，判断文书类型和处理方式
-        def _classify_indictment_doc(md_file: Path) -> dict:
-            """
-            读取文件内容，判断文书类型。
-
-            返回：
-              {"type": "procuratorate_standalone", "doc_name": "起诉书"}  → 直接复制
-              {"type": "procuratorate_mixed", "doc_name": "起诉书"}      → LLM 提取
-              {"type": "police", "doc_name": "起诉意见书"}               → LLM 提取
-            """
-            text = md_file.read_text(encoding="utf-8")
-            head = text[:5000]  # 文书编号通常在文件最开头
-
-            # 公安文书编号特征：任意长度的地名前缀 + "公" + 业务类型 + "字"
-            has_police_number = bool(re.search(r'.+公(刑|治|行|刑立|刑强|刑诉)\w*字', head[:2000]))
-            # 检察院文书编号特征：任意长度的地名前缀 + "检" + 业务类型 + "字"
-            has_procuratorate_number = bool(re.search(r'.+检(刑诉|公诉|刑执)\w*字', head[:2000]))
-
-            # 文书抬头判断（抬头通常在文件名附近）
-            has_police_title = bool(re.search(r'起诉意见书', head[:1000]))
-            has_procuratorate_title = bool(re.search(r'起\s*诉\s*书', head[:300]))
-
-            # 公安文书：有公安编号 或 抬头为"起诉意见书"
-            is_police_doc = has_police_number or has_police_title
-            # 检察院文书：有检察院编号 或 抬头为"起诉书"
-            is_procuratorate_doc = has_procuratorate_number or has_procuratorate_title
-
-            # 判断逻辑
-            if is_procuratorate_doc and not is_police_doc:
-                return {"type": "procuratorate_standalone", "doc_name": "起诉书"}
-            if is_procuratorate_doc and is_police_doc:
-                return {"type": "procuratorate_mixed", "doc_name": "起诉书（混合文件）"}
-            # 兜底：两者都无，按文件名判断
-            if "起诉书" in md_file.name and "意见" not in md_file.name:
-                return {"type": "procuratorate_standalone", "doc_name": "起诉书"}
-            return {"type": "police", "doc_name": "起诉意见书"}
 
         for md_file in indictment_files:
             if EXTRACT_TASKS.get(case_id) == "cancelled":
@@ -1602,60 +1672,63 @@ async def _do_extract_evidence(
                 logger.info(f"[证据提取] 跳过已处理: {md_file.name}")
                 continue
 
+            # 已在 gather 中通过 LLM 提取完成的，跳过
+            if md_file.name in indictment_extracted:
+                continue
+
             # 读内容判断类型
             classification = _classify_indictment_doc(md_file)
             is_standalone = classification["type"] == "procuratorate_standalone"
 
-            if is_standalone:
-                # 检察院起诉书单独存在 → 直接复制
-                dest_name = f"{next_id:03d}_{md_file.name}"
-                dest_path = evidence_dir / dest_name
-                shutil.copy2(str(md_file), str(dest_path))
-                logger.info(f"[证据提取] {md_file.name} → {dest_name}（{classification['doc_name']}，直接复制）")
-
-                all_evidence.append({
-                    "name": md_file.stem,
-                    "type": classification["doc_name"],
-                    "source": md_file.name,
-                    "page_range": "",
-                    "persons": "",
-                    "related_entities": "",
-                    "summary_preview": f"{md_file.name}（待案卷分析时详细提取）",
-                    "has_quotes": True,
-                    "md_file": dest_name,
-                })
-                next_id += 1
-            else:
-                # 起诉意见书 / 混合文件 → LLM 提取
+            if not is_standalone:
+                # 非 standalone 但未在 gather 中处理（兜底），重试一次 LLM 提取
                 md_text = md_file.read_text(encoding="utf-8")
-                logger.info(f"[证据提取] {md_file.name} → LLM 提取（{classification['doc_name']}）")
-                ev_path = await _process_indictment_single(md_file, md_text, evidence_dir, next_id)
+                logger.info(f"[证据提取] {md_file.name} → LLM 提取兜底（{classification['doc_name']}）")
+                try:
+                    ev_path = await _process_indictment_single(md_file, md_text, evidence_dir, next_id)
+                    ev_text = ev_path.read_text(encoding="utf-8")
+                    all_evidence.append({
+                        "name": ev_path.stem.split("_", 1)[1] if "_" in ev_path.stem else ev_path.stem,
+                        "type": classification.get("doc_name", "起诉意见书"),
+                        "source": md_file.name,
+                        "page_range": "",
+                        "persons": "",
+                        "related_entities": "",
+                        "summary_preview": ev_text[:200],
+                        "has_quotes": True,
+                        "md_file": ev_path.name,
+                    })
+                    next_id += 1
+                except Exception as e:
+                    logger.error(f"[证据提取] {md_file.name}: 兜底 LLM 提取失败: {e}")
+                continue
 
-                ev_text = ev_path.read_text(encoding="utf-8")
-                all_evidence.append({
-                    "name": ev_path.stem.split("_", 1)[1] if "_" in ev_path.stem else ev_path.stem,
-                    "type": doc_type if doc_type != "混合文件" else "起诉意见书",
-                    "source": md_file.name,
-                    "page_range": "",
-                    "persons": "",
-                    "related_entities": "",
-                    "summary_preview": ev_text[:200],
-                    "has_quotes": True,
-                    "md_file": ev_path.name,
-                })
-                next_id += 1
+            # 检察院起诉书单独存在 → 直接复制
+            dest_name = f"{next_id:03d}_{md_file.name}"
+            dest_path = evidence_dir / dest_name
+            shutil.copy2(str(md_file), str(dest_path))
+            logger.info(f"[证据提取] {md_file.name} → {dest_name}（{classification['doc_name']}，直接复制）")
 
-            # 更新进度
-            task = EXTRACT_TASKS.get(case_id)
-            if task:
-                task["current_file"] = md_file.name
-                task["processed_files"] = task.get("processed_files", 0) + 1
+            all_evidence.append({
+                "name": md_file.stem,
+                "type": classification["doc_name"],
+                "source": md_file.name,
+                "page_range": "",
+                "persons": "",
+                "related_entities": "",
+                "charges": case_charges,
+                "summary_preview": f"{md_file.name}（待案卷分析时详细提取）",
+                "has_quotes": True,
+                "md_file": dest_name,
+            })
+            next_id += 1
 
         # ── 最终保存 ──
         index_data = {
             "case_id": case_id,
             "total_evidence": len(all_evidence),
             "evidence": all_evidence,
+            "case_charges": case_charges,
             "generated_at": datetime.now().isoformat(),
         }
         # 如果提取结果为 0，记录可能的原因供前端展示
@@ -2041,6 +2114,8 @@ def _parse_evidence_blocks(llm_output: str, source_file: str) -> list:
         original_quotes = _extract_field(content, "原文摘录") or ""
         contradiction = _extract_field(content, "矛盾提示") or "无"
         related_entities = _extract_field(content, "关联信息") or ""
+        ev_charges_str = _extract_field(content, "关联罪名") or ""
+        ev_charges = [c.strip() for c in ev_charges_str.replace("、", ",").split(",") if c.strip()] if ev_charges_str else []
 
         blocks.append({
             "name": name,
@@ -2050,6 +2125,7 @@ def _parse_evidence_blocks(llm_output: str, source_file: str) -> list:
             "persons": persons.strip(),
             "key_facts": key_facts.strip(),
             "summary": summary.strip(),
+            "charges": ev_charges,
             "original_quotes": original_quotes.strip(),
             "contradiction_hints": contradiction.strip(),
             "related_entities": related_entities.strip(),

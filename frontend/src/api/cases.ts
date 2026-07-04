@@ -234,11 +234,11 @@ export async function createAnalysis(caseDir: string): Promise<any> {
   return res.json()
 }
 
-export async function analyzeCase(caseId: string, defendant: string, crimeType?: string): Promise<any> {
+export async function analyzeCase(caseId: string, defendant: string, charges?: string[]): Promise<any> {
   const res = await fetch(`${API_BASE}/analyze-case/analyze/${caseId}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ defendant, use_ai: true, crime_type: crimeType })
+    body: JSON.stringify({ defendant, use_ai: true, charges: charges })
   })
   return res.json()
 }

@@ -52,10 +52,10 @@ def _save_tasks():
         data = {}
         for task_id, state in _task_states.items():
             data[task_id] = {
-                "case_id": state["case_id"],
-                "status": state["status"],
-                "total": state["total"],
-                "current": state["current"],
+                "case_id": state.get("case_id", ""),
+                "status": state.get("status", ""),
+                "total": state.get("total", 0),
+                "current": state.get("current", 0),
                 "current_file": state.get("current_file", ""),
                 "message": state.get("message", ""),
                 "started_at": state.get("started_at", ""),
@@ -64,6 +64,9 @@ def _save_tasks():
                 "error_details": state.get("error_details", []),
                 "stopped_by_user": state.get("stopped_by_user", False),
                 "recoverable": state.get("recoverable", True),
+                "pages_done": state.get("pages_done", 0),
+                "pages_total": state.get("pages_total", 0),
+                "batch_id": state.get("batch_id", ""),
             }
     TASKS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -109,6 +112,9 @@ def _update_task(case_id: str, **kwargs):
                 "error_details": [],       # 结构化错误列表
                 "stopped_by_user": False,  # 是否用户主动停止
                 "recoverable": True,       # 是否可恢复
+                "pages_done": 0,           # 已识别页数（真批量轮询聚合）
+                "pages_total": 0,          # 总页数
+                "batch_id": "",            # 当前 batch_id
             }
         _task_states[task_id].update(kwargs)
         _task_states[task_id]["updated_at"] = datetime.now().isoformat()
@@ -228,26 +234,39 @@ def start_convert_task(case_id: str, max_concurrent: int = 3):
                     except ValueError as e:
                         _update_task(case_id, status="failed", message=str(e))
                         return
+                    concurrency = max_concurrent  # PaddleOCR 保留原并发参数（本次不动）
                 else:
                     from mineru_async import AsyncMinerUConverter, BatchProgress, ConvertResult
                     try:
-                        converter = AsyncMinerUConverter()
+                        # 真批量：max_concurrent 语义为上传并发数，从配置读取
+                        concurrency = int(get_config_value("pdf_convert_concurrency") or 10)
+                        converter = AsyncMinerUConverter(max_concurrent_upload=concurrency)
                     except ValueError as e:
                         _update_task(case_id, status="failed", message=str(e))
                         return
 
-                # 进度回调
+                # 进度回调（getattr 防御：PaddleOCR 的旧 BatchProgress 无页级字段）
                 def batch_progress_cb(progress: BatchProgress):
+                    pages_done = getattr(progress, "pages_done", 0)
+                    pages_total = getattr(progress, "pages_total", 0)
+                    batch_id = getattr(progress, "batch_id", "")
+                    msg = f"已完成 {progress.completed}/{progress.total}（失败 {progress.failed}）"
+                    if pages_total:
+                        msg += f" · {pages_done}/{pages_total} 页"
                     _update_task(
                         case_id,
                         current=progress.completed,
+                        total=progress.total,
                         current_file=", ".join(progress.current_files[-3:]) if progress.current_files else "",
-                        message=f"已完成 {progress.completed}/{progress.total}（失败 {progress.failed}）",
+                        message=msg,
+                        pages_done=pages_done,
+                        pages_total=pages_total,
+                        batch_id=batch_id,
                         results=results,
                     )
 
                 # 执行异步批量转换（仅处理待转换文件）
-                logger.info(f"[后台任务] {case_id}: 使用引擎 '{pdf_engine}'，转换 {len(pending_files)} 个文件，并发={max_concurrent}")
+                logger.info(f"[后台任务] {case_id}: 引擎 '{pdf_engine}'，{len(pending_files)} 个文件，并发={concurrency}")
                 convert_results: List[ConvertResult] = []
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
@@ -256,7 +275,7 @@ def start_convert_task(case_id: str, max_concurrent: int = 3):
                         converter.convert_batch(
                             pending_files,
                             md_dir,
-                            max_concurrent=max_concurrent,
+                            max_concurrent=concurrency,
                             timeout=3600,
                             progress_cb=batch_progress_cb,
                         )

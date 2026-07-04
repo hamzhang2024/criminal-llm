@@ -17,8 +17,30 @@ export async function tauriOpen(url: string): Promise<void> {
   open(url).catch(() => {})
 }
 
-/** API 基础地址：开发模式走 Vite 代理，生产模式直连后端 */
-export const API_BASE = import.meta.env.PROD ? 'http://localhost:8080/api' : '/api'
+/** API 基础地址：开发模式走 Vite 代理，生产模式读端口文件 */
+export function getApiBase(): string {
+  if (!import.meta.env.PROD) return '/api'
+  // 生产模式：从 localStorage 读后端端口（Tauri 命令写入）
+  const stored = typeof localStorage !== 'undefined' ? localStorage.getItem('backend_port') : null
+  if (stored) return `http://localhost:${stored}/api`
+  return 'http://localhost:8080/api'  // fallback
+}
+
+export let API_BASE = getApiBase()
+
+/** 启动时调用：从 Rust 拿后端端口，写入 localStorage 并刷新 API_BASE */
+export async function initApiBase(): Promise<void> {
+  if (import.meta.env.PROD && isTauri()) {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core')
+      const port = await invoke<number>('get_backend_port')
+      localStorage.setItem('backend_port', String(port))
+      API_BASE = `http://localhost:${port}/api`
+    } catch {
+      // fallback：保持 8080
+    }
+  }
+}
 
 /** AbortSignal.timeout polyfill（兼容旧版浏览器） */
 export function timeoutSignal(ms: number): AbortSignal {

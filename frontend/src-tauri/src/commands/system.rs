@@ -1,4 +1,4 @@
-use crate::state::{kill_backend_process, stop_caffeinate, CaffeinateProcess};
+use crate::state::{kill_backend_process, stop_caffeinate, BackendPort, CaffeinateProcess};
 use tauri::{AppHandle, Manager};
 
 /// 打开文件（跨平台）
@@ -37,6 +37,14 @@ pub fn open_url(url: String) -> Result<bool, String> {
         .output()
         .map_err(|e| format!("无法打开链接: {}", e))?;
     Ok(true)
+}
+
+/// 获取后端实际端口
+#[tauri::command]
+pub fn get_backend_port(app: tauri::AppHandle) -> Result<u16, String> {
+    let port_state = app.state::<BackendPort>();
+    let port = *port_state.0.lock().map_err(|e| format!("锁错误: {}", e))?;
+    Ok(port)
 }
 
 /// 强制退出应用（确认关闭时使用，绕过 prevent_close）

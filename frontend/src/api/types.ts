@@ -4,6 +4,7 @@ export interface Case {
   id: string
   name: string
   defendant: string
+  charges: string[]  // 指控罪名列表
   created_at: string
   file_count: number
   status: 'new' | 'processing' | 'done'

@@ -27,6 +27,7 @@ OPENCLAW_MODEL = os.getenv("OPENCLAW_MODEL", "")
 # 服务配置（桌面应用默认绑定 localhost）
 HOST = os.getenv("HOST", "127.0.0.1")
 PORT = int(os.getenv("PORT", 8080))
+PORT_RANGE = 10  # 端口被占时尝试的端口数（8080→8081→...→8089）
 DEBUG = os.getenv("DEBUG", "false").lower() == "true"
 
 # PDF 处理配置

@@ -77,7 +77,15 @@ class LLMClient:
         self.base_url = base_url
         self.api_key = api_key
         self.model = default_model
-        self.timeout = 600.0
+        # 分层超时：connect/write/pool 各 60s，read 180s 防 stream hang
+        # 单一数值 timeout 在 streaming 响应下每次收到 chunk 重置计时器，
+        # read timeout 是单次读取超时，180s 无数据则抛 ReadTimeout → 触发重试
+        self.timeout = httpx.Timeout(
+            connect=30.0,
+            read=180.0,
+            write=60.0,
+            pool=30.0,
+        )
         self.client = httpx.AsyncClient(timeout=self.timeout, verify=_SSL_VERIFY)
 
         # 缓存命中率统计（会话级别累计）

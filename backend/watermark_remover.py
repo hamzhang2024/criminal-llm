@@ -265,13 +265,27 @@ def remove_rotation_watermark(doc):
                 has_tj = "Tj" in content
 
                 if has_rotation and (has_hex or has_tj) and not has_fm1_call:
-                    filtered, removed_bytes, blocks = filter_rotation_watermark_blocks(content)
-                    if removed_bytes > 0:
+                    # 纯水印流检测：同时含 rg(颜色) + /Gs(图形状态) + 旋转矩阵 + 十六进制文字
+                    # → 外层 q...Q 包裹了灰色半透明状态，只删内层块会残留蒙纱，整个清空
+                    has_rg = bool(re.search(r'[\d.]+\s+[\d.]+\s+[\d.]+\s+rg', content))
+                    has_gs_state = bool(re.search(r'/Gs\d+\s+gs', content))
+
+                    if has_rg and has_gs_state:
+                        # 纯水印流 → 整个清空（避免外层 rg+gs 残留导致发白蒙纱）
                         try:
-                            doc.update_stream(cxref, filtered.encode('latin-1'))
+                            doc.update_stream(cxref, b'')
                             filtered_streams += 1
                         except Exception:
                             pass
+                    else:
+                        # 混合内容 → 只过滤旋转块（保留原有逻辑）
+                        filtered, removed_bytes, blocks = filter_rotation_watermark_blocks(content)
+                        if removed_bytes > 0:
+                            try:
+                                doc.update_stream(cxref, filtered.encode('latin-1'))
+                                filtered_streams += 1
+                            except Exception:
+                                pass
 
                 good_refs.append(cxref)
             except Exception:

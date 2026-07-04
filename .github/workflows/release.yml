@@ -119,19 +119,8 @@ jobs:
           RES_DIR="frontend/src-tauri/resources/backend"
           mkdir -p "$RES_DIR"
 
-          # 复制 PyInstaller 输出
-          if [ "${{ matrix.platform.os }}" = "windows-latest" ]; then
-            # Windows: PyInstaller 生成单个 exe
-            cp backend/dist/criminal-llm.exe "$RES_DIR/" 2>/dev/null || true
-          else
-            # macOS/Linux: PyInstaller 生成 dist/criminal-llm 目录
-            if [ -d "backend/dist/criminal-llm" ]; then
-              cp -r backend/dist/criminal-llm/* "$RES_DIR/" 2>/dev/null || true
-            else
-              # 某些配置可能生成单文件
-              cp backend/dist/criminal-llm "$RES_DIR/" 2>/dev/null || true
-            fi
-          fi
+          # onedir 模式（三平台统一）：dist/criminal-llm/ 是目录（二进制 + _internal/）
+          cp -r backend/dist/criminal-llm/* "$RES_DIR/" 2>/dev/null || true
 
           # 确保 legal_db 存在（从 backend/legal_db 复制）
           if [ -d "$RES_DIR/legal_db" ]; then

@@ -20,6 +20,9 @@ DEFAULTS = {
     # PDF 转 MD 引擎配置
     "pdf_engine": "mineru",          # "paddleocr" | "mineru"
     "paddleocr_token": "",            # PaddleOCR Token
+    # MinerU 真批量配置
+    "pdf_convert_concurrency": 10,    # PDF 转换上传并发数（1-50，真批量下提交/轮询已聚合）
+    "mineru_model_version": "vlm",    # MinerU 模型版本：vlm（高精度）/ pipeline（快速）/ MinerU-HTML
 }
 
 
@@ -62,6 +65,9 @@ def get_config_status() -> Dict[str, Any]:
         "pdf_engine": config.get("pdf_engine", "paddleocr"),
         "paddleocr_token": bool(config.get("paddleocr_token")),
         "paddleocr_token_value": config.get("paddleocr_token", ""),
+        # MinerU 真批量配置
+        "pdf_convert_concurrency": config.get("pdf_convert_concurrency", 10),
+        "mineru_model_version": config.get("mineru_model_version", "vlm"),
     }
 
 

@@ -13,7 +13,9 @@ Set-Location D:\criminal-llm-win\backend
 Remove-Item -Recurse -Force build, dist -ErrorAction SilentlyContinue
 python -m PyInstaller --clean criminal-llm.spec
 if ($LASTEXITCODE -ne 0) { exit 1 }
-Copy-Item -Force dist\criminal-llm.exe ..\frontend\src-tauri\resources\backend\criminal-llm.exe
+# onedir 模式：dist\criminal-llm\ 是目录（二进制 + _internal\），先清理旧产物再整目录复制
+Remove-Item -Recurse -Force ..\frontend\src-tauri\resources\backend\* -ErrorAction SilentlyContinue
+Copy-Item -Recurse -Force dist\criminal-llm\* ..\frontend\src-tauri\resources\backend\
 
 # Tauri build
 Set-Location D:\criminal-llm-win\frontend

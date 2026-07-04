@@ -108,6 +108,8 @@ export function ReportPage() {
 
   // Active tab
   const [activeTab, setActiveTab] = useState<string>('stage_1')
+  const [charges, setCharges] = useState<string[]>([])
+  const [selectedCharge, setSelectedCharge] = useState<string>('')
 
   // Evidence browsing (left sidebar)
   const [evidenceItems, setEvidenceItems] = useState<EvidenceItem[]>([])
@@ -296,6 +298,12 @@ export function ReportPage() {
     loadData()
   }, [caseId])
 
+  // 切换罪名时重新加载内容
+  useEffect(() => {
+    if (!caseId || !selectedCharge) return
+    loadData()
+  }, [selectedCharge])
+
   // 切换至法律法规 tab 时加载法律知识库
   useEffect(() => {
     if (activeTab === 'stage_4' && caseId) {
@@ -342,6 +350,10 @@ export function ReportPage() {
       if (caseInfo.id) {
         setCaseName(caseInfo.name || '')
         setDefendant(caseInfo.defendant || '')
+      if (caseInfo.charges?.length) {
+        setCharges(caseInfo.charges);
+        setSelectedCharge(caseInfo.charges[0]);
+      }
       }
 
       // 尝试从新 5 阶段 API 加载
@@ -351,14 +363,14 @@ export function ReportPage() {
         if (s === 5) {
           for (const sub of [1, 2, 3]) {
             try {
-              const md = await api.getStageMarkdown(caseId, sub === 1 ? 51 : sub === 2 ? 52 : 53)
+              const md = await api.getStageMarkdown(caseId, sub === 1 ? 51 : sub === 2 ? 52 : 53, selectedCharge || undefined)
               content[`stage_5${sub}`] = md.content || ''
               hasAnyStage = true
             } catch { /* ignore */ }
           }
         } else {
           try {
-            const md = await api.getStageMarkdown(caseId, s)
+            const md = await api.getStageMarkdown(caseId, s, selectedCharge || undefined)
             content[`stage_${s}`] = md.content || ''
             hasAnyStage = true
           } catch { /* ignore */ }
@@ -367,7 +379,7 @@ export function ReportPage() {
 
       // 加载控辩对抗（阶段 6）
       try {
-        const md = await api.getStageMarkdown(caseId, 6)
+        const md = await api.getStageMarkdown(caseId, 6, selectedCharge || undefined)
         content['stage_6'] = md.content || ''
       } catch { /* ignore */ }
 

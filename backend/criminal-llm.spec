@@ -83,7 +83,6 @@ hiddenimports = [
     'fitz',
     'pdf2image',
     'PIL',
-    'pypdf',
     'PIL.Image',
     # aiohttp (异步 HTTP)
     'aiohttp',
@@ -142,7 +141,22 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=[
+        # ML 重库(backend 用远程 OCR/LLM API,本地不跑模型)
+        'torch', 'torchvision', 'transformers',
+        'numpy', 'scipy', 'pandas', 'matplotlib',
+        'onnxruntime', 'onnx',
+        'paddleocr', 'paddlepaddle', 'paddlex',
+        # CV 库(backend 只用 PyMuPDF/Pillow,不做 CV)
+        'cv2', 'opencv', 'opencv_python', 'opencv_python_headless', 'opencv_contrib_python',
+        # 其他重库
+        'pyarrow', 'llvmlite', 'av', 'imageio', 'imageio_ffmpeg',
+        'PyPDF2', 'pypdfium2', 'rapidocr',
+        # 未使用(代码注释明确已用 PyMuPDF 替代)
+        'pypdf',
+        # 未使用的模板引擎(backend 无 Jinja2 渲染)
+        'jinja2',
+    ],
     noarchive=False,
     optimize=0,
 )
@@ -151,9 +165,8 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
+    exclude_binaries=True,
     name='criminal-llm',
     debug=False,
     bootloader_ignore_signals=False,
@@ -167,4 +180,14 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    name='criminal-llm',
 )

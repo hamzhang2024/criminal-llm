@@ -890,7 +890,7 @@ class AnalysisPipeline:
             return []
         return sorted([f.name for f in d.iterdir() if f.is_file()])
 
-    def _search_legal_knowledge(self, crime_type: Optional[str]) -> dict:
+    def _search_legal_knowledge(self, charges: list = None) -> dict:
         """从内置刑法中搜索相关法条"""
         from legal_knowledge import CRIME_ARTICLE_MAP, load_criminal_law, load_criminal_procedure_law
 
@@ -1120,7 +1120,7 @@ class AnalysisPipeline:
         # ===== 4c: 法律依据检索 =====
         if not self._wiki_page_exists("04-法律依据", "适用法条.md"):
             print("[步骤 4c] 检索法律依据...")
-            legal = self._search_legal_knowledge(crime_type)
+            legal = self._search_legal_knowledge(charges)
 
             # 读取用户提供的参考材料
             user_ref_text = ""

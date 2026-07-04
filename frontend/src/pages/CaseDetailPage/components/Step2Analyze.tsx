@@ -18,8 +18,8 @@ interface EvidenceItem {
 interface Step2AnalyzeProps {
   caseId: string
   defendant: string
-  crimeType: string
-  setCrimeType: (v: string) => void
+  charges: string[]
+  setCharges: (v: string[]) => void
   evidenceList: EvidenceItem[]
   evidenceExtracted: boolean
   stageStatus: Record<number, 'idle' | 'running' | 'completed' | 'error'>
@@ -38,7 +38,7 @@ interface Step2AnalyzeProps {
 }
 
 export function Step2Analyze({
-  caseId, defendant, crimeType, setCrimeType,
+  caseId, defendant, charges, setCharges,
   evidenceList, evidenceExtracted,
   stageStatus, runningStage, stageMessages, stageErrors,
   onRunStage, onRunAll, onStopStage, onClearStage, onViewStage,
@@ -111,23 +111,29 @@ export function Step2Analyze({
             <div style={{ fontSize: '11px', color: 'var(--macos-text-tertiary)', marginBottom: '4px' }}>被告人</div>
             <div style={{ fontSize: '14px', color: 'var(--macos-text-primary)', fontWeight: 500 }}>{defendant || '未指定'}</div>
           </div>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: '11px', color: 'var(--macos-text-tertiary)', marginBottom: '4px' }}>罪名（可选）</div>
-            <input
-              type="text"
-              value={crimeType}
-              onChange={(e) => setCrimeType(e.target.value)}
-              placeholder="如：诈骗罪、职务侵占罪"
-              style={{
-                width: '100%',
-                padding: '6px 10px',
-                border: '1px solid var(--macos-border)',
-                borderRadius: '8px',
-                fontSize: '13px',
-                background: 'var(--macos-bg-secondary)',
-                boxSizing: 'border-box'
-              }}
-            />
+          <div style={{ flex: 2 }}>
+            <div style={{ fontSize: '11px', color: 'var(--macos-text-tertiary)', marginBottom: '4px' }}>指控罪名（回车添加，可多个）</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', padding: '6px 10px', border: '1px solid var(--macos-border)', borderRadius: '8px', minHeight: '36px', alignItems: 'center', background: 'var(--macos-bg-secondary)' }}>
+              {charges.map((c, i) => (
+                <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '2px 8px', background: 'var(--macos-accent)', color: '#fff', borderRadius: '10px', fontSize: '12px', fontWeight: 500 }}>
+                  {c}
+                  <button onClick={() => setCharges(charges.filter((_, j) => j !== i))} style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', padding: '0 2px', fontSize: '14px', lineHeight: 1 }}>×</button>
+                </span>
+              ))}
+              <input
+                type="text"
+                placeholder={charges.length === 0 ? "如：诈骗罪" : "继续添加..."}
+                style={{ border: 'none', outline: 'none', fontSize: '13px', flex: 1, minWidth: '80px', background: 'transparent' }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    const v = (e.target as HTMLInputElement).value.trim()
+                    if (v && !charges.includes(v)) setCharges([...charges, v])
+                    ;(e.target as HTMLInputElement).value = ''
+                  }
+                }}
+              />
+            </div>
           </div>
         </div>
       </MacOSCard>

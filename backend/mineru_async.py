@@ -94,6 +94,26 @@ class BatchProgress:
     failed: int = 0
     current_files: List[str] = field(default_factory=list)
     started_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    # 真批量轮询聚合的页级进度（一次轮询拿到 batch 内所有文件的 extract_progress）
+    pages_done: int = 0       # batch 内已识别页数
+    pages_total: int = 0      # batch 内总页数
+    batch_id: str = ""        # 当前 batch_id，用于状态持久化/中断恢复
+
+
+@dataclass
+class FileSpec:
+    """批量提交中的单个文件描述（真批量编排用）
+
+    一个原始 PDF 若超过 MINERU_MAX_PAGES 会被切成多个 chunk，每个 chunk 是一个
+    FileSpec，通过 data_id 在批量轮询结果中精确定位回本文件。整文件提交时
+    start_page/end_page 为 0、source_pdf 等于 path。
+    """
+    path: Path                       # 本地文件路径（chunk 文件或原始 PDF）
+    name: str                        # 提交给 API 的文件名
+    data_id: str                     # 唯一标识，格式 "{source_stem}__chunk{start}_{end}"
+    start_page: int = 0              # chunk 起始页（0-based）；整文件为 0
+    end_page: int = 0                # chunk 结束页；整文件为 0
+    source_pdf: Optional[Path] = None  # 原始 PDF（多 chunk 合并用；单文件时等于 path）
 
 
 def _get_mineru_token() -> str:
@@ -301,13 +321,30 @@ class AsyncMinerUConverter:
         )
     """
 
-    def __init__(self, token: Optional[str] = None):
+    def __init__(
+        self,
+        token: Optional[str] = None,
+        model_version: Optional[str] = None,
+        max_concurrent_upload: int = DEFAULT_MAX_CONCURRENT,
+    ):
         self.token = token or _get_mineru_token()
         if not self.token:
             raise ValueError("MinerU Token 未配置，请设置 MINERU_TOKEN 环境变量或在设置中配置")
+        # 模型版本：参数 > 配置文件 > 默认 vlm
+        if not model_version:
+            try:
+                from config_manager import get_config_value
+                model_version = get_config_value("mineru_model_version") or "vlm"
+            except ImportError:
+                model_version = "vlm"
+        self.model_version = model_version
+        self.max_concurrent_upload = max_concurrent_upload
         # 调试日志：显示 token 来源和前几位（不泄露完整 token）
         source = "参数传入" if token else "配置文件/环境变量"
-        logger.info(f"[MinerU] 初始化: token来源={source}, token前20字符={self.token[:20]}...")
+        logger.info(
+            f"[MinerU] 初始化: token来源={source}, model_version={self.model_version}, "
+            f"max_concurrent_upload={self.max_concurrent_upload}, token前20字符={self.token[:20]}..."
+        )
 
     async def convert_single(
         self,
@@ -351,70 +388,317 @@ class AsyncMinerUConverter:
         timeout: int = DEFAULT_TIMEOUT,
         progress_cb: Optional[Callable[[BatchProgress], None]] = None,
     ) -> List[ConvertResult]:
-        """批量转换多个 PDF 文件（并发处理）"""
-        logger.info(f"[MinerU] convert_batch 入口: {len(pdf_paths)} 个文件, output_dir={output_dir}, max_concurrent={max_concurrent}")
+        """真批量转换：跨 PDF 聚合所有 chunk 到同一批次提交
+
+        替代旧的"每文件独立 batch_id + Semaphore 并发"伪批量。编排：
+        1. 对每个 PDF 切 chunk → 收集所有 FileSpec（一个 PDF 的多个 chunk 进同一批）
+        2. 按 MINERU_BATCH_SIZE(=50) 分组
+        3. 每组：_submit_batch 一次提交 → 并发 PUT 上传 → _poll_batch 单条轮询（带页级进度）
+           → _download_and_parse 每个 done 结果
+        4. 失败的 FileSpec 整体重提一轮（最多 3 轮，每轮退避）
+        5. 同源 chunk 按 start_page 排序合并 → 每个源 PDF 一个 MD
+
+        max_concurrent 在真批量下语义为"上传并发数"（提交与轮询已是批量聚合的）。
+        """
+        logger.info(
+            f"[MinerU] convert_batch(真批量): {len(pdf_paths)} 个 PDF, "
+            f"output={output_dir}, 上传并发={max_concurrent}"
+        )
         output_dir.mkdir(parents=True, exist_ok=True)
-        results = []
 
-        # 创建信号量控制并发
-        semaphore = asyncio.Semaphore(max_concurrent)
-
-        # 进度跟踪 + 锁保护（避免并发更新导致计数不一致）
         progress = BatchProgress(total=len(pdf_paths))
         progress_lock = asyncio.Lock()
 
-        async def _convert_with_semaphore(pdf_path: Path) -> ConvertResult:
-            async with semaphore:
-                # 重试逻辑：遇到 429 限频时自动退避
-                max_retries = 3
-                for attempt in range(max_retries):
-                    result = await self.convert_single(
-                        pdf_path, output_dir, timeout,
-                        progress_cb=lambda stage, detail: None
-                    )
+        def emit_progress():
+            if progress_cb:
+                progress_cb(progress)
 
-                    # 检查是否需要重试（429 限频）
-                    if not result.success and result.error:
-                        if "429" in result.error or "限频" in result.error or "队列已满" in result.error:
-                            wait_time = 30 * (attempt + 1)  # 30s, 60s, 90s
-                            logger.info(f"[MinerU] 触发限频，{wait_time}s 后重试 ({attempt + 1}/{max_retries}): {pdf_path.name}")
-                            await asyncio.sleep(wait_time)
-                            continue
+        # 1. 切 chunk → 收集 FileSpec
+        pdf_to_specs: Dict[Path, List[FileSpec]] = {}
+        chunk_temp_paths: List[Path] = []
+        for pdf_path in pdf_paths:
+            try:
+                chunks = _split_pdf_pages(pdf_path)  # List[(path, start_1based, end)] 或 []
+            except Exception:
+                logger.exception(f"[MinerU] 切分失败 {pdf_path.name}")
+                pdf_to_specs[pdf_path] = []
+                continue
 
-                    # 成功或其他错误，直接返回
-                    break
-
-                # 更新进度（加锁保护）
-                async with progress_lock:
-                    progress.completed += 1
-                    if not result.success:
-                        progress.failed += 1
-                    progress.current_files.append(pdf_path.name)
-
-                    if progress_cb:
-                        progress_cb(progress)
-
-                return result
-
-        # 并发执行所有转换
-        tasks = [_convert_with_semaphore(pdf) for pdf in pdf_paths]
-        logger.info(f"[MinerU] 启动 {len(tasks)} 个并发任务, gather 开始...")
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        logger.info(f"[MinerU] gather 完成, 原始结果数={len(results)}, 成功={sum(1 for r in results if not isinstance(r, Exception))}, 异常={sum(1 for r in results if isinstance(r, Exception))}")
-
-        # 处理异常结果
-        final_results = []
-        for i, r in enumerate(results):
-            if isinstance(r, Exception):
-                final_results.append(ConvertResult(
-                    file_name=pdf_paths[i].name,
-                    success=False,
-                    error=str(r)
-                ))
+            specs: List[FileSpec] = []
+            if chunks:
+                for chunk_path, start_page, end_page in chunks:
+                    specs.append(FileSpec(
+                        path=chunk_path,
+                        name=chunk_path.name,
+                        data_id=f"{pdf_path.stem}__c{start_page}_{end_page}",
+                        start_page=start_page,
+                        end_page=end_page,
+                        source_pdf=pdf_path,
+                    ))
+                    chunk_temp_paths.append(chunk_path)
             else:
-                final_results.append(r)
+                # 整文件（无需切分）
+                specs.append(FileSpec(
+                    path=pdf_path,
+                    name=pdf_path.name,
+                    data_id=f"{pdf_path.stem}__full",
+                    source_pdf=pdf_path,
+                ))
+            pdf_to_specs[pdf_path] = specs
 
-        return final_results
+        all_specs = [s for specs in pdf_to_specs.values() for s in specs]
+        if not all_specs:
+            return [ConvertResult(file_name=p.name, success=False, error="切分失败") for p in pdf_paths]
+
+        logger.info(f"[MinerU] 共 {len(all_specs)} 个文件单元（含 chunk）")
+
+        # 页级进度回调（_poll_batch → 更新 progress → emit）
+        def on_page(pages_done: int, pages_total: int):
+            progress.pages_done = pages_done
+            progress.pages_total = pages_total
+            emit_progress()
+
+        # 2~4. 逐批处理 + 失败重试（最多 3 轮）
+        spec_results: Dict[str, Tuple[Optional[str], Optional[Path]]] = {}
+        pending = list(all_specs)
+
+        async with aiohttp.ClientSession() as session:
+            for attempt in range(3):
+                if not pending:
+                    break
+                if attempt > 0:
+                    backoff = 15 * attempt
+                    logger.info(f"[MinerU] 第 {attempt} 轮重试: {len(pending)} 个文件单元，退避 {backoff}s")
+                    await asyncio.sleep(backoff)
+
+                still_failed: List[FileSpec] = []
+                for gi in range(0, len(pending), MINERU_BATCH_SIZE):
+                    group = pending[gi:gi + MINERU_BATCH_SIZE]
+                    group_results, group_failed = await self._process_specs_group(
+                        session, group, output_dir, timeout, on_page,
+                    )
+                    spec_results.update(group_results)
+                    still_failed.extend(group_failed)
+                pending = still_failed
+
+        # 5. 合并同源 chunk → 每个源 PDF 一个 ConvertResult
+        results: List[ConvertResult] = []
+        for pdf_path in pdf_paths:
+            specs = pdf_to_specs.get(pdf_path, [])
+            result = self._assemble_pdf_result(pdf_path, specs, spec_results, output_dir)
+            results.append(result)
+            async with progress_lock:
+                if result.success:
+                    progress.completed += 1
+                else:
+                    progress.failed += 1
+                progress.current_files = [pdf_path.name]
+                emit_progress()
+
+        # 6. 清理 chunk 临时 PDF
+        for cp in chunk_temp_paths:
+            cp.unlink(missing_ok=True)
+
+        logger.info(
+            f"[MinerU] convert_batch 完成: {progress.completed}/{progress.total} 成功, "
+            f"{progress.failed} 失败"
+        )
+        return results
+
+    async def _process_specs_group(
+        self,
+        session: aiohttp.ClientSession,
+        specs: List[FileSpec],
+        output_dir: Path,
+        timeout: int,
+        on_page: Optional[Callable[[int, int], None]] = None,
+    ) -> Tuple[Dict[str, Tuple[Optional[str], Optional[Path]]], List[FileSpec]]:
+        """处理一组（≤ MINERU_BATCH_SIZE）FileSpec：提交→并发上传→轮询→下载解析
+
+        Returns:
+            (spec_results, failed_specs)
+            spec_results: {data_id: (text, images_dir)}；成功 text 非空，失败 (None, None)
+            failed_specs: 失败的 FileSpec（供上层重试）
+        """
+        spec_results: Dict[str, Tuple[Optional[str], Optional[Path]]] = {}
+        spec_by_id = {s.data_id: s for s in specs}
+
+        # a. 批量提交（一个 batch_id 覆盖整组）
+        batch_id, upload_urls, err = await self._submit_batch(session, specs)
+        if not batch_id:
+            logger.error(f"[MinerU] 批提交失败（{len(specs)} 文件）: {err}")
+            for s in specs:
+                spec_results[s.data_id] = (None, None)
+            return spec_results, list(specs)
+
+        # b. 并发上传（信号量限流，避免 OSS 并发过高）
+        upload_sem = asyncio.Semaphore(self.max_concurrent_upload)
+
+        async def _upload_one(spec: FileSpec, url: str):
+            async with upload_sem:
+                return spec.data_id, await self._upload_file(session, url, spec.path)
+
+        upload_outcomes = await asyncio.gather(*[
+            _upload_one(spec, upload_urls[i]) for i, spec in enumerate(specs)
+        ])
+        uploaded_ids = set()
+        for data_id, ok in upload_outcomes:
+            if ok:
+                uploaded_ids.add(data_id)
+            else:
+                logger.error(f"[MinerU] 上传失败: {data_id}")
+                spec_results[data_id] = (None, None)
+
+        if not uploaded_ids:
+            return spec_results, list(specs)
+
+        # c. 单条轮询整组（聚合页级进度）
+        extract_results, _, _ = await self._poll_batch(
+            session, batch_id, len(specs), timeout,
+            page_progress_cb=on_page,
+        )
+        if not extract_results:
+            logger.error(f"[MinerU] batch {batch_id} 轮询超时/失败，整组判失败")
+            for s in specs:
+                spec_results.setdefault(s.data_id, (None, None))
+            failed = [s for s in specs if not spec_results.get(s.data_id, (None, None))[0]]
+            return spec_results, failed
+
+        # d. 下载解析每个 done 结果
+        for r in extract_results:
+            data_id = r.get("data_id")
+            spec = spec_by_id.get(data_id)
+            if not spec:
+                continue
+            state = r.get("state")
+            if state == "done" and r.get("full_zip_url") and data_id in uploaded_ids:
+                try:
+                    stem = self._stem_for_spec(spec)
+                    text, images_dir = await self._download_and_parse(r, output_dir, stem)
+                    if text and len(text) > 100:
+                        text = self._post_process_text(text, stem)
+                        spec_results[data_id] = (text, images_dir)
+                    else:
+                        logger.warning(f"[MinerU] 结果为空: {data_id}")
+                        spec_results[data_id] = (None, None)
+                except Exception:
+                    logger.exception(f"[MinerU] 下载解析失败 {data_id}")
+                    spec_results[data_id] = (None, None)
+            else:
+                err_msg = r.get("err_msg", "")
+                logger.warning(f"[MinerU] 转换失败 {data_id}: state={state} err={err_msg}")
+                spec_results[data_id] = (None, None)
+
+        failed = [s for s in specs if not spec_results.get(s.data_id, (None, None))[0]]
+        return spec_results, failed
+
+    @staticmethod
+    def _stem_for_spec(spec: FileSpec) -> str:
+        """计算 _download_and_parse 使用的 stem（决定中间产物目录名）
+
+        整文件：用 source_pdf.stem（直接产出最终 MD/images 名）
+        chunk：用 {source_stem}__c{start}（中间名，合并后清理）
+        """
+        if spec.start_page == 0 and spec.end_page == 0:
+            return spec.source_pdf.stem if spec.source_pdf else spec.path.stem
+        return f"{spec.source_pdf.stem}__c{spec.start_page}"
+
+    @staticmethod
+    def _post_process_text(text: str, stem: str) -> str:
+        """单文件/chunk 结果的后处理：图片路径修正 + 签名保护 + OCR 纠错 + 图片折叠"""
+        text = text.replace("images/", f"./{stem}_images/")
+        text = text.replace('src="images/', f'src="./{stem}_images/')
+        text = _protect_signatures_as_images(text)
+        text = _fix_ocr_errors(text)
+        text, _ = _fold_consecutive_images(text)
+        return text
+
+    def _assemble_pdf_result(
+        self,
+        pdf_path: Path,
+        specs: List[FileSpec],
+        spec_results: Dict[str, Tuple[Optional[str], Optional[Path]]],
+        output_dir: Path,
+    ) -> ConvertResult:
+        """把一个源 PDF 的所有 FileSpec 结果合并成一个 ConvertResult（处理单文件与多 chunk）"""
+        if not specs:
+            return ConvertResult(file_name=pdf_path.name, success=False, error="切分失败")
+
+        # 单文件单元（整文件，_split_pdf_pages 返回 [] 的情形）
+        if len(specs) == 1:
+            spec = specs[0]
+            text, images_dir = spec_results.get(spec.data_id, (None, None))
+            if text and len(text) > 100:
+                target_md = output_dir / f"{pdf_path.stem}.md"
+                target_md.write_text(text, encoding="utf-8")
+                return ConvertResult(
+                    file_name=pdf_path.name, success=True, text=text, images_dir=images_dir
+                )
+            return ConvertResult(file_name=pdf_path.name, success=False, error="转换失败或结果为空")
+
+        # 多 chunk：按 start_page 排序合并
+        sorted_specs = sorted(specs, key=lambda s: s.start_page)
+        parts: List[str] = []
+        images_dirs: List[Path] = []
+        all_ok = True
+        for spec in sorted_specs:
+            text, images_dir = spec_results.get(spec.data_id, (None, None))
+            if text:
+                header = f"---\n\n<!-- 原PDF第{spec.start_page}-{spec.end_page}页 -->\n\n"
+                parts.append(header + text)
+                if images_dir:
+                    images_dirs.append(images_dir)
+            else:
+                all_ok = False
+
+        if not parts:
+            return ConvertResult(file_name=pdf_path.name, success=False, error="所有分段转换失败")
+
+        merged = "\n\n".join(parts)
+
+        # 合并各 chunk images → {source_stem}_images
+        merged_images_dir = output_dir / f"{pdf_path.stem}_images"
+        merged_images_dir.mkdir(parents=True, exist_ok=True)
+        for src_dir in images_dirs:
+            if src_dir and src_dir.exists():
+                for img in src_dir.iterdir():
+                    if img.is_file():
+                        shutil.copy2(str(img), str(merged_images_dir / img.name))
+
+        # 修正各 chunk 图片路径（chunk stem 为 {source_stem}__c{start}）→ 统一指向 {source_stem}_images
+        merged = re.sub(
+            r'\./([^/\s]+?__c\d+_images)/',
+            f"./{pdf_path.stem}_images/",
+            merged,
+        )
+        merged = merged.replace("images/", f"./{pdf_path.stem}_images/")
+        merged = _protect_signatures_as_images(merged)
+        merged = _fix_ocr_errors(merged)
+        merged, _ = _fold_consecutive_images(merged)
+
+        target_md = output_dir / f"{pdf_path.stem}.md"
+        target_md.write_text(merged, encoding="utf-8")
+
+        # 清理 chunk 中间产物（{source_stem}__c*_images / _*.json）
+        for spec in sorted_specs:
+            chunk_stem = self._stem_for_spec(spec)
+            for intermediate in (
+                output_dir / f"{chunk_stem}_images",
+                output_dir / f"{chunk_stem}_layout.json",
+                output_dir / f"{chunk_stem}_content_list.json",
+                output_dir / f"{chunk_stem}_middle.json",
+            ):
+                if intermediate.exists():
+                    if intermediate.is_dir():
+                        shutil.rmtree(intermediate, ignore_errors=True)
+                    else:
+                        intermediate.unlink(missing_ok=True)
+
+        if not all_ok:
+            logger.warning(f"[MinerU] {pdf_path.name}: 部分 chunk 失败，已合并可用内容")
+        return ConvertResult(
+            file_name=pdf_path.name, success=True, text=merged, images_dir=merged_images_dir
+        )
 
     async def _convert_single_file(
         self,
@@ -608,6 +892,191 @@ class AsyncMinerUConverter:
             text=merged_text,
             images_dir=merged_images_dir
         )
+
+    async def _submit_batch(
+        self,
+        session: aiohttp.ClientSession,
+        files: List["FileSpec"],
+    ) -> Tuple[Optional[str], List[Optional[str]], str]:
+        """真批量提交：一次向 /file-urls/batch 提交 ≤ MINERU_BATCH_SIZE 个文件
+
+        Args:
+            session: aiohttp 会话
+            files: FileSpec 列表（len ≤ MINERU_BATCH_SIZE）
+
+        Returns:
+            (batch_id, upload_urls, error_msg)
+            成功：(batch_id, [url1, url2, ...], "")   upload_urls 与 files 一一对应
+            失败：(None, [], "错误描述")
+        """
+        try:
+            params = {
+                "is_ocr": "true",
+                "enable_formula": "false",
+                "enable_table": "true",
+                "language": "ch_server",
+            }
+            json_body = {
+                "files": [{"name": f.name, "data_id": f.data_id} for f in files],
+                "model_version": self.model_version,
+            }
+
+            async with session.post(
+                f"{MINERU_API}/file-urls/batch",
+                headers={"Authorization": f"Bearer {self.token}"},
+                params=params,
+                json=json_body,
+                timeout=aiohttp.ClientTimeout(total=30),
+                ssl=_SSL_CONTEXT,
+            ) as resp:
+                if resp.status == 401:
+                    body = await resp.text()
+                    logger.error(f"[MinerU] 批量提交认证失败 (401): {body[:200]}")
+                    return None, [], "MinerU Token 无效或已过期，请在设置页面重新配置"
+                if resp.status != 200:
+                    body = await resp.text()
+                    err_msg = f"MinerU API HTTP {resp.status}: {body[:200]}"
+                    logger.error(f"[MinerU] {err_msg}")
+                    return None, [], err_msg
+
+                result = await resp.json()
+
+                if result.get("code") != 0:
+                    err_code = result.get("code")
+                    err_msg = result.get("msg", "未知错误")
+                    logger.error(f"[MinerU] API 错误 code={err_code}: {err_msg}")
+                    return None, [], f"MinerU API 错误 ({err_code}): {err_msg}"
+
+                data = result.get("data", {})
+                batch_id = data.get("batch_id")
+                file_urls = data.get("file_urls", [])
+
+                if not batch_id:
+                    logger.error("[MinerU] 批量提交返回数据不完整: 无 batch_id")
+                    return None, [], "MinerU 返回数据不完整（无 batch_id）"
+
+                if len(file_urls) != len(files):
+                    logger.error(
+                        f"[MinerU] 上传链接数({len(file_urls)}) != 文件数({len(files)})"
+                    )
+                    return None, [], "MinerU 返回的上传链接数量与文件数不一致"
+
+                logger.info(
+                    f"[MinerU] 批量提交成功: batch_id={batch_id}, 文件数={len(files)}"
+                )
+                return batch_id, file_urls, ""
+
+        except asyncio.TimeoutError:
+            logger.error(f"[MinerU] 批量提交超时（{len(files)} 个文件）")
+            return None, [], "MinerU 批量提交超时"
+        except aiohttp.ClientError as e:
+            logger.error(f"[MinerU] 网络错误: {e}")
+            return None, [], f"MinerU 网络错误: {str(e)[:100]}"
+        except Exception as e:
+            logger.error(f"[MinerU] 批量提交异常: {e}")
+            return None, [], f"MinerU 提交异常: {str(e)[:100]}"
+
+    async def _poll_batch(
+        self,
+        session: aiohttp.ClientSession,
+        batch_id: str,
+        file_count: int,
+        timeout: int,
+        progress_cb: Optional[Callable[[str, str], None]] = None,
+        page_progress_cb: Optional[Callable[[int, int], None]] = None,
+    ) -> Tuple[Optional[List[Dict[str, Any]]], int, int]:
+        """真批量聚合轮询：单条循环拿回 batch 内所有文件状态 + 页级进度
+
+        一次 GET /extract-results/batch/{batch_id} 即可拿到 batch 内每个文件的
+        state 与 extract_progress，相比伪批量（每文件一条轮询）请求量降一个数量级，
+        且天然获得页级进度。
+
+        Args:
+            session: aiohttp 会话
+            batch_id: 批次 ID
+            file_count: 批次内文件数（判断是否全部结束）
+            timeout: 超时秒数
+            progress_cb: 文字进度回调 (stage, detail)
+            page_progress_cb: 页级进度回调 (pages_done, pages_total)
+
+        Returns:
+            (extract_results, pages_done, pages_total)
+            成功：(extract_result 数组, 累计已识别页, 总页)
+            超时：(None, 最后一次的 pages_done, pages_total)
+        """
+        waited = 0
+        pages_done = 0
+        pages_total = 0
+
+        while waited < timeout:
+            try:
+                async with session.get(
+                    f"{MINERU_API}/extract-results/batch/{batch_id}",
+                    headers={"Authorization": f"Bearer {self.token}"},
+                    timeout=aiohttp.ClientTimeout(total=30),
+                    ssl=_SSL_CONTEXT,
+                ) as resp:
+                    if resp.status == 401:
+                        logger.error("[MinerU] 轮询认证失败 (401): Token 无效或已过期")
+                        return None, pages_done, pages_total
+
+                    result = await resp.json()
+                    data = result.get("data", {})
+                    extract_results = data.get("extract_result", [])
+
+                    if not extract_results:
+                        # 批次刚提交，文件尚未入列
+                        await asyncio.sleep(POLL_INTERVAL)
+                        waited += POLL_INTERVAL
+                        if progress_cb:
+                            progress_cb("processing", f"排队中...（已等待 {waited} 秒）")
+                        continue
+
+                    # 聚合 batch 内所有文件状态
+                    done = sum(1 for r in extract_results if r.get("state") == "done")
+                    failed = sum(1 for r in extract_results if r.get("state") == "failed")
+                    pages_done = 0
+                    pages_total = 0
+                    for r in extract_results:
+                        ep = r.get("extract_progress") or {}
+                        if ep:
+                            pages_done += int(ep.get("extracted_pages", 0) or 0)
+                            pages_total += int(ep.get("total_pages", 0) or 0)
+
+                    if progress_cb and pages_total > 0:
+                        progress_cb(
+                            "processing",
+                            f"已识别 {done}/{file_count} 文件（{pages_done}/{pages_total} 页）",
+                        )
+                    elif progress_cb:
+                        progress_cb("processing", f"已完成 {done}/{file_count} 文件")
+
+                    if page_progress_cb:
+                        page_progress_cb(pages_done, pages_total)
+
+                    # 全部结束（含失败）则返回
+                    if done + failed >= file_count:
+                        logger.info(
+                            f"[MinerU] batch {batch_id} 全部完成: "
+                            f"成功 {done}, 失败 {failed}, 页 {pages_done}/{pages_total}"
+                        )
+                        return extract_results, pages_done, pages_total
+
+            except asyncio.TimeoutError:
+                logger.warning(f"[MinerU] 轮询单次超时（batch {batch_id}），继续重试")
+            except aiohttp.ClientError as e:
+                logger.warning(f"[MinerU] 轮询网络错误（batch {batch_id}）: {e}，继续重试")
+            except Exception as e:
+                logger.warning(f"[MinerU] 轮询异常（batch {batch_id}）: {e}，继续重试")
+
+            await asyncio.sleep(POLL_INTERVAL)
+            waited += POLL_INTERVAL
+
+        logger.error(
+            f"[MinerU] batch {batch_id} 轮询超时（{timeout}s）: "
+            f"最后状态 页 {pages_done}/{pages_total}"
+        )
+        return None, pages_done, pages_total
 
     async def _submit_task(
         self,

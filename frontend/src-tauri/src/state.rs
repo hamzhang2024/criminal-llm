@@ -9,6 +9,9 @@ pub struct BackendClient(pub Client);
 /// 后端进程 PID
 pub struct BackendPid(pub Mutex<Option<u32>>);
 
+/// 后端实际端口（从 backend.port 文件读取）
+pub struct BackendPort(pub Mutex<u16>);
+
 /// 电源管理：caffeinate 进程
 pub struct CaffeinateProcess(pub Mutex<Option<u32>>);
 

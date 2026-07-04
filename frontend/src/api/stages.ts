@@ -16,11 +16,11 @@ export async function getIndictmentCandidates(caseId: string): Promise<{ candida
   return res.json()
 }
 
-export async function runAllStages(caseId: string, defendant: string, crimeType?: string, indictmentFile?: string): Promise<any> {
+export async function runAllStages(caseId: string, defendant: string, charges?: string[], indictmentFile?: string): Promise<any> {
   const res = await fetch(`${API_BASE}/stage-analysis/${caseId}/run-all`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ defendant, crime_type: crimeType, indictment_file: indictmentFile })
+    body: JSON.stringify({ defendant, charges: charges, indictment_file: indictmentFile })
   })
   return res.json()
 }
@@ -35,11 +35,11 @@ export async function getStageProgress(caseId: string): Promise<any> {
   return res.json()
 }
 
-export async function runSingleStage(caseId: string, stageNum: number, defendant: string, crimeType?: string, indictmentFile?: string): Promise<any> {
+export async function runSingleStage(caseId: string, stageNum: number, defendant: string, charges?: string[], indictmentFile?: string): Promise<any> {
   const res = await fetch(`${API_BASE}/stage-analysis/${caseId}/run-stage/${stageNum}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ defendant, crime_type: crimeType, indictment_file: indictmentFile })
+    body: JSON.stringify({ defendant, charges: charges, indictment_file: indictmentFile })
   })
   return res.json()
 }
@@ -49,8 +49,8 @@ export async function getStageResult(caseId: string, stageNum: number): Promise<
   return res.json()
 }
 
-export async function getStageMarkdown(caseId: string, stageNum: number): Promise<any> {
-  const res = await fetch(`${API_BASE}/stage-analysis/${caseId}/stage/${stageNum}/markdown`)
+export async function getStageMarkdown(caseId: string, stageNum: number, charge?: string): Promise<any> {
+  const res = await fetch(`${API_BASE}/stage-analysis/${caseId}/stage/${stageNum}/markdown${charge ? `?charge=${encodeURIComponent(charge)}` : ''}`)
   if (!res.ok) {
     return { content: '' }
   }
@@ -65,8 +65,9 @@ export async function getFullReport(caseId: string): Promise<any> {
   return res.json()
 }
 
-export async function saveStageMarkdown(caseId: string, stageNum: number, content: string): Promise<any> {
-  const res = await fetch(`${API_BASE}/stage-analysis/${caseId}/stage/${stageNum}/markdown`, {
+export async function saveStageMarkdown(caseId: string, stageNum: number, content: string, charge?: string): Promise<any> {
+  const qs = charge ? `?charge=${encodeURIComponent(charge)}` : ''
+  const res = await fetch(`${API_BASE}/stage-analysis/${caseId}/stage/${stageNum}/markdown${qs}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ content }),

@@ -12,7 +12,7 @@ import json
 import time
 import shutil
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Body, HTTPException, UploadFile, File
 
@@ -87,6 +87,7 @@ async def run_pipeline_step(
     case_id: str,
     step_num: float,
     defendant: str = Body(..., embed=True),
+    charges: List[str] = Body(default=[], embed=True),
     crime_type: Optional[str] = Body(default=None, embed=True),
     indictment_file: Optional[str] = Body(default=None, embed=True),
 ):
@@ -116,25 +117,25 @@ async def run_pipeline_step(
 
     try:
         step_methods = {
-            1: lambda: pipeline.step1_merge_statements(defendant, crime_type),
+            1: lambda: pipeline.step1_merge_statements(defendant, charges[0] if charges else None),
             2: lambda: pipeline.step2_detailed_summaries(
-                defendant, crime_type,
+                defendant, charges[0] if charges else None,
                 progress_cb=lambda current, total, msg: _set_progress(case_id, int(step_num), msg, current, total),
             ),
             3: lambda: pipeline.step3_internal_contradiction(
-                defendant, crime_type,
+                defendant, charges[0] if charges else None,
                 progress_cb=lambda current, total, msg: _set_progress(case_id, int(step_num), msg, current, total),
             ),
             4: lambda: pipeline.step4_build_case_wiki(
-                defendant, crime_type,
+                defendant, charges,
                 progress_cb=lambda current, total, msg: _set_progress(case_id, int(step_num), msg, current, total),
             ),
             4.5: lambda: pipeline.step45_debate_simulation(
-                defendant, crime_type,
+                defendant, charges,
                 progress_cb=lambda current, total, msg: _set_progress(case_id, 4, msg, current, total),
             ),
             5: lambda: pipeline.step5_defense_opinion(
-                defendant, crime_type,
+                defendant, charges,
                 progress_cb=lambda current, total, msg: _set_progress(case_id, 5, msg, current, total),
             ),
         }
@@ -219,6 +220,7 @@ async def get_analysis_state(case_id: str):
 async def resume_pipeline(
     case_id: str,
     defendant: str = Body(..., embed=True),
+    charges: List[str] = Body(default=[], embed=True),
     crime_type: Optional[str] = Body(default=None, embed=True),
     indictment_file: Optional[str] = Body(default=None, embed=True),
 ):
@@ -240,25 +242,25 @@ async def resume_pipeline(
         pipeline._mark_step_running(next_step)
 
         step_methods = {
-            1: lambda: pipeline.step1_merge_statements(defendant, crime_type),
+            1: lambda: pipeline.step1_merge_statements(defendant, charges[0] if charges else None),
             2: lambda: pipeline.step2_detailed_summaries(
-                defendant, crime_type,
+                defendant, charges[0] if charges else None,
                 progress_cb=lambda current, total, msg: _set_progress(case_id, int(next_step), msg, current, total),
             ),
             3: lambda: pipeline.step3_internal_contradiction(
-                defendant, crime_type,
+                defendant, charges[0] if charges else None,
                 progress_cb=lambda current, total, msg: _set_progress(case_id, int(next_step), msg, current, total),
             ),
             4: lambda: pipeline.step4_build_case_wiki(
-                defendant, crime_type,
+                defendant, charges,
                 progress_cb=lambda current, total, msg: _set_progress(case_id, int(next_step), msg, current, total),
             ),
             4.5: lambda: pipeline.step45_debate_simulation(
-                defendant, crime_type,
+                defendant, charges,
                 progress_cb=lambda current, total, msg: _set_progress(case_id, 4, msg, current, total),
             ),
             5: lambda: pipeline.step5_defense_opinion(
-                defendant, crime_type,
+                defendant, charges,
                 progress_cb=lambda current, total, msg: _set_progress(case_id, 5, msg, current, total),
             ),
         }

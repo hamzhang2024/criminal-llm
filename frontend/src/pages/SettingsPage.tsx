@@ -172,6 +172,8 @@ interface ConfigForm {
   evidence_concurrency: number
   pdf_engine: 'mineru' | 'paddleocr'
   paddleocr_token: string
+  pdf_convert_concurrency: number
+  mineru_model_version: string
 }
 
 // 默认 LLM 配置（阿里云百炼 Token Plan）
@@ -189,6 +191,8 @@ export function SettingsPage() {
     evidence_concurrency: 3,
     pdf_engine: 'mineru',
     paddleocr_token: '',
+    pdf_convert_concurrency: 10,
+    mineru_model_version: 'vlm',
   })
   const [status, setStatus] = useState<ConfigStatus | null>(null)
   const [saving, setSaving] = useState(false)
@@ -214,6 +218,8 @@ export function SettingsPage() {
       config.llm_api_key !== initialConfig.llm_api_key ||
       config.llm_base_url !== initialConfig.llm_base_url ||
       config.llm_model !== initialConfig.llm_model ||
+      config.pdf_convert_concurrency !== initialConfig.pdf_convert_concurrency ||
+      config.mineru_model_version !== initialConfig.mineru_model_version ||
       config.evidence_concurrency !== initialConfig.evidence_concurrency
     )
   }, [initialConfig, config])
@@ -253,6 +259,8 @@ export function SettingsPage() {
       if (data.llm_base_url) updates.llm_base_url = data.llm_base_url
       if (data.llm_model) updates.llm_model = data.llm_model
       if (data.evidence_concurrency) updates.evidence_concurrency = data.evidence_concurrency
+      if (data.pdf_convert_concurrency) updates.pdf_convert_concurrency = data.pdf_convert_concurrency
+      if (data.mineru_model_version) updates.mineru_model_version = data.mineru_model_version
       const loaded = { ...config, ...updates }
       setConfig(loaded)
       setInitialConfig(loaded)
@@ -745,6 +753,43 @@ export function SettingsPage() {
                       {showToken ? <EyeOff className="w-4 h-4" color="#86868b" /> : <Eye className="w-4 h-4" color="#86868b" />}
                     </button>
                   </div>
+                </div>
+
+                {/* 上传并发数 */}
+                <div style={{ marginBottom: '16px' }}>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: '500', marginBottom: '8px' }}>
+                    上传并发数
+                    <span style={{ fontSize: '11px', color: '#86868b', fontWeight: '400', marginLeft: '8px' }}>
+                      同时上传文件数（1-50，过大易触发限频）
+                    </span>
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={50}
+                    value={config.pdf_convert_concurrency ?? 10}
+                    onChange={e => setConfig(prev => ({ ...prev, pdf_convert_concurrency: Math.max(1, Math.min(50, Number(e.target.value) || 10)) }))}
+                    style={{ width: '120px', padding: '10px 12px', border: '1px solid var(--macos-border)', borderRadius: '8px', fontSize: '14px', boxSizing: 'border-box' }}
+                  />
+                </div>
+
+                {/* 模型版本 */}
+                <div style={{ marginBottom: '16px' }}>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: '500', marginBottom: '8px' }}>
+                    模型版本
+                    <span style={{ fontSize: '11px', color: '#86868b', fontWeight: '400', marginLeft: '8px' }}>
+                      vlm 高精度 / pipeline 快速 / MinerU-HTML 仅 HTML
+                    </span>
+                  </label>
+                  <select
+                    value={config.mineru_model_version ?? 'vlm'}
+                    onChange={e => setConfig(prev => ({ ...prev, mineru_model_version: e.target.value }))}
+                    style={{ padding: '10px 12px', border: '1px solid var(--macos-border)', borderRadius: '8px', fontSize: '14px', background: 'white', cursor: 'pointer' }}
+                  >
+                    <option value="vlm">vlm（推荐，扫描件/手写）</option>
+                    <option value="pipeline">pipeline（快速，电子版）</option>
+                    <option value="MinerU-HTML">MinerU-HTML（仅 HTML）</option>
+                  </select>
                 </div>
               </div>
             )}

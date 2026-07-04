@@ -21,11 +21,14 @@ export function CaseDetailPage() {
   const [password, setPassword] = useState('')
   const [processing, setProcessing] = useState(false)
   const [progress, setProgress] = useState('')
+  // 转换心跳：记录上次进度键（current_pages_done），3 分钟无变化则提示"处理中，请耐心等待"
+  const lastConvertKeyRef = useRef('')
+  const staleSinceRef = useRef(0)
   const [error, setError] = useState<string | null>(null)
   const [optDecrypt, setOptDecrypt] = useState(false)
   const [optWatermark, setOptWatermark] = useState(false)
   const [optDeleteOriginal, setOptDeleteOriginal] = useState(true)
-  const [crimeType, setCrimeType] = useState('')
+  const [charges, setCharges] = useState<string[]>([])
   const processAbortRef = useRef<AbortController | null>(null)
   const convertPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const extractPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -47,7 +50,7 @@ export function CaseDetailPage() {
     checkExtractStatus, stopPolling: stopExtractPolling,
   } = useEvidenceExtraction(caseId)
 
-  const stageHooks = useStageAnalysis(caseId, defendant, crimeType)
+  const stageHooks = useStageAnalysis(caseId, defendant, charges)
   const {
     stageStatus, setStageStatus, stageMessages, stageErrors, runningStage, setRunningStage,
     handleRunStage, handleRunAllAnalysis, handleStopStage,
@@ -120,7 +123,11 @@ export function CaseDetailPage() {
             convertPollRef.current = setInterval(async () => {
               try {
                 const sr = await fetch(`${API_BASE}/tasks/${caseId}/convert-status`); const sd = await sr.json()
-                if (sd.status === 'running') { const c = sd.current || 0, t = sd.total || 0; setProgress(`转换中：${c}/${t} (${t > 0 ? Math.round(c/t*100) : 0}%)`) }
+                if (sd.status === 'running') {
+                  const c = sd.current || 0, t = sd.total || 0, pd = sd.pages_done || 0, pt = sd.pages_total || 0
+                  const pct = t > 0 ? Math.round(c / t * 100) : 0
+                  setProgress(`转换中：${c}/${t} 文件${pt > 0 ? ` · ${pd}/${pt} 页` : ''} (${pct}%)`)
+                }
                 else if (sd.status === 'completed') { clearInterval(convertPollRef.current!); convertPollRef.current = null; setProcessing(false); setProgress('') }
                 else if (sd.status === 'failed' || sd.status === 'cancelled') { clearInterval(convertPollRef.current!); convertPollRef.current = null; setProcessing(false); setError(sd.message || '转换失败') }
                 else if (sd.status === 'interrupted') { clearInterval(convertPollRef.current!); convertPollRef.current = null; setProcessing(false); setError('上次任务被中断，请点击「转换并提取」重新开始') }
@@ -191,7 +198,20 @@ export function CaseDetailPage() {
       convertPollRef.current = setInterval(async () => {
         try {
           const sr = await fetch(`${API_BASE}/tasks/${caseId}/convert-status`); const sd = await sr.json()
-          if (sd.status === 'running') { const c = sd.current || 0, t = sd.total || 0; setProgress(`转换中：${c}/${t} (${t > 0 ? Math.round(c/t*100) : 0}%)${sd.message ? ' — ' + sd.message : ''}`) }
+          if (sd.status === 'running') {
+            const c = sd.current || 0, t = sd.total || 0, pd = sd.pages_done || 0, pt = sd.pages_total || 0
+            const pct = t > 0 ? Math.round(c / t * 100) : 0
+            // 心跳：current 与 pages_done 均未变则计时，3 分钟无变化追加提示（大文件转换可能很久）
+            const key = `${c}_${pd}`
+            if (lastConvertKeyRef.current === key) {
+              if (!staleSinceRef.current) staleSinceRef.current = Date.now()
+            } else {
+              staleSinceRef.current = 0
+              lastConvertKeyRef.current = key
+            }
+            const staleWarn = staleSinceRef.current && (Date.now() - staleSinceRef.current > 180000) ? ' · 处理中，请耐心等待' : ''
+            setProgress(`转换中：${c}/${t} 文件${pt > 0 ? ` · ${pd}/${pt} 页` : ''} (${pct}%)${staleWarn}`)
+          }
           else if (sd.status === 'completed') {
             clearInterval(convertPollRef.current!); convertPollRef.current = null
             const sc = sd.results?.filter((r: any) => r.success).length || 0
@@ -274,7 +294,11 @@ export function CaseDetailPage() {
         const pi = setInterval(async () => {
           try {
             const sr = await fetch(`${API_BASE}/tasks/${caseId}/convert-status`); const sd = await sr.json()
-            if (sd.status === 'running') { const c = sd.current || 0, t = sd.total || 0; setProgress(`正在转换并提取证据（第 1/2 步）${c}/${t} (${t > 0 ? Math.round(c/t*100) : 0}%)`) }
+            if (sd.status === 'running') {
+              const c = sd.current || 0, t = sd.total || 0, pd = sd.pages_done || 0, pt = sd.pages_total || 0
+              const pct = t > 0 ? Math.round(c / t * 100) : 0
+              setProgress(`正在转换并提取证据（第 1/2 步）：${c}/${t} 文件${pt > 0 ? ` · ${pd}/${pt} 页` : ''} (${pct}%)`)
+            }
             else if (sd.status === 'completed') { clearInterval(pi); resolve() }
             else if (sd.status === 'failed' || sd.status === 'cancelled') { clearInterval(pi); reject(new Error(sd.message || '转换失败')) }
             else if (sd.status === 'interrupted') { clearInterval(pi); reject(new Error('上次任务被中断，请点击「转换并提取」重新开始')) }
@@ -306,11 +330,11 @@ export function CaseDetailPage() {
     if (!defendant.trim()) { showAlert({ title: '提示', message: '缺少被告人信息', variant: 'warning' }); return }
     setError(null); setProgress('正在触发分析...'); setProcessing(true)
     try {
-      const r = await api.runAllStages(caseId!, defendant, crimeType || undefined)
+      const r = await api.runAllStages(caseId!, defendant, charges.length > 0 ? charges : undefined)
       if (!r.success) throw new Error(r.detail || '触发失败')
       setProgress('分析已启动'); pollAnalysisProgress()
     } catch (err) { setError(err instanceof Error ? err.message : '触发失败'); setProgress(''); setProcessing(false) }
-  }, [caseId, defendant, crimeType])
+  }, [caseId, defendant, charges])
 
   const handleStart = useCallback(async () => {
     if (currentStep === 0) {
@@ -431,7 +455,7 @@ export function CaseDetailPage() {
             )}
 
             {currentStep === 2 && (
-              <Step2Analyze caseId={caseId!} defendant={defendant} crimeType={crimeType} setCrimeType={setCrimeType}
+              <Step2Analyze caseId={caseId!} defendant={defendant} charges={charges} setCharges={setCharges}
                 evidenceList={evidenceList} evidenceExtracted={evidenceExtracted}
                 stageStatus={stageStatus} runningStage={runningStage} stageMessages={stageMessages} stageErrors={stageErrors}
                 onRunStage={handleRunStage} onRunAll={handleRunAllAnalysis} onStopStage={handleStopStage}
