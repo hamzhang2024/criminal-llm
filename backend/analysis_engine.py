@@ -358,9 +358,12 @@ class AnalysisEngine:
         self.md_texts = texts
         return texts
 
-    def _save_stage(self, stage: int, data: Dict[str, Any], markdown: str):
-        """保存阶段结果"""
-        stage_dir = self.analysis_dir / f"stage_{stage}"
+    def _save_stage(self, stage: int, data: Dict[str, Any], markdown: str, charge: Optional[str] = None):
+        """保存阶段结果（多罪名时存到 analysis/{charge}/stage_N/）"""
+        if charge:
+            stage_dir = self.analysis_dir / charge / f"stage_{stage}"
+        else:
+            stage_dir = self.analysis_dir / f"stage_{stage}"
         stage_dir.mkdir(parents=True, exist_ok=True)
 
         # 保存 Markdown
@@ -894,7 +897,7 @@ class AnalysisEngine:
             "generated_at": datetime.now().isoformat(),
         }
 
-        self._save_stage(4, data, md_output)
+        self._save_stage(4, data, md_output, charge=crime_type)
         return data
 
     # ========== 阶段 5：证据分析 + 矛盾分析 + 口供对比 + 三阶层辩护 ==========
