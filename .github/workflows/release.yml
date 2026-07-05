@@ -154,11 +154,19 @@ jobs:
           if [ -f "$EXEC" ]; then
             SIZE=$(stat -f%z "$EXEC" 2>/dev/null || stat -c%s "$EXEC" 2>/dev/null)
             echo "后端可执行文件: $EXEC ($SIZE bytes)"
-            if [ "$SIZE" -lt 10485760 ]; then
-              echo "❌ 后端可执行文件小于 10MB，可能打包不完整"
+            # onedir 模式：入口 exe 是 stub（~10MB），真正代码在 _internal/
+            if [ "$SIZE" -lt 1048576 ]; then
+              echo "❌ 后端可执行文件小于 1MB，可能打包不完整"
               exit 1
             fi
             echo "✅ 后端可执行文件大小正常"
+            # 验证 _internal 目录存在（onedir 模式）
+            if [ -d "$RES_DIR/_internal" ]; then
+              INTERNAL_SIZE=$(du -sh "$RES_DIR/_internal" 2>/dev/null | cut -f1 || echo "未知")
+              echo "✅ _internal 目录存在 ($INTERNAL_SIZE)"
+            else
+              echo "⚠️ _internal 目录缺失（onefile 模式或打包异常）"
+            fi
           else
             echo "❌ 后端可执行文件缺失: $EXEC"
             echo "📋 当前后端资源目录:"
