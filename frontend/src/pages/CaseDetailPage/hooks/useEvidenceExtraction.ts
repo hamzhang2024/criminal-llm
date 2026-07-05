@@ -157,7 +157,7 @@ export function useEvidenceExtraction(caseId: string | undefined) {
     evidenceList, setEvidenceList,
     evidenceExtracted, setEvidenceExtracted,
     extracting, setExtracting,
-    checkExtractStatus, loadEvidence,
+    checkExtractStatus, loadEvidence, pollExtractProgress,
     handleExtractEvidence,
     handleStopExtract,
     handleClearEvidence,

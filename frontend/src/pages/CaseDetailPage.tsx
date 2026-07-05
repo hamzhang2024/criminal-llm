@@ -48,7 +48,7 @@ export function CaseDetailPage() {
     evidenceList, evidenceExtracted, extracting, setEvidenceExtracted, setEvidenceList,
     loadEvidence, handleExtractEvidence: extractEvidenceFn,
     handleStopExtract, handleClearEvidence, handleRefreshEvidence,
-    checkExtractStatus, stopPolling: stopExtractPolling,
+    checkExtractStatus, pollExtractProgress, stopPolling: stopExtractPolling,
   } = useEvidenceExtraction(caseId)
 
   const stageHooks = useStageAnalysis(caseId, defendant, charges)
@@ -127,7 +127,12 @@ export function CaseDetailPage() {
   useEffect(() => {
     if (!caseId || currentStep === 0) return () => { stopExtractPolling(); if (convertPollRef.current) { clearInterval(convertPollRef.current); convertPollRef.current = null } }
     checkExtractStatus().then(running => {
-      if (running) { setProcessing(true); setProgress('正在提取证据...'); return }
+      if (running) {
+        setProcessing(true); setProgress('正在提取证据...')
+        // 启动轮询监控提取进度，完成后自动清除状态
+        pollExtractProgress()
+        return
+      }
       // 检查转换轮询
       if (currentStep >= 1) {
         fetch(`${API_BASE}/tasks/${caseId}/convert-status`).then(r => r.json()).then(d => {
