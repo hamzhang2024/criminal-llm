@@ -1136,7 +1136,7 @@ class AnalysisEngine:
             {"role": "user", "content": defense_prompt},
         ])
 
-        self._save_stage(53, {"name": "三阶层辩护"}, defense_md)
+        self._save_stage(53, {"name": "三阶层辩护"}, defense_md, charge=crime_type)
 
         # 合并阶段 5 的三个子阶段为一个完整报告
         full_report = f"""# {defendant}案 — 综合辩护分析报告
@@ -1177,7 +1177,7 @@ class AnalysisEngine:
         report_file = self.analysis_dir / "full_defense_report.md"
         report_file.write_text(full_report, encoding="utf-8")
 
-        self._save_stage(5, data, full_report)
+        self._save_stage(5, data, full_report, charge=crime_type)
         return data
 
     # ========== 证据质证意见生成（合并三性审查） ==========
