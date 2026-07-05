@@ -195,6 +195,28 @@ jobs:
           echo ""
           echo "=== 全部完整性检查通过 ==="
 
+      # ---- 冒烟测试：后端能启动并响应 health ----
+      - name: Smoke test - backend startup
+        shell: bash
+        run: |
+          cd backend
+          # 启动后端，超时 30 秒
+          python3 main.py &
+          BACKEND_PID=$!
+          sleep 5
+          # 探测 health，最多等 25 秒
+          for i in $(seq 1 25); do
+            if curl -sf http://localhost:8080/api/health > /dev/null 2>&1; then
+              echo "✅ 后端启动成功，health 响应 OK"
+              kill $BACKEND_PID 2>/dev/null
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "❌ 后端 30 秒内未响应 health"
+          kill $BACKEND_PID 2>/dev/null
+          exit 1
+
       # ---- Tauri build ----
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
