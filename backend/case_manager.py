@@ -126,8 +126,12 @@ def scan_cases(owner: Optional[str] = None) -> List[CaseInfo]:
                                 metadata['case_dir'] = str(sub)
 
                             # 计算各阶段文件数量
-                            file_count = sum(1 for _ in sub.rglob("*.pdf"))
-                            file_count += sum(1 for _ in sub.rglob("*.md"))
+                            # 只统计 original/ + processed/ + md/ 下的文件（和前端 useCaseFiles 一致）
+                            file_count = 0
+                            for subdir_name in ("original", "processed", "md"):
+                                subdir_path = sub / subdir_name
+                                if subdir_path.exists():
+                                    file_count += sum(1 for _ in subdir_path.iterdir() if _.is_file())
 
                             metadata['file_count'] = file_count
 
@@ -287,7 +291,12 @@ async def list_pending_folders():
 
 @router.post("/create")
 async def create_case(request: CreateCaseRequest) -> CaseInfo:
-    """创建新案件"""
+    """创建新案件（同名同被告人同owner不重复创建）"""
+    # 去重检查：遍历已有案件，同名同被告人同owner则返回已有
+    for existing in scan_cases(owner=request.owner):
+        if existing.name == request.name and existing.defendant == request.defendant:
+            return existing
+
     case_id = f"case_{uuid.uuid4().hex[:8]}"
 
     # 创建案件文件夹结构
