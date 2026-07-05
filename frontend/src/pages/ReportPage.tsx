@@ -5,7 +5,7 @@ import { FileText, Loader2, Send, Download, Check,
   PanelLeftClose, Trash2, CheckSquare, RefreshCw,
   FileBarChart, GitCompareArrows, Clock, Users, BookOpen, Eye,
   Gavel, Phone, Mail, Building2, StickyNote, Edit3, Swords, Network, Search, ExternalLink, Printer,
-  BarChart3, Grid3x3
+  BarChart3, Grid3x3, Maximize2, Minimize2, X
 } from 'lucide-react'
 import { api, reviewEvidence, getEvidenceReview, EvidenceReviewItem, EvidenceReviewResult, generateReviewNotes, getReviewNotes, generateCrossExamination, getCrossExamination, getPersonRelation, RelationGraphData, getEventTimeline, TimelineData, searchSimilarCases, SimilarCasesData } from '../api'
 import { getEvidenceChain, EvidenceChainData } from '../api/stages'
@@ -197,6 +197,7 @@ export function ReportPage() {
   const [evidenceChainData, setEvidenceChainData] = useState<EvidenceChainData | null>(null)
   const [evidenceChainLoading, setEvidenceChainLoading] = useState(false)
   const [evidenceChainView, setEvidenceChainView] = useState<'mindmap' | 'graph'>('mindmap')
+  const [evidenceChainFullscreen, setEvidenceChainFullscreen] = useState(false)
   const [caseCharges, setCaseCharges] = useState<string[]>([])
 
   // 辩护意见折叠面板状态
@@ -2678,9 +2679,14 @@ export function ReportPage() {
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               {evidenceChainData && (
-                <button onClick={(e) => { e.stopPropagation(); setEvidenceChainView(v => v === 'mindmap' ? 'graph' : 'mindmap') }} style={{ padding: '2px 8px', fontSize: '10px', borderRadius: '4px', border: `1px solid ${colors.border}`, background: 'transparent', color: colors.textSecondary, cursor: 'pointer' }}>
-                  {evidenceChainView === 'mindmap' ? '网状图' : '思维导图'}
-                </button>
+                <>
+                  <button onClick={(e) => { e.stopPropagation(); setEvidenceChainView(v => v === 'mindmap' ? 'graph' : 'mindmap') }} style={{ padding: '2px 8px', fontSize: '10px', borderRadius: '4px', border: `1px solid ${colors.border}`, background: 'transparent', color: colors.textSecondary, cursor: 'pointer' }}>
+                    {evidenceChainView === 'mindmap' ? '网状图' : '思维导图'}
+                  </button>
+                  <button onClick={(e) => { e.stopPropagation(); setEvidenceChainFullscreen(true) }} style={{ padding: '2px 8px', fontSize: '10px', borderRadius: '4px', border: `1px solid ${colors.border}`, background: 'transparent', color: colors.textSecondary, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                    <Maximize2 className="w-3 h-3" /> 全屏
+                  </button>
+                </>
               )}
               <ChevronIcon expanded={evidenceCenterPanels.evidenceChain} />
             </div>
@@ -2715,6 +2721,55 @@ export function ReportPage() {
             </div>
           )}
         </div>
+
+        {/* 证据链全屏 overlay */}
+        {evidenceChainFullscreen && evidenceChainData && (
+          <div style={{
+            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+            background: '#fff', zIndex: 99999, display: 'flex', flexDirection: 'column',
+          }}>
+            {/* 全屏顶栏 */}
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '8px 16px', borderBottom: `1px solid ${colors.border}`, background: colors.surfaceAlt,
+              flexShrink: 0,
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <Network className="w-5 h-5" style={{ color: '#34C759' }} />
+                <span style={{ fontSize: '15px', fontWeight: 600, color: colors.textPrimary }}>证据链可视化</span>
+                <span style={{ fontSize: '12px', color: colors.textTertiary }}>
+                  {evidenceChainData.summary?.total_evidence || 0} 证据 · {evidenceChainData.summary?.total_relations || 0} 关联
+                </span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <button onClick={() => setEvidenceChainView(v => v === 'mindmap' ? 'graph' : 'mindmap')} style={{ padding: '4px 12px', fontSize: '12px', borderRadius: '6px', border: `1px solid ${colors.border}`, background: 'transparent', color: colors.textSecondary, cursor: 'pointer' }}>
+                  {evidenceChainView === 'mindmap' ? '切换网状图' : '切换思维导图'}
+                </button>
+                <button onClick={() => setEvidenceChainFullscreen(false)} style={{ padding: '4px 12px', fontSize: '12px', borderRadius: '6px', border: 'none', background: colors.accent, color: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <X className="w-4 h-4" /> 退出全屏
+                </button>
+              </div>
+            </div>
+            {/* 全屏内容区 */}
+            <div style={{ flex: 1, overflow: 'auto', padding: '8px', background: colors.surface }}>
+              {evidenceChainView === 'mindmap' ? (
+                <EvidenceChainMindmap data={evidenceChainData} onNodeClick={(node) => {
+                  if (node.type === 'evidence' && node.id) {
+                    const ev = evidenceItems.find(e => e.id === String(node.id))
+                    if (ev) { setSelectedEvidenceId(ev.id); setEvidenceChainFullscreen(false) }
+                  }
+                }} />
+              ) : (
+                <EvidenceChainGraph data={evidenceChainData} onNodeClick={(node) => {
+                  if (node.type === 'evidence' && node.id) {
+                    const ev = evidenceItems.find(e => e.id === String(node.id))
+                    if (ev) { setSelectedEvidenceId(ev.id); setEvidenceChainFullscreen(false) }
+                  }
+                }} />
+              )}
+            </div>
+          </div>
+        )}
 
         {/* 1. 证据列表（默认展开） */}
         <div style={{ border: `1px solid ${colors.border}`, borderRadius: '8px', overflow: 'hidden' }}>
