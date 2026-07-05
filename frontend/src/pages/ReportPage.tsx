@@ -198,7 +198,7 @@ export function ReportPage() {
   const [evidenceChainLoading, setEvidenceChainLoading] = useState(false)
   const [evidenceChainView, setEvidenceChainView] = useState<'mindmap' | 'graph'>('mindmap')
   const [evidenceChainFullscreen, setEvidenceChainFullscreen] = useState(false)
-  const [caseCharges, setCaseCharges] = useState<string[]>([])
+  // caseCharges 已移除，使用 charges 代替
 
   // 辩护意见折叠面板状态
   const [defenseOpinionPanels, setDefenseOpinionPanels] = useState({
@@ -2615,27 +2615,27 @@ export function ReportPage() {
         })()}
 
         {/* 0b. 证据-罪名关联矩阵(多罪名时显示) */}
-        {caseCharges.length > 1 && (() => {
-          const charges = caseCharges
+        {charges.length > 1 && (() => {
+          const chargesList = charges
           const typeSet = new Set<string>()
           evidenceItems.forEach(e => typeSet.add(e.type || '其他'))
           const types = Array.from(typeSet).sort()
           const matrix: Record<string, Record<string, number>> = {}
-          types.forEach(t => { matrix[t] = {}; charges.forEach(c => { matrix[t][c] = 0 }) })
+          types.forEach(t => { matrix[t] = {}; chargesList.forEach(c => { matrix[t][c] = 0 }) })
           evidenceItems.forEach(e => {
             const t = e.type || '其他'
             const cs = (e as any).charges || []
-            if (cs.length === 0) { charges.forEach(c => { matrix[t][c] += 1 }) }
+            if (cs.length === 0) { chargesList.forEach(c => { matrix[t][c] += 1 }) }
             else { cs.forEach((c: string) => { if (matrix[t][c] !== undefined) matrix[t][c] += 1 }) }
           })
-          const maxVal = Math.max(...types.flatMap(t => charges.map(c => matrix[t][c])), 1)
+          const maxVal = Math.max(...types.flatMap(t => chargesList.map(c => matrix[t][c])), 1)
           return (
             <div style={{ border: `1px solid ${colors.border}`, borderRadius: '8px', overflow: 'hidden' }}>
               <div style={panelHeaderStyle} onClick={() => togglePanel('evidenceChargeMatrix')}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <Grid3x3 className="w-4 h-4" style={{ color: '#AF52DE' }} />
                   <span style={{ fontSize: '13px', fontWeight: 600, color: colors.textPrimary }}>证据-罪名关联矩阵</span>
-                  <span style={{ fontSize: '11px', color: colors.textTertiary }}>{charges.length} 罪名 × {types.length} 类型</span>
+                  <span style={{ fontSize: '11px', color: colors.textTertiary }}>{chargesList.length} 罪名 × {types.length} 类型</span>
                 </div>
                 <ChevronIcon expanded={evidenceCenterPanels.evidenceChargeMatrix} />
               </div>
@@ -2645,14 +2645,14 @@ export function ReportPage() {
                     <thead>
                       <tr>
                         <th style={{ padding: '6px 8px', textAlign: 'left', borderBottom: `2px solid ${colors.border}`, color: colors.textTertiary }}>证据类型</th>
-                        {charges.map(c => <th key={c} style={{ padding: '6px 8px', textAlign: 'center', borderBottom: `2px solid ${colors.border}`, color: colors.textSecondary }}>{c}</th>)}
+                        {chargesList.map(c => <th key={c} style={{ padding: '6px 8px', textAlign: 'center', borderBottom: `2px solid ${colors.border}`, color: colors.textSecondary }}>{c}</th>)}
                       </tr>
                     </thead>
                     <tbody>
                       {types.map(t => (
                         <tr key={t}>
                           <td style={{ padding: '6px 8px', color: colors.textSecondary, borderBottom: `1px solid ${colors.border}` }}>{t}</td>
-                          {charges.map(c => {
+                          {chargesList.map(c => {
                             const v = matrix[t][c]
                             const opacity = v / maxVal
                             return <td key={c} style={{ padding: '6px 8px', textAlign: 'center', borderBottom: `1px solid ${colors.border}`, background: v > 0 ? `rgba(175, 82, 222, ${0.15 + opacity * 0.5})` : 'transparent', fontWeight: v > 0 ? 600 : 400, color: v > 0 ? colors.textPrimary : colors.textTertiary }}>{v > 0 ? v : '-'}</td>
