@@ -76,7 +76,8 @@ class LLMClient:
         base_url, api_key, default_model = self._get_cached_config()
         self.base_url = base_url
         self.api_key = api_key
-        self.model = default_model
+        # 规范化模型名称：DeepSeek API 要求全小写
+        self.model = default_model.lower() if default_model else ""
         # 分层超时：connect/write/pool 各 60s，read 180s 防 stream hang
         # 单一数值 timeout 在 streaming 响应下每次收到 chunk 重置计时器，
         # read timeout 是单次读取超时，180s 无数据则抛 ReadTimeout → 触发重试
@@ -94,7 +95,7 @@ class LLMClient:
         self._total_requests = 0
 
         logger.info("[LLM 客户端] baseUrl: %s", base_url)
-        logger.info("[LLM 客户端] model: %s", default_model)
+        logger.info("[LLM 客户端] model: %s", self.model)
         logger.info("[LLM 客户端] apiKey: %s", '已配置' if api_key else '未配置')
 
     @classmethod
@@ -121,8 +122,9 @@ class LLMClient:
         base_url, api_key, default_model = self._get_cached_config()
         self.base_url = base_url
         self.api_key = api_key
-        self.model = default_model
-        logger.info("[LLM 客户端] 配置已重载 baseUrl: %s, model: %s", base_url, default_model)
+        # 规范化模型名称：DeepSeek API 要求全小写（deepseek-v4-pro/deepseek-v4-flash）
+        self.model = default_model.lower() if default_model else ""
+        logger.info("[LLM 客户端] 配置已重载 baseUrl: %s, model: %s", base_url, self.model)
 
     def get_cache_stats(self) -> dict:
         """获取缓存命中率统计"""
