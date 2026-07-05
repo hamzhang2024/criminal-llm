@@ -105,7 +105,7 @@ export function EvidenceChainMindmap({ data, onNodeClick }: Props) {
               type: 'evidence' as const,
               color: cfg.color,
               originalNode: ev,
-              summary: relatedSummary.slice(0, 100),  // 与该待证事实相关的内容
+              summary: relatedSummary.slice(0, 200),  // 与该待证事实相关的内容
               factId: fact.id,  // 标记所属待证事实
             }
           }),
@@ -425,7 +425,7 @@ export function EvidenceChainMindmap({ data, onNodeClick }: Props) {
               fill="#6b7280"
               fontSize={8}
             >
-              {node.summary.length > 28 ? node.summary.slice(0, 28) + '...' : node.summary}
+              {node.summary.length > 40 ? node.summary.slice(0, 40) + '...' : node.summary}
             </text>
           )}
           <title>{node.name}{node.description ? `\n${node.description}` : ''}{node.summary ? `\n\n摘要：${node.summary}` : ''}</title>

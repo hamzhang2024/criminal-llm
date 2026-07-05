@@ -2030,73 +2030,79 @@ def generate_evidence_chain(case_path: Path) -> Dict[str, Any]:
                     pass
 
         # ========== 证据与待证事实的关联逻辑 =============
-        # 原则：以证据类型推断为主 + 关键词精确匹配为辅
+        # 三层防丢：LLM分析 → 规则推断 → 未关联保底
 
-        # 1. 先用证据类型推断关联（这是主要的逻辑关联）
-        type_fact_mapping = {
-            "indictment": ["fact_subject", "fact_subjective", "fact_behavior", "fact_result"],  # 指控文书列明所有构成要件
-            "confession": ["fact_subject", "fact_subjective", "fact_behavior"],  # 被告人供述：身份、动机、行为
-            "witness": ["fact_behavior", "fact_result"],  # 证人证言：看到的行为和结果
-            "victim": ["fact_behavior", "fact_result"],  # 被害人陈述：受害经过和行为结果
-            "documentary": ["fact_result"],  # 书证：主要是金额、转账记录等结果证据
-            "physical": ["fact_behavior"],  # 物证：证明行为存在
-            "expert": ["fact_result"],  # 鉴定意见：证明损失/伤害结果
-            "inspection": ["fact_behavior"],  # 勘验检查笔录：证明行为现场
-            "electronic": ["fact_result", "fact_behavior"],  # 电子数据：交易记录等
-            "audiovisual": ["fact_behavior"],  # 视听资料：监控录像等
-            "procedural": [],  # 程序性文书不直接证明案件事实
-            "other": [],
-        }
+        # ── 第1层：LLM 分析结果优先（来自证据提取阶段的 proves_facts）──
+        llm_proves = ev.get("proves_facts", [])
+        llm_details = ev.get("proves_details", {})
 
-        # 2. 关键词精确匹配（只针对特定证据名称）
-        # 规则：证据名称中明确包含某个词，才关联到对应事实
-        name_exact_mapping = {
-            "户籍": ["fact_subject"],
-            "身份证": ["fact_subject"],
-            "出生": ["fact_subject"],
-            "年龄": ["fact_subject"],
-            "自首": ["fact_circumstance"],
-            "坦白": ["fact_circumstance"],
-            "立功": ["fact_circumstance"],
-            "退赃": ["fact_circumstance"],
-            "赔偿": ["fact_circumstance"],
-            "抓获": ["fact_subject"],
-            "到案": ["fact_circumstance"],
-        }
+        if llm_proves:
+            # LLM 已分析：高置信度关联
+            for fact_id in llm_proves:
+                proves_facts.append(fact_id)
+                proves_strength[fact_id] = "high"
+                detail_text = llm_details.get(fact_id, "LLM 分析确认")
+                proves_details[fact_id] = [detail_text]
 
-        inferred_facts = type_fact_mapping.get(cat, [])
-        for fact in facts_to_prove:
-            if fact["id"] in inferred_facts:
-                proves_facts.append(fact["id"])
-                proves_strength[fact["id"]] = "low"  # 类型推断的证明力为 low
-                proves_details[fact["id"]] = [f"依据证据类型推断"]
-
-        # 3. 用证据名称关键词补充（精确匹配）
-        ev_name_lower = ev_name.lower()
-        for kw, target_facts in name_exact_mapping.items():
-            if kw in ev_name_lower:
-                for tf in target_facts:
-                    if tf not in proves_facts:
-                        proves_facts.append(tf)
-                        proves_strength[tf] = "medium"
-                        proves_details[tf] = [f"证据名称包含「{kw}」"]
-
-        # 4. 精确关键词补充（仅当类型推断为空时使用）
-        # 只有证据名称明确包含特定词汇才触发
+        # ── 第2层：规则推断兜底（仅当 LLM 无分析结果时）──
         if not proves_facts:
-            strict_keyword_mapping = {
-                "fact_subject": ["户籍证明", "身份证", "出生证", "抓获经过", "到案经过", "在逃", "网上追逃"],
-                "fact_subjective": ["故意", "明知", "目的", "动机", "非法占有", "营利目的"],
-                "fact_circumstance": ["自首", "坦白", "认罪", "立功", "退赃", "赔偿", "从轻", "从重", "累犯"],
+            type_fact_mapping = {
+                "indictment": ["fact_subject", "fact_subjective", "fact_behavior", "fact_result"],
+                "confession": ["fact_subject", "fact_subjective", "fact_behavior"],
+                "witness": ["fact_behavior", "fact_result"],
+                "victim": ["fact_behavior", "fact_result"],
+                "documentary": ["fact_result"],
+                "physical": ["fact_behavior"],
+                "expert": ["fact_result"],
+                "inspection": ["fact_behavior"],
+                "electronic": ["fact_result", "fact_behavior"],
+                "audiovisual": ["fact_behavior"],
+                "procedural": [],
+                "other": [],
             }
 
+            name_exact_mapping = {
+                "户籍": ["fact_subject"], "身份证": ["fact_subject"],
+                "出生": ["fact_subject"], "年龄": ["fact_subject"],
+                "自首": ["fact_circumstance"], "坦白": ["fact_circumstance"],
+                "立功": ["fact_circumstance"], "退赃": ["fact_circumstance"],
+                "赔偿": ["fact_circumstance"], "抓获": ["fact_subject"],
+                "到案": ["fact_circumstance"],
+            }
+
+            inferred_facts = type_fact_mapping.get(cat, [])
             for fact in facts_to_prove:
-                fact_id = fact["id"]
-                strict_kws = strict_keyword_mapping.get(fact_id, [])
-                if any(kw in ev_name_lower for kw in strict_kws):
-                    proves_facts.append(fact_id)
-                    proves_strength[fact_id] = "high"
-                    proves_details[fact_id] = [f"证据名称精确匹配"]
+                if fact["id"] in inferred_facts:
+                    proves_facts.append(fact["id"])
+                    proves_strength[fact["id"]] = "low"
+                    proves_details[fact["id"]] = [f"依据证据类型推断"]
+
+            # 3. 用证据名称关键词补充（精确匹配）
+            ev_name_lower = ev_name.lower()
+            for kw, target_facts in name_exact_mapping.items():
+                if kw in ev_name_lower:
+                    for tf in target_facts:
+                        if tf not in proves_facts:
+                            proves_facts.append(tf)
+                            proves_strength[tf] = "medium"
+                            proves_details[tf] = [f"证据名称包含「{kw}」"]
+
+            # 4. 精确关键词补充（仅当类型推断为空时使用）
+            # 只有证据名称明确包含特定词汇才触发
+            if not proves_facts:
+                strict_keyword_mapping = {
+                    "fact_subject": ["户籍证明", "身份证", "出生证", "抓获经过", "到案经过", "在逃", "网上追逃"],
+                    "fact_subjective": ["故意", "明知", "目的", "动机", "非法占有", "营利目的"],
+                    "fact_circumstance": ["自首", "坦白", "认罪", "立功", "退赃", "赔偿", "从轻", "从重", "累犯"],
+                }
+
+                for fact in facts_to_prove:
+                    fact_id = fact["id"]
+                    strict_kws = strict_keyword_mapping.get(fact_id, [])
+                    if any(kw in ev_name_lower for kw in strict_kws):
+                        proves_facts.append(fact_id)
+                        proves_strength[fact_id] = "high"
+                        proves_details[fact_id] = [f"证据名称精确匹配"]
 
         evidence_item = {
             "id": ev_id,

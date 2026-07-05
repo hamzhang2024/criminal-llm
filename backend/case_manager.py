@@ -986,6 +986,13 @@ _EVIDENCE_EXTRACTION_RULES = """
 - **矛盾提示**：[供述前后是否一致？有无自相矛盾之处？]
 - **关联罪名**：[从 {case_charges} 中选择与此证据相关的罪名，可多选。如无法判断则留空]
 - **关联信息**：[列出所有关键关联信息，见上方"关键关联信息提取"要求。如无则填"无"]
+- **证明对象**：
+  - 主体事实：[是/否] — [引用证据原文中能证明被告人身份、年龄、户籍等主体要件的具体内容]
+  - 主观事实：[是/否] — [引用证据原文中能证明犯罪故意、动机、目的等主观要件的具体内容]
+  - 行为事实：[是/否] — [引用证据原文中能证明具体犯罪行为、手段、方式的原文内容]
+  - 结果事实：[是/否] — [引用证据原文中能证明危害结果、涉案金额、受害人损失的原文内容]
+  - 因果关系：[是/否] — [引用证据原文中能证明行为与结果之间因果关联的具体内容]
+  - 情节事实：[是/否] — [引用证据原文中能证明自首、坦白、立功、退赃等量刑情节的原文内容]
 
 **注意（起诉意见书/起诉书/多次供述专用）：**
 - 必须逐笔提取全部犯罪事实，每笔必须包含：**时间、地点（详细到门牌号/街道）、涉案人员及角色、行为方式、金额/结果、简要案情**
@@ -1104,6 +1111,8 @@ async def _extract_single_file(
             "persons": ev_block.get("persons", ""),
             "related_entities": ev_block.get("related_entities", ""),
             "charges": ev_block.get("charges", []),
+            "proves_facts": ev_block.get("proves_facts", []),
+            "proves_details": ev_block.get("proves_details", {}),
             "summary_preview": ev_block["summary"][:200],
             "has_quotes": bool(ev_block.get("original_quotes", "").strip()),
             "md_file": ev_path.name,
@@ -2038,6 +2047,8 @@ def _parse_evidence_blocks(llm_output: str, source_file: str) -> list:
                             "original_quotes": item.get("original_quotes", item.get("原文摘录", "")),
                             "contradiction_hints": item.get("contradiction_hints", item.get("矛盾提示", "无")),
                             "related_entities": item.get("related_entities", item.get("关联信息", "")),
+                            "proves_facts": item.get("proves_facts", []),
+                            "proves_details": item.get("proves_details", {}),
                             "raw_text": json.dumps(item, ensure_ascii=False, indent=2),
                         })
                 if blocks:
@@ -2126,6 +2137,28 @@ def _parse_evidence_blocks(llm_output: str, source_file: str) -> list:
         ev_charges_str = _extract_field(content, "关联罪名") or ""
         ev_charges = [c.strip() for c in ev_charges_str.replace("、", ",").split(",") if c.strip()] if ev_charges_str else []
 
+        # ── 解析"证明对象"：LLM 对6个待证事实的逐项判断 ──
+        proves_facts = []
+        proves_details = {}
+        _fact_ids = [
+            ("主体事实", "fact_subject"), ("主观事实", "fact_subjective"),
+            ("行为事实", "fact_behavior"), ("结果事实", "fact_result"),
+            ("因果关系", "fact_causation"), ("情节事实", "fact_circumstance"),
+        ]
+        import re as _re
+        for fact_name_cn, fact_id in _fact_ids:
+            # 匹配 "- 主体事实：是 — xxx" 或 "- **主体事实**：是 — xxx"
+            pat = _re.compile(
+                rf'{_re.escape(fact_name_cn)}\s*[：:]\s*(是|否)\s*[—\-–]\s*(.+?)(?=\n\s*[-*]\s*[一-鿿]|$)',
+                _re.DOTALL,
+            )
+            m = pat.search(content)
+            if m:
+                answer, detail = m.group(1).strip(), m.group(2).strip()
+                if answer == "是" and detail and len(detail) > 2:
+                    proves_facts.append(fact_id)
+                    proves_details[fact_id] = detail[:500]
+
         blocks.append({
             "name": name,
             "type": ev_type,
@@ -2135,6 +2168,8 @@ def _parse_evidence_blocks(llm_output: str, source_file: str) -> list:
             "key_facts": key_facts.strip(),
             "summary": summary.strip(),
             "charges": ev_charges,
+            "proves_facts": proves_facts,
+            "proves_details": proves_details,
             "original_quotes": original_quotes.strip(),
             "contradiction_hints": contradiction.strip(),
             "related_entities": related_entities.strip(),
