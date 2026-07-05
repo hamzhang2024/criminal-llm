@@ -14,7 +14,7 @@ export { getAppVersion, checkUpdate } from './config'
 export type { UpdateInfo } from './config'
 
 // 案件管理
-export { listCases, getPendingCases, getTrash, getCaseInfo, getCaseFiles, getStepFiles, createCase, importCase, deleteCase, restoreCase, permanentDeleteCase, claimCases, uploadFiles, deleteFile, deleteOriginalFileOnly, batchProcess, convertToMd, deleteMdFile, deletePdfFile, openFile, getLlmSegmentNames, getThumbnails, cleanupProcessed } from './cases'
+export { listCases, getPendingCases, getTrash, getCaseInfo, getCaseFiles, getStepFiles, createCase, importCase, updateCaseCharges, deleteCase, restoreCase, permanentDeleteCase, claimCases, uploadFiles, deleteFile, deleteOriginalFileOnly, batchProcess, convertToMd, deleteMdFile, deletePdfFile, openFile, getLlmSegmentNames, getThumbnails, cleanupProcessed } from './cases'
 
 // 案卷分析（旧 analyze-case API）
 export { createAnalysis, analyzeCase, getAnalysisProgress, chatAboutCase, getReport, selectEvidence } from './cases'
@@ -41,7 +41,7 @@ import { openUrl, waitForBackend, API_BASE, safeFetch } from './client'
 import { thumbnailUrl, serveFileUrl, thumbCacheUrl } from './cases'
 import { login, verifyToken, register, resetPassword, sendResetCode, resetWithCode, getToken, setToken, clearToken, getAuthEmail, setAuthEmail, clearAuthEmail } from './auth'
 import { getAppVersion, checkUpdate } from './config'
-import { listCases, getPendingCases, getTrash, getCaseInfo, getCaseFiles, getStepFiles, createCase, importCase, deleteCase, restoreCase, permanentDeleteCase, claimCases, uploadFiles, deleteFile, deleteOriginalFileOnly, batchProcess, convertToMd, deleteMdFile, deletePdfFile, openFile, getLlmSegmentNames, getThumbnails, cleanupProcessed, createAnalysis, analyzeCase, getAnalysisProgress, chatAboutCase, getReport, selectEvidence } from './cases'
+import { listCases, getPendingCases, getTrash, getCaseInfo, getCaseFiles, getStepFiles, createCase, importCase, updateCaseCharges, deleteCase, restoreCase, permanentDeleteCase, claimCases, uploadFiles, deleteFile, deleteOriginalFileOnly, batchProcess, convertToMd, deleteMdFile, deletePdfFile, openFile, getLlmSegmentNames, getThumbnails, cleanupProcessed, createAnalysis, analyzeCase, getAnalysisProgress, chatAboutCase, getReport, selectEvidence } from './cases'
 import { extractEvidence, stopExtractEvidence, getEvidenceIndex, getExtractStatus, getEvidenceSummary, getMdFiles, getProcessedPdfs } from './evidence'
 import { runPipelineStep, getPipelineStatus, getPipelineProgress, getStepResult, getAnalysisState, resumePipeline, getDefenseStages, getDefenseStageContent, getWikiIndex, getWikiPage, getMdFile, getPdfText, uploadWikiReference, clearWiki, getEvidenceSummaries, getEvidenceOther, getSummaryContent, getEvidenceFiles, getContradictionFiles, getContradictionContent } from './pipeline'
 import { getIndictmentCandidates, runAllStages, getStageStatus, getStageProgress, runSingleStage, getStageResult, getStageMarkdown, getFullReport, saveStageMarkdown, saveFullReport, reviewEvidence, getEvidenceReview, generateReviewNotes, getReviewNotes, generateCrossExamination, getCrossExamination, getEvidenceChain, getPersonRelation, getEventTimeline, searchSimilarCases } from './stages'
@@ -64,6 +64,7 @@ export const api = {
   getStepFiles,
   createCase,
   importCase,
+  updateCaseCharges,
   deleteCase,
   restoreCase,
   permanentDeleteCase,

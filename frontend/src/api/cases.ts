@@ -52,11 +52,11 @@ export async function getStepFiles(caseId: string, step: number): Promise<any> {
   return res.json()
 }
 
-export async function createCase(name: string, defendant: string, owner?: string): Promise<any> {
+export async function createCase(name: string, defendant: string, owner?: string, charges?: string[]): Promise<any> {
   const res = await safeFetch(`${API_BASE}/cases/create`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, defendant, owner })
+    body: JSON.stringify({ name, defendant, owner, charges })
   })
   return res.json()
 }
@@ -65,6 +65,15 @@ export async function importCase(folderPath: string, name: string, defendant: st
   const params = new URLSearchParams({ folder_path: folderPath, name, defendant })
   const res = await fetch(`${API_BASE}/cases/import?${params.toString()}`, {
     method: 'POST'
+  })
+  return res.json()
+}
+
+export async function updateCaseCharges(caseId: string, charges: string[]): Promise<any> {
+  const res = await safeFetch(`${API_BASE}/cases/${caseId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ charges })
   })
   return res.json()
 }

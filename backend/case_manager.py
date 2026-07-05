@@ -328,6 +328,24 @@ async def create_case(request: CreateCaseRequest) -> CaseInfo:
     return CaseInfo(**metadata)
 
 
+@router.patch("/{case_id}")
+async def update_case(case_id: str, charges: List[str] = Body(default=[])):
+    """更新案件信息（目前支持 charges）"""
+    case_path = find_case_path(case_id)
+    if not case_path:
+        raise HTTPException(status_code=404, detail="案件不存在")
+    meta_file = case_path / "case.json"
+    if not meta_file.exists():
+        raise HTTPException(status_code=404, detail="案件元数据不存在")
+    with open(meta_file, 'r', encoding='utf-8') as f:
+        meta = json.load(f)
+    meta["charges"] = charges
+    with open(meta_file, 'w', encoding='utf-8') as f:
+        json.dump(meta, f, ensure_ascii=False, indent=2)
+    logger.info(f"[案件更新] {case_id}: charges={charges}")
+    return {"success": True, "charges": charges}
+
+
 @router.post("/import")
 async def import_folder(folder_path: str, name: str, defendant: str, charges: List[str] = Body(default=[])) -> CaseInfo:
     """导入文件夹为合法案件"""

@@ -34,6 +34,14 @@ export function CaseDetailPage() {
   const convertPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const extractPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const [analysisCompleted, setAnalysisCompleted] = useState(false)
+  const chargesInitRef = useRef(false)
+
+  // charges 变更时保存到后端
+  useEffect(() => {
+    if (chargesInitRef.current && caseId && charges.length >= 0) {
+      api.updateCaseCharges(caseId, charges).catch(() => {})
+    }
+  }, [charges, caseId])
 
   // 子 hooks
   const {
@@ -93,6 +101,10 @@ export function CaseDetailPage() {
     api.getCaseInfo(caseId).then(d => {
       if (d.id) {
         setCaseName(d.name); setDefendant(d.defendant)
+        if (d.charges?.length) {
+          setCharges(d.charges)
+        }
+        chargesInitRef.current = true
       }
     }).catch((e: unknown) => {
       // 404 说明案件已被删除，清除 localStorage 中的旧 step 并提示
