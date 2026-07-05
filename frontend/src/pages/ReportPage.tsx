@@ -4,9 +4,13 @@ import { FileText, Loader2, Send, Download, Check,
   AlertCircle, Scale, MessageCircle, Bookmark, PanelLeft,
   PanelLeftClose, Trash2, CheckSquare, RefreshCw,
   FileBarChart, GitCompareArrows, Clock, Users, BookOpen, Eye,
-  Gavel, Phone, Mail, Building2, StickyNote, Edit3, Swords, Network, Search, ExternalLink, Printer
+  Gavel, Phone, Mail, Building2, StickyNote, Edit3, Swords, Network, Search, ExternalLink, Printer,
+  BarChart3, Grid3x3
 } from 'lucide-react'
 import { api, reviewEvidence, getEvidenceReview, EvidenceReviewItem, EvidenceReviewResult, generateReviewNotes, getReviewNotes, generateCrossExamination, getCrossExamination, getPersonRelation, RelationGraphData, getEventTimeline, TimelineData, searchSimilarCases, SimilarCasesData } from '../api'
+import { getEvidenceChain, EvidenceChainData } from '../api/stages'
+import { EvidenceChainMindmap } from '../components/EvidenceChainMindmap'
+import { EvidenceChainGraph } from '../components/EvidenceChainGraph'
 import { showAlert } from '../components/MacOSDialog'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
@@ -181,10 +185,19 @@ export function ReportPage() {
 
   // 证据中心折叠面板状态
   const [evidenceCenterPanels, setEvidenceCenterPanels] = useState({
+    evidenceTypeChart: true,
+    evidenceChargeMatrix: true,
+    evidenceChain: true,
     evidenceList: true,
     evidenceReview: false,
     reviewNotes: false,
   })
+
+  // 证据链可视化数据
+  const [evidenceChainData, setEvidenceChainData] = useState<EvidenceChainData | null>(null)
+  const [evidenceChainLoading, setEvidenceChainLoading] = useState(false)
+  const [evidenceChainView, setEvidenceChainView] = useState<'mindmap' | 'graph'>('mindmap')
+  const [caseCharges, setCaseCharges] = useState<string[]>([])
 
   // 辩护意见折叠面板状态
   const [defenseOpinionPanels, setDefenseOpinionPanels] = useState({
@@ -541,6 +554,17 @@ export function ReportPage() {
 
   // 切换到证据中心 tab 时加载三性审查结果
   useEffect(() => {
+    if (activeTab === 'evidence_center' && caseId && !evidenceReview) {
+      loadEvidenceReview()
+    }
+    // 加载证据链可视化数据
+    if (activeTab === 'evidence_center' && caseId && !evidenceChainData && !evidenceChainLoading) {
+      setEvidenceChainLoading(true)
+      getEvidenceChain(caseId).then(data => {
+        setEvidenceChainData(data)
+        setEvidenceChainLoading(false)
+      }).catch(() => setEvidenceChainLoading(false))
+    }
     if (activeTab === 'evidence_center' && caseId && !evidenceReview) {
       loadEvidenceReview()
     }
@@ -2550,6 +2574,148 @@ export function ReportPage() {
 
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+        {/* 0a. 证据类型分布 */}
+        {(() => {
+          const typeCounts: Record<string, number> = {}
+          evidenceItems.forEach(e => {
+            const t = e.type || '其他'
+            typeCounts[t] = (typeCounts[t] || 0) + 1
+          })
+          const sorted = Object.entries(typeCounts).sort((a, b) => b[1] - a[1])
+          const maxCount = Math.max(...sorted.map(s => s[1]), 1)
+          const chartColors = ['#007AFF', '#34C759', '#FF9500', '#AF52DE', '#FF3B30', '#5856D6', '#00C7BE', '#FF2D55', '#5AC8FA', '#FFCC00', '#8E8E93', '#36C5F0']
+          return (
+            <div style={{ border: `1px solid ${colors.border}`, borderRadius: '8px', overflow: 'hidden' }}>
+              <div style={panelHeaderStyle} onClick={() => togglePanel('evidenceTypeChart')}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <BarChart3 className="w-4 h-4" style={{ color: '#007AFF' }} />
+                  <span style={{ fontSize: '13px', fontWeight: 600, color: colors.textPrimary }}>证据类型分布</span>
+                  <span style={{ fontSize: '11px', color: colors.textTertiary }}>{evidenceItems.length} 份 · {sorted.length} 类</span>
+                </div>
+                <ChevronIcon expanded={evidenceCenterPanels.evidenceTypeChart} />
+              </div>
+              {evidenceCenterPanels.evidenceTypeChart && (
+                <div style={{ padding: '16px', background: colors.surface }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    {sorted.map(([type, count], i) => (
+                      <div key={type} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ width: '100px', fontSize: '11px', color: colors.textSecondary, textAlign: 'right', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{type}</span>
+                        <div style={{ flex: 1, height: '20px', background: colors.surfaceAlt, borderRadius: '4px', overflow: 'hidden' }}>
+                          <div style={{ width: `${(count / maxCount) * 100}%`, height: '100%', background: chartColors[i % chartColors.length], borderRadius: '4px', transition: 'width 0.3s' }} />
+                        </div>
+                        <span style={{ width: '28px', fontSize: '11px', fontWeight: 600, color: colors.textPrimary }}>{count}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )
+        })()}
+
+        {/* 0b. 证据-罪名关联矩阵(多罪名时显示) */}
+        {caseCharges.length > 1 && (() => {
+          const charges = caseCharges
+          const typeSet = new Set<string>()
+          evidenceItems.forEach(e => typeSet.add(e.type || '其他'))
+          const types = Array.from(typeSet).sort()
+          const matrix: Record<string, Record<string, number>> = {}
+          types.forEach(t => { matrix[t] = {}; charges.forEach(c => { matrix[t][c] = 0 }) })
+          evidenceItems.forEach(e => {
+            const t = e.type || '其他'
+            const cs = (e as any).charges || []
+            if (cs.length === 0) { charges.forEach(c => { matrix[t][c] += 1 }) }
+            else { cs.forEach((c: string) => { if (matrix[t][c] !== undefined) matrix[t][c] += 1 }) }
+          })
+          const maxVal = Math.max(...types.flatMap(t => charges.map(c => matrix[t][c])), 1)
+          return (
+            <div style={{ border: `1px solid ${colors.border}`, borderRadius: '8px', overflow: 'hidden' }}>
+              <div style={panelHeaderStyle} onClick={() => togglePanel('evidenceChargeMatrix')}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Grid3x3 className="w-4 h-4" style={{ color: '#AF52DE' }} />
+                  <span style={{ fontSize: '13px', fontWeight: 600, color: colors.textPrimary }}>证据-罪名关联矩阵</span>
+                  <span style={{ fontSize: '11px', color: colors.textTertiary }}>{charges.length} 罪名 × {types.length} 类型</span>
+                </div>
+                <ChevronIcon expanded={evidenceCenterPanels.evidenceChargeMatrix} />
+              </div>
+              {evidenceCenterPanels.evidenceChargeMatrix && (
+                <div style={{ padding: '16px', background: colors.surface, overflowX: 'auto' }}>
+                  <table style={{ borderCollapse: 'collapse', fontSize: '11px', width: '100%' }}>
+                    <thead>
+                      <tr>
+                        <th style={{ padding: '6px 8px', textAlign: 'left', borderBottom: `2px solid ${colors.border}`, color: colors.textTertiary }}>证据类型</th>
+                        {charges.map(c => <th key={c} style={{ padding: '6px 8px', textAlign: 'center', borderBottom: `2px solid ${colors.border}`, color: colors.textSecondary }}>{c}</th>)}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {types.map(t => (
+                        <tr key={t}>
+                          <td style={{ padding: '6px 8px', color: colors.textSecondary, borderBottom: `1px solid ${colors.border}` }}>{t}</td>
+                          {charges.map(c => {
+                            const v = matrix[t][c]
+                            const opacity = v / maxVal
+                            return <td key={c} style={{ padding: '6px 8px', textAlign: 'center', borderBottom: `1px solid ${colors.border}`, background: v > 0 ? `rgba(175, 82, 222, ${0.15 + opacity * 0.5})` : 'transparent', fontWeight: v > 0 ? 600 : 400, color: v > 0 ? colors.textPrimary : colors.textTertiary }}>{v > 0 ? v : '-'}</td>
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )
+        })()}
+
+        {/* 0c. 证据链可视化 */}
+        <div style={{ border: `1px solid ${colors.border}`, borderRadius: '8px', overflow: 'hidden' }}>
+          <div style={panelHeaderStyle} onClick={() => togglePanel('evidenceChain')}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Network className="w-4 h-4" style={{ color: '#34C759' }} />
+              <span style={{ fontSize: '13px', fontWeight: 600, color: colors.textPrimary }}>证据链可视化</span>
+              <span style={{ fontSize: '11px', color: colors.textTertiary }}>
+                {evidenceChainData ? `${evidenceChainData.summary?.total_evidence || 0} 证据 · ${evidenceChainData.summary?.total_relations || 0} 关联` : evidenceChainLoading ? '加载中...' : ''}
+              </span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              {evidenceChainData && (
+                <button onClick={(e) => { e.stopPropagation(); setEvidenceChainView(v => v === 'mindmap' ? 'graph' : 'mindmap') }} style={{ padding: '2px 8px', fontSize: '10px', borderRadius: '4px', border: `1px solid ${colors.border}`, background: 'transparent', color: colors.textSecondary, cursor: 'pointer' }}>
+                  {evidenceChainView === 'mindmap' ? '网状图' : '思维导图'}
+                </button>
+              )}
+              <ChevronIcon expanded={evidenceCenterPanels.evidenceChain} />
+            </div>
+          </div>
+          {evidenceCenterPanels.evidenceChain && (
+            <div style={{ padding: '8px', background: colors.surface, minHeight: '300px' }}>
+              {evidenceChainLoading ? (
+                <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '300px' }}>
+                  <Loader2 className="w-6 h-6 animate-spin" style={{ color: colors.accent }} />
+                </div>
+              ) : evidenceChainData ? (
+                evidenceChainView === 'mindmap' ? (
+                  <EvidenceChainMindmap data={evidenceChainData} onNodeClick={(node) => {
+                    if (node.type === 'evidence' && node.id) {
+                      const ev = evidenceItems.find(e => e.id === String(node.id))
+                      if (ev) setSelectedEvidenceId(ev.id)
+                    }
+                  }} />
+                ) : (
+                  <EvidenceChainGraph data={evidenceChainData} onNodeClick={(node) => {
+                    if (node.type === 'evidence' && node.id) {
+                      const ev = evidenceItems.find(e => e.id === String(node.id))
+                      if (ev) setSelectedEvidenceId(ev.id)
+                    }
+                  }} />
+                )
+              ) : (
+                <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '300px', color: colors.textTertiary, fontSize: '13px' }}>
+                  证据链数据暂未生成，请先完成证据提取和分析
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
         {/* 1. 证据列表（默认展开） */}
         <div style={{ border: `1px solid ${colors.border}`, borderRadius: '8px', overflow: 'hidden' }}>
           <div style={panelHeaderStyle} onClick={() => togglePanel('evidenceList')}>
