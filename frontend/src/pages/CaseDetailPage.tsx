@@ -29,6 +29,7 @@ export function CaseDetailPage() {
   const [optWatermark, setOptWatermark] = useState(false)
   const [optDeleteOriginal, setOptDeleteOriginal] = useState(true)
   const [charges, setCharges] = useState<string[]>([])
+  const [notFound, setNotFound] = useState(false)
   const processAbortRef = useRef<AbortController | null>(null)
   const convertPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const extractPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -88,7 +89,19 @@ export function CaseDetailPage() {
   // === 页面加载：案件信息 + 状态恢复 ===
   useEffect(() => {
     if (!caseId) return
-    api.getCaseInfo(caseId).then(d => { if (d.id) { setCaseName(d.name); setDefendant(d.defendant) } }).catch(() => {})
+    // 验证 caseId 是否有效，防止旧 ID 持续轮询
+    api.getCaseInfo(caseId).then(d => {
+      if (d.id) {
+        setCaseName(d.name); setDefendant(d.defendant)
+      }
+    }).catch((e: unknown) => {
+      // 404 说明案件已被删除，清除 localStorage 中的旧 step 并提示
+      if (e instanceof Error && e.message.includes('404')) {
+        localStorage.removeItem(`case_${caseId}_step`)
+        console.warn(`案件 ${caseId} 已不存在，已清除本地缓存`)
+        setNotFound(true)
+      }
+    })
     // 恢复阶段状态
     api.getStageStatus(caseId).then(status => {
       const stages = status?.status || {}
@@ -361,6 +374,23 @@ export function CaseDetailPage() {
   }, [currentStep, files, password, optDecrypt, optWatermark, optDeleteOriginal, handleConvertAndExtract, caseId])
 
   const StepIcon = steps[currentStep]?.icon || FileText
+
+  // 案件不存在：阻止所有轮询，显示提示
+  if (notFound) {
+    return (
+      <PageLayout>
+        <div style={{ display: 'flex', flex: 1, alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 16 }}>
+          <div style={{ fontSize: 48 }}>📭</div>
+          <h2 style={{ fontSize: 20, fontWeight: 600 }}>案件不存在</h2>
+          <p style={{ fontSize: 14, color: 'var(--macos-text-secondary)' }}>该案件可能已被删除或数据已清除</p>
+          <button onClick={() => navigate('/')} style={{
+            padding: '10px 24px', background: 'var(--macos-accent)', color: '#fff',
+            border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 500, cursor: 'pointer'
+          }}>← 返回首页</button>
+        </div>
+      </PageLayout>
+    )
+  }
 
   return (
     <PageLayout>
