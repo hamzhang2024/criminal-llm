@@ -295,6 +295,20 @@ async def run_all_stages(
     import asyncio
     # 兼容旧调用: crime_type 非空时包装为 charges
     effective_charges = charges or ([crime_type] if crime_type else [])
+
+    # 保存 charges 到 case.json（如果提供了 charges）
+    if effective_charges:
+        meta_file = case_path / "case.json"
+        if meta_file.exists():
+            try:
+                with open(meta_file, 'r', encoding='utf-8') as f:
+                    meta = json.load(f)
+                meta["charges"] = effective_charges
+                with open(meta_file, 'w', encoding='utf-8') as f:
+                    json.dump(meta, f, ensure_ascii=False, indent=2)
+            except Exception:
+                pass  # 保存失败不阻塞分析
+
     asyncio.create_task(_execute_all_stages(case_id, defendant, effective_charges, indictment_file=indictment_file))
 
     return {
