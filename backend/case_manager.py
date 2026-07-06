@@ -1308,6 +1308,27 @@ async def _do_extract_evidence(
             case_charges = case_meta.get("charges", []) or []
         except Exception:
             pass
+
+    # 如果 case_charges 为空，从案件名称推断可能的罪名
+    if not case_charges:
+        import re as _re
+        case_name = case_path.name
+        # 常见罪名模式：涉嫌XX罪
+        charge_pattern = _re.findall(r'涉嫌(.+?)(?:罪|案)', case_name)
+        if charge_pattern:
+            # 拆分多个罪名（如"非法经营罪诈骗罪" → ["非法经营罪", "诈骗罪"]）
+            raw = charge_pattern[0]
+            case_charges = _re.findall(r'[一-鿿]+罪', raw)
+            if case_charges:
+                # 更新 case.json 保存推断的罪名
+                try:
+                    meta = json.loads(case_json.read_text(encoding="utf-8"))
+                    meta["charges"] = case_charges
+                    case_json.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+                except Exception:
+                    pass
+                logger.info(f"[证据提取] 从案件名称推断罪名: {case_charges}")
+
     if case_charges:
         logger.info(f"[证据提取] 案件罪名: {case_charges}")
 
