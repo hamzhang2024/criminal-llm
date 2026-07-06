@@ -329,8 +329,11 @@ async def create_case(request: CreateCaseRequest) -> CaseInfo:
 
 
 @router.patch("/{case_id}")
-async def update_case(case_id: str, charges: List[str] = Body(default=[])):
+async def update_case(case_id: str, request: Request):
     """更新案件信息（目前支持 charges）"""
+    import json as _json
+    body = await request.json()
+    charges = body.get("charges", [])
     # 输入校验
     charges = [c.strip()[:100] for c in charges if c.strip()][:20]
     case_path = find_case_path(case_id)
