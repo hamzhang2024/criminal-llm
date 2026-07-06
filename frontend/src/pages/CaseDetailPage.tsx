@@ -35,11 +35,16 @@ export function CaseDetailPage() {
   const extractPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const [analysisCompleted, setAnalysisCompleted] = useState(false)
   const chargesInitRef = useRef(false)
+  const lastSavedChargesRef = useRef<string[]>([])
 
-  // charges 变更时保存到后端
+  // charges 变更时保存到后端（跳过初始加载和未变化的情况）
   useEffect(() => {
-    if (chargesInitRef.current && caseId && charges.length >= 0) {
-      api.updateCaseCharges(caseId, charges).catch(() => {})
+    if (chargesInitRef.current && caseId) {
+      const key = JSON.stringify(charges)
+      if (key !== JSON.stringify(lastSavedChargesRef.current)) {
+        lastSavedChargesRef.current = charges
+        api.updateCaseCharges(caseId, charges).catch(() => {})
+      }
     }
   }, [charges, caseId])
 

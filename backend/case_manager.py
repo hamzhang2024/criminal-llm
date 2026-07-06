@@ -331,6 +331,8 @@ async def create_case(request: CreateCaseRequest) -> CaseInfo:
 @router.patch("/{case_id}")
 async def update_case(case_id: str, charges: List[str] = Body(default=[])):
     """更新案件信息（目前支持 charges）"""
+    # 输入校验
+    charges = [c.strip()[:100] for c in charges if c.strip()][:20]
     case_path = find_case_path(case_id)
     if not case_path:
         raise HTTPException(status_code=404, detail="案件不存在")
@@ -340,8 +342,17 @@ async def update_case(case_id: str, charges: List[str] = Body(default=[])):
     with open(meta_file, 'r', encoding='utf-8') as f:
         meta = json.load(f)
     meta["charges"] = charges
-    with open(meta_file, 'w', encoding='utf-8') as f:
-        json.dump(meta, f, ensure_ascii=False, indent=2)
+    # 原子写入：先写临时文件再 rename，防止并发写入导致数据损坏
+    import tempfile
+    tmp_fd, tmp_path = tempfile.mkstemp(dir=str(case_path), suffix='.json')
+    try:
+        with os.fdopen(tmp_fd, 'w', encoding='utf-8') as tmp_f:
+            json.dump(meta, tmp_f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, str(meta_file))
+    except Exception:
+        try: os.unlink(tmp_path)
+        except OSError: pass
+        raise
     logger.info(f"[案件更新] {case_id}: charges={charges}")
     return {"success": True, "charges": charges}
 
@@ -2163,12 +2174,11 @@ def _parse_evidence_blocks(llm_output: str, source_file: str) -> list:
             ("行为事实", "fact_behavior"), ("结果事实", "fact_result"),
             ("因果关系", "fact_causation"), ("情节事实", "fact_circumstance"),
         ]
-        import re as _re
         for fact_name_cn, fact_id in _fact_ids:
             # 匹配 "- 主体事实：是 — xxx" 或 "- **主体事实**：是 — xxx"
-            pat = _re.compile(
-                rf'{_re.escape(fact_name_cn)}\s*[：:]\s*(是|否)\s*[—\-–]\s*(.+?)(?=\n\s*[-*]\s*[一-鿿]|$)',
-                _re.DOTALL,
+            pat = re.compile(
+                rf'{re.escape(fact_name_cn)}\s*[：:]\s*(是|否)\s*[—\-–]\s*(.+?)(?=\n\s*[-*]\s*[一-鿿]|$)',
+                re.DOTALL,
             )
             m = pat.search(content)
             if m:
