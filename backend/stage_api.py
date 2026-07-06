@@ -801,7 +801,8 @@ def _parse_person_relation(content: str) -> dict:
     lines = content.split('\n')
     in_table = False
     for line in lines:
-        if '|---' in line or '| ---' in line:
+        # 匹配表格分隔行：| --- | 或 | :--- | 或 | :---: | 等
+        if re.match(r'^\|[\s:]*---[\s:]*\|', line):
             in_table = True
             continue
         if not in_table or not line.strip().startswith('|'):
@@ -916,8 +917,8 @@ def _parse_person_relation(content: str) -> dict:
         }
 
         for line in lines:
-            # 跳过表头分隔线
-            if '|---' in line or '| ---' in line:
+            # 匹配表格分隔行
+            if re.match(r'^\|[\s:]*---[\s:]*\|', line):
                 in_table = True
                 continue
             if not in_table or not line.strip().startswith('|'):
