@@ -2602,7 +2602,7 @@ def _split_indictment_and_evidence(texts: List[Dict[str, str]]):
 
 
 def _truncate_all(texts: List[Dict[str, str]], max_total: int) -> str:
-    """将所有证据文本合并，限制总长度"""
+    """按优先级分层截断：起诉书完整保留，口供优先，其余用剩余预算"""
     total = sum(len(t["text"]) for t in texts)
     if total <= max_total:
         return "\n\n".join([
@@ -2610,12 +2610,52 @@ def _truncate_all(texts: List[Dict[str, str]], max_total: int) -> str:
             for t in texts
         ])
 
-    # 按比例缩减
-    ratio = max_total / total
+    # 分三层：起诉书 > 口供/证言 > 其余
+    indictment_types = {"起诉书", "起诉意见书"}
+    key_types = {"犯罪嫌疑人供述和辩解", "证人证言", "被害人陈述"}
+
+    indictment = [t for t in texts if t.get("type", "") in indictment_types]
+    key_evidence = [t for t in texts if t.get("type", "") in key_types and t not in indictment]
+    other = [t for t in texts if t not in indictment and t not in key_evidence]
+
     parts = []
-    for t in texts:
-        truncated = t["text"][:int(len(t["text"]) * ratio)]
-        parts.append(f"### {t['filename']}（{t['type']}）\n{truncated}")
+    used = 0
+
+    # 第一层：起诉书完整保留
+    for t in indictment:
+        text = f"### {t['filename']}（{t['type']}）\n{t['text']}"
+        parts.append(text)
+        used += len(t["text"])
+
+    # 第二层：口供/证言优先保留（最多占剩余预算的60%）
+    remaining = max_total - used
+    key_budget = int(remaining * 0.6)
+    key_total = sum(len(t["text"]) for t in key_evidence)
+    if key_total <= key_budget:
+        for t in key_evidence:
+            text = f"### {t['filename']}（{t['type']}）\n{t['text']}"
+            parts.append(text)
+            used += len(t["text"])
+    else:
+        ratio = key_budget / key_total
+        for t in key_evidence:
+            truncated = t["text"][:int(len(t["text"]) * ratio)]
+            text = f"### {t['filename']}（{t['type']}）\n{truncated}"
+            parts.append(text)
+            used += int(len(t["text"]) * ratio)
+
+    # 第三层：其余证据用剩余预算按比例分配
+    remaining = max_total - used
+    other_total = sum(len(t["text"]) for t in other)
+    if other_total > 0 and remaining > 0:
+        ratio = min(1.0, remaining / other_total)
+        for t in other:
+            truncated = t["text"][:int(len(t["text"]) * ratio)]
+            text = f"### {t['filename']}（{t['type']}）\n{truncated}"
+            parts.append(text)
+
+    logger.info(f"[截断] 总{total:,}字符 → 预算{max_total:,}: 起诉书{len(indictment)}份完整, "
+                f"口供{len(key_evidence)}份, 其余{len(other)}份按比例")
     return "\n\n".join(parts)
 
 
