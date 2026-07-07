@@ -18,6 +18,16 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
+def _get_content_budget_chars() -> int:
+    """根据 model_context_limit 配置计算内容字符预算（tokens → chars，按0.68比率）"""
+    try:
+        from config_manager import get_config_value
+        context_limit = int(get_config_value("model_context_limit", "250000"))
+    except Exception:
+        context_limit = 250000
+    content_tokens = context_limit - 38000  # 预留 system prompt + 响应
+    return int(content_tokens / 0.68)  # tokens → chars
+
 try:
     from legal_knowledge import (
         get_legal_knowledge, get_dynamic_legal_knowledge, THEORY_THREE_TIERS,
@@ -554,7 +564,7 @@ class AnalysisEngine:
 
         indictment_catalog, indictment_text, evidence_catalog_text, evidence_only = _split_indictment_and_evidence(texts)
 
-        all_text = _truncate_all(texts, max_total=150000)
+        all_text = _truncate_all(texts, max_total=_get_content_budget_chars())
 
         system_prompt = """你是一位资深刑事辩护律师，正在梳理案中人物关系。
 请从全部案卷材料中识别涉案人员及其相互关系。
@@ -683,7 +693,7 @@ class AnalysisEngine:
 
         indictment_catalog, indictment_text, evidence_catalog_text, evidence_only = _split_indictment_and_evidence(texts)
 
-        all_text = _truncate_all(texts, max_total=200000)
+        all_text = _truncate_all(texts, max_total=_get_content_budget_chars())
 
         system_prompt = """你是一位资深刑事辩护律师，正在梳理案卷中的事件脉络。
 请按时间顺序识别案件中的所有关键事件，并将相关证据归组到对应事件下。
@@ -954,7 +964,7 @@ class AnalysisEngine:
         from llm_client import get_llm_client
         client = get_llm_client()
 
-        all_text = _truncate_all(texts, max_total=200000)
+        all_text = _truncate_all(texts, max_total=_get_content_budget_chars())
 
         contradiction_prompt = f"""## 辩护对象
 被告人：**{defendant}**
