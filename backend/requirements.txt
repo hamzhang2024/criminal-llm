@@ -19,4 +19,4 @@ aiohttp  # 异步 HTTP 客户端（PaddleOCR/MinerU 异步转换依赖）
 python-dotenv
 
 # 打包
-pyinstaller
+pyinstallertiktoken
