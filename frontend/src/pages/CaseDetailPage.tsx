@@ -62,7 +62,10 @@ export function CaseDetailPage() {
     loadEvidence, handleExtractEvidence: extractEvidenceFn,
     handleStopExtract, handleClearEvidence, handleRefreshEvidence,
     checkExtractStatus, pollExtractProgress, stopPolling: stopExtractPolling,
-  } = useEvidenceExtraction(caseId)
+  } = useEvidenceExtraction(caseId, (success) => {
+    // 提取完成后清除页面级 processing 状态
+    setProcessing(false); setProgress(success ? '' : '提取完成')
+  })
 
   const stageHooks = useStageAnalysis(caseId, defendant, charges)
   const {

@@ -4,7 +4,7 @@ import { useState, useCallback, useRef } from 'react'
 import { api, API_BASE } from '../../../api'
 import { showAlert, showConfirm } from '../../../components/MacOSDialog'
 
-export function useEvidenceExtraction(caseId: string | undefined) {
+export function useEvidenceExtraction(caseId: string | undefined, onExtractComplete?: (success: boolean) => void) {
   const [evidenceList, setEvidenceList] = useState<any[]>([])
   const [evidenceExtracted, setEvidenceExtracted] = useState(false)
   const [extracting, setExtracting] = useState(false)
@@ -71,6 +71,8 @@ export function useEvidenceExtraction(caseId: string | undefined) {
             setEvidenceExtracted(true)
           }
           setExtracting(false)
+          // 通知父组件提取完成（清除 processing 和 progress）
+          if (onExtractComplete) onExtractComplete(total > 0)
         } else {
           // 运行时刷新已提取的证据
           const data = await api.getEvidenceIndex(caseId!)
@@ -81,10 +83,11 @@ export function useEvidenceExtraction(caseId: string | undefined) {
         if (extractPollFailuresRef.current >= 3) {
           stopPolling()
           setExtracting(false)
+          if (onExtractComplete) onExtractComplete(false)
         }
       }
     }, 3000)
-  }, [caseId, stopPolling])
+  }, [caseId, stopPolling, onExtractComplete])
 
   // 提取证据
   const handleExtractEvidence = useCallback(async () => {
