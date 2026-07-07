@@ -68,6 +68,8 @@ def get_config_status() -> Dict[str, Any]:
         # MinerU 真批量配置
         "pdf_convert_concurrency": config.get("pdf_convert_concurrency", 10),
         "mineru_model_version": config.get("mineru_model_version", "vlm"),
+        # 模型上下文大小（tokens）
+        "model_context_limit": config.get("model_context_limit", 250000),
     }
 
 

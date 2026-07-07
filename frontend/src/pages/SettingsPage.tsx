@@ -162,6 +162,7 @@ interface ConfigStatus {
     remaining_pages: number
     exceeded: boolean
   } | null
+  model_context_limit: number
 }
 
 interface ConfigForm {
@@ -174,6 +175,7 @@ interface ConfigForm {
   paddleocr_token: string
   pdf_convert_concurrency: number
   mineru_model_version: string
+  model_context_limit: number
 }
 
 // 默认 LLM 配置（阿里云百炼 Token Plan）
@@ -193,6 +195,7 @@ export function SettingsPage() {
     paddleocr_token: '',
     pdf_convert_concurrency: 10,
     mineru_model_version: 'vlm',
+    model_context_limit: 250,
   })
   const [status, setStatus] = useState<ConfigStatus | null>(null)
   const [saving, setSaving] = useState(false)
@@ -220,7 +223,8 @@ export function SettingsPage() {
       config.llm_model !== initialConfig.llm_model ||
       config.pdf_convert_concurrency !== initialConfig.pdf_convert_concurrency ||
       config.mineru_model_version !== initialConfig.mineru_model_version ||
-      config.evidence_concurrency !== initialConfig.evidence_concurrency
+      config.evidence_concurrency !== initialConfig.evidence_concurrency ||
+      config.model_context_limit !== initialConfig.model_context_limit
     )
   }, [initialConfig, config])
 
@@ -261,6 +265,7 @@ export function SettingsPage() {
       if (data.evidence_concurrency) updates.evidence_concurrency = data.evidence_concurrency
       if (data.pdf_convert_concurrency) updates.pdf_convert_concurrency = data.pdf_convert_concurrency
       if (data.mineru_model_version) updates.mineru_model_version = data.mineru_model_version
+      if (data.model_context_limit) updates.model_context_limit = Math.round(data.model_context_limit / 1000)
       const loaded = { ...config, ...updates }
       setConfig(loaded)
       setInitialConfig(loaded)
@@ -299,6 +304,7 @@ export function SettingsPage() {
           llm_base_url: config.llm_base_url.trim(),
           llm_model: config.llm_model.trim(),
           evidence_concurrency: config.evidence_concurrency,
+          model_context_limit: config.model_context_limit * 1000,
         }),
       })
       if (res.ok) {
@@ -1004,6 +1010,56 @@ export function SettingsPage() {
                 <span style={{ fontSize: '12px', color: '#86868b' }}>
                   范围 1-50，默认 3。过高可能导致 API 限流，建议 1-5
                 </span>
+              </div>
+            </div>
+
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: '500', marginBottom: '8px' }}>
+                模型上下文大小
+              </label>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                {[
+                  { k: 250, label: '250K', desc: '本地/通用模型' },
+                  { k: 512, label: '512K', desc: '中等上下文' },
+                  { k: 1000, label: '100万', desc: 'DeepSeek V4 等' },
+                ].map(opt => (
+                  <label
+                    key={opt.k}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '6px',
+                      padding: '8px 12px', borderRadius: '8px',
+                      border: `1.5px solid ${config.model_context_limit === opt.k ? 'var(--macos-accent)' : 'var(--macos-border)'}`,
+                      background: config.model_context_limit === opt.k ? 'var(--macos-accent-surface)' : 'transparent',
+                      cursor: 'pointer', flex: '1 1 0', minWidth: '120px',
+                    }}
+                  >
+                    <input
+                      type="radio"
+                      name="model_context"
+                      checked={config.model_context_limit === opt.k}
+                      onChange={() => setConfig(prev => ({ ...prev, model_context_limit: opt.k }))}
+                      style={{ accentColor: 'var(--macos-accent)' }}
+                    />
+                    <div>
+                      <div style={{ fontSize: '13px', fontWeight: 500, color: '#1d1d1f' }}>{opt.label} tokens</div>
+                      <div style={{ fontSize: '11px', color: '#86868b' }}>{opt.desc}</div>
+                    </div>
+                  </label>
+                ))}
+              </div>
+              <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '12px', color: '#86868b' }}>自定义（K tokens）：</span>
+                <input
+                  type="number"
+                  min={50}
+                  max={10000}
+                  value={config.model_context_limit}
+                  onChange={e => setConfig(prev => ({ ...prev, model_context_limit: Math.max(50, parseInt(e.target.value) || 250) }))}
+                  style={{ width: '100px', padding: '6px 10px', border: '1px solid var(--macos-border)', borderRadius: '8px', fontSize: '13px' }}
+                />
+              </div>
+              <div style={{ marginTop: '6px', fontSize: '11px', color: '#86868b' }}>
+                影响证据提取的分块策略。值越大，单次处理的文本越多，提取越完整。
               </div>
             </div>
           </MacOSCard>

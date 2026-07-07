@@ -14,6 +14,9 @@ from datetime import datetime
 import shutil
 from typing import List, Dict, Optional
 from pydantic import BaseModel
+import os
+import glob
+import tiktoken
 
 logger = logging.getLogger(__name__)
 from fastapi import APIRouter, UploadFile, File, HTTPException, Request, Body
@@ -1066,30 +1069,53 @@ async def _extract_single_file(
     if charges:
         charges_str = f"当前案件指控罪名：{'、'.join(charges)}"
 
-    # 截断超长文本（LLM 上下文限制）
-    max_chars = 100000
-    if len(md_text) > max_chars:
-        logger.info(f"[证据提取] {md_file.name}: 文件过长（{len(md_text)} 字符），截断至 {max_chars} 字符，后续内容将被忽略")
-        md_text = md_text[:max_chars]
+    # 按 token 预算分块（用 tiktoken 精确计算，按 ## 标题边界拆分）
+    context_limit = int(get_config_value("model_context_limit", "250000"))
+    content_budget = context_limit - 38000  # 预留 system prompt + 提取规则 + 响应
+    if content_budget < 50000:
+        content_budget = 50000  # 最少保证 50K tokens
 
-    result = await asyncio.wait_for(
-        client.chat([
-            # system 消息：角色定义 + 完整提取规则（合并为一条，避免 assistant role 兼容性问题）
-            {"role": "system", "content": _EVIDENCE_SYSTEM_PROMPT + "\n\n" + _EVIDENCE_EXTRACTION_RULES},
-            # user 消息：文件名 + 文件内容（变化的部分，放在最后）
-            {"role": "user", "content": f"## 案卷文件：{md_file.name}\n\n{charges_str}\n\n{md_text}"},
-        ]),
-        timeout=timeout_seconds,
-    )
+    chunks = _split_content_by_tokens(md_text, content_budget, md_file.name)
 
-    evidence_blocks = _parse_evidence_blocks(result, md_file.name)
-    # 调试：将 LLM 原始响应保存到 debug 文件，方便排查解析失败
+    if len(chunks) == 1:
+        # 单块，直接发送
+        result = await asyncio.wait_for(
+            client.chat([
+                {"role": "system", "content": _EVIDENCE_SYSTEM_PROMPT + "\n\n" + _EVIDENCE_EXTRACTION_RULES},
+                {"role": "user", "content": f"## 案卷文件：{md_file.name}\n\n{charges_str}\n\n{md_text}"},
+            ]),
+            timeout=timeout_seconds,
+        )
+        evidence_blocks = _parse_evidence_blocks(result, md_file.name)
+    else:
+        # 多块，逐块提取后合并
+        all_evidence_blocks = []
+        for ci, chunk in enumerate(chunks):
+            chunk_label = chunk["label"]
+            chunk_text = chunk["text"]
+            logger.info(f"[证据提取] {chunk_label}: 发送 {_count_tokens(chunk_text)} tokens")
+            result = await asyncio.wait_for(
+                client.chat([
+                    {"role": "system", "content": _EVIDENCE_SYSTEM_PROMPT + "\n\n" + _EVIDENCE_EXTRACTION_RULES},
+                    {"role": "user", "content": f"## 案卷文件：{chunk_label}\n\n{charges_str}\n\n{chunk_text}"},
+                ]),
+                timeout=timeout_seconds,
+            )
+            blocks = _parse_evidence_blocks(result, chunk_label)
+            logger.info(f"[证据提取] {chunk_label}: 提取 {len(blocks)} 份证据")
+            all_evidence_blocks.extend(blocks)
+        evidence_blocks = _merge_evidence_blocks(all_evidence_blocks)
+        logger.info(f"[证据提取] {md_file.name}: {len(chunks)} 块合并后 {len(evidence_blocks)} 份证据")
+
+    # 调试：将解析结果保存到 debug 文件
     debug_file = temp_dir / f"_debug_{md_file.stem}.txt"
     try:
-        debug_file.write_text(f"=== LLM 返回 ({len(result)} 字符) ===\n\n{result}\n\n=== 解析结果 ({len(evidence_blocks)} 份证据) ===\n", encoding="utf-8")
+        debug_file.write_text(f"=== 解析结果 ({len(evidence_blocks)} 份证据) ===\n\n" + "\n---\n".join(
+            f"[{e.get('name','')}]\n{e.get('raw_text','')}" for e in evidence_blocks
+        ), encoding="utf-8")
     except Exception:
         pass
-    logger.info(f"[证据提取] {md_file.name}: LLM 返回 {len(result)} 字符，解析为 {len(evidence_blocks)} 份证据")
+    logger.info(f"[证据提取] {md_file.name}: 解析为 {len(evidence_blocks)} 份证据")
 
     # 保存到临时目录，用临时编号（最终编号由合并阶段分配）
     evidence_list = []
@@ -2062,6 +2088,111 @@ async def clear_stage(case_id: str, stage_num: int):
                     f.unlink()
 
     return {"success": True, "message": f"已清除阶段 {stage_num} 的输出"}
+
+
+_tiktoken_enc = None
+
+def _count_tokens(text: str) -> int:
+    """用 tiktoken 精确计算 token 数"""
+    global _tiktoken_enc
+    if _tiktoken_enc is None:
+        _tiktoken_enc = tiktoken.get_encoding("cl100k_base")
+    return len(_tiktoken_enc.encode(text))
+
+
+def _split_content_by_tokens(text: str, budget: int, source_name: str) -> list:
+    """
+    按 token 预算分块，优先按 ## 标题边界拆分，不破坏文书结构。
+
+    返回：[{"label": "xxx - 分块 1/3", "text": "..."}, ...]
+    """
+    total_tokens = _count_tokens(text)
+    if total_tokens <= budget:
+        return [{"label": source_name, "text": text}]
+
+    # 按 \n## 拆分（二级标题 = 文书边界）
+    sections = re.split(r'\n(?=## )', text)
+    if len(sections) <= 1:
+        # 无二级标题，降级按三级标题拆分
+        sections = re.split(r'\n(?=### )', text)
+    if len(sections) <= 1:
+        # 仍然无法拆分，降级按固定 token 数硬切
+        return _split_by_token_count(text, budget, source_name)
+
+    chunks = []
+    current_parts: list[str] = []
+    current_tokens = 0
+
+    for section in sections:
+        sec_tokens = _count_tokens(section)
+        if sec_tokens > budget:
+            # 单段超过预算，先把前面积累的发出
+            if current_parts:
+                chunks.append({"label": source_name, "text": "\n".join(current_parts)})
+                current_parts = []
+                current_tokens = 0
+            # 超长段内部按三级标题再拆
+            sub_chunks = _split_content_by_tokens(section, budget, source_name)
+            chunks.extend(sub_chunks)
+            continue
+        if current_tokens + sec_tokens > budget:
+            # 加上这段会超预算，先把当前积累发出
+            chunks.append({"label": source_name, "text": "\n".join(current_parts)})
+            current_parts = [section]
+            current_tokens = sec_tokens
+        else:
+            current_parts.append(section)
+            current_tokens += sec_tokens
+
+    if current_parts:
+        chunks.append({"label": source_name, "text": "\n".join(current_parts)})
+
+    # 标注分块序号
+    if len(chunks) > 1:
+        for i, chunk in enumerate(chunks):
+            chunk["label"] = f"{source_name} - 分块 {i+1}/{len(chunks)}"
+
+    logger.info(f"[分块] {source_name}: {total_tokens:,} tokens → {len(chunks)} 块")
+    return chunks
+
+
+def _split_by_token_count(text: str, budget: int, source_name: str) -> list:
+    """降级方案：无标题边界时按固定 token 数硬切"""
+    global _tiktoken_enc
+    if _tiktoken_enc is None:
+        _tiktoken_enc = tiktoken.get_encoding("cl100k_base")
+
+    tokens = _tiktoken_enc.encode(text)
+    chunks = []
+    for i in range(0, len(tokens), budget):
+        chunk_tokens = tokens[i:i + budget]
+        chunk_text = _tiktoken_enc.decode(chunk_tokens)
+        chunks.append({"label": source_name, "text": chunk_text})
+
+    if len(chunks) > 1:
+        for i, chunk in enumerate(chunks):
+            chunk["label"] = f"{source_name} - 分块 {i+1}/{len(chunks)}"
+
+    logger.info(f"[分块] {source_name}: 硬切为 {len(chunks)} 块")
+    return chunks
+
+
+def _merge_evidence_blocks(blocks: list) -> list:
+    """合并多块提取结果，按证据名称去重"""
+    seen_names: dict[str, dict] = {}
+    for block in blocks:
+        name = block.get("name", "")
+        if not name:
+            continue
+        if name not in seen_names:
+            seen_names[name] = block
+        else:
+            # 保留更长的摘要
+            existing_summary = seen_names[name].get("summary", "")
+            new_summary = block.get("summary", "")
+            if len(new_summary) > len(existing_summary):
+                seen_names[name] = block
+    return list(seen_names.values())
 
 
 def _parse_evidence_blocks(llm_output: str, source_file: str) -> list:

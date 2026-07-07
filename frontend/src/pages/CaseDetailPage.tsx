@@ -32,7 +32,6 @@ export function CaseDetailPage() {
   const [notFound, setNotFound] = useState(false)
   const processAbortRef = useRef<AbortController | null>(null)
   const convertPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const extractPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const [analysisCompleted, setAnalysisCompleted] = useState(false)
   const chargesInitRef = useRef(false)
   const lastSavedChargesRef = useRef<string[]>([])
@@ -272,8 +271,6 @@ export function CaseDetailPage() {
   }, [caseId])
 
   const handleExtractEvidence = useCallback(async () => {
-    extractUserStoppedRef.current = false; extractPollFailuresRef.current = 0
-    stopExtractPolling()
     try {
       const sf = await api.getStepFiles(caseId!, 2)
       if (!Array.isArray(sf) || sf.length === 0) {
@@ -284,8 +281,11 @@ export function CaseDetailPage() {
     } catch { }
     setProcessing(true); setError(null); setProgress('正在提取证据...')
     try {
-      await api.extractEvidence(caseId!)
-      startExtractPoll()
+      const result = await extractEvidenceFn()
+      // extractEvidenceFn 内部已启动 hook 轮询，完成后通过 onExtractComplete 回调清 processing
+      if (result && 'needConvert' in result) {
+        setProcessing(false); setProgress('')
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : '提取失败'
       if (msg.includes('无 MD 文件') || msg.includes('请先完成 PDF 转 MD')) {
@@ -294,33 +294,7 @@ export function CaseDetailPage() {
         if (ok) handleConvertAllToMd()
       } else { setError(msg); setProgress(''); setProcessing(false) }
     }
-  }, [caseId, handleConvertAllToMd])
-
-  const extractUserStoppedRef = useRef(false)
-  const extractPollFailuresRef = useRef(0)
-  const startExtractPoll = useCallback(() => {
-    extractUserStoppedRef.current = false; extractPollFailuresRef.current = 0
-    if (extractPollRef.current) clearInterval(extractPollRef.current)
-    extractPollRef.current = setInterval(async () => {
-      if (extractUserStoppedRef.current) { if (extractPollRef.current) { clearInterval(extractPollRef.current); extractPollRef.current = null } return }
-      try {
-        const st = await api.getExtractStatus(caseId!)
-        extractPollFailuresRef.current = 0
-        if (st.status !== 'running') {
-          if (extractPollRef.current) { clearInterval(extractPollRef.current); extractPollRef.current = null }
-          const data = await api.getEvidenceIndex(caseId!)
-          if (data.total_evidence > 0) { setEvidenceList(data.evidence || []); setEvidenceExtracted(true); setProgress(`已提取 ${data.total_evidence} 份证据`) }
-          else { setError(data.error_hint || '提取未成功'); setProgress('') }
-          setProcessing(false)
-        } else {
-          const tf = st.total_files || 0, pf = st.processed_files || 0
-          setProgress(`正在提取证据... ${pf}/${tf} (${tf > 0 ? Math.round(pf/tf*100) : 0}%)`)
-          try { const d = await api.getEvidenceIndex(caseId!); if (d.total_evidence > 0) setEvidenceList(d.evidence || []) } catch {}
-        }
-      } catch { extractPollFailuresRef.current++; if (extractPollFailuresRef.current >= 3) { if (extractPollRef.current) { clearInterval(extractPollRef.current); extractPollRef.current = null } setProcessing(false); setError('提取过程出错'); setProgress('') } }
-    }, 3000)
-    setTimeout(() => { if (extractPollRef.current) { clearInterval(extractPollRef.current); extractPollRef.current = null; setProcessing(false); setProgress('⚠️ 提取超时') } }, 900000)
-  }, [caseId])
+  }, [caseId, handleConvertAllToMd, extractEvidenceFn])
 
   const handleConvertAndExtract = useCallback(async () => {
     setProcessing(true); setError(null); setProgress('正在转换并提取证据...')
