@@ -28,6 +28,100 @@ def _get_content_budget_chars() -> int:
     content_tokens = context_limit - 38000  # 预留 system prompt + 响应
     return int(content_tokens / 0.68)  # tokens → chars
 
+
+async def _batch_analyze_evidence(
+    texts: List[Dict[str, str]],
+    system_prompt: str,
+    user_prompt_header: str,
+    user_prompt_footer: str,
+    progress_cb: Optional[Callable] = None,
+    label: str = "分析",
+) -> List[str]:
+    """分批处理证据，每批独立调用 LLM，返回所有批次的原始响应列表。
+
+    不截断任何证据内容，按 token 预算分批，起诉书每批都带。
+    """
+    import tiktoken
+    enc = tiktoken.get_encoding("cl100k_base")
+
+    from llm_client import get_llm_client
+    client = get_llm_client()
+
+    # 计算 prompt 固定开销
+    header_tokens = len(enc.encode(user_prompt_header))
+    footer_tokens = len(enc.encode(user_prompt_footer))
+    system_tokens = len(enc.encode(system_prompt))
+    # 预留：system + 响应 + 安全余量
+    fixed_overhead = system_tokens + header_tokens + footer_tokens + 5000
+
+    try:
+        from config_manager import get_config_value
+        context_limit = int(get_config_value("model_context_limit", "250000"))
+    except Exception:
+        context_limit = 250000
+
+    evidence_budget = context_limit - fixed_overhead
+    if evidence_budget < 20000:
+        evidence_budget = 20000
+
+    # 分离起诉书（每批必带）和普通证据
+    indictment_types = {"起诉书", "起诉意见书"}
+    indictments = [t for t in texts if t.get("type", "") in indictment_types]
+    evidence = [t for t in texts if t.get("type", "") not in indictment_types]
+
+    indictment_text = "\n\n".join(
+        f"### {t['filename']}（{t['type']}）\n{t['text']}" for t in indictments
+    )
+    indictment_tokens = len(enc.encode(indictment_text)) if indictment_text else 0
+
+    # 普通证据按 token 数分批
+    evidence_chunks: List[List[Dict[str, str]]] = []
+    current_chunk: List[Dict[str, str]] = []
+    current_tokens = indictment_tokens
+
+    for ev in evidence:
+        ev_text = f"### {ev['filename']}（{ev['type']}）\n{ev['text']}"
+        ev_tokens = len(enc.encode(ev_text))
+        if current_tokens + ev_tokens > evidence_budget and current_chunk:
+            evidence_chunks.append(current_chunk)
+            current_chunk = [ev]
+            current_tokens = indictment_tokens + ev_tokens
+        else:
+            current_chunk.append(ev)
+            current_tokens += ev_tokens
+    if current_chunk:
+        evidence_chunks.append(current_chunk)
+
+    total_chunks = len(evidence_chunks)
+    if total_chunks == 0:
+        # 只有起诉书，没有普通证据
+        evidence_chunks = [[]]
+        total_chunks = 1
+
+    logger.info(f"[{label}] {len(evidence)} 份证据 + {len(indictments)} 份起诉书 → "
+                f"{total_chunks} 批（预算 {evidence_budget:,} tokens）")
+
+    results: List[str] = []
+    for ci, chunk in enumerate(evidence_chunks):
+        if progress_cb:
+            progress_cb(f"{label}第 {ci+1}/{total_chunks} 批...")
+
+        chunk_text = indictment_text
+        if chunk:
+            chunk_parts = [f"### {t['filename']}（{t['type']}）\n{t['text']}" for t in chunk]
+            chunk_text = (indictment_text + "\n\n" if indictment_text else "") + "\n\n".join(chunk_parts)
+
+        user_prompt = f"{user_prompt_header}\n\n{chunk_text}\n\n{user_prompt_footer}"
+
+        response = await client.chat([
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ])
+        results.append(response)
+        logger.info(f"[{label}] 第 {ci+1}/{total_chunks} 批完成，{len(response)} 字符")
+
+    return results
+
 try:
     from legal_knowledge import (
         get_legal_knowledge, get_dynamic_legal_knowledge, THEORY_THREE_TIERS,
@@ -559,42 +653,29 @@ class AnalysisEngine:
         if progress_cb:
             progress_cb("正在分析人物关系...")
 
-        from llm_client import get_llm_client
-        client = get_llm_client()
-
         indictment_catalog, indictment_text, evidence_catalog_text, evidence_only = _split_indictment_and_evidence(texts)
 
-        all_text = _truncate_all(texts, max_total=_get_content_budget_chars())
-
-        system_prompt = """你是一位资深刑事辩护律师，正在梳理案中人物关系。
-请从全部案卷材料中识别涉案人员及其相互关系。
+        system_prompt = """梳理案中人物关系。从全部证据中识别涉案人员及相互关系。
 
 **重要区分**：
-- 起诉书/起诉意见书是指控文书，不是证据。引用时写"据起诉书"或"据起诉意见书"，不要用"见证据XXX"格式
-- 只有正式证据（笔录、证言、鉴定意见、书证等）才用"见证据XXX"格式引用
+- 起诉书/起诉意见书是指控文书，引用时写"据起诉书"/"据起诉意见书"
+- 正式证据用"见证据XXX"格式引用
 
-输出要求：
-1. 用 Markdown 格式
-2. 关系表要完整，不遗漏重要人物
-3. 关系说明要具体，不要只写"认识"这种模糊描述
-4. **必须输出关系图的 JSON 数据结构**（见下方示例）"""
+输出要求：Markdown格式 + 必须输出关系图JSON（nodes/edges/subgraphs）"""
 
-        user_prompt = f"""## 辩护对象
+        prompt_header = f"""## 辩护对象
 被告人：**{defendant}**
 
-## 指控文书（非证据，引用时写"据起诉书"/"据起诉意见书"）
-
+## 指控文书（非证据）
 {indictment_catalog}
 
-## 证据目录（按编号引用）
-
+## 证据目录
 {evidence_catalog_text}
 
 ## 全部案卷材料
+"""
 
-{all_text}
-
----
+        prompt_footer = f"""---
 
 ## 请完成以下分析
 
@@ -603,56 +684,25 @@ class AnalysisEngine:
 | 姓名 | 角色 | 与{defendant}的关系 | 涉案程度 | 证据来源 | 备注 |
 |------|------|---------------------|----------|----------|------|
 
-角色可选：被告人/嫌疑人、同案犯、被害人、证人、鉴定人、办案人员、其他。
+角色：被告人/嫌疑人、同案犯、被害人、证人、鉴定人、办案人员、其他。
 涉案程度：核心、重要、次要、边缘。
-证据来源：证据用编号格式（如"见证据009"），指控文书写"据起诉书"/"据起诉意见书"。
 
-### 二、人物关系图
-
-请将人物关系输出为以下 JSON 格式。系统将据此生成图形化关系图：
+### 二、人物关系图（JSON格式）
 
 ```json
-{{
-  "subgraphs": [
-    {{"name": "核心合伙人", "nodes": ["A", "B"]}}
-  ],
-  "nodes": [
-    {{"id": "A", "label": "项少甫", "group": "core"}},
-    {{"id": "B", "label": "江涛", "group": "core"}}
-  ],
-  "edges": [
-    {{"from": "A", "to": "B", "label": "合伙开赌"}}
-  ]
-}}
+{{"nodes":[{{"id":"A","label":"姓名","group":"core"}}],"edges":[{{"from":"A","to":"B","label":"关系"}}],"subgraphs":[{{"name":"组名","nodes":["A","B"]}}]}}
 ```
 
-规则：
-- `nodes`: 所有涉案人员，`id` 为单字母标识符（A, B, C...），`label` 为姓名，`group` 可选：core（核心）、staff（执行）、witness（证人）、other（其他）
-- `edges`: 两人之间的关系，`label` 为关系描述（2-6 字关键词）
-- `subgraphs`: 按角色层级分组，`nodes` 中为该组包含的节点 ID 列表
-- 不限制节点数量，包含所有重要人物
-- 连线标签不要用 emoji 或特殊符号
-
 ### 三、关系详细分析
+梳理嫌疑人之间、嫌疑人与被害人、证人与各方的关系，说明性质、来源、对辩护的影响。"""
 
-请梳理以下关系维度：
-1. **嫌疑人之间的关系**：主从犯关系、共犯关系、是否存在互相推诿
-2. **嫌疑人与被害人之间的关系**：是否存在矛盾、利益冲突、熟悉程度
-3. **证人与各方的关系**：是否有利害关系、立场倾向
-4. **其他重要关系**：如介绍人、中间人、资金往来等
+        batch_results = await _batch_analyze_evidence(
+            texts, system_prompt, prompt_header, prompt_footer,
+            progress_cb=progress_cb, label="人物关系",
+        )
 
-对每组关系，说明：
-- 关系性质（亲属、朋友、同事、交易方等）
-- 关系来源（证据用编号格式，指控文书写"据起诉书"/"据起诉意见书"）
-- 对辩护的影响（有利/不利/中性）
-"""
-
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ]
-
-        md_output = await client.chat(messages)
+        # 合并多批结果：直接拼接 Markdown
+        md_output = "\n\n---\n\n".join(batch_results)
 
         # 优先尝试从 JSON 生成 Mermaid 图
         md_output = _extract_json_and_render(md_output, _json_to_mermaid_graph)
@@ -693,93 +743,50 @@ class AnalysisEngine:
 
         indictment_catalog, indictment_text, evidence_catalog_text, evidence_only = _split_indictment_and_evidence(texts)
 
-        all_text = _truncate_all(texts, max_total=_get_content_budget_chars())
-
-        system_prompt = """你是一位资深刑事辩护律师，正在梳理案卷中的事件脉络。
-请按时间顺序识别案件中的所有关键事件，并将相关证据归组到对应事件下。
+        system_prompt = """梳理案卷中的事件脉络。按时间顺序识别关键事件，将证据归组到对应事件下。
 
 **重要区分**：
-- 起诉书/起诉意见书是指控文书，不是证据。引用时写"据起诉书"或"据起诉意见书"
-- 只有正式证据（笔录、证言、鉴定意见、书证等）才用"见证据XXX"格式引用
+- 起诉书/起诉意见书是指控文书，引用时写"据起诉书"/"据起诉意见书"
+- 正式证据用"见证据XXX"格式
 
-重要原则：
-1. 以"事件"为单位，不是以"文件"为单位
-2. 同一事件可能涉及多份证据（供述、证言、物证、鉴定等）
-3. 对每个事件，要简要概括各证据的说法
-4. **必须输出时间线的 JSON 数据结构**（见下方示例）"""
+原则：以事件为单位，同事件挂接多份证据，必须输出时间线JSON。"""
 
-        user_prompt = f"""## 辩护对象
+        prompt_header = f"""## 辩护对象
 被告人：**{defendant}**
 
-## 指控文书（非证据，引用时写"据起诉书"/"据起诉意见书"）
-
+## 指控文书（非证据）
 {indictment_catalog}
 
-## 证据目录（按编号引用）
-
+## 证据目录
 {evidence_catalog_text}
 
 ## 全部案卷材料
+"""
 
-{all_text}
-
----
+        prompt_footer = """---
 
 ## 请完成以下分析
 
-### 一、事件时间线
-
-请将事件时间线输出为以下 JSON 格式。系统将据此生成图形化时间线：
+### 一、事件时间线（JSON格式）
 
 ```json
-{{
-  "title": "案件时间线",
-  "events": [
-    {{"date": "2025-12-22", "title": "第一次赌局开场", "evidence": ["见证据009", "见证据013"]}},
-    {{"date": "2026-01-21 19:40-23:00", "title": "终场聚赌，现场抓捕", "evidence": ["见证据001", "见证据027"]}}
-  ]
-}}
+{"title":"案件时间线","events":[{"date":"2025-12-22","title":"事件简述","evidence":["见证据009"]}]}
 ```
 
-规则：
-- `date`: 日期或时间范围，保留原始时间格式（如 `19:40-23:00`）
-- `title`: 事件简述（不超过 30 字）
-- `evidence`: 相关证据编号列表（仅正式证据，不包括起诉书/起诉意见书）
+规则：date用原始格式，title不超30字，evidence仅正式证据。
 
 ### 二、事件拆解与证据归组
 
-对每个事件，详细列出：
+每个事件列出：时间、地点、简述、相关证据（编号+名称+该证据说法1-2句）、初步观察（各证据是否一致、有无矛盾）。
 
-#### 事件 {{N}}：[事件名称]
-- **时间**：[具体时间或时间范围]
-- **地点**：[如材料中有]
-- **事件简述**：[简要概括发生了什么]
+确保不遗漏重要事件，每个事件挂接全部相关证据。"""
 
-**相关证据：**
-1. **[证据编号+名称]**（[证据类型]）：[该证据对该事件的说法，1-2 句话概括，标注页码]
-2. **[证据编号+名称]**（[证据类型]）：[...]
-3. ...
+        batch_results = await _batch_analyze_evidence(
+            texts, system_prompt, prompt_header, prompt_footer,
+            progress_cb=progress_cb, label="时间线",
+        )
 
-**初步观察：**
-- 各证据说法是否一致
-- 是否存在明显矛盾或疑点
-- 是否有证据缺失
-
----
-
-请确保：
-- 不遗漏重要事件
-- 每个事件都挂接全部相关证据
-- 观察要客观，不要做深入辩护分析（那是阶段 5 的工作）
-- 证据用"见证据XXX"格式，指控文书写"据起诉书"/"据起诉意见书"
-"""
-
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ]
-
-        md_output = await client.chat(messages)
+        md_output = "\n\n---\n\n".join(batch_results)
 
         # 优先尝试从 JSON 生成 Mermaid 时间线
         md_output = _extract_json_and_render(md_output, _json_to_mermaid_timeline)
@@ -961,69 +968,47 @@ class AnalysisEngine:
         if progress_cb:
             progress_cb("正在进行矛盾分析和口供对比...")
 
-        from llm_client import get_llm_client
-        client = get_llm_client()
+        contradiction_system = "识别证据间的矛盾和证据链薄弱环节。\n\n重要：起诉书/起诉意见书引用时写'据起诉书'/'据起诉意见书'，正式证据用'见证据XXX'格式。"
 
-        all_text = _truncate_all(texts, max_total=_get_content_budget_chars())
-
-        contradiction_prompt = f"""## 辩护对象
+        prompt_header = f"""## 辩护对象
 被告人：**{defendant}**
 
-## 指控文书（非证据，引用时写"据起诉书"/"据起诉意见书"）
-
+## 指控文书（非证据）
 {indictment_catalog}
 
-## 证据目录（按编号引用）
-
+## 证据目录
 {evidence_catalog_text}
 
 ## 全部案卷材料
+"""
 
-{all_text}
-
----
+        prompt_footer = """---
 
 ## 请完成以下分析
 
-**引用规则**：
-- 证据用编号格式，如"见证据009"、"见证据013"
-- 起诉书/起诉意见书是指控文书不是证据，引用时写"据起诉书"/"据起诉意见书"，不要用"见证据XXX"格式
-
 ### 一、口供稳定性分析（同一人多次笔录对比）
-
-对每个有多份笔录的人，按时间线列出陈述变化：
-
-#### [姓名] 的 {{N}} 次笔录对比
 
 | 时间 | 关键陈述 | 变化 | 可能原因 |
 |------|---------|------|---------|
 
-### 二、横向矛盾分析（不同证据对同一事实的记载）
-
-#### （一）关键事实横向比对
+### 二、横向矛盾分析
 
 | 比对维度 | 被告人供述 | 证人证言 | 书证/物证 | 是否矛盾 |
 |----------|-----------|---------|----------|----------|
 
-#### （二）矛盾类型识别
-- **直接矛盾**：描述完全相反
-- **间接矛盾**：推论与事实冲突
-- **隐性矛盾**：表面不矛盾但逻辑上无法同时成立
-
-#### （三）矛盾对证明力的影响
-- 核心事实矛盾 → 动摇指控基础
-- 细节矛盾 → 影响证据可信度
-- 可合理解释的矛盾 → 不影响采信
+矛盾类型：直接矛盾、间接矛盾、隐性矛盾。
+影响：核心事实矛盾→动摇指控基础，细节矛盾→影响可信度。
 
 ### 三、证据链条薄弱环节
-- 哪些环节仅靠言词证据，缺乏客观证据
-- 证据链条中是否存在断裂
-"""
+- 仅靠言词证据的环节
+- 证据链断裂处"""
 
-        contradiction_md = await client.chat([
-            {"role": "system", "content": "你是刑事辩护律师，正在识别证据间的矛盾和证据链薄弱环节。\n\n重要：起诉书/起诉意见书是指控文书不是证据，引用时写'据起诉书'/'据起诉意见书'，不要用'见证据XXX'格式。只有正式证据（笔录、证言、鉴定等）才用'见证据XXX'格式。"},
-            {"role": "user", "content": contradiction_prompt},
-        ])
+        batch_results = await _batch_analyze_evidence(
+            texts, contradiction_system, prompt_header, prompt_footer,
+            progress_cb=progress_cb, label="矛盾分析",
+        )
+
+        contradiction_md = "\n\n---\n\n".join(batch_results)
 
         self._save_stage(52, {"name": "矛盾分析"}, contradiction_md)
 
