@@ -2118,9 +2118,9 @@ _SKIP_FILE_PATTERNS = [
     re.compile(r'^#\s*封底'),
 ]
 
-_SKIP_SECTION_KEYWORDS = {"卷内文书目录", "犯罪嫌疑人诉讼权利义务告知书"}
+_SKIP_SECTION_KEYWORDS = {"卷内文书目录"}
 
-_SKIP_EVIDENCE_TYPES = {"程序性文书", "卷内文书目录", "其他程序性文书"}
+_SKIP_EVIDENCE_TYPES = set()  # 不再过滤程序性文书，它们证明程序合法性
 
 
 def _should_skip_file(text: str) -> bool:
