@@ -394,6 +394,9 @@ export function HomePage() {
         <div className="mb-md">
           <label className="text-sm font-medium mb-sm block">案件名称</label>
           <MacOSInput type="text" value={newCaseName} onChange={(e) => setNewCaseName(e.target.value)} placeholder="xx涉嫌开设赌场罪" />
+          <div style={{ fontSize: '11px', color: 'var(--macos-text-tertiary)', marginTop: '4px' }}>
+            💡 请务必在名称中包含所有涉嫌罪名，如"张三涉嫌诈骗罪、职务侵占罪"。系统将自动识别罪名用于分析。
+          </div>
         </div>
         <div className="mb-lg">
           <label className="text-sm font-medium mb-sm block">被告人姓名</label>
