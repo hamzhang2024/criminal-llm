@@ -1061,6 +1061,17 @@ async def _extract_single_file(
     from llm_client import get_llm_client, LLMRetryExhaustedError
     client = get_llm_client()
 
+    # 预过滤：封面/封底直接跳过
+    if _should_skip_file(md_text):
+        logger.info(f"[证据提取] {md_file.name}: 跳过（封面/封底）")
+        return (md_file.name, [])
+
+    # 预过滤：移除非证据段落（目录等）
+    original_len = len(md_text)
+    md_text = _strip_non_evidence_sections(md_text)
+    if len(md_text) < original_len:
+        logger.info(f"[证据提取] {md_file.name}: 移除非证据段落，{original_len:,} → {len(md_text):,} 字符")
+
     # 无重试的直接调用，超时由调用方控制
     timeout_seconds = 600  # 10 分钟
 
@@ -1106,6 +1117,12 @@ async def _extract_single_file(
             all_evidence_blocks.extend(blocks)
         evidence_blocks = _merge_evidence_blocks(all_evidence_blocks)
         logger.info(f"[证据提取] {md_file.name}: {len(chunks)} 块合并后 {len(evidence_blocks)} 份证据")
+
+    # 后过滤：移除非证据类型
+    before_count = len(evidence_blocks)
+    evidence_blocks = [b for b in evidence_blocks if b.get("type", "") not in _SKIP_EVIDENCE_TYPES]
+    if len(evidence_blocks) < before_count:
+        logger.info(f"[证据提取] {md_file.name}: 过滤非证据 {before_count - len(evidence_blocks)} 份（目录/程序性文书）")
 
     # 调试：将解析结果保存到 debug 文件
     debug_file = temp_dir / f"_debug_{md_file.stem}.txt"
@@ -2091,6 +2108,37 @@ async def clear_stage(case_id: str, stage_num: int):
 
 
 _tiktoken_enc = None
+
+# ── 非证据过滤 ──
+
+_SKIP_FILE_PATTERNS = [
+    re.compile(r'^#\s*刑事侦查卷宗'),
+    re.compile(r'案件名称\s+\S+\s+案件编号'),
+    re.compile(r'立卷单位\s+\S+\s+立卷人'),
+    re.compile(r'^#\s*封底'),
+]
+
+_SKIP_SECTION_KEYWORDS = {"卷内文书目录", "犯罪嫌疑人诉讼权利义务告知书"}
+
+_SKIP_EVIDENCE_TYPES = {"程序性文书", "卷内文书目录", "其他程序性文书"}
+
+
+def _should_skip_file(text: str) -> bool:
+    """判断整个文件是否为封面/封底（前20行匹配模式）"""
+    head = "\n".join(text.strip().split("\n")[:20])
+    return any(p.search(head) for p in _SKIP_FILE_PATTERNS)
+
+
+def _strip_non_evidence_sections(text: str) -> str:
+    """移除文件中的非证据段落（目录等），按 ## 标题拆分"""
+    sections = re.split(r'\n(?=## )', text)
+    kept = []
+    for s in sections:
+        if any(kw in s[:100] for kw in _SKIP_SECTION_KEYWORDS):
+            continue
+        kept.append(s)
+    return "\n\n".join(kept)
+
 
 def _count_tokens(text: str) -> int:
     """用 tiktoken 精确计算 token 数"""
