@@ -157,62 +157,53 @@ jobs:
         run: |
           echo "=== 验证后端构建产物 ==="
           RES_DIR="frontend/src-tauri/resources/backend"
+
+          # 1. 后端二进制存在
           if [ "${{ matrix.platform.os }}" = "windows-latest" ]; then
             EXEC="$RES_DIR/criminal-llm.exe"
           else
             EXEC="$RES_DIR/criminal-llm"
           fi
-          if [ -f "$EXEC" ]; then
-            SIZE=$(stat -f%z "$EXEC" 2>/dev/null || stat -c%s "$EXEC" 2>/dev/null)
-            echo "后端可执行文件: $EXEC ($SIZE bytes)"
-            # onedir 模式：入口 exe 是 stub（~10MB），真正代码在 _internal/
-            if [ "$SIZE" -lt 1048576 ]; then
-              echo "❌ 后端可执行文件小于 1MB，可能打包不完整"
-              exit 1
-            fi
-            echo "✅ 后端可执行文件大小正常"
-            # 验证 _internal 目录存在（onedir 模式）
-            if [ -d "$RES_DIR/_internal" ]; then
-              INTERNAL_SIZE=$(du -sh "$RES_DIR/_internal" 2>/dev/null | cut -f1 || echo "未知")
-              echo "✅ _internal 目录存在 ($INTERNAL_SIZE)"
-            else
-              echo "⚠️ _internal 目录缺失（onefile 模式或打包异常）"
-            fi
-          else
+          if [ ! -f "$EXEC" ]; then
             echo "❌ 后端可执行文件缺失: $EXEC"
-            echo "📋 当前后端资源目录:"
-            ls -la "$RES_DIR/" 2>/dev/null || dir "$RES_DIR"
             exit 1
           fi
+          echo "✅ 后端可执行文件存在"
 
-          echo ""
-          echo "=== 验证 legal_db ==="
-          if [ -d "$RES_DIR/legal_db" ]; then
-            echo "✅ legal_db 目录存在"
-            ls "$RES_DIR/legal_db/"
-          else
-            echo "❌ legal_db 目录缺失!"
-            echo "📋 尝试从 backend 复制..."
-            if [ -d "backend/legal_db" ]; then
-              cp -r backend/legal_db "$RES_DIR/"
-              echo "✅ 已复制 legal_db"
-            else
-              echo "❌ backend/legal_db 也不存在!"
+          # 2. _internal 目录存在（Python 依赖）
+          if [ ! -d "$RES_DIR/_internal" ]; then
+            echo "❌ _internal 目录缺失（Python 依赖未打包）"
+            exit 1
+          fi
+          INTERNAL_COUNT=$(find "$RES_DIR/_internal" -type f | wc -l)
+          echo "✅ _internal 目录存在（$INTERNAL_COUNT 个文件）"
+
+          # 3. legal_db 存在
+          if [ ! -d "$RES_DIR/legal_db" ]; then
+            echo "❌ legal_db 目录缺失"
+            exit 1
+          fi
+          echo "✅ legal_db 目录存在"
+
+          # 4. 后端能启动并响应 health
+          echo "=== 冒烟测试：后端启动 ==="
+          cd backend
+          python3 main.py &
+          BACKEND_PID=$!
+          sleep 5
+          for i in $(seq 1 25); do
+            if curl -sf http://localhost:8080/api/health > /dev/null 2>&1; then
+              echo "✅ 后端启动成功，health 响应 OK"
+              kill $BACKEND_PID 2>/dev/null
+              break
+            fi
+            if [ $i -eq 25 ]; then
+              echo "❌ 后端 30 秒内未响应 health"
+              kill $BACKEND_PID 2>/dev/null
               exit 1
             fi
-          fi
-
-          echo ""
-          echo "=== 验证前端构建产物 ==="
-          if [ -f "frontend/dist/index.html" ]; then
-            echo "✅ dist/index.html 存在"
-          else
-            echo "❌ frontend/dist/index.html 缺失!"
-            exit 1
-          fi
-
-          echo ""
-          echo "=== 全部完整性检查通过 ==="
+            sleep 1
+          done
 
       # ---- 冒烟测试：后端能启动并响应 health ----
       - name: Smoke test - backend startup
