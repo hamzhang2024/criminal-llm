@@ -117,10 +117,21 @@ jobs:
         shell: bash
         run: |
           RES_DIR="frontend/src-tauri/resources/backend"
+          rm -rf "$RES_DIR"
           mkdir -p "$RES_DIR"
 
-          # onedir 模式（三平台统一）：dist/criminal-llm/ 是目录（二进制 + _internal/）
-          cp -r backend/dist/criminal-llm/* "$RES_DIR/" 2>/dev/null || true
+          # 验证 PyInstaller 输出存在
+          if [ ! -d "backend/dist/criminal-llm" ]; then
+            echo "❌ PyInstaller 输出目录不存在: backend/dist/criminal-llm"
+            echo "📋 backend/dist/ 内容:"
+            ls -la backend/dist/ 2>/dev/null || echo "backend/dist/ 也不存在"
+            exit 1
+          fi
+
+          # onedir 模式：复制二进制 + _internal/
+          cp -r backend/dist/criminal-llm/* "$RES_DIR/"
+          echo "✅ 后端资源已复制"
+          ls -la "$RES_DIR/" | head -10
 
           # 确保 legal_db 存在（从 backend/legal_db 复制）
           if [ -d "$RES_DIR/legal_db" ]; then
