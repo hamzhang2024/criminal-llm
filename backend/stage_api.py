@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import APIRouter, Body, HTTPException
+from fastapi import APIRouter, Body, HTTPException, Query
 
 from analysis_engine import AnalysisEngine
 from analysis_pipeline import AnalysisPipeline, _contains_indictment_title
@@ -699,7 +699,10 @@ async def get_cross_examination(case_id: str):
 # ========== 证据链可视化 ==========
 
 @router.get("/{case_id}/evidence-chain")
-async def get_evidence_chain(case_id: str):
+async def get_evidence_chain(
+    case_id: str,
+    charge: Optional[str] = Query(default=None, description="按罪名过滤证据链（空=全部）"),
+):
     """获取证据链可视化数据
 
     返回证据节点和关系边，用于前端 SVG 可视化渲染：
@@ -714,7 +717,7 @@ async def get_evidence_chain(case_id: str):
     from analysis_engine import generate_evidence_chain
 
     try:
-        result = generate_evidence_chain(case_path)
+        result = generate_evidence_chain(case_path, charge=charge if charge else None)
         return result
     except Exception as e:
         logger.error(f"[证据链] {case_id}: 分析失败: {e}")

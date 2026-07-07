@@ -276,8 +276,12 @@ export interface EvidenceChainData {
 }
 
 /** 获取证据链可视化数据 */
-export async function getEvidenceChain(caseId: string): Promise<EvidenceChainData> {
-  const res = await fetch(`${API_BASE}/stage-analysis/${caseId}/evidence-chain`)
+export async function getEvidenceChain(caseId: string, charge?: string): Promise<EvidenceChainData> {
+  let url = `${API_BASE}/stage-analysis/${caseId}/evidence-chain`
+  if (charge) {
+    url += `?charge=${encodeURIComponent(charge)}`
+  }
+  const res = await fetch(url)
   if (!res.ok) {
     return { nodes: [], edges: [], groups: [], total_evidence: 0, total_relations: 0, error: '获取失败' }
   }

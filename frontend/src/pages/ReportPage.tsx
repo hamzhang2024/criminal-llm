@@ -198,6 +198,7 @@ export function ReportPage() {
   const [evidenceChainLoading, setEvidenceChainLoading] = useState(false)
   const [evidenceChainView, setEvidenceChainView] = useState<'mindmap' | 'graph'>('mindmap')
   const [evidenceChainFullscreen, setEvidenceChainFullscreen] = useState(false)
+  const [evidenceChainCharge, setEvidenceChainCharge] = useState<string>('')
   // caseCharges 已移除，使用 charges 代替
 
   // 辩护意见折叠面板状态
@@ -558,18 +559,21 @@ export function ReportPage() {
     if (activeTab === 'evidence_center' && caseId && !evidenceReview) {
       loadEvidenceReview()
     }
-    // 加载证据链可视化数据
-    if (activeTab === 'evidence_center' && caseId && !evidenceChainData && !evidenceChainLoading) {
-      setEvidenceChainLoading(true)
-      getEvidenceChain(caseId).then(data => {
-        setEvidenceChainData(data)
-        setEvidenceChainLoading(false)
-      }).catch(() => setEvidenceChainLoading(false))
-    }
     if (activeTab === 'evidence_center' && caseId && !evidenceReview) {
       loadEvidenceReview()
     }
   }, [activeTab, caseId, evidenceReview, loadEvidenceReview])
+
+  // 证据链可视化数据加载（随罪名筛选切换重新加载）
+  useEffect(() => {
+    if (activeTab === 'evidence_center' && caseId) {
+      setEvidenceChainLoading(true)
+      getEvidenceChain(caseId, evidenceChainCharge || undefined).then(data => {
+        setEvidenceChainData(data)
+        setEvidenceChainLoading(false)
+      }).catch(() => setEvidenceChainLoading(false))
+    }
+  }, [activeTab, caseId, evidenceChainCharge])
 
   // 加载阅卷笔录
   const loadReviewNotes = useCallback(async () => {
@@ -2667,6 +2671,47 @@ export function ReportPage() {
           )
         })()}
 
+        {/* 证据链罪名筛选（多罪名时显示） */}
+        {charges.length > 1 && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap',
+            padding: '8px 12px', background: colors.surfaceAlt,
+            borderRadius: '8px', border: `1px solid ${colors.border}`,
+            marginBottom: '8px',
+          }}>
+            <span style={{ fontSize: '11px', color: colors.textTertiary, marginRight: '2px' }}>罪名:</span>
+            <button
+              onClick={() => setEvidenceChainCharge('')}
+              style={{
+                padding: '3px 10px', fontSize: '11px', borderRadius: '12px',
+                border: `1px solid ${!evidenceChainCharge ? colors.accent : colors.border}`,
+                background: !evidenceChainCharge ? colors.accentLight : 'transparent',
+                color: !evidenceChainCharge ? colors.accent : colors.textSecondary,
+                cursor: 'pointer', fontWeight: !evidenceChainCharge ? 600 : 400,
+                transition: 'all 0.15s',
+              }}
+            >
+              全部
+            </button>
+            {charges.map(c => (
+              <button
+                key={c}
+                onClick={() => setEvidenceChainCharge(c)}
+                style={{
+                  padding: '3px 10px', fontSize: '11px', borderRadius: '12px',
+                  border: `1px solid ${evidenceChainCharge === c ? colors.accent : colors.border}`,
+                  background: evidenceChainCharge === c ? colors.accentLight : 'transparent',
+                  color: evidenceChainCharge === c ? colors.accent : colors.textSecondary,
+                  cursor: 'pointer', fontWeight: evidenceChainCharge === c ? 600 : 400,
+                  transition: 'all 0.15s',
+                }}
+              >
+                {c}
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* 0c. 证据链可视化 */}
         <div style={{ border: `1px solid ${colors.border}`, borderRadius: '8px', overflow: 'hidden' }}>
           <div style={panelHeaderStyle} onClick={() => togglePanel('evidenceChain')}>
@@ -2674,7 +2719,7 @@ export function ReportPage() {
               <Network className="w-4 h-4" style={{ color: '#34C759' }} />
               <span style={{ fontSize: '13px', fontWeight: 600, color: colors.textPrimary }}>证据链可视化</span>
               <span style={{ fontSize: '11px', color: colors.textTertiary }}>
-                {evidenceChainData ? `${evidenceChainData.summary?.total_evidence || 0} 证据 · ${evidenceChainData.summary?.total_relations || 0} 关联` : evidenceChainLoading ? '加载中...' : ''}
+                {evidenceChainData ? `${evidenceChainData.summary?.total_evidence || 0} 证据 · ${evidenceChainData.summary?.total_relations || 0} 关联${evidenceChainCharge ? ` (${evidenceChainCharge})` : ''}` : evidenceChainLoading ? '加载中...' : ''}
               </span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>

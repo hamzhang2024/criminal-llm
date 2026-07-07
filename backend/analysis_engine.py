@@ -1749,7 +1749,7 @@ class AnalysisEngine:
 
 # ========== 工具函数 ==========
 
-def generate_evidence_chain(case_path: Path) -> Dict[str, Any]:
+def generate_evidence_chain(case_path: Path, charge: Optional[str] = None) -> Dict[str, Any]:
     """生成证据链可视化数据
 
     结构：
@@ -1759,6 +1759,10 @@ def generate_evidence_chain(case_path: Path) -> Dict[str, Any]:
     - 边：证明关系、印证关系、矛盾关系
 
     核心逻辑：证据用于证明事实
+
+    Args:
+        case_path: 案件路径
+        charge: 可选，按罪名筛选证据（仅返回关联该罪名的证据）
     """
     analysis_dir = case_path / "analysis"
     evidence_dir = case_path / "evidence"
@@ -1776,6 +1780,15 @@ def generate_evidence_chain(case_path: Path) -> Dict[str, Any]:
 
     if not evidence_list:
         return {"nodes": [], "edges": [], "groups": [], "total_evidence": 0, "total_relations": 0, "error": "无证据数据"}
+
+    # 按罪名过滤证据（多罪名案件支持）
+    if charge:
+        evidence_list = [
+            ev for ev in evidence_list
+            if isinstance(ev, dict) and charge in ev.get("charges", [])
+        ]
+        if not evidence_list:
+            return {"nodes": [], "edges": [], "groups": [], "total_evidence": 0, "total_relations": 0, "error": f"罪名「{charge}」下无关联证据"}
 
     # 2. 提取指控事实（从起诉书/起诉意见书）
     accusation = _extract_accusation(evidence_list, analysis_dir, evidence_dir)
@@ -2126,9 +2139,10 @@ def generate_evidence_chain(case_path: Path) -> Dict[str, Any]:
 
     # 6.1 指控事实节点
     if accusation:
+        accusation_name = f"指控：{charge}" if charge else accusation.get("name", "指控事实")
         nodes.append({
             "id": "accusation",
-            "name": accusation.get("name", "指控事实"),
+            "name": accusation_name,
             "description": accusation.get("description", "")[:100],
             "type": "accusation",
             "color": "#1e3a5f",
