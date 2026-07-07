@@ -2619,7 +2619,7 @@ export function ReportPage() {
         })()}
 
         {/* 0b. 证据-罪名关联矩阵(多罪名时显示) */}
-        {charges.length > 1 && (() => {
+        {false && charges.length > 1 && (() => {
           const chargesList = charges
           const typeSet = new Set<string>()
           evidenceItems.forEach(e => typeSet.add(e.type || '其他'))
@@ -2671,8 +2671,8 @@ export function ReportPage() {
           )
         })()}
 
-        {/* 0c. 证据链可视化 */}
-        <div style={{ border: `1px solid ${colors.border}`, borderRadius: '8px', overflow: 'hidden' }}>
+{/* 0c. 证据链可视化（已关闭） */}
+        {false && (<>        <div style={{ border: `1px solid ${colors.border}`, borderRadius: '8px', overflow: 'hidden' }}>
           <div style={panelHeaderStyle} onClick={() => togglePanel('evidenceChain')}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <Network className="w-4 h-4" style={{ color: '#34C759' }} />
@@ -2802,6 +2802,8 @@ export function ReportPage() {
             </div>
           </div>
         )}
+        </>
+        )}
 
         {/* 1. 证据列表（默认展开） */}
         <div style={{ border: `1px solid ${colors.border}`, borderRadius: '8px', overflow: 'hidden' }}>
@@ -2838,7 +2840,8 @@ export function ReportPage() {
           )}
         </div>
 
-        {/* 2. 证据质证意见（合并三性审查） */}
+{/* 2. 证据质证意见（已关闭） */}
+        {false && (<>
         <div style={{ border: `1px solid ${colors.border}`, borderRadius: '8px', overflow: 'hidden' }}>
           <div style={panelHeaderStyle} onClick={() => togglePanel('evidenceReview')}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -3006,7 +3009,10 @@ export function ReportPage() {
           )}
         </div>
 
-        {/* 4. 阅卷笔录（可折叠） */}
+        </>
+        )}
+{/* 4. 阅卷笔录（已关闭） */}
+        {false && (<>
         <div style={{ border: `1px solid ${colors.border}`, borderRadius: '8px', overflow: 'hidden' }}>
           <div style={panelHeaderStyle} onClick={() => togglePanel('reviewNotes')}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -3041,6 +3047,8 @@ export function ReportPage() {
             </div>
           )}
         </div>
+        </>
+        )}
       </div>
     )
   }
@@ -3096,7 +3104,8 @@ export function ReportPage() {
           )}
         </div>
 
-        {/* 2. 质证意见（可折叠） */}
+{/* 2. 质证意见（已关闭） */}
+          {false && (<>
         <div style={{ border: `1px solid ${colors.border}`, borderRadius: '8px', overflow: 'hidden' }}>
           <div style={panelHeaderStyle} onClick={() => togglePanel('crossExam')}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -3142,6 +3151,8 @@ export function ReportPage() {
           )}
         </div>
 
+          </>
+          )}
         {/* 3. 完整报告（可折叠） */}
         <div style={{ border: `1px solid ${colors.border}`, borderRadius: '8px', overflow: 'hidden' }}>
           <div style={panelHeaderStyle} onClick={() => togglePanel('fullReport')}>
