@@ -1910,9 +1910,9 @@ export function ReportPage() {
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <Eye className="w-4 h-4" style={{ color: '#1a6b6a' }} />
             <span style={{ fontSize: '13px', fontWeight: 600, color: colors.textPrimary }}>证据质证意见</span>
-            {evidenceReview && (
+            {evidenceReview! && (
               <span style={{ fontSize: '11px', color: colors.textTertiary }}>
-                {evidenceReview.reviews.length} 条已审查
+                {evidenceReview!.reviews.length} 条已审查
               </span>
             )}
           </div>
@@ -1949,7 +1949,7 @@ export function ReportPage() {
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
             {/* 审查概览 */}
-            {evidenceReview.reviews.length > 0 && (
+            {evidenceReview!.reviews.length > 0 && (
               <div style={{
                 background: 'rgba(26,107,106,0.05)',
                 border: '1px solid rgba(26,107,106,0.2)',
@@ -1958,9 +1958,9 @@ export function ReportPage() {
                 marginBottom: '4px',
               }}>
                 <div style={{ fontSize: '11px', color: colors.textSecondary }}>
-                  审查证据总数：{evidenceReview.reviews.length} 条
+                  审查证据总数：{evidenceReview!.reviews.length} 条
                   {' | '}
-                  问题证据：{evidenceReview.reviews.filter(r =>
+                  问题证据：{evidenceReview!.reviews.filter(r =>
                     (r.legality?.score || 100) < 70 ||
                     (r.authenticity?.score || 100) < 70 ||
                     (r.relevance?.score || 100) < 70
@@ -1969,7 +1969,7 @@ export function ReportPage() {
               </div>
             )}
 
-            {evidenceReview.reviews.map((review, idx) => {
+            {evidenceReview!.reviews.map((review, idx) => {
               const hasIssues = (review.legality?.score || 100) < 70 ||
                                (review.authenticity?.score || 100) < 70 ||
                                (review.relevance?.score || 100) < 70
@@ -2678,7 +2678,7 @@ export function ReportPage() {
               <Network className="w-4 h-4" style={{ color: '#34C759' }} />
               <span style={{ fontSize: '13px', fontWeight: 600, color: colors.textPrimary }}>证据链可视化</span>
               <span style={{ fontSize: '11px', color: colors.textTertiary }}>
-                {evidenceChainData ? `${evidenceChainData.summary?.total_evidence || 0} 证据 · ${evidenceChainData.summary?.total_relations || 0} 关联${evidenceChainCharge ? ` (${evidenceChainCharge})` : ''}` : evidenceChainLoading ? '加载中...' : ''}
+                {evidenceChainData ? `${evidenceChainData!.summary?.total_evidence || 0} 证据 · ${evidenceChainData!.summary?.total_relations || 0} 关联${evidenceChainCharge ? ` (${evidenceChainCharge})` : ''}` : evidenceChainLoading ? '加载中...' : ''}
               </span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -2731,14 +2731,14 @@ export function ReportPage() {
                 </div>
               ) : evidenceChainData ? (
                 evidenceChainView === 'mindmap' ? (
-                  <EvidenceChainMindmap data={evidenceChainData} onNodeClick={(node) => {
+                  <EvidenceChainMindmap data={evidenceChainData!} onNodeClick={(node) => {
                     if (node.type === 'evidence' && node.id) {
                       const ev = evidenceItems.find(e => e.id === String(node.id))
                       if (ev) setSelectedEvidenceId(ev.id)
                     }
                   }} />
                 ) : (
-                  <EvidenceChainGraph data={evidenceChainData} onNodeClick={(node) => {
+                  <EvidenceChainGraph data={evidenceChainData!} onNodeClick={(node) => {
                     if (node.type === 'evidence' && node.id) {
                       const ev = evidenceItems.find(e => e.id === String(node.id))
                       if (ev) setSelectedEvidenceId(ev.id)
@@ -2770,7 +2770,7 @@ export function ReportPage() {
                 <Network className="w-5 h-5" style={{ color: '#34C759' }} />
                 <span style={{ fontSize: '15px', fontWeight: 600, color: colors.textPrimary }}>证据链可视化</span>
                 <span style={{ fontSize: '12px', color: colors.textTertiary }}>
-                  {evidenceChainData.summary?.total_evidence || 0} 证据 · {evidenceChainData.summary?.total_relations || 0} 关联
+                  {evidenceChainData!.summary?.total_evidence || 0} 证据 · {evidenceChainData!.summary?.total_relations || 0} 关联
                 </span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -2785,14 +2785,14 @@ export function ReportPage() {
             {/* 全屏内容区 */}
             <div style={{ flex: 1, overflow: 'auto', padding: '8px', background: colors.surface }}>
               {evidenceChainView === 'mindmap' ? (
-                <EvidenceChainMindmap data={evidenceChainData} onNodeClick={(node) => {
+                <EvidenceChainMindmap data={evidenceChainData!} onNodeClick={(node) => {
                   if (node.type === 'evidence' && node.id) {
                     const ev = evidenceItems.find(e => e.id === String(node.id))
                     if (ev) { setSelectedEvidenceId(ev.id); setEvidenceChainFullscreen(false) }
                   }
                 }} />
               ) : (
-                <EvidenceChainGraph data={evidenceChainData} onNodeClick={(node) => {
+                <EvidenceChainGraph data={evidenceChainData!} onNodeClick={(node) => {
                   if (node.type === 'evidence' && node.id) {
                     const ev = evidenceItems.find(e => e.id === String(node.id))
                     if (ev) { setSelectedEvidenceId(ev.id); setEvidenceChainFullscreen(false) }
@@ -2847,13 +2847,13 @@ export function ReportPage() {
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <Gavel className="w-4 h-4" style={{ color: '#0891b2' }} />
               <span style={{ fontSize: '13px', fontWeight: 600, color: colors.textPrimary }}>证据质证意见</span>
-              {evidenceReview && (
-                <span style={{ fontSize: '11px', color: colors.textTertiary }}>{evidenceReview.reviews.length} 条已审查</span>
+              {evidenceReview! && (
+                <span style={{ fontSize: '11px', color: colors.textTertiary }}>{evidenceReview!.reviews.length} 条已审查</span>
               )}
             </div>
             <ChevronIcon expanded={evidenceCenterPanels.evidenceReview} />
           </div>
-          {evidenceCenterPanels.evidenceReview && (
+          {evidenceCenterPanels.evidenceReview! && (
             <div style={{ padding: '16px', background: colors.surface }}>
               {/* 审查按钮 */}
               <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '12px' }}>
@@ -2880,7 +2880,7 @@ export function ReportPage() {
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '500px', overflow: 'auto' }}>
                   {/* 审查概览 */}
-                  {evidenceReview.reviews.length > 0 && (
+                  {evidenceReview!.reviews.length > 0 && (
                     <div style={{
                       background: 'rgba(8,145,178,0.05)',
                       border: '1px solid rgba(8,145,178,0.2)',
@@ -2889,9 +2889,9 @@ export function ReportPage() {
                       marginBottom: '4px',
                     }}>
                       <span style={{ fontSize: '11px', color: colors.textSecondary }}>
-                        审查证据：{evidenceReview.reviews.length} 条
+                        审查证据：{evidenceReview!.reviews.length} 条
                         {' | '}
-                        问题证据：{evidenceReview.reviews.filter(r =>
+                        问题证据：{evidenceReview!.reviews.filter(r =>
                           (r.legality?.score || 100) < 70 ||
                           (r.authenticity?.score || 100) < 70 ||
                           (r.relevance?.score || 100) < 70
@@ -2900,7 +2900,7 @@ export function ReportPage() {
                     </div>
                   )}
 
-                  {evidenceReview.reviews.map((review, idx) => {
+                  {evidenceReview!.reviews.map((review, idx) => {
                     const hasIssues = (review.legality?.score || 100) < 70 ||
                                      (review.authenticity?.score || 100) < 70 ||
                                      (review.relevance?.score || 100) < 70
