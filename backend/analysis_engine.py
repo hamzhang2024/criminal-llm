@@ -2139,11 +2139,16 @@ def generate_evidence_chain(case_path: Path, charge: Optional[str] = None) -> Di
 
     # 6.1 指控事实节点
     if accusation:
-        accusation_name = f"指控：{charge}" if charge else accusation.get("name", "指控事实")
+        if charge:
+            accusation_name = f"指控：{charge}"
+            accusation_desc = f"以{charge}定罪的事实依据"
+        else:
+            accusation_name = accusation.get("name", "指控事实")
+            accusation_desc = accusation.get("description", "")[:100]
         nodes.append({
             "id": "accusation",
             "name": accusation_name,
-            "description": accusation.get("description", "")[:100],
+            "description": accusation_desc,
             "type": "accusation",
             "color": "#1e3a5f",
         })

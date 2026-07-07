@@ -2671,47 +2671,6 @@ export function ReportPage() {
           )
         })()}
 
-        {/* 证据链罪名筛选（多罪名时显示） */}
-        {charges.length > 1 && (
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap',
-            padding: '8px 12px', background: colors.surfaceAlt,
-            borderRadius: '8px', border: `1px solid ${colors.border}`,
-            marginBottom: '8px',
-          }}>
-            <span style={{ fontSize: '11px', color: colors.textTertiary, marginRight: '2px' }}>罪名:</span>
-            <button
-              onClick={() => setEvidenceChainCharge('')}
-              style={{
-                padding: '3px 10px', fontSize: '11px', borderRadius: '12px',
-                border: `1px solid ${!evidenceChainCharge ? colors.accent : colors.border}`,
-                background: !evidenceChainCharge ? colors.accentLight : 'transparent',
-                color: !evidenceChainCharge ? colors.accent : colors.textSecondary,
-                cursor: 'pointer', fontWeight: !evidenceChainCharge ? 600 : 400,
-                transition: 'all 0.15s',
-              }}
-            >
-              全部
-            </button>
-            {charges.map(c => (
-              <button
-                key={c}
-                onClick={() => setEvidenceChainCharge(c)}
-                style={{
-                  padding: '3px 10px', fontSize: '11px', borderRadius: '12px',
-                  border: `1px solid ${evidenceChainCharge === c ? colors.accent : colors.border}`,
-                  background: evidenceChainCharge === c ? colors.accentLight : 'transparent',
-                  color: evidenceChainCharge === c ? colors.accent : colors.textSecondary,
-                  cursor: 'pointer', fontWeight: evidenceChainCharge === c ? 600 : 400,
-                  transition: 'all 0.15s',
-                }}
-              >
-                {c}
-              </button>
-            ))}
-          </div>
-        )}
-
         {/* 0c. 证据链可视化 */}
         <div style={{ border: `1px solid ${colors.border}`, borderRadius: '8px', overflow: 'hidden' }}>
           <div style={panelHeaderStyle} onClick={() => togglePanel('evidenceChain')}>
@@ -2723,6 +2682,34 @@ export function ReportPage() {
               </span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              {/* 罪名筛选胶囊（多罪名时显示） */}
+              {charges.length > 1 && evidenceChainData && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setEvidenceChainCharge(''); }}
+                    style={{
+                      padding: '2px 8px', fontSize: '10px', borderRadius: '4px',
+                      border: `1px solid ${!evidenceChainCharge ? colors.accent : colors.border}`,
+                      background: !evidenceChainCharge ? colors.accentLight : 'transparent',
+                      color: !evidenceChainCharge ? colors.accent : colors.textSecondary,
+                      cursor: 'pointer', fontWeight: !evidenceChainCharge ? 600 : 400,
+                    }}
+                  >全部</button>
+                  {charges.map(c => (
+                    <button
+                      key={c}
+                      onClick={(e) => { e.stopPropagation(); setEvidenceChainCharge(c); }}
+                      style={{
+                        padding: '2px 8px', fontSize: '10px', borderRadius: '4px',
+                        border: `1px solid ${evidenceChainCharge === c ? colors.accent : colors.border}`,
+                        background: evidenceChainCharge === c ? colors.accentLight : 'transparent',
+                        color: evidenceChainCharge === c ? colors.accent : colors.textSecondary,
+                        cursor: 'pointer', fontWeight: evidenceChainCharge === c ? 600 : 400,
+                      }}
+                    >{c}</button>
+                  ))}
+                </div>
+              )}
               {evidenceChainData && (
                 <>
                   <button onClick={(e) => { e.stopPropagation(); setEvidenceChainView(v => v === 'mindmap' ? 'graph' : 'mindmap') }} style={{ padding: '2px 8px', fontSize: '10px', borderRadius: '4px', border: `1px solid ${colors.border}`, background: 'transparent', color: colors.textSecondary, cursor: 'pointer' }}>
