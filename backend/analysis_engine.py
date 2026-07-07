@@ -701,16 +701,55 @@ class AnalysisEngine:
             progress_cb=progress_cb, label="人物关系",
         )
 
-        # 合并多批结果：直接拼接 Markdown
-        md_output = "\n\n---\n\n".join(batch_results)
+        # 合并多批结果：提取所有批次的 JSON 数据合并后渲染
+        all_nodes = []
+        all_edges = []
+        all_subgraphs = []
+        markdown_parts = []
 
-        # 优先尝试从 JSON 生成 Mermaid 图
-        md_output = _extract_json_and_render(md_output, _json_to_mermaid_graph)
+        import re as _re
+        for batch_md in batch_results:
+            json_blocks = _re.findall(r'```json\n(.*?)```', batch_md, _re.DOTALL)
+            for block in json_blocks:
+                try:
+                    data = json.loads(block.strip())
+                    all_nodes.extend(data.get("nodes", []))
+                    all_edges.extend(data.get("edges", []))
+                    all_subgraphs.extend(data.get("subgraphs", []))
+                except (json.JSONDecodeError, KeyError, TypeError):
+                    pass
+            # 保留非 JSON 的 markdown 内容
+            cleaned = _re.sub(r'```json\n.*?```', '', batch_md, flags=_re.DOTALL).strip()
+            if cleaned:
+                markdown_parts.append(cleaned)
 
-        # 如果 JSON 提取失败（LLM 直接输出了 mermaid），回退到旧的后处理逻辑
-        if '```mermaid' in md_output:
-            import re as _re
-            md_output = _legacy_fix_mermaid(md_output)
+        # 去重节点（按 id 去重，保留第一个出现的）
+        seen_ids = set()
+        unique_nodes = []
+        for n in all_nodes:
+            if n["id"] not in seen_ids:
+                seen_ids.add(n["id"])
+                unique_nodes.append(n)
+
+        # 去重边（按 from+to+label 去重）
+        seen_edges = set()
+        unique_edges = []
+        for e in all_edges:
+            key = (e["from"], e["to"], e.get("label", ""))
+            if key not in seen_edges:
+                seen_edges.add(key)
+                unique_edges.append(e)
+
+        if unique_nodes:
+            merged_json = json.dumps({
+                "nodes": unique_nodes,
+                "edges": unique_edges,
+                "subgraphs": all_subgraphs,
+            }, ensure_ascii=False)
+            mermaid = _json_to_mermaid_graph({"nodes": unique_nodes, "edges": unique_edges, "subgraphs": all_subgraphs})
+            markdown_parts.insert(0, f"```mermaid\n{mermaid}\n```")
+
+        md_output = "\n\n---\n\n".join(markdown_parts) if markdown_parts else "\n\n---\n\n".join(batch_results)
 
         data = {
             "stage": 2,
