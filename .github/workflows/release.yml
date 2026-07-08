@@ -189,13 +189,14 @@ jobs:
           echo "=== 冒烟测试：运行打包产物 ==="
           RES_DIR="frontend/src-tauri/resources/backend"
           if [ "${{ matrix.platform.os }}" = "windows-latest" ]; then
-            EXEC="$RES_DIR/criminal-llm.exe"
+            EXEC_NAME="criminal-llm.exe"
           else
-            EXEC="$RES_DIR/criminal-llm"
+            EXEC_NAME="criminal-llm"
           fi
           # 切到 resources 目录，让二进制能找到 legal_db/_internal
           cd "$RES_DIR"
-          ./$EXEC &
+          chmod +x "$EXEC_NAME" 2>/dev/null || true
+          ./"$EXEC_NAME" &
           BACKEND_PID=$!
           sleep 5
           for i in $(seq 1 25); do
