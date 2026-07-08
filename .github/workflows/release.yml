@@ -185,47 +185,32 @@ jobs:
           fi
           echo "✅ legal_db 目录存在"
 
-          # 4. 后端能启动并响应 health
-          echo "=== 冒烟测试：后端启动 ==="
-          cd backend
-          python3 main.py &
+          # 4. 冒烟测试：跑打包产物二进制（而非源码），验证 PyInstaller 打包完整性
+          echo "=== 冒烟测试：运行打包产物 ==="
+          RES_DIR="frontend/src-tauri/resources/backend"
+          if [ "${{ matrix.platform.os }}" = "windows-latest" ]; then
+            EXEC="$RES_DIR/criminal-llm.exe"
+          else
+            EXEC="$RES_DIR/criminal-llm"
+          fi
+          # 切到 resources 目录，让二进制能找到 legal_db/_internal
+          cd "$RES_DIR"
+          ./$EXEC &
           BACKEND_PID=$!
           sleep 5
           for i in $(seq 1 25); do
             if curl -sf http://localhost:8080/api/health > /dev/null 2>&1; then
-              echo "✅ 后端启动成功，health 响应 OK"
+              echo "✅ 打包产物启动成功，health 响应 OK"
               kill $BACKEND_PID 2>/dev/null
               break
             fi
             if [ $i -eq 25 ]; then
-              echo "❌ 后端 30 秒内未响应 health"
+              echo "❌ 打包产物 30 秒内未响应 health"
               kill $BACKEND_PID 2>/dev/null
               exit 1
             fi
             sleep 1
           done
-
-      # ---- 冒烟测试：后端能启动并响应 health ----
-      - name: Smoke test - backend startup
-        shell: bash
-        run: |
-          cd backend
-          # 启动后端，超时 30 秒
-          python3 main.py &
-          BACKEND_PID=$!
-          sleep 5
-          # 探测 health，最多等 25 秒
-          for i in $(seq 1 25); do
-            if curl -sf http://localhost:8080/api/health > /dev/null 2>&1; then
-              echo "✅ 后端启动成功，health 响应 OK"
-              kill $BACKEND_PID 2>/dev/null
-              exit 0
-            fi
-            sleep 1
-          done
-          echo "❌ 后端 30 秒内未响应 health"
-          kill $BACKEND_PID 2>/dev/null
-          exit 1
 
       # ---- Tauri build ----
       - name: Build Tauri app

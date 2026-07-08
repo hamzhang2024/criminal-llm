@@ -24,6 +24,12 @@ import { ReportRenderer } from '../components/report/ReportRenderer'
 import { PersonRelationGraph } from '../components/PersonRelationGraph'
 import { EventTimelineGraph } from '../components/EventTimelineGraph'
 
+// ====== 功能开关（已关闭的功能设为 false）======
+const ENABLE_EVIDENCE_CHAIN = false      // 证据链可视化 + 关联矩阵
+const ENABLE_EVIDENCE_REVIEW_PANEL = false // 证据质证意见（证据中心内）
+const ENABLE_REVIEW_NOTES = false         // 阅卷笔录
+const ENABLE_CROSS_EXAM = false           // 质证意见（辩护意见面板内）
+
 // ====== 设计令牌 ======
 
 const colors = {
@@ -2619,7 +2625,7 @@ export function ReportPage() {
         })()}
 
         {/* 0b. 证据-罪名关联矩阵(多罪名时显示) */}
-        {false && charges.length > 1 && (() => {
+        {ENABLE_EVIDENCE_CHAIN && charges.length > 1 && (() => {
           const chargesList = charges
           const typeSet = new Set<string>()
           evidenceItems.forEach(e => typeSet.add(e.type || '其他'))
@@ -2671,8 +2677,8 @@ export function ReportPage() {
           )
         })()}
 
-{/* 0c. 证据链可视化（已关闭） */}
-        {false && (<>        <div style={{ border: `1px solid ${colors.border}`, borderRadius: '8px', overflow: 'hidden' }}>
+{/* 0c. 证据链可视化 */}
+        {ENABLE_EVIDENCE_CHAIN && (<>        <div style={{ border: `1px solid ${colors.border}`, borderRadius: '8px', overflow: 'hidden' }}>
           <div style={panelHeaderStyle} onClick={() => togglePanel('evidenceChain')}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <Network className="w-4 h-4" style={{ color: '#34C759' }} />
@@ -2840,8 +2846,8 @@ export function ReportPage() {
           )}
         </div>
 
-{/* 2. 证据质证意见（已关闭） */}
-        {false && (<>
+{/* 2. 证据质证意见 */}
+        {ENABLE_EVIDENCE_REVIEW_PANEL && (<>
         <div style={{ border: `1px solid ${colors.border}`, borderRadius: '8px', overflow: 'hidden' }}>
           <div style={panelHeaderStyle} onClick={() => togglePanel('evidenceReview')}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -3011,8 +3017,8 @@ export function ReportPage() {
 
         </>
         )}
-{/* 4. 阅卷笔录（已关闭） */}
-        {false && (<>
+{/* 4. 阅卷笔录 */}
+        {ENABLE_REVIEW_NOTES && (<>
         <div style={{ border: `1px solid ${colors.border}`, borderRadius: '8px', overflow: 'hidden' }}>
           <div style={panelHeaderStyle} onClick={() => togglePanel('reviewNotes')}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -3104,8 +3110,8 @@ export function ReportPage() {
           )}
         </div>
 
-{/* 2. 质证意见（已关闭） */}
-          {false && (<>
+{/* 2. 质证意见 */}
+          {ENABLE_CROSS_EXAM && (<>
         <div style={{ border: `1px solid ${colors.border}`, borderRadius: '8px', overflow: 'hidden' }}>
           <div style={panelHeaderStyle} onClick={() => togglePanel('crossExam')}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>

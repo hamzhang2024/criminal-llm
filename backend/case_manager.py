@@ -14,8 +14,6 @@ from datetime import datetime
 import shutil
 from typing import List, Dict, Optional
 from pydantic import BaseModel
-import os
-import glob
 import tiktoken
 
 logger = logging.getLogger(__name__)
@@ -1114,12 +1112,6 @@ async def _extract_single_file(
         evidence_blocks = _merge_evidence_blocks(all_evidence_blocks)
         logger.info(f"[证据提取] {md_file.name}: {len(chunks)} 块合并后 {len(evidence_blocks)} 份证据")
 
-    # 后过滤：移除非证据类型
-    before_count = len(evidence_blocks)
-    evidence_blocks = [b for b in evidence_blocks if b.get("type", "") not in _SKIP_EVIDENCE_TYPES]
-    if len(evidence_blocks) < before_count:
-        logger.info(f"[证据提取] {md_file.name}: 过滤非证据 {before_count - len(evidence_blocks)} 份（目录/程序性文书）")
-
     # 调试：将解析结果保存到 debug 文件
     debug_file = temp_dir / f"_debug_{md_file.stem}.txt"
     try:
@@ -2109,8 +2101,6 @@ _tiktoken_enc = None
 
 _SKIP_SECTION_KEYWORDS = {"卷内文书目录"}
 
-_SKIP_EVIDENCE_TYPES = set()  # 不再过滤程序性文书，它们证明程序合法性
-
 
 def _strip_cover_page(text: str) -> str:
     """移除文件开头的封面/封底内容，保留正文（从第一个 ## 标题开始）"""
@@ -2130,7 +2120,7 @@ def _strip_non_evidence_sections(text: str) -> str:
         if any(kw in s[:100] for kw in _SKIP_SECTION_KEYWORDS):
             continue
         kept.append(s)
-    return "\n\n".join(kept)
+    return "\n".join(kept)
 
 
 def _count_tokens(text: str) -> int:
@@ -2219,21 +2209,30 @@ def _split_by_token_count(text: str, budget: int, source_name: str) -> list:
 
 
 def _merge_evidence_blocks(blocks: list) -> list:
-    """合并多块提取结果，按证据名称去重"""
-    seen_names: dict[str, dict] = {}
+    """合并多块提取结果，按 (name, source) 去重；未命名证据全部保留"""
+    seen: dict[tuple, dict] = {}
+    unnamed: list = []
     for block in blocks:
         name = block.get("name", "")
-        if not name:
+        source = block.get("source", "")
+        if not name or name == "未命名证据":
+            unnamed.append(block)
             continue
-        if name not in seen_names:
-            seen_names[name] = block
+        key = (name, source)
+        if key not in seen:
+            seen[key] = block
         else:
-            # 保留更长的摘要
-            existing_summary = seen_names[name].get("summary", "")
-            new_summary = block.get("summary", "")
-            if len(new_summary) > len(existing_summary):
-                seen_names[name] = block
-    return list(seen_names.values())
+            # 保留更长的摘要，合并 raw_text
+            existing = seen[key]
+            if len(block.get("summary", "")) > len(existing.get("summary", "")):
+                block_copy = dict(block)
+                if existing.get("raw_text"):
+                    block_copy["raw_text"] = existing["raw_text"] + "\n" + block_copy.get("raw_text", "")
+                seen[key] = block_copy
+            else:
+                if block.get("raw_text"):
+                    existing["raw_text"] = existing.get("raw_text", "") + "\n" + block["raw_text"]
+    return list(seen.values()) + unnamed
 
 
 def _parse_evidence_blocks(llm_output: str, source_file: str) -> list:

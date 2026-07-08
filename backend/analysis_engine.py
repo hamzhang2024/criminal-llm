@@ -18,6 +18,16 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
+# 模块级 tiktoken 编码器缓存（避免每次调用重新加载）
+_tiktoken_enc = None
+
+def _get_enc():
+    global _tiktoken_enc
+    if _tiktoken_enc is None:
+        import tiktoken
+        _tiktoken_enc = tiktoken.get_encoding("cl100k_base")
+    return _tiktoken_enc
+
 def _get_content_budget_chars() -> int:
     """根据 model_context_limit 配置计算内容字符预算（tokens → chars，按0.68比率）"""
     try:
@@ -41,8 +51,7 @@ async def _batch_analyze_evidence(
 
     不截断任何证据内容，按 token 预算分批，起诉书每批都带。
     """
-    import tiktoken
-    enc = tiktoken.get_encoding("cl100k_base")
+    enc = _get_enc()
 
     from llm_client import get_llm_client
     client = get_llm_client()
@@ -73,6 +82,12 @@ async def _batch_analyze_evidence(
         f"### {t['filename']}（{t['type']}）\n{t['text']}" for t in indictments
     )
     indictment_tokens = len(enc.encode(indictment_text)) if indictment_text else 0
+
+    # M6: 起诉书单独超预算时告警并截断，避免首批就溢出
+    if indictment_tokens > evidence_budget:
+        logger.warning(f"[{label}] 起诉书 {indictment_tokens:,} tokens 超预算 {evidence_budget:,}，截断")
+        indictment_text = indictment_text[:int(len(indictment_text) * evidence_budget / indictment_tokens)]
+        indictment_tokens = len(enc.encode(indictment_text))
 
     # 普通证据按 token 数分批
     evidence_chunks: List[List[Dict[str, str]]] = []
@@ -247,45 +262,6 @@ def _json_to_mermaid_timeline(data: dict) -> str:
         lines.append(f"    {date_str} : {desc}")
 
     return "\n".join(lines)
-
-
-def _legacy_fix_mermaid(text: str) -> str:
-    """旧的后处理修复逻辑（回退方案）"""
-    import re as _re
-    mermaid_blocks = _re.findall(r'```mermaid\n(.*?)```', text, _re.DOTALL)
-    for block in mermaid_blocks:
-        lines = block.split('\n')
-        new_lines = []
-        for line in lines:
-            m_sg = _re.match(r'(\s*subgraph\s+)([^\n\[]*)\[([^\]]*)\]', line)
-            if m_sg:
-                prefix, name, suffix = m_sg.groups()
-                clean_name = _re.sub(r'[^\w\u4e00-\u9fff]', '', name).strip()
-                line = f'{prefix}{clean_name}-{suffix}'
-                new_lines.append(line)
-                continue
-            chained = _re.findall(r'(.+?)\s*(--\s*"[^"]*"\s*-->|-->)\s*(\w+)\s*(?:--\s*"[^"]*"\s*-->|-->)\s*(\w+)', line)
-            if chained:
-                for src, arrow, mid, tgt in chained:
-                    new_lines.append(f'{src.strip()} {arrow.strip()} {mid}')
-                    new_lines.append(f'{mid} --> {tgt}')
-                continue
-            m = _re.match(r'^(\s*)(.+?)(\s*--\s*"[^"]*"\s*-->|\s*-->\s*)(.+)$', line)
-            if m:
-                indent, sources_str, arrow, targets_str = m.groups()
-                arrow_norm = arrow.strip()
-                sources = [s.strip() for s in sources_str.split('&')]
-                targets = [t.strip() for t in targets_str.split('&')]
-                expanded = '\n'.join(
-                    f'{indent}{src} {arrow_norm} {tgt}'
-                    for src in sources for tgt in targets
-                )
-                new_lines.append(expanded)
-            else:
-                new_lines.append(line)
-        fixed_block = '\n'.join(new_lines)
-        text = text.replace(block, fixed_block)
-    return text
 
 
 def _legacy_fix_mermaid_timeline(text: str) -> str:
