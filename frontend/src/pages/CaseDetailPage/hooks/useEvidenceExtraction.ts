@@ -53,9 +53,20 @@ export function useEvidenceExtraction(caseId: string | undefined, onExtractCompl
     extractUserStoppedRef.current = false
     extractPollFailuresRef.current = 0
 
+    // 超时兜底：15分钟后强制停止，避免后端任务卡死时 processing 永不清
+    const startedAt = Date.now()
+    const TIMEOUT_MS = 15 * 60 * 1000
+
     extractPollRef.current = setInterval(async () => {
       if (extractUserStoppedRef.current) {
         stopPolling()
+        return
+      }
+      // 超时检查
+      if (Date.now() - startedAt > TIMEOUT_MS) {
+        stopPolling()
+        setExtracting(false)
+        if (onExtractComplete) onExtractComplete(false)
         return
       }
       try {

@@ -709,44 +709,69 @@ class AnalysisEngine:
 
         import re as _re
         for batch_md in batch_results:
-            json_blocks = _re.findall(r'```json\n(.*?)```', batch_md, _re.DOTALL)
+            # 兼容 \r\n 和行尾空格
+            json_blocks = _re.findall(r'```json[ \t]*\r?\n(.*?)```', batch_md, _re.DOTALL)
             for block in json_blocks:
                 try:
                     data = json.loads(block.strip())
-                    all_nodes.extend(data.get("nodes", []))
-                    all_edges.extend(data.get("edges", []))
-                    all_subgraphs.extend(data.get("subgraphs", []))
-                except (json.JSONDecodeError, KeyError, TypeError):
-                    pass
+                    if not isinstance(data, dict):
+                        logger.warning(f"[人物关系] JSON 非对象，跳过: {str(data)[:80]}")
+                        continue
+                    all_nodes.extend(data.get("nodes", []) or [])
+                    all_edges.extend(data.get("edges", []) or [])
+                    all_subgraphs.extend(data.get("subgraphs", []) or [])
+                except (json.JSONDecodeError, KeyError, TypeError, AttributeError) as e:
+                    logger.warning(f"[人物关系] JSON 解析失败: {e}, block={block[:80]}")
             # 保留非 JSON 的 markdown 内容
-            cleaned = _re.sub(r'```json\n.*?```', '', batch_md, flags=_re.DOTALL).strip()
+            cleaned = _re.sub(r'```json[ \t]*\r?\n.*?```', '', batch_md, flags=_re.DOTALL).strip()
             if cleaned:
                 markdown_parts.append(cleaned)
 
-        # 去重节点（按 id 去重，保留第一个出现的）
+        # 去重节点（按 id 去重，保留第一个出现的；跳过缺 id 的）
         seen_ids = set()
         unique_nodes = []
         for n in all_nodes:
-            if n["id"] not in seen_ids:
-                seen_ids.add(n["id"])
-                unique_nodes.append(n)
+            if not isinstance(n, dict):
+                continue
+            nid = n.get("id")
+            if not nid or nid in seen_ids:
+                continue
+            seen_ids.add(nid)
+            unique_nodes.append(n)
 
-        # 去重边（按 from+to+label 去重）
+        # 去重边（按 from+to+label 去重；跳过缺 from/to 的）
         seen_edges = set()
         unique_edges = []
         for e in all_edges:
-            key = (e["from"], e["to"], e.get("label", ""))
+            if not isinstance(e, dict):
+                continue
+            frm, to = e.get("from"), e.get("to")
+            if not frm or not to:
+                continue
+            key = (frm, to, e.get("label", ""))
             if key not in seen_edges:
                 seen_edges.add(key)
                 unique_edges.append(e)
 
+        # subgraphs 按 name 去重，合并 nodes
+        seen_sg = set()
+        unique_subgraphs = []
+        for sg in all_subgraphs:
+            if not isinstance(sg, dict):
+                continue
+            name = sg.get("name", "")
+            if name in seen_sg:
+                for existing in unique_subgraphs:
+                    if existing.get("name") == name:
+                        existing_nodes = set(existing.get("nodes", []))
+                        existing["nodes"] = list(existing_nodes | set(sg.get("nodes", [])))
+                        break
+            else:
+                seen_sg.add(name)
+                unique_subgraphs.append(dict(sg))
+
         if unique_nodes:
-            merged_json = json.dumps({
-                "nodes": unique_nodes,
-                "edges": unique_edges,
-                "subgraphs": all_subgraphs,
-            }, ensure_ascii=False)
-            mermaid = _json_to_mermaid_graph({"nodes": unique_nodes, "edges": unique_edges, "subgraphs": all_subgraphs})
+            mermaid = _json_to_mermaid_graph({"nodes": unique_nodes, "edges": unique_edges, "subgraphs": unique_subgraphs})
             markdown_parts.insert(0, f"```mermaid\n{mermaid}\n```")
 
         md_output = "\n\n---\n\n".join(markdown_parts) if markdown_parts else "\n\n---\n\n".join(batch_results)
@@ -782,6 +807,9 @@ class AnalysisEngine:
 
         indictment_catalog, indictment_text, evidence_catalog_text, evidence_only = _split_indictment_and_evidence(texts)
 
+        # 时间线需要全局时序，不适合分批，用优先级截断（起诉书完整、口供优先）
+        all_text = _truncate_all(texts, max_total=_get_content_budget_chars())
+
         system_prompt = """梳理案卷中的事件脉络。按时间顺序识别关键事件，将证据归组到对应事件下。
 
 **重要区分**：
@@ -790,7 +818,7 @@ class AnalysisEngine:
 
 原则：以事件为单位，同事件挂接多份证据，必须输出时间线JSON。"""
 
-        prompt_header = f"""## 辩护对象
+        user_prompt = f"""## 辩护对象
 被告人：**{defendant}**
 
 ## 指控文书（非证据）
@@ -800,16 +828,16 @@ class AnalysisEngine:
 {evidence_catalog_text}
 
 ## 全部案卷材料
-"""
+{all_text}
 
-        prompt_footer = """---
+---
 
 ## 请完成以下分析
 
 ### 一、事件时间线（JSON格式）
 
 ```json
-{"title":"案件时间线","events":[{"date":"2025-12-22","title":"事件简述","evidence":["见证据009"]}]}
+{{"title":"案件时间线","events":[{{"date":"2025-12-22","title":"事件简述","evidence":["见证据009"]}}]}}
 ```
 
 规则：date用原始格式，title不超30字，evidence仅正式证据。
@@ -820,12 +848,10 @@ class AnalysisEngine:
 
 确保不遗漏重要事件，每个事件挂接全部相关证据。"""
 
-        batch_results = await _batch_analyze_evidence(
-            texts, system_prompt, prompt_header, prompt_footer,
-            progress_cb=progress_cb, label="时间线",
-        )
-
-        md_output = "\n\n---\n\n".join(batch_results)
+        md_output = await client.chat([
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ])
 
         # 优先尝试从 JSON 生成 Mermaid 时间线
         md_output = _extract_json_and_render(md_output, _json_to_mermaid_timeline)
@@ -1007,9 +1033,13 @@ class AnalysisEngine:
         if progress_cb:
             progress_cb("正在进行矛盾分析和口供对比...")
 
-        contradiction_system = "识别证据间的矛盾和证据链薄弱环节。\n\n重要：起诉书/起诉意见书引用时写'据起诉书'/'据起诉意见书'，正式证据用'见证据XXX'格式。"
+        from llm_client import get_llm_client
+        client = get_llm_client()
 
-        prompt_header = f"""## 辩护对象
+        # 矛盾分析需跨证据对比，不适合分批，用优先级截断（起诉书完整、口供优先）
+        all_text = _truncate_all(texts, max_total=_get_content_budget_chars())
+
+        contradiction_prompt = f"""## 辩护对象
 被告人：**{defendant}**
 
 ## 指控文书（非证据）
@@ -1019,9 +1049,9 @@ class AnalysisEngine:
 {evidence_catalog_text}
 
 ## 全部案卷材料
-"""
+{all_text}
 
-        prompt_footer = """---
+---
 
 ## 请完成以下分析
 
@@ -1036,18 +1066,16 @@ class AnalysisEngine:
 |----------|-----------|---------|----------|----------|
 
 矛盾类型：直接矛盾、间接矛盾、隐性矛盾。
-影响：核心事实矛盾→动摇指控基础，细节矛盾→影响可信度。
+影响：核心事实矛盾->动摇指控基础，细节矛盾->影响可信度。
 
 ### 三、证据链条薄弱环节
 - 仅靠言词证据的环节
 - 证据链断裂处"""
 
-        batch_results = await _batch_analyze_evidence(
-            texts, contradiction_system, prompt_header, prompt_footer,
-            progress_cb=progress_cb, label="矛盾分析",
-        )
-
-        contradiction_md = "\n\n---\n\n".join(batch_results)
+        contradiction_md = await client.chat([
+            {"role": "system", "content": "识别证据间的矛盾和证据链薄弱环节。\n\n重要：起诉书/起诉意见书引用时写'据起诉书'/'据起诉意见书'，正式证据用'见证据XXX'格式。"},
+            {"role": "user", "content": contradiction_prompt},
+        ])
 
         self._save_stage(52, {"name": "矛盾分析"}, contradiction_md)
 
