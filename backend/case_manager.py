@@ -1058,6 +1058,7 @@ async def _extract_single_file(
     返回：(md_filename, evidence_list)
     evidence_list 中每项包含证据数据，文件保存在 temp_dir 中。
     """
+    from config_manager import get_config_value
     from llm_client import get_llm_client, LLMRetryExhaustedError
     client = get_llm_client()
 
