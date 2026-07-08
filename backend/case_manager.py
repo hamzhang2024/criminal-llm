@@ -1061,12 +1061,7 @@ async def _extract_single_file(
     from llm_client import get_llm_client, LLMRetryExhaustedError
     client = get_llm_client()
 
-    # 预过滤：封面/封底直接跳过
-    if _should_skip_file(md_text):
-        logger.info(f"[证据提取] {md_file.name}: 跳过（封面/封底）")
-        return (md_file.name, [])
-
-    # 预过滤：移除非证据段落（目录等）
+    # 预过滤：移除非证据段落（封面、目录等）
     original_len = len(md_text)
     md_text = _strip_non_evidence_sections(md_text)
     if len(md_text) < original_len:
@@ -2111,26 +2106,23 @@ _tiktoken_enc = None
 
 # ── 非证据过滤 ──
 
-_SKIP_FILE_PATTERNS = [
-    re.compile(r'^#\s*刑事侦查卷宗'),
-    re.compile(r'案件名称\s+\S+\s+案件编号'),
-    re.compile(r'立卷单位\s+\S+\s+立卷人'),
-    re.compile(r'^#\s*封底'),
-]
-
 _SKIP_SECTION_KEYWORDS = {"卷内文书目录"}
 
 _SKIP_EVIDENCE_TYPES = set()  # 不再过滤程序性文书，它们证明程序合法性
 
 
-def _should_skip_file(text: str) -> bool:
-    """判断整个文件是否为封面/封底（前20行匹配模式）"""
-    head = "\n".join(text.strip().split("\n")[:20])
-    return any(p.search(head) for p in _SKIP_FILE_PATTERNS)
+def _strip_cover_page(text: str) -> str:
+    """移除文件开头的封面/封底内容，保留正文（从第一个 ## 标题开始）"""
+    lines = text.split("\n")
+    for i, line in enumerate(lines):
+        if line.startswith("## "):
+            return "\n".join(lines[i:])
+    return text  # 没有 ## 标题，返回原文
 
 
 def _strip_non_evidence_sections(text: str) -> str:
-    """移除文件中的非证据段落（目录等），按 ## 标题拆分"""
+    """移除文件中的非证据段落（封面、目录等），按 ## 标题拆分"""
+    text = _strip_cover_page(text)
     sections = re.split(r'\n(?=## )', text)
     kept = []
     for s in sections:
