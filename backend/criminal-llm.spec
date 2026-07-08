@@ -24,6 +24,12 @@ datas += tmp_pdf2image[0]; binaries += tmp_pdf2image[1]
 tmp_aiohttp = collect_all('aiohttp')
 datas += tmp_aiohttp[0]; binaries += tmp_aiohttp[1]
 
+# tiktoken 编码文件（cl100k_base 等），打包后否则报 Unknown encoding
+tmp_tiktoken = collect_all('tiktoken')
+datas += tmp_tiktoken[0]; binaries += tmp_tiktoken[1]
+tmp_tiktoken_ext = collect_all('tiktoken_ext')
+datas += tmp_tiktoken_ext[0]; binaries += tmp_tiktoken_ext[1]
+
 hiddenimports = [
     # 本地模块（后端核心文件）
     '_bootstrap',
