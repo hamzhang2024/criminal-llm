@@ -2109,12 +2109,22 @@ _SKIP_SECTION_KEYWORDS = {"卷内文书目录"}
 
 
 def _strip_cover_page(text: str) -> str:
-    """移除文件开头的封面/封底内容，保留正文（从第一个 ## 标题开始）"""
+    """移除文件开头的封面（卷内文书目录表格+三面照），保留正文。
+    只跳过开头到第一个实质文书标题（# 或 ##）之间目录/照片内容。
+    """
     lines = text.split("\n")
+    # 找第一个实质文书标题：# XXX 且不是封面标识
     for i, line in enumerate(lines):
+        if line.startswith("# "):
+            title = line[2:].strip()
+            # 跳过封面标识
+            if title in ("刑事侦查卷宗", "封底"):
+                continue
+            # 第一个实质标题，保留从这里开始
+            return "\n".join(lines[i:])
         if line.startswith("## "):
             return "\n".join(lines[i:])
-    return text  # 没有 ## 标题，返回原文
+    return text  # 无标题，返回原文
 
 
 def _strip_non_evidence_sections(text: str) -> str:
