@@ -4,7 +4,8 @@ import { useState, useCallback, useRef } from 'react'
 import { api, API_BASE } from '../../../api'
 import { showAlert, showConfirm } from '../../../components/MacOSDialog'
 
-export function useEvidenceExtraction(caseId: string | undefined, onExtractComplete?: (success: boolean) => void) {
+export type ExtractResult = 'success' | 'cancelled' | 'failed'
+export function useEvidenceExtraction(caseId: string | undefined, onExtractComplete?: (result: ExtractResult) => void) {
   const [evidenceList, setEvidenceList] = useState<any[]>([])
   const [evidenceExtracted, setEvidenceExtracted] = useState(false)
   const [extracting, setExtracting] = useState(false)
@@ -66,7 +67,7 @@ export function useEvidenceExtraction(caseId: string | undefined, onExtractCompl
       if (Date.now() - startedAt > TIMEOUT_MS) {
         stopPolling()
         setExtracting(false)
-        if (onExtractComplete) onExtractComplete(false)
+        if (onExtractComplete) onExtractComplete('failed')
         return
       }
       try {
@@ -82,8 +83,11 @@ export function useEvidenceExtraction(caseId: string | undefined, onExtractCompl
             setEvidenceExtracted(true)
           }
           setExtracting(false)
-          // 通知父组件提取完成（清除 processing 和 progress）
-          if (onExtractComplete) onExtractComplete(total > 0)
+          // 区分取消/失败/成功：cancelled 状态或用户主动停止且无证据 = 取消
+          const result: ExtractResult = st.status === 'cancelled' || extractUserStoppedRef.current
+            ? (total > 0 ? 'success' : 'cancelled')
+            : (total > 0 ? 'success' : 'failed')
+          if (onExtractComplete) onExtractComplete(result)
         } else {
           // 运行时刷新已提取的证据
           const data = await api.getEvidenceIndex(caseId!)
@@ -94,7 +98,7 @@ export function useEvidenceExtraction(caseId: string | undefined, onExtractCompl
         if (extractPollFailuresRef.current >= 3) {
           stopPolling()
           setExtracting(false)
-          if (onExtractComplete) onExtractComplete(false)
+          if (onExtractComplete) onExtractComplete('failed')
         }
       }
     }, 3000)

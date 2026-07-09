@@ -61,9 +61,16 @@ export function CaseDetailPage() {
     loadEvidence, handleExtractEvidence: extractEvidenceFn,
     handleStopExtract, handleClearEvidence, handleRefreshEvidence,
     checkExtractStatus, pollExtractProgress, stopPolling: stopExtractPolling,
-  } = useEvidenceExtraction(caseId, (success) => {
-    // 提取完成后清除页面级 processing 状态
-    setProcessing(false); setProgress(success ? '' : '提取完成')
+  } = useEvidenceExtraction(caseId, (result) => {
+    // 提取完成后清除页面级 processing 状态，根据结果给准确提示
+    setProcessing(false)
+    if (result === 'success') {
+      setProgress('')
+    } else if (result === 'cancelled') {
+      setProgress('提取已取消')
+    } else {
+      setProgress('提取失败，请重试')
+    }
   })
 
   const stageHooks = useStageAnalysis(caseId, defendant, charges)
