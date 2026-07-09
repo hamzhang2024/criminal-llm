@@ -2109,31 +2109,40 @@ _SKIP_SECTION_KEYWORDS = {"卷内文书目录"}
 
 
 def _strip_cover_page(text: str) -> str:
-    """移除文件开头的封面（卷内文书目录表格+三面照），保留正文。
-    只跳过开头到第一个实质文书标题（# 或 ##）之间目录/照片内容。
+    """移除文件开头的封面（刑事侦查卷宗标识+卷内文书目录表格+三面照）。
+    只跳过开头的封面块，遇到第一个实质文书标题即保留。
     """
     lines = text.split("\n")
-    # 找第一个实质文书标题：# XXX 且不是封面标识
+    # 找第一个实质文书标题：跳过"刑事侦查卷宗"和"卷内文书目录"封面块
+    in_cover = True
     for i, line in enumerate(lines):
-        if line.startswith("# "):
-            title = line[2:].strip()
-            # 跳过封面标识
-            if title in ("刑事侦查卷宗", "封底"):
-                continue
-            # 第一个实质标题，保留从这里开始
+        stripped = line.strip()
+        # 封面标识：跳过
+        if stripped in ("# 刑事侦查卷宗", "# 封底", "## 卷内文书目录"):
+            continue
+        # 封面块内的目录表格行（<table>开头）和三面照也跳过
+        if in_cover and (stripped.startswith("<table>") or stripped.startswith("![]") or stripped == "" or "三面照" in stripped or re.match(r'^冯叶飞$', stripped) or re.match(r'^\d{18}$', stripped)):
+            continue
+        # 第一个实质标题（# 或 ##）或实质内容
+        if line.startswith("# ") or line.startswith("## "):
             return "\n".join(lines[i:])
-        if line.startswith("## "):
+        # 非标题实质内容，也停止跳过
+        if stripped and not stripped.startswith("|"):
             return "\n".join(lines[i:])
-    return text  # 无标题，返回原文
+        in_cover = False
+    return text
 
 
 def _strip_non_evidence_sections(text: str) -> str:
-    """移除文件中的非证据段落（封面、目录等），按 ## 标题拆分"""
+    """移除文件中的非证据段落（卷内文书目录等），按 # 和 ## 标题拆分"""
     text = _strip_cover_page(text)
-    sections = re.split(r'\n(?=## )', text)
+    # 同时按 # 和 ## 拆分，避免一级标题文书被误删
+    sections = re.split(r'\n(?=#{1,2} )', text)
     kept = []
     for s in sections:
-        if any(kw in s[:100] for kw in _SKIP_SECTION_KEYWORDS):
+        # 只检查段落开头是否为目录
+        head = s[:100].lstrip()
+        if head.startswith("## 卷内文书目录") or head.startswith("# 卷内文书目录"):
             continue
         kept.append(s)
     return "\n".join(kept)
