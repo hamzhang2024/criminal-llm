@@ -282,15 +282,19 @@ def _extract_json_and_render(text: str, mermaid_fn) -> str:
     生成 Mermaid 图，替换 JSON 块。
     """
     import re as _re
-    json_blocks = _re.findall(r'```json\n(.*?)```', text, _re.DOTALL)
+    json_blocks = _re.findall(r'```json[ \t]*\r?\n(.*?)```', text, _re.DOTALL)
     for block in json_blocks:
         try:
             data = json.loads(block.strip())
+            # mermaid_fn 要求 dict，LLM 可能返回 list 导致 .get 报错
+            if not isinstance(data, dict):
+                logger.warning(f"[JSON渲染] JSON 非对象，跳过: {str(data)[:80]}")
+                continue
             mermaid = mermaid_fn(data)
             replacement = f"```mermaid\n{mermaid}\n```"
             text = text.replace(f"```json\n{block}```", replacement, 1)
-        except (json.JSONDecodeError, KeyError, TypeError):
-            pass  # JSON 解析失败，保留原始内容
+        except (json.JSONDecodeError, KeyError, TypeError, AttributeError) as e:
+            logger.warning(f"[JSON渲染] 解析失败: {e}, block={block[:80]}")
     return text
 
 
