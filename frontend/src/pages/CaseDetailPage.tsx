@@ -326,7 +326,7 @@ export function CaseDetailPage() {
         }, 2000)
         setTimeout(() => { clearInterval(pi); reject(new Error('转换超时')) }, 900000)
       })
-      setProgress('正在转换并提取证据（第 2/2 步：提取证据）...')
+      setProgress('正在提取证据...')
       await api.extractEvidence(caseId!)
       await new Promise<void>((resolve, reject) => {
         const pi = setInterval(async () => {
@@ -335,7 +335,17 @@ export function CaseDetailPage() {
             if (st.status !== 'running') {
               clearInterval(pi); const d = await api.getEvidenceIndex(caseId!)
               if (d.total_evidence > 0) { setEvidenceList(d.evidence || []); setEvidenceExtracted(true) }
+              // 根据状态给准确提示
+              if (st.status === 'cancelled') { setProgress('提取已取消') }
+              else if (d.total_evidence > 0) { setProgress(`已提取 ${d.total_evidence} 份证据`) }
+              else { setProgress('提取失败，请重试') }
               resolve()
+            } else {
+              // 实时显示提取进度
+              const pf = st.processed_files || 0, tf = st.total_files || 0
+              const cur = st.current_file ? ` · ${st.current_file}` : ''
+              const pct = tf > 0 ? Math.round(pf / tf * 100) : 0
+              setProgress(`正在提取证据... ${pf}/${tf} 文件 (${pct}%)${cur}`)
             }
           } catch { }
         }, 3000)
