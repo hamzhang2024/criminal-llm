@@ -1088,12 +1088,19 @@ async def _extract_single_file(
 
     chunks = _split_content_by_tokens(md_text, content_budget, md_file.name)
 
+    # 统计讯问笔录次数，提示LLM逐份提取
+    interrog_count = len(re.findall(r'被讯问人[：:]\s*\S', md_text))
+    ask_count = len(re.findall(r'被询问人[：:]\s*\S', md_text))
+    hint = ""
+    if interrog_count + ask_count > 0:
+        hint = f"\n\n**⚠️ 本文件检测到约 {interrog_count} 次讯问 + {ask_count} 次询问，必须逐份提取，不得合并。每份独立输出。**\n"
+
     if len(chunks) == 1:
         # 单块，直接发送
         result = await asyncio.wait_for(
             client.chat([
                 {"role": "system", "content": _EVIDENCE_SYSTEM_PROMPT + "\n\n" + _EVIDENCE_EXTRACTION_RULES},
-                {"role": "user", "content": f"## 案卷文件：{md_file.name}\n\n{charges_str}\n\n{md_text}"},
+                {"role": "user", "content": f"## 案卷文件：{md_file.name}\n\n{charges_str}{hint}\n\n{md_text}"},
             ]),
             timeout=timeout_seconds,
         )
