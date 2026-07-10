@@ -2141,18 +2141,23 @@ def _strip_cover_page(text: str) -> str:
 
 
 def _strip_non_evidence_sections(text: str) -> str:
-    """移除文件中的非证据段落（卷内文书目录等），按 # 和 ## 标题拆分"""
+    """移除文件中的卷内文书目录段（表格目录），不破坏文书结构。
+    只删除开头的目录段，到下一个标题（#或##）即停止。
+    """
     text = _strip_cover_page(text)
-    # 同时按 # 和 ## 拆分，避免一级标题文书被误删
-    sections = re.split(r'\n(?=#{1,2} )', text)
-    kept = []
-    for s in sections:
-        # 只检查段落开头是否为目录
-        head = s[:100].lstrip()
-        if head.startswith("## 卷内文书目录") or head.startswith("# 卷内文书目录"):
-            continue
-        kept.append(s)
-    return "\n".join(kept)
+    # 找开头的卷内文书目录段
+    match = re.search(r'^## 卷内文书目录', text, re.MULTILINE)
+    if match:
+        start = match.start()
+        # 找目录段结尾：下一个任意标题（# 或 ##）
+        rest = text[match.end():]
+        next_header = re.search(r'\n#{1,2} ', rest)
+        if next_header:
+            end = match.end() + next_header.start()
+            text = text[:start] + text[end:]
+        else:
+            text = text[:start]
+    return text
 
 
 def _count_tokens(text: str) -> int:
