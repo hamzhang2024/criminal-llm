@@ -836,10 +836,10 @@ def _parse_person_relation(content: str) -> dict:
     if mermaid_match:
         mermaid_code = mermaid_match.group(1)
 
-        # 解析节点定义：A[姓名], B[姓名], etc.
-        node_pattern = r'([A-Z])\[([^\]]+)\]'
+        # 解析节点定义：支持单字母ID(A[姓名])和多字符拼音ID(FengYefei[姓名])
+        node_pattern = r'(\w+)\[([^\]]+)\]'
         node_matches = re.findall(node_pattern, mermaid_code)
-        node_id_map = {}  # A -> 姓名
+        node_id_map = {}  # ID -> 姓名
 
         for node_id, node_name in node_matches:
             # 每个 ID 只取第一次出现的定义，避免 subgraph 中重复定义覆盖
@@ -879,8 +879,8 @@ def _parse_person_relation(content: str) -> dict:
                 "description": "",
             })
 
-        # 解析边：A -- "关系" --> B
-        edge_pattern = r'([A-Z])\s*--\s*"([^"]+)"\s*-->\s*([A-Z])'
+        # 解析边：A -- "关系" --> B（支持多字符ID）
+        edge_pattern = r'(\w+)\s*--\s*"([^"]+)"\s*-->\s*(\w+)'
         edge_matches = re.findall(edge_pattern, mermaid_code)
 
         for src_id, label, tgt_id in edge_matches:
