@@ -18,6 +18,11 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
+# 统一禁止对话式输出的指令，追加到每个分析阶段的 system_prompt 末尾
+_NO_CHITCHAT = """
+**输出规则：直接输出分析内容，不要输出任何对话式开场白、寒暄、"好的"、"作为XXX"等客套话。
+不要称呼对方为"律师"或被告人姓名，直接输出结构化分析结果。**"""
+
 # 模块级 tiktoken 编码器缓存（避免每次调用重新加载）
 _tiktoken_enc = None
 
@@ -560,7 +565,7 @@ class AnalysisEngine:
 - 优先以**起诉书**为准，无起诉书时以**起诉意见书**为准
 - 如起诉意见书有多份，以形成时间在**最后**的为准
 - 所有信息必须基于原文，不要臆测
-- 用 Markdown 格式输出，结构清晰，便于后续分析"""
+- 用 Markdown 格式输出，结构清晰，便于后续分析""" + _NO_CHITCHAT
 
         user_prompt = f"""## 辩护对象
 被告人：**{defendant}**
@@ -796,7 +801,7 @@ class AnalysisEngine:
 - 起诉书/起诉意见书是指控文书，引用时写"据起诉书"/"据起诉意见书"
 - 正式证据用"见证据XXX"格式
 
-原则：以事件为单位，同事件挂接多份证据，必须输出时间线JSON。"""
+原则：以事件为单位，同事件挂接多份证据，必须输出时间线JSON。""" + _NO_CHITCHAT
 
         user_prompt = f"""## 辩护对象
 被告人：**{defendant}**
@@ -1053,7 +1058,7 @@ class AnalysisEngine:
 - 证据链断裂处"""
 
         contradiction_md = await client.chat([
-            {"role": "system", "content": "识别证据间的矛盾和证据链薄弱环节。\n\n重要：起诉书/起诉意见书引用时写'据起诉书'/'据起诉意见书'，正式证据用'见证据XXX'格式。"},
+            {"role": "system", "content": "识别证据间的矛盾和证据链薄弱环节。\n\n\n**输出规则：直接输出分析内容，不要输出任何对话式开场白、寒暄、"好的"、"作为XXX"等客套话。不要称呼对方为"律师"或被告人姓名，直接输出结构化分析结果。**\n\n重要：起诉书/起诉意见书引用时写'据起诉书'/'据起诉意见书'，正式证据用'见证据XXX'格式。"},
             {"role": "user", "content": contradiction_prompt},
         ])
 
