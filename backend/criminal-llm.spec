@@ -7,6 +7,7 @@ datas = [
     ('mineru_async.py', '.'),
     ('paddleocr_async.py', '.'),
     ('paddleocr_remote.py', '.'),
+    ('analysis_engine.py', '.'),
 ]
 binaries = []
 
