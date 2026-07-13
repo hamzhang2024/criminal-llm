@@ -7,7 +7,7 @@ mod db;
 mod state;
 
 use db::AppDb;
-use state::{start_caffeinate, BackendClient, BackendPid, BackendPort, CaffeinateProcess};
+use state::{start_caffeinate, kill_backend_process, BackendClient, BackendPid, BackendPort, CaffeinateProcess};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -227,6 +227,12 @@ pub fn run() {
             }
             _ => {}
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            // 兜底：Cmd+Q 或菜单退出时也杀后端进程
+            if let tauri::RunEvent::ExitRequested { .. } = event {
+                kill_backend_process(app_handle);
+            }
+        });
 }
