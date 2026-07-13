@@ -1058,7 +1058,7 @@ class AnalysisEngine:
 - 证据链断裂处"""
 
         contradiction_md = await client.chat([
-            {"role": "system", "content": "识别证据间的矛盾和证据链薄弱环节。\n\n\n**输出规则：直接输出分析内容，不要输出任何对话式开场白、寒暄、"好的"、"作为XXX"等客套话。不要称呼对方为"律师"或被告人姓名，直接输出结构化分析结果。**\n\n重要：起诉书/起诉意见书引用时写'据起诉书'/'据起诉意见书'，正式证据用'见证据XXX'格式。"},
+            {"role": "system", "content": "识别证据间的矛盾和证据链薄弱环节。\n\n" + _NO_CHITCHAT + "\n\n重要：起诉书/起诉意见书引用时写'据起诉书'/'据起诉意见书'，正式证据用'见证据XXX'格式。"},
             {"role": "user", "content": contradiction_prompt},
         ])
 
