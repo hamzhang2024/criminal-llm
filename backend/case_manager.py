@@ -1066,12 +1066,7 @@ async def _extract_single_file(
     from llm_client import get_llm_client, LLMRetryExhaustedError
     client = get_llm_client()
 
-    # 预过滤：移除非证据段落（封面、目录等）
-    original_len = len(md_text)
-    md_text = _strip_non_evidence_sections(md_text)
-    if len(md_text) < original_len:
-        logger.info(f"[证据提取] {md_file.name}: 移除非证据段落，{original_len:,} → {len(md_text):,} 字符")
-
+    # 不做预过滤，保留完整原始内容（封面、目录等由LLM自行判断）
     # 无重试的直接调用，超时由调用方控制
     timeout_seconds = 600  # 10 分钟
 
