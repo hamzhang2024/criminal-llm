@@ -1385,16 +1385,25 @@ async def _do_extract_evidence(
     if not case_charges:
         import re as _re
         case_name = case_path.name
-        # 策略：找到"涉嫌"后面的字符串，在每个"罪"后面切开，逐个提取
-        suspect_match = _re.search(r'涉嫌(.+?)(?:_|$)', case_name)
-        if suspect_match:
-            suspect_part = suspect_match.group(1)  # "诈骗罪非法经营罪"
-            # 按"罪"切分：["诈骗罪", "非法经营罪"]
-            parts = _re.split(r'罪', suspect_part)
+        # 从 case.json 获取嫌疑人姓名
+        defendant = ""
+        if case_json.exists():
+            try:
+                meta = json.loads(case_json.read_text(encoding="utf-8"))
+                defendant = meta.get("defendant", "")
+            except Exception:
+                pass
+
+        # 策略：先移除嫌疑人姓名和"涉嫌"，再按"罪"切分
+        clean_name = case_name
+        if defendant:
+            clean_name = clean_name.replace(defendant, "")
+        clean_name = clean_name.replace("涉嫌", "").replace("、", "").replace("_", "")
+
+        # 按"罪"切分：["诈骗", "非法经营", ""] → ["诈骗罪", "非法经营罪"]
+        if clean_name:
+            parts = _re.split(r'罪', clean_name)
             case_charges = [p + '罪' for p in parts if p and len(p) >= 2]
-        else:
-            # fallback：找所有独立的"XX罪"
-            case_charges = _re.findall(r'([一-鿿]{2,}罪)', case_name)
             case_charges = [c for c in case_charges if c not in ('犯罪', '罪犯')]
         if case_charges:
             case_charges = list(dict.fromkeys(case_charges))
