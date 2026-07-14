@@ -886,7 +886,7 @@ async def _process_indictment_single(md_file: Path, md_text: str, evidence_dir: 
 不要概括、不要简化、不要对比其他证据，只做真实记录。"""},
         {"role": "user", "content": f"""## {doc_type}：{md_file.name}
 
-{md_text[:800000]}
+{md_text}
 
 ---
 
