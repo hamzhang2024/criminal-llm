@@ -34,14 +34,15 @@ def _get_enc():
     return _tiktoken_enc
 
 def _get_content_budget_chars() -> int:
-    """根据 model_context_limit 配置计算内容字符预算（tokens → chars，按0.68比率）"""
+    """根据 model_context_limit 配置计算内容字符预算（tokens → chars）"""
     try:
         from config_manager import get_config_value
         context_limit = int(get_config_value("model_context_limit", "250000"))
     except Exception:
         context_limit = 250000
     content_tokens = context_limit - 38000  # 预留 system prompt + 响应
-    return int(content_tokens / 0.68)  # tokens → chars
+    # 中文：1 字符 ≈ 0.74 token，或 1 token ≈ 1.35 字符
+    return int(content_tokens * 1.35)  # tokens → chars
 
 
 def _get_indictment_budget_chars() -> int:
