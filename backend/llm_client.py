@@ -164,9 +164,16 @@ class LLMClient:
 
         url = f"{self.base_url}/chat/completions"
 
+        # 根据模型上下文窗口动态计算最大输出 tokens（防止 API 默认值截断长输出）
+        from config_manager import get_config_value
+        context_limit = int(get_config_value("model_context_limit", "250000"))
+        # 预留 20% 给输入，其余作为输出上限
+        max_output_tokens = int(context_limit * 0.8)
+
         payload = {
             "model": model or self.model,
-            "messages": messages
+            "messages": messages,
+            "max_tokens": max_output_tokens
         }
 
         headers = {
@@ -217,7 +224,15 @@ class LLMClient:
                         overall_rate = (self._cache_hit_tokens / overall_total * 100) if overall_total > 0 else 0
                         logger.info("[LLM 缓存] 本次命中: %d/%d tokens (%.0f%%), 累计: %d/%d (%.0f%%), 共 %d 次请求", hit, total, hit_rate, self._cache_hit_tokens, overall_total, overall_rate, self._total_requests)
 
-                    return data["choices"][0]["message"]["content"]
+                    # 检测输出是否被截断
+                    choice = data["choices"][0]
+                    finish_reason = choice.get("finish_reason", "")
+                    if finish_reason == "length":
+                        logger.warning("[LLM] 输出被截断！finish_reason=length，建议增大 max_output_tokens 配置（当前 %d）", max_output_tokens)
+                    elif finish_reason == "stop":
+                        pass  # 正常结束
+
+                    return choice["message"]["content"]
 
                 return str(data)
             except (httpx.ReadTimeout, httpx.ConnectTimeout) as e:
