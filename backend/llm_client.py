@@ -11,6 +11,14 @@ import time
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 
+# 导入上下文预算计算函数
+from analysis_engine import (
+    _get_content_budget_chars,
+    _get_indictment_budget_chars,
+    _get_evidence_budget_chars,
+    _get_knowledge_budget_chars
+)
+
 logger = logging.getLogger(__name__)
 
 # 打包后 certifi 证书路径可能失效，macOS 用系统证书
@@ -269,7 +277,7 @@ class LLMClient:
 
 **【刑事辩护专业提示词参考】**
 
-{ZHANG_CRIMINAL_DEFENSE[:8000]}
+{ZHANG_CRIMINAL_DEFENSE[:_get_knowledge_budget_chars()]}
 
 ---
 
@@ -638,7 +646,7 @@ class LLMClient:
             
             user_message = f"""## 原始案卷证据材料
 
-{evidence_context[:80000]}
+{evidence_context[:_get_evidence_budget_chars()]}
 
 ---
 
@@ -667,7 +675,7 @@ class LLMClient:
             
             user_message = f"""## 案卷证据材料
 
-{evidence_context[:80000]}
+{evidence_context[:_get_evidence_budget_chars()]}
 
 ---
 

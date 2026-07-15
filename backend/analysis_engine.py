@@ -44,6 +44,21 @@ def _get_content_budget_chars() -> int:
     return int(content_tokens / 0.68)  # tokens → chars
 
 
+def _get_indictment_budget_chars() -> int:
+    """获取起诉书字符预算（约占总预算10%）"""
+    return int(_get_content_budget_chars() * 0.1)
+
+
+def _get_evidence_budget_chars() -> int:
+    """获取证据上下文字符预算（约占总预算80%）"""
+    return int(_get_content_budget_chars() * 0.8)
+
+
+def _get_knowledge_budget_chars() -> int:
+    """获取法律知识字符预算（约占总预算10%）"""
+    return int(_get_content_budget_chars() * 0.1)
+
+
 async def _batch_analyze_evidence(
     texts: List[Dict[str, str]],
     system_prompt: str,
@@ -578,7 +593,7 @@ class AnalysisEngine:
 
 > 注：优先以起诉书为准，无起诉书时以起诉意见书为准。如有多份，取形成时间最后的。
 
-{indictment["text"][:80000]}
+{indictment["text"][:_get_indictment_budget_chars()]}
 
 ---
 
@@ -1103,7 +1118,7 @@ class AnalysisEngine:
 
 ## 阶段 5B：矛盾分析
 
-{contradiction_md[:8000]}
+{contradiction_md[:_get_knowledge_budget_chars()]}
 
 ## 罪名特定知识
 
