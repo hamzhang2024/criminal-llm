@@ -362,7 +362,39 @@ class AnalysisEngine:
                                         md_file = candidate
                                         break
                         if md_file.exists():
-                            text = md_file.read_text(encoding="utf-8")
+                            # 优先从 index.json 的结构化字段构建 text
+                            has_structured = any([
+                                ev.get('key_facts'),
+                                ev.get('summary'),
+                            ])
+
+                            if has_structured:
+                                # 从结构化字段构建 text
+                                text_parts = [f"# {ev.get('name', '')}\n"]
+
+                                if ev.get('persons'):
+                                    text_parts.append(f"**涉案人员**：{ev['persons']}\n")
+
+                                if ev.get('related_entities'):
+                                    text_parts.append(f"## 关联信息\n{ev['related_entities']}\n")
+
+                                if ev.get('key_facts'):
+                                    text_parts.append(f"## 关键事实\n{ev['key_facts']}\n")
+
+                                if ev.get('summary'):
+                                    text_parts.append(f"## 详细摘要\n{ev['summary']}\n")
+
+                                if ev.get('original_quotes'):
+                                    text_parts.append(f"## 原文摘录\n{ev['original_quotes']}\n")
+
+                                if ev.get('contradiction_hints'):
+                                    text_parts.append(f"## 矛盾提示\n{ev['contradiction_hints']}\n")
+
+                                text = "\n".join(text_parts)
+                            else:
+                                # 向后兼容：回退到读取 .md 文件
+                                text = md_file.read_text(encoding="utf-8")
+
                             if text.strip():
                                 ev_id = ev.get("id", 0)
                                 ev_type = ev.get("type", "其他证据")
