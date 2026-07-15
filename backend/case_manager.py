@@ -18,6 +18,9 @@ import tiktoken
 
 logger = logging.getLogger(__name__)
 from fastapi import APIRouter, UploadFile, File, HTTPException, Request, Body
+
+# 证据结构化字段列表（用于传递和写入 index.json）
+EVIDENCE_STRUCTURED_FIELDS = ["key_facts", "summary", "original_quotes", "contradiction_hints"]
 from fastapi.responses import JSONResponse
 import json
 import uuid
@@ -1767,10 +1770,7 @@ async def _do_extract_evidence(
                             "page_range": b.get("page_range", ""),
                             "persons": b.get("persons", ""),
                             "related_entities": b.get("related_entities", ""),
-                            "key_facts": b.get("key_facts", ""),
-                            "summary": b.get("summary", ""),
-                            "original_quotes": b.get("original_quotes", ""),
-                            "contradiction_hints": b.get("contradiction_hints", ""),
+                            **{field: b.get(field, "") for field in EVIDENCE_STRUCTURED_FIELDS},
                             "summary_preview": b["summary"][:200],
                             "has_quotes": bool(b.get("original_quotes", "").strip()),
                             "md_file": ef.name,
@@ -1805,10 +1805,7 @@ async def _do_extract_evidence(
                         "source": ev_data["source"],
                         "persons": ev_data.get("persons", ""),
                         "related_entities": ev_data.get("related_entities", ""),
-                        "key_facts": ev_data.get("key_facts", ""),
-                        "summary": ev_data.get("summary", ""),
-                        "original_quotes": ev_data.get("original_quotes", ""),
-                        "contradiction_hints": ev_data.get("contradiction_hints", ""),
+                        **{field: ev_data.get(field, "") for field in EVIDENCE_STRUCTURED_FIELDS},
                         "summary_preview": ev_data.get("summary_preview", ev_data.get("summary", "")[:200]),
                         "has_quotes": ev_data.get("has_quotes", bool(ev_data.get("original_quotes", "").strip())),
                         "md_file": new_name,

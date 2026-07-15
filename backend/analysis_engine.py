@@ -364,31 +364,25 @@ class AnalysisEngine:
                         if md_file.exists():
                             # 优先从 index.json 的结构化字段构建 text
                             has_structured = any([
-                                ev.get('key_facts'),
-                                ev.get('summary'),
+                                ev.get('key_facts', '').strip(),
+                                ev.get('summary', '').strip(),
                             ])
 
                             if has_structured:
                                 # 从结构化字段构建 text
+                                fields_map = {
+                                    'persons': '**涉案人员**：{}\n',
+                                    'related_entities': '## 关联信息\n{}\n',
+                                    'key_facts': '## 关键事实\n{}\n',
+                                    'summary': '## 详细摘要\n{}\n',
+                                    'original_quotes': '## 原文摘录\n{}\n',
+                                    'contradiction_hints': '## 矛盾提示\n{}\n',
+                                }
+
                                 text_parts = [f"# {ev.get('name', '')}\n"]
-
-                                if ev.get('persons'):
-                                    text_parts.append(f"**涉案人员**：{ev['persons']}\n")
-
-                                if ev.get('related_entities'):
-                                    text_parts.append(f"## 关联信息\n{ev['related_entities']}\n")
-
-                                if ev.get('key_facts'):
-                                    text_parts.append(f"## 关键事实\n{ev['key_facts']}\n")
-
-                                if ev.get('summary'):
-                                    text_parts.append(f"## 详细摘要\n{ev['summary']}\n")
-
-                                if ev.get('original_quotes'):
-                                    text_parts.append(f"## 原文摘录\n{ev['original_quotes']}\n")
-
-                                if ev.get('contradiction_hints'):
-                                    text_parts.append(f"## 矛盾提示\n{ev['contradiction_hints']}\n")
+                                for field, template in fields_map.items():
+                                    if ev.get(field, '').strip():
+                                        text_parts.append(template.format(ev[field]))
 
                                 text = "\n".join(text_parts)
                             else:
