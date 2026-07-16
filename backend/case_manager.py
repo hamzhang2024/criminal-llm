@@ -2332,6 +2332,23 @@ def _parse_evidence_blocks(llm_output: str, source_file: str) -> list:
     import json
     blocks = []
 
+    # 分批输出检测关键词
+    _DEFERRED_PATTERNS = [
+        "后续证据", "后续还有", "将继续", "此处省略", "分批输出",
+        "后续回复", "下一轮", "推迟", "因篇幅限制", "因内容较多",
+        "确保所有文书均被覆盖", "重复性内容"
+    ]
+
+    def _check_deferred_output(blocks_to_check):
+        """检查证据块是否包含分批输出提示"""
+        for block in blocks_to_check:
+            raw = block.get("raw_text", "")
+            for pattern in _DEFERRED_PATTERNS:
+                if pattern in raw:
+                    logger.warning(f"[证据解析] {source_file}: 检测到分批输出提示「{pattern}」，LLM 可能未完整输出所有证据")
+                    return True
+        return False
+
     # ── 第1优先：JSON 数组解析 ──
     # 匹配 ```json ... ``` 代码块，或直接查找 JSON 数组
     json_text = llm_output
@@ -2369,6 +2386,7 @@ def _parse_evidence_blocks(llm_output: str, source_file: str) -> list:
                         })
                 if blocks:
                     logger.info(f"[证据解析] {source_file}: JSON 模式解析成功，{len(blocks)} 份证据")
+                    _check_deferred_output(blocks)
                     return blocks
         except (json.JSONDecodeError, Exception) as e:
             logger.info(f"[证据解析] {source_file}: JSON 解析失败，回退到文本模式: {e}")
@@ -2491,6 +2509,7 @@ def _parse_evidence_blocks(llm_output: str, source_file: str) -> list:
             "raw_text": content.strip(),
         })
 
+    _check_deferred_output(blocks)
     return blocks
 
 
