@@ -15,6 +15,7 @@ PROMPT_TEMPLATE = """你是法律知识工程师。请从以下《刑事审判�
 {excerpt}"""
 
 EXCERPT_MAX = 6000
+REQUEST_TIMEOUT = 300
 
 
 def validate_card(data: dict) -> list[str]:
@@ -29,6 +30,8 @@ def validate_card(data: dict) -> list[str]:
     keywords = data.get("keywords")
     if not isinstance(keywords, list) or not (3 <= len(keywords) <= 15):
         errors.append("keywords 须为 3-15 个元素的列表")
+    elif not all(isinstance(k, str) and k for k in keywords):
+        errors.append("keywords 元素必须是非空字符串")
     return errors
 
 
@@ -45,8 +48,9 @@ def distill_case(session, base_url: str, api_key: str, model: str, title: str, m
                     "model": model,
                     "messages": [{"role": "user", "content": prompt}],
                     "response_format": {"type": "json_object"},
+                    "temperature": 0.1,
                 },
-                timeout=300,
+                timeout=REQUEST_TIMEOUT,
             )
             resp.raise_for_status()
             content = resp.json()["choices"][0]["message"]["content"]

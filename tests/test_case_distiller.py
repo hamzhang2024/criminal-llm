@@ -36,6 +36,12 @@ def test_validate_card_keywords_count():
     assert any("keywords" in e for e in validate_card(card))
 
 
+def test_validate_card_keywords_element_type():
+    card = good_card()
+    card["keywords"] = ["a", 2, None]
+    assert any("keywords" in e for e in validate_card(card))
+
+
 class FakeResponse:
     def __init__(self, payload):
         self._payload = payload
