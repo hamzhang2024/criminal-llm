@@ -11,6 +11,7 @@ LLM 配置来源（优先级：环境变量 > 桌面端 criminal-llm-config.json
 import argparse
 import json
 import os
+import re
 import sqlite3
 import sys
 import threading
@@ -104,7 +105,13 @@ def run(md_dir: Path, db_path: Path, session, base_url: str, api_key: str, model
         limit: int | None = None, progress_cb=print) -> dict:
     conn = sqlite3.connect(str(db_path))
     init_schema(conn)
-    existing = {r[0] for r in conn.execute("SELECT case_no FROM cases")}
+    # 按 (案号, 标题) 判重：同案号不同标题属不同案例（源数据有重号），不能跳过。
+    # 已入库的重号案例案号带 -N 后缀（如 第8号-2），判重时归一化回基础案号，
+    # 否则重跑时第二篇会以 ("第8号", 标题) 失配而被重复提炼。
+    existing = {
+        (re.sub(r"-\d+$", "", r[0]), r[1])
+        for r in conn.execute("SELECT case_no, title FROM cases")
+    }
     stats = {"distilled": 0, "skipped_existing": 0, "skipped_invalid_name": 0, "failed": 0}
     failed = []
     # 写操作均在主线程消费循环执行，锁为防御性保留
@@ -119,7 +126,7 @@ def run(md_dir: Path, db_path: Path, session, base_url: str, api_key: str, model
             progress_cb(f"[跳过] 命名不规范: {path.name}")
             continue
         case_no, title = parsed
-        if case_no in existing:
+        if (case_no, title) in existing:
             stats["skipped_existing"] += 1
             continue
         todo.append((path, case_no, title))

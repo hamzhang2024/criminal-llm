@@ -78,6 +78,30 @@ def test_duplicate_case_no_gets_suffix(tmp_path):
     assert nos == ["第5号", "第5号-2"]
 
 
+def test_rerun_duplicate_title_skipped_but_new_title_suffixed(tmp_path):
+    """同案号同标题真重复才跳过；同案号不同标题走 -2 后缀"""
+    md_dir = tmp_path / "md"
+    md_dir.mkdir()
+    (md_dir / "【第8号】甲案——问题一.md").write_text(make_md(8, "甲案"), encoding="utf-8")
+    (md_dir / "【第8号】乙案——问题二.md").write_text(make_md(8, "乙案"), encoding="utf-8")
+    db_path = tmp_path / "cases.db"
+    stats1 = distill_cases.run(md_dir, db_path, OkSession(), "http://fake/v1", "key", "model")
+    assert stats1["distilled"] == 2  # 第8号 + 第8号-2
+
+    # 重跑：两篇都跳过（同案号同标题组合已存在）
+    stats2 = distill_cases.run(md_dir, db_path, OkSession(), "http://fake/v1", "key", "model")
+    assert stats2["distilled"] == 0
+    assert stats2["skipped_existing"] == 2
+
+    # 新增同案号第三篇不同标题：得 -3 后缀
+    (md_dir / "【第8号】丙案——问题三.md").write_text(make_md(8, "丙案"), encoding="utf-8")
+    stats3 = distill_cases.run(md_dir, db_path, OkSession(), "http://fake/v1", "key", "model")
+    assert stats3["distilled"] == 1
+    conn = sqlite3.connect(str(db_path))
+    nos = sorted(r[0] for r in conn.execute("SELECT case_no FROM cases").fetchall())
+    assert nos == ["第8号", "第8号-2", "第8号-3"]
+
+
 def test_missing_sections_fallback(tmp_path):
     """缺标准章节：LLM 总结 issue + 摘录 2000 字 + issue_source='llm'"""
     md_dir = tmp_path / "md"
