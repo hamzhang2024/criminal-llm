@@ -33,7 +33,8 @@ CREATE TABLE IF NOT EXISTS cases (
     reasoning_excerpt TEXT NOT NULL,
     keywords TEXT NOT NULL,
     full_text TEXT NOT NULL,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    issue_source TEXT NOT NULL DEFAULT 'original'
 );
 CREATE VIRTUAL TABLE IF NOT EXISTS cases_fts USING fts5(
     case_no UNINDEXED,
@@ -44,6 +45,9 @@ CREATE VIRTUAL TABLE IF NOT EXISTS cases_fts USING fts5(
 
 WORKERS = 5
 
+# 文章体裁案例缺「三、裁判理由」章节时，裁判分析即正文，摘录取全文开头
+FALLBACK_REASONING_EXCERPT_LEN = 2000
+
 
 def build_match_query(q: str) -> str:
     """与检索服务共用的 MATCH 查询构造（bigram 短语）"""
@@ -53,6 +57,11 @@ def build_match_query(q: str) -> str:
 
 def init_schema(conn: sqlite3.Connection):
     conn.executescript(SCHEMA)
+    # 既有库迁移：补充 issue_source 列（'original'=原文章节，'llm'=LLM 总结）
+    try:
+        conn.execute("ALTER TABLE cases ADD COLUMN issue_source TEXT NOT NULL DEFAULT 'original'")
+    except sqlite3.OperationalError:
+        pass  # 列已存在
 
 
 def _fts_content(title: str, charges: list, issue: str, summary: str, keywords: list) -> str:
@@ -60,20 +69,35 @@ def _fts_content(title: str, charges: list, issue: str, summary: str, keywords: 
 
 
 def insert_case(conn, case_no, title, sections, card, md_text):
+    """插入案例 + FTS 索引。案号 UNIQUE 冲突时自动加 -2/-3... 后缀重试，返回最终入库案号"""
     now = datetime.now(timezone.utc).isoformat()
-    conn.execute(
-        "INSERT INTO cases (case_no, title, charges, issue, holding_summary, reasoning_excerpt, keywords, full_text, created_at)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (
-            case_no, title, json.dumps(card["charges"], ensure_ascii=False),
-            sections["issue"], card["holding_summary"], sections["reasoning_excerpt"],
-            json.dumps(card["keywords"], ensure_ascii=False), md_text, now,
-        ),
-    )
+    final_no = case_no
+    suffix = 2
+    while True:
+        try:
+            conn.execute(
+                "INSERT INTO cases (case_no, title, charges, issue, holding_summary, reasoning_excerpt,"
+                " keywords, full_text, created_at, issue_source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    final_no, title, json.dumps(card["charges"], ensure_ascii=False),
+                    sections["issue"], card["holding_summary"], sections["reasoning_excerpt"],
+                    json.dumps(card["keywords"], ensure_ascii=False), md_text, now,
+                    sections.get("issue_source", "original"),
+                ),
+            )
+            break
+        except sqlite3.IntegrityError:
+            # 仅当冲突确为案号重复时加后缀重试，其余完整性错误照常抛出
+            if conn.execute("SELECT 1 FROM cases WHERE case_no = ?", (final_no,)).fetchone():
+                final_no = f"{case_no}-{suffix}"
+                suffix += 1
+            else:
+                raise
     conn.execute(
         "INSERT INTO cases_fts (case_no, content) VALUES (?, ?)",
-        (case_no, _fts_content(title, card["charges"], sections["issue"], card["holding_summary"], card["keywords"])),
+        (final_no, _fts_content(title, card["charges"], sections["issue"], card["holding_summary"], card["keywords"])),
     )
+    return final_no
 
 
 def run(md_dir: Path, db_path: Path, session, base_url: str, api_key: str, model: str,
@@ -105,12 +129,22 @@ def run(md_dir: Path, db_path: Path, session, base_url: str, api_key: str, model
     def process(path, case_no, title):
         md_text = path.read_text(encoding="utf-8")
         sections = extract_sections(md_text)
-        if sections["issue"] is None:
-            return (case_no, None, "缺少「二、主要问题」章节", None, None, None)
+        # 文章体裁缺「二、主要问题」章节：不再直接失败，改由 LLM 从全文总结主要问题
+        need_issue = sections["issue"] is None
         try:
-            card = distill_case(session, base_url, api_key, model, title, md_text)
+            card = distill_case(session, base_url, api_key, model, title, md_text,
+                                need_issue=need_issue)
         except Exception as e:
             return (case_no, None, str(e), None, None, None)
+        if need_issue:
+            # LLM 总结的 issue 标记为非原文；无章节边界，裁判分析即正文，摘录取全文开头
+            sections = {
+                "issue": card["issue"],
+                "reasoning_excerpt": md_text.strip()[:FALLBACK_REASONING_EXCERPT_LEN],
+                "issue_source": "llm",
+            }
+        else:
+            sections["issue_source"] = "original"
         return (case_no, title, None, sections, card, md_text)
 
     with ThreadPoolExecutor(max_workers=WORKERS) as pool:
@@ -124,17 +158,19 @@ def run(md_dir: Path, db_path: Path, session, base_url: str, api_key: str, model
                 continue
             with db_lock:
                 try:
-                    insert_case(conn, case_no, title, sections, card, md_text)
+                    final_no = insert_case(conn, case_no, title, sections, card, md_text)
                     conn.commit()
                 except Exception as e:
-                    # DB 异常（如案号冲突）隔离处理，不中断整批
+                    # DB 异常隔离处理，不中断整批
                     conn.rollback()
                     stats["failed"] += 1
                     failed.append({"case_no": case_no, "reason": f"DB 写入失败: {e}"})
                     progress_cb(f"[失败] {case_no}: DB 写入失败: {e}")
                     continue
             stats["distilled"] += 1
-            progress_cb(f"[完成] {case_no} {title}（累计 {stats['distilled']}）")
+            if final_no != case_no:
+                progress_cb(f"[改名] {case_no} 案号重复，入库为 {final_no}")
+            progress_cb(f"[完成] {final_no} {title}（累计 {stats['distilled']}）")
 
     fail_path = Path(db_path).parent / "failed_cases.json"
     if failed:

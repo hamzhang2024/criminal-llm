@@ -64,6 +64,55 @@ def test_run_incremental(tmp_path):
     assert len(fts) == 3
 
 
+def test_duplicate_case_no_gets_suffix(tmp_path):
+    """同一案号两篇不同案例：第二篇以 -2 后缀入库"""
+    md_dir = tmp_path / "md"
+    md_dir.mkdir()
+    (md_dir / "【第5号】甲案——问题一.md").write_text(make_md(5, "甲案"), encoding="utf-8")
+    (md_dir / "【第5号】乙案——问题二.md").write_text(make_md(5, "乙案"), encoding="utf-8")
+    db_path = tmp_path / "cases.db"
+    stats = distill_cases.run(md_dir, db_path, OkSession(), "http://fake/v1", "key", "model")
+    assert stats["distilled"] == 2
+    conn = sqlite3.connect(str(db_path))
+    nos = sorted(r[0] for r in conn.execute("SELECT case_no FROM cases").fetchall())
+    assert nos == ["第5号", "第5号-2"]
+
+
+def test_missing_sections_fallback(tmp_path):
+    """缺标准章节：LLM 总结 issue + 摘录 2000 字 + issue_source='llm'"""
+    md_dir = tmp_path / "md"
+    md_dir.mkdir()
+    article = "【第6号】丙案——问题\n\n## 一、基本案情\n\n" + "正文内容。" * 600  # >2000 字
+    (md_dir / "【第6号】丙案——问题.md").write_text(article, encoding="utf-8")
+
+    class IssueSession:
+        def post(self, url, headers=None, json=None, timeout=None):
+            card = {
+                "charges": ["测试罪"],
+                "holding_summary": "测试要旨。" * 30,
+                "keywords": ["测试", "案例", "罪名"],
+                "issue": "本案核心法律问题是什么？这是一个测试问题总结。",
+            }
+            return type("R", (), {
+                "raise_for_status": lambda self: None,
+                "json": lambda self: {"choices": [{"message": {"content": _json_dumps(card, ensure_ascii=False)}}]},
+            })()
+
+    db_path = tmp_path / "cases.db"
+    stats = distill_cases.run(md_dir, db_path, IssueSession(), "http://fake/v1", "key", "model")
+    assert stats["distilled"] == 1
+    conn = sqlite3.connect(str(db_path))
+    row = conn.execute("SELECT issue, reasoning_excerpt, issue_source FROM cases WHERE case_no = '第6号'").fetchone()
+    assert "测试问题总结" in row[0]
+    assert len(row[1]) == 2000
+    assert row[2] == "llm"
+    # 标准路径仍为 original
+    (md_dir / "【第7号】丁案——问题.md").write_text(make_md(7, "丁案"), encoding="utf-8")
+    distill_cases.run(md_dir, db_path, IssueSession(), "http://fake/v1", "key", "model")
+    row2 = conn.execute("SELECT issue_source FROM cases WHERE case_no = '第7号'").fetchone()
+    assert row2[0] == "original"
+
+
 def test_run_limit(tmp_path):
     md_dir = tmp_path / "md"
     md_dir.mkdir()
