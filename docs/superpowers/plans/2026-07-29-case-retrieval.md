@@ -13,6 +13,7 @@
 **与 spec 的两处细化（实现层面更合理）：**
 1. 用量计数表存于案例服务自己的 `usage.db`（`cases.db` 会被 scp 覆盖部署、`auth.db` 对案例服务只读挂载，都不适合写计数）
 2. 案例服务不启用 CORS 中间件——只被桌面本地后端服务端到服务端调用，浏览器不直连
+3. 【实施修正】桌面本地后端代理前缀由 `/api/cases` 改为 `/api/case-search`：case_manager 的 case_router 已占用 `/api/cases/{case_id}`，形状冲突不可调和。云端 8001 服务路径保持 `/api/cases/*` 不变
 
 ---
 
@@ -925,8 +926,10 @@ def validate_key(req: ValidateRequest):
 
 - [ ] **Step 5: 运行测试确认通过**
 
-Run: `python -m pytest tests/test_auth_keys.py -v`
-Expected: 7 passed（注意 test 中 `/api/charges` 此时 404 而非 200/401——鉴权依赖先于路由匹配执行，FastAPI 对未注册路径直接 404。**调整**：先在 main.py 加一个返回空列表的 `/api/charges` 占位实现让鉴权测试成立，Task 6 再填真实逻辑）
+Run: `python3 -m pytest tests/test_auth_keys.py -v`
+Expected: 6 passed（计划原文笔误为 7，实际 6 个用例）
+
+另需在 main.py 末尾加启动初始化（计划遗漏，审查发现）：`init_usage_db()` 模块级调用一次，避免生产冷启动时 usage 表不存在导致 500。
 
 占位实现（加在 Step 4 的 main.py 末尾）：
 ```python
@@ -1807,6 +1810,8 @@ git commit -m "feat: 案例检索 API 申请页与管理页"
 
 ### Task 10: 配置项 + 云端代理路由
 
+> 【实施说明】本任务已按 `/api/case-search` 前缀完成实现（见顶部修正 3）。下文测试中的本地路径以 `/api/case-search/*` 为准；`_get()` 转发的云端路径仍为 `/api/cases/*`。
+
 **Files:**
 - Modify: `criminal-llm/backend/config_manager.py`（DEFAULTS + get_config_status）
 - Create: `criminal-llm/backend/case_search_api.py`
@@ -2328,19 +2333,19 @@ async function request<T>(path: string): Promise<T> {
 
 export function searchCases(q: string, charge: string, page: number, size = 20): Promise<CaseSearchResult> {
   const params = new URLSearchParams({ q, charge, page: String(page), size: String(size) })
-  return request<CaseSearchResult>(`/cases/search?${params}`)
+  return request<CaseSearchResult>(`/case-search/search?${params}`)
 }
 
 export function getCharges(): Promise<{ charges: string[] }> {
-  return request<{ charges: string[] }>(`/cases/charges`)
+  return request<{ charges: string[] }>(`/case-search/charges`)
 }
 
 export function getCaseFull(caseNo: string): Promise<CaseFull> {
-  return request<CaseFull>(`/cases/${encodeURIComponent(caseNo)}/full`)
+  return request<CaseFull>(`/case-search/${encodeURIComponent(caseNo)}/full`)
 }
 
 export async function validateCaseKey(apiKey: string): Promise<CaseKeyValidation> {
-  const res = await fetch(`${API_BASE}/cases/validate`, {
+  const res = await fetch(`${API_BASE}/case-search/validate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ api_key: apiKey }),
@@ -2353,7 +2358,7 @@ export async function validateCaseKey(apiKey: string): Promise<CaseKeyValidation
 }
 ```
 
-注意：本地后端代理路由前缀是 `/api/cases`，`API_BASE` 一般以 `/api` 结尾（与 stages.ts 中 `${API_BASE}/stage-analysis/...` 对照确认拼接结果应为 `/api/cases/search`）。
+注意：本地后端代理路由前缀是 `/api/case-search`（见顶部修正 3），`API_BASE` 一般以 `/api` 结尾（与 stages.ts 中 `${API_BASE}/stage-analysis/...` 对照确认拼接结果应为 `/api/case-search/search`）。
 
 - [ ] **Step 2: `src/components/report/CaseSearchPanel.tsx`**
 
