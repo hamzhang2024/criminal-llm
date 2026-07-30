@@ -73,3 +73,33 @@ def test_run_limit(tmp_path):
     stats = distill_cases.run(md_dir, tmp_path / "cases.db", OkSession(),
                               "http://fake/v1", "key", "model", limit=1)
     assert stats["distilled"] == 1
+
+
+class FailSession:
+    """LLM 调用始终失败：post 直接抛异常，distill_case 重试两次后抛 RuntimeError"""
+
+    def post(self, url, headers=None, json=None, timeout=None):
+        raise ConnectionError("模拟网络故障")
+
+
+def test_run_llm_failure(tmp_path):
+    md_dir = tmp_path / "md"
+    md_dir.mkdir()
+    (md_dir / "【第1号】甲测试案——问题一.md").write_text(make_md(1), encoding="utf-8")
+
+    db_path = tmp_path / "cases.db"
+    stats = distill_cases.run(md_dir, db_path, FailSession(), "http://fake/v1", "key", "model")
+    assert stats["failed"] >= 1
+    assert stats["distilled"] == 0
+
+    # 失败清单落盘，含 case_no 与 reason
+    fail_path = tmp_path / "failed_cases.json"
+    assert fail_path.exists()
+    failed = json.loads(fail_path.read_text(encoding="utf-8"))
+    assert failed[0]["case_no"] == "第1号"
+    assert failed[0]["reason"]
+
+    # 恢复后重跑成功，上一轮残留的失败清单被清理
+    stats2 = distill_cases.run(md_dir, db_path, OkSession(), "http://fake/v1", "key", "model")
+    assert stats2["distilled"] == 1
+    assert not fail_path.exists()

@@ -83,6 +83,7 @@ def run(md_dir: Path, db_path: Path, session, base_url: str, api_key: str, model
     existing = {r[0] for r in conn.execute("SELECT case_no FROM cases")}
     stats = {"distilled": 0, "skipped_existing": 0, "skipped_invalid_name": 0, "failed": 0}
     failed = []
+    # 写操作均在主线程消费循环执行，锁为防御性保留
     db_lock = threading.Lock()
 
     # 收集待处理文件
@@ -122,15 +123,26 @@ def run(md_dir: Path, db_path: Path, session, base_url: str, api_key: str, model
                 progress_cb(f"[失败] {case_no}: {err}")
                 continue
             with db_lock:
-                insert_case(conn, case_no, title, sections, card, md_text)
-                conn.commit()
+                try:
+                    insert_case(conn, case_no, title, sections, card, md_text)
+                    conn.commit()
+                except Exception as e:
+                    # DB 异常（如案号冲突）隔离处理，不中断整批
+                    conn.rollback()
+                    stats["failed"] += 1
+                    failed.append({"case_no": case_no, "reason": f"DB 写入失败: {e}"})
+                    progress_cb(f"[失败] {case_no}: DB 写入失败: {e}")
+                    continue
             stats["distilled"] += 1
             progress_cb(f"[完成] {case_no} {title}（累计 {stats['distilled']}）")
 
+    fail_path = Path(db_path).parent / "failed_cases.json"
     if failed:
-        fail_path = Path(db_path).parent / "failed_cases.json"
         fail_path.write_text(json.dumps(failed, ensure_ascii=False, indent=2), encoding="utf-8")
         progress_cb(f"失败清单已写入: {fail_path}（{len(failed)} 篇）")
+    elif fail_path.exists():
+        # 本轮无失败，清理上一轮残留的失败清单，避免误导
+        fail_path.unlink()
     conn.close()
     return stats
 
