@@ -117,7 +117,13 @@ async def _run_stage_4(engine, defendant, crime_type, reference_case_nos):
     """阶段 4：支持注入用户选中的真实案例卡片"""
     if reference_case_nos:
         from case_search_api import fetch_case_cards
-        cards = fetch_case_cards(reference_case_nos)
+        # fetch_case_cards 是同步网络请求，放到线程池避免阻塞事件循环
+        cards = await asyncio.to_thread(fetch_case_cards, reference_case_nos)
+        if len(cards) < len(reference_case_nos):
+            logger.warning(
+                f"[阶段4] 请求 {len(reference_case_nos)} 篇参考案例，实际拉到 {len(cards)} 篇，"
+                f"缺失：{[no for no in reference_case_nos if no not in {c.get('case_no') for c in cards}]}"
+            )
         return await engine.stage_4_legal_regulations(defendant, crime_type, reference_cases=cards)
     return await engine.stage_4_legal_regulations(defendant, crime_type)
 

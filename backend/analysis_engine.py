@@ -322,12 +322,12 @@ def _extract_json_and_render(text: str, mermaid_fn) -> str:
 
 
 def build_reference_block(cards: List[Dict[str, Any]]) -> str:
-    """把选中的真实案例卡片格式化为提示词注入块"""
+    """把选中的真实案例卡片格式化为提示词注入块（畸形卡片缺字段时按空串渲染，不抛异常）"""
     blocks = []
     for c in cards:
         charges = "、".join(c.get("charges", []))
         blocks.append(
-            f"【{c['case_no']}】{c['title']}\n"
+            f"【{c.get('case_no', '')}】{c.get('title', '')}\n"
             f"涉及罪名：{charges}\n"
             f"主要问题：{c.get('issue', '')}\n"
             f"裁判要旨：{c.get('holding_summary', '')}\n"
@@ -984,6 +984,20 @@ class AnalysisEngine:
         if crime_specific:
             crime_specific_section = f"## 罪名特定知识\n{crime_specific}"
 
+        # 类案裁判规则小节：有真实参考案例时要求引用之（与 system_prompt 注入指令保持一致），
+        # 无参考案例时保持原文（严禁虚构、不引用具体案例）
+        if reference_cases:
+            case_rules_section = """### 三、类案裁判规则
+- 引用系统提示中提供的真实参考案例，格式为「【案号】案例名 + 裁判要旨」
+- 除提供的案例外，严禁虚构任何案号、法院名称、裁判日期或当事人姓名
+- 说明与本案的关联"""
+        else:
+            case_rules_section = """### 三、类案裁判规则
+- **严禁虚构案例**：不得编造任何案号、法院名称、裁判日期或当事人姓名
+- 仅描述相关裁判规则和法律要旨，不引用具体案例
+- 如果引用指导性案例，必须是确信真实存在的（如最高人民法院正式发布的指导性案例）
+- 说明与本案的关联"""
+
         user_prompt = f"""## 辩护对象
 被告人：**{defendant}**
 
@@ -1021,11 +1035,7 @@ class AnalysisEngine:
 - 摘录关键条款
 - 说明对本案的适用性
 
-### 三、类案裁判规则
-- **严禁虚构案例**：不得编造任何案号、法院名称、裁判日期或当事人姓名
-- 仅描述相关裁判规则和法律要旨，不引用具体案例
-- 如果引用指导性案例，必须是确信真实存在的（如最高人民法院正式发布的指导性案例）
-- 说明与本案的关联
+{case_rules_section}
 
 ### 四、量刑指导意见
 - 列明该罪名的基准刑
