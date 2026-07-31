@@ -892,7 +892,7 @@ class AnalysisPipeline:
             return []
         return sorted([f.name for f in d.iterdir() if f.is_file()])
 
-    def _search_legal_knowledge(self, charges: list = None) -> dict:
+    def _search_legal_knowledge(self, crime_type: str | None = None) -> dict:
         """从内置刑法中搜索相关法条"""
         from legal_knowledge import CRIME_ARTICLE_MAP, load_criminal_law, load_criminal_procedure_law
 
@@ -921,6 +921,42 @@ class AnalysisPipeline:
                 print(f"[法律知识库] 加载内置刑法失败: {e}")
 
         return result
+
+    def _case_charges(self, crime_type: Optional[str] = None) -> list[str]:
+        """案件罪名列表：优先 case.json 的 charges，回退 crime_type 单罪名"""
+        meta_file = self.case_dir / "case.json"
+        if meta_file.exists():
+            try:
+                meta = json.loads(meta_file.read_text(encoding="utf-8"))
+                charges = meta.get("charges") or []
+                if charges:
+                    return charges
+            except Exception:
+                pass
+        return [crime_type] if crime_type else []
+
+    def _save_suggested_keywords(self, keywords: list[str]):
+        """LLM 推荐关键词写入 case.json（不覆盖用户已编辑的 search_keywords）"""
+        meta_file = self.case_dir / "case.json"
+        meta = {}
+        if meta_file.exists():
+            try:
+                meta = json.loads(meta_file.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        meta["suggested_keywords"] = keywords
+        meta_file.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _effective_keywords(self) -> list[str]:
+        """有效检索关键词：用户编辑 > LLM 推荐 > 空"""
+        meta_file = self.case_dir / "case.json"
+        if meta_file.exists():
+            try:
+                meta = json.loads(meta_file.read_text(encoding="utf-8"))
+                return meta.get("search_keywords") or meta.get("suggested_keywords") or []
+            except Exception:
+                pass
+        return []
 
     def _build_wiki_index(self) -> str:
         """生成 Wiki 索引"""
@@ -966,7 +1002,7 @@ class AnalysisPipeline:
             (wiki_dir / subdir).mkdir(exist_ok=True)
 
         # 定义所有子步骤总数，用于进度报告
-        SUB_STEPS = ["4a-指控要素", "4b-证据摄入", "4c-法律依据", "4d-综合结论"]
+        SUB_STEPS = ["4a-指控要素", "4c-法律框架", "4b-证据摄入", "4d-综合结论"]
         sub_done = 0
         sub_total = len(SUB_STEPS)
         if progress_cb:
@@ -975,6 +1011,7 @@ class AnalysisPipeline:
         results_log = {"sub_steps": [], "wiki_dir": str(wiki_dir)}
 
         # ===== 4a: 指控要素分析（起诉书 > 起诉意见书） =====
+        indictment_analyzed = False
         if not self._wiki_page_exists("", "01-指控要素.md"):
             indictment_text, indictment_type = await self._find_indictment_in_md_files()
 
@@ -997,6 +1034,7 @@ class AnalysisPipeline:
 请以 Markdown 格式输出分析结果。"""},
                     ])
                     self._save_wiki_page("", "01-指控要素.md", analysis)
+                    indictment_analyzed = True
                     results_log["sub_steps"].append({"step": "4a", "name": "指控要素分析", "status": "done"})
                     print("[步骤 4a] 完成指控要素分析")
                 except Exception as e:
@@ -1009,10 +1047,89 @@ class AnalysisPipeline:
             results_log["sub_steps"].append({"step": "4a", "name": "指控要素分析", "status": "skipped"})
         sub_done = 1
         if progress_cb:
-            progress_cb(sub_done, sub_total, "步骤 4：逐人证据摄入（证据分析）")
+            progress_cb(sub_done, sub_total, "步骤 4：构建法律框架（法条+类案）")
 
         # 读取指控要素（用于后续步骤）
         indictment_content = self._load_wiki_page("", "01-指控要素.md")
+
+        # LLM 推荐类案检索关键词（罪名除外），存 case.json suggested_keywords
+        if indictment_analyzed:
+            try:
+                kw_text = await self.llm.chat([
+                    {"role": "system", "content": "你是刑事律师。请从指控要素分析中提取 3-5 个类案检索关键词（不要包含罪名本身），聚焦行为特征、情节要素、对象特征，每行一个，只输出关键词。"},
+                    {"role": "user", "content": indictment_content[:5000]},
+                ])
+                suggested = [line.strip("- •　 ") for line in kw_text.strip().split("\n") if line.strip()][:5]
+                if suggested:
+                    self._save_suggested_keywords(suggested)
+            except Exception as e:
+                print(f"[步骤 4a] 关键词推荐失败（不影响主流程）: {e}")
+
+        # ===== 4c: 法律依据检索 =====
+        if not self._wiki_page_exists("04-法律依据", "适用法条.md"):
+            print("[步骤 4c] 检索法律依据...")
+            legal = self._search_legal_knowledge(crime_type)
+
+            # 读取用户提供的参考材料
+            user_ref_text = ""
+            user_ref_dir = self.analysis_dir / "user_reference"
+            if user_ref_dir.exists():
+                for md in user_ref_dir.rglob("*.md"):
+                    user_ref_text += md.read_text(encoding="utf-8")[:5000] + "\n\n"
+
+            try:
+                legal_analysis = await self.llm.chat([
+                    {"role": "system", "content": "你是刑事律师，请根据案件情况检索并分析相关法律依据。"},
+                    {"role": "user", "content": f"""## 指控要素
+{indictment_content}
+
+## 罪名类型：{crime_type or '未知'}
+
+## 从刑法知识库检索到的法条
+{legal['articles'][:8000] if legal['articles'] else '未找到相关法条'}
+
+## 从刑法知识库检索到的司法解释
+{legal['interpretations'][:8000] if legal['interpretations'] else '未找到相关司法解释'}
+
+## 从刑法知识库检索到的案例
+{legal['cases'][:5000] if legal['cases'] else '未找到相关案例'}
+
+## 用户提供的参考材料
+{user_ref_text[:5000] if user_ref_text else '无'}
+
+请综合分析：
+1. 适用的主要刑法条文及内容
+2. 相关司法解释的适用要点
+3. 类似案例的裁判规则（如有）
+4. 对本案的法律适用建议
+
+请输出 Markdown 格式，分别保存到适用法条、司法解释、参考案例三个部分。"""},
+                ])
+                self._save_wiki_page("04-法律依据", "适用法条.md", legal_analysis)
+                results_log["sub_steps"].append({"step": "4c", "name": "法律依据检索", "status": "done"})
+                print("[步骤 4c] 完成法律依据分析")
+            except Exception as e:
+                self._save_wiki_page("04-法律依据", "适用法条.md", f"分析失败：{e}")
+                results_log["sub_steps"].append({"step": "4c", "name": "法律依据检索", "status": "failed", "error": str(e)})
+
+            # 类案裁判规则（自动检索，供分析参考；失败静默降级）
+            try:
+                from case_framework import fetch_case_rules
+                charge_list = self._case_charges(crime_type)
+                case_rules = fetch_case_rules(charge_list, keywords=self._effective_keywords())
+                for charge_name, rules_md in case_rules.items():
+                    safe_name = charge_name.replace("/", "_")
+                    self._save_wiki_page("04-法律依据", f"类案裁判规则-{safe_name}.md", rules_md)
+                if case_rules:
+                    print(f"[步骤 4c] 已检索类案 {len(case_rules)} 个罪名的裁判规则")
+            except Exception as e:
+                print(f"[步骤 4c] 类案检索降级（不影响主流程）: {e}")
+        else:
+            results_log["sub_steps"].append({"step": "4c", "name": "法律依据检索", "status": "skipped"})
+
+        sub_done = 2
+        if progress_cb:
+            progress_cb(sub_done, sub_total, "步骤 4：逐人证据摄入（证据分析）")
 
         # ===== 4b: 逐人证据摄入（串行） =====
         evidence_list = []
@@ -1032,6 +1149,11 @@ class AnalysisPipeline:
 
         # 读取已分析的证据列表（用于交叉引用）
         analyzed_evidence = []
+
+        # 法律框架（4c 产物：法条 + 司法解释 + 类案裁判规则）
+        legal_framework = ""
+        for lf in self._list_wiki_pages("04-法律依据"):
+            legal_framework += f"\n### {lf}\n{self._load_wiki_page('04-法律依据', lf)[:2000]}\n"
 
         print(f"[步骤 4b] 开始逐人证据摄入（{len(evidence_list)} 份证据，串行）...")
         for ev in evidence_list:
@@ -1088,6 +1210,9 @@ class AnalysisPipeline:
                     {"role": "user", "content": f"""## 指控要素
 {indictment_content or '无起诉意见书'}
 
+## 法律框架（法条 + 司法解释 + 类案裁判规则）
+{legal_framework if legal_framework else '无'}
+
 ## 待分析证据：{person}（{etype}）
 {summary_text[:30000]}
 
@@ -1114,59 +1239,6 @@ class AnalysisPipeline:
                 self._save_wiki_page("03-证据分析", wiki_filename, f"分析失败：{e}")
                 results_log["sub_steps"].append({"step": "4b", "name": f"{person}（{etype}）", "status": "failed", "error": str(e)})
                 print(f"[步骤 4b] {person} 分析失败: {e}")
-
-        sub_done = 2
-        if progress_cb:
-            progress_cb(sub_done, sub_total, "步骤 4：法律依据检索")
-
-        # ===== 4c: 法律依据检索 =====
-        if not self._wiki_page_exists("04-法律依据", "适用法条.md"):
-            print("[步骤 4c] 检索法律依据...")
-            legal = self._search_legal_knowledge(charges)
-
-            # 读取用户提供的参考材料
-            user_ref_text = ""
-            user_ref_dir = self.analysis_dir / "user_reference"
-            if user_ref_dir.exists():
-                for md in user_ref_dir.rglob("*.md"):
-                    user_ref_text += md.read_text(encoding="utf-8")[:5000] + "\n\n"
-
-            try:
-                legal_analysis = await self.llm.chat([
-                    {"role": "system", "content": "你是刑事律师，请根据案件情况检索并分析相关法律依据。"},
-                    {"role": "user", "content": f"""## 指控要素
-{indictment_content}
-
-## 罪名类型：{crime_type or '未知'}
-
-## 从刑法知识库检索到的法条
-{legal['articles'][:8000] if legal['articles'] else '未找到相关法条'}
-
-## 从刑法知识库检索到的司法解释
-{legal['interpretations'][:8000] if legal['interpretations'] else '未找到相关司法解释'}
-
-## 从刑法知识库检索到的案例
-{legal['cases'][:5000] if legal['cases'] else '未找到相关案例'}
-
-## 用户提供的参考材料
-{user_ref_text[:5000] if user_ref_text else '无'}
-
-请综合分析：
-1. 适用的主要刑法条文及内容
-2. 相关司法解释的适用要点
-3. 类似案例的裁判规则（如有）
-4. 对本案的法律适用建议
-
-请输出 Markdown 格式，分别保存到适用法条、司法解释、参考案例三个部分。"""},
-                ])
-                self._save_wiki_page("04-法律依据", "适用法条.md", legal_analysis)
-                results_log["sub_steps"].append({"step": "4c", "name": "法律依据检索", "status": "done"})
-                print("[步骤 4c] 完成法律依据分析")
-            except Exception as e:
-                self._save_wiki_page("04-法律依据", "适用法条.md", f"分析失败：{e}")
-                results_log["sub_steps"].append({"step": "4c", "name": "法律依据检索", "status": "failed", "error": str(e)})
-        else:
-            results_log["sub_steps"].append({"step": "4c", "name": "法律依据检索", "status": "skipped"})
 
         sub_done = 3
         if progress_cb:
