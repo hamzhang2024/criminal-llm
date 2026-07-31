@@ -1107,7 +1107,9 @@ export function ReportPage() {
         setStageContent(prev => ({ ...prev, stage_4: result.markdown }))
       }
       loadLegalKB()
-    } catch { /* ignore */ }
+    } catch (e) {
+      showAlert({ title: '重新生成失败', message: `重新生成失败：${e instanceof Error ? e.message : '请检查网络或 API Key 配置'}`, variant: 'danger' })
+    }
     finally { setRegeneratingLegal(false) }
   }, [caseId, defendant, loadLegalKB])
 
