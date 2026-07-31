@@ -112,3 +112,38 @@ def test_case_no_url_encoded(monkeypatch):
     fetch_case_cards(["第1000号"])
     assert "第1000号" not in seen["url"]  # 已被编码
     assert "%" in seen["url"]
+
+
+def test_fetch_case_cards_no_key_returns_empty(monkeypatch):
+    """Key 未配置时直接返回空列表，不做无谓网络往返"""
+    called = []
+
+    class SpyRequests:
+        @staticmethod
+        def get(*a, **kw):
+            called.append(1)
+            return FakeResp(200, {})
+
+    monkeypatch.setattr(case_search_api, "_service_config", lambda: ("http://cloud", ""))
+    monkeypatch.setattr(case_search_api, "requests", SpyRequests)
+    assert fetch_case_cards(["第1号", "第2号"]) == []
+    assert called == []  # 未发起任何请求
+
+
+def test_fetch_case_cards_breaks_on_connection_failure(monkeypatch):
+    """连接级失败（云端整体不可达）时中断循环，避免 N×10s 线性阻塞"""
+    calls = []
+
+    class FlakyRequests:
+        @staticmethod
+        def get(url, headers=None, timeout=None):
+            calls.append(url)
+            if len(calls) == 2:
+                raise RequestException("云端不可达")
+            return FakeResp(200, {"case_no": "x"})
+
+    monkeypatch.setattr(case_search_api, "_service_config", lambda: ("http://cloud", "cca_x"))
+    monkeypatch.setattr(case_search_api, "requests", FlakyRequests)
+    cards = fetch_case_cards(["第1号", "第2号", "第3号", "第4号"])
+    assert len(calls) == 2  # 第二次失败后不再请求第3、4个
+    assert len(cards) == 1

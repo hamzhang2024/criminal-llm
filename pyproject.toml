@@ -7,6 +7,9 @@ description = "刑事案卷智能分析桌面应用"
 requires-python = ">=3.10"
 
 # Ruff 配置 - 快速 Python linter 和 formatter
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
 [tool.ruff]
 target-version = "py310"
 line-length = 120

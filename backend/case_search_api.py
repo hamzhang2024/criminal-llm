@@ -86,8 +86,15 @@ def validate_key(req: ValidateKeyRequest):
 
 
 def fetch_case_cards(case_nos: List[str]) -> List[Dict[str, Any]]:
-    """供阶段 4 注入使用：批量拉取完整卡片，单篇失败跳过（调用方按实际拿到数量注入）"""
+    """供阶段 4 注入使用：批量拉取完整卡片，单篇失败跳过（调用方按实际拿到数量注入）
+
+    - Key 未配置直接返回空，不做无谓网络往返
+    - 连接级失败（云端整体不可达）中断循环，避免 N×TIMEOUT 线性阻塞；
+      404 等 HTTP 错误仍跳过继续
+    """
     base, key = _service_config()
+    if not key:
+        return []
     cards: List[Dict[str, Any]] = []
     for no in case_nos:
         try:
@@ -96,5 +103,5 @@ def fetch_case_cards(case_nos: List[str]) -> List[Dict[str, Any]]:
             if resp.status_code == 200:
                 cards.append(resp.json())
         except RequestException:
-            continue
+            break
     return cards

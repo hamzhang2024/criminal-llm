@@ -113,6 +113,14 @@ async def _run_sub_stage(engine, sub_stage_type: str, defendant: str, crime_type
     raise ValueError(f"未知子阶段类型: {sub_stage_type}")
 
 
+async def _run_stage_4(engine, defendant, crime_type, reference_case_nos):
+    """阶段 4：支持注入用户选中的真实案例卡片"""
+    if reference_case_nos:
+        from case_search_api import fetch_case_cards
+        cards = fetch_case_cards(reference_case_nos)
+        return await engine.stage_4_legal_regulations(defendant, crime_type, reference_cases=cards)
+    return await engine.stage_4_legal_regulations(defendant, crime_type)
+
 
 def _resolve_stage_path(case_path: Path, stage_num: int, charge: Optional[str] = None) -> Path:
     """解析阶段 Markdown 文件的存储路径（共享层 vs 罪名层）
@@ -325,6 +333,7 @@ async def run_single_stage(
     defendant: str = Body(..., embed=True),
     crime_type: Optional[str] = Body(default=None, embed=True),
     indictment_file: Optional[str] = Body(default=None, embed=True),
+    reference_case_nos: Optional[List[str]] = Body(default=None, embed=True),
 ):
     """
     单独执行某个阶段（支持 51/52/53 子阶段）
@@ -362,7 +371,7 @@ async def run_single_stage(
         1: lambda: engine.stage_1_read_indictment(defendant, crime_type),
         2: lambda: engine.stage_2_character_relations(defendant, crime_type),
         3: lambda: engine.stage_3_event_timeline(defendant, crime_type),
-        4: lambda: engine.stage_4_legal_regulations(defendant, crime_type),
+        4: lambda: _run_stage_4(engine, defendant, crime_type, reference_case_nos),
         5: lambda: engine.stage_5_full_defense(defendant, crime_type),
         6: lambda: AnalysisPipeline(case_id, case_path, indictment_file=indictment_file).step45_debate_simulation(defendant, crime_type),
         51: lambda: _run_sub_stage(engine, "evidence_analysis", defendant, crime_type),

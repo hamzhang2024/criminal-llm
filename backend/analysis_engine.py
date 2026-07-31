@@ -10,6 +10,8 @@
 输出：每个阶段生成结构化 JSON + Markdown，保存到案件 analysis/ 目录
 """
 import json
+import os
+import tempfile
 import time
 import logging
 from pathlib import Path
@@ -319,6 +321,35 @@ def _extract_json_and_render(text: str, mermaid_fn) -> str:
     return text
 
 
+def build_reference_block(cards: List[Dict[str, Any]]) -> str:
+    """把选中的真实案例卡片格式化为提示词注入块"""
+    blocks = []
+    for c in cards:
+        charges = "、".join(c.get("charges", []))
+        blocks.append(
+            f"【{c['case_no']}】{c['title']}\n"
+            f"涉及罪名：{charges}\n"
+            f"主要问题：{c.get('issue', '')}\n"
+            f"裁判要旨：{c.get('holding_summary', '')}\n"
+            f"裁判理由摘录：{c.get('reasoning_excerpt', '')}"
+        )
+    return "\n\n".join(blocks)
+
+
+def _atomic_write(path, content: str):
+    """先写同目录临时文件，成功后原子替换，避免中途失败损坏旧产物"""
+    path = str(path)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
+        os.replace(tmp, path)
+    except Exception:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        raise
+
+
 class AnalysisEngine:
     """5 阶段分析引擎"""
 
@@ -499,11 +530,11 @@ class AnalysisEngine:
 
         # 保存 Markdown
         md_file = stage_dir / "output.md"
-        md_file.write_text(markdown, encoding="utf-8")
+        _atomic_write(md_file, markdown)
 
         # 保存结构化 JSON
         json_file = stage_dir / "output.json"
-        json_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        _atomic_write(json_file, json.dumps(data, ensure_ascii=False, indent=2))
 
         self.stage_results[stage] = data
 
@@ -904,10 +935,12 @@ class AnalysisEngine:
         defendant: str,
         crime_type: Optional[str] = None,
         progress_cb: Optional[Callable] = None,
+        reference_cases: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
         阶段 4：梳理涉案罪名的法律法规
         输出：刑法法条 + 司法解释 + 类案裁判要旨 + 量刑指导意见
+        reference_cases：用户勾选的真实案例卡片（《刑事审判参考》），注入提示词供引用
         """
         texts = self._load_evidence_texts()
 
@@ -931,6 +964,15 @@ class AnalysisEngine:
 2. 司法解释要引用现行有效的
 3. 类案只描述裁判规则和要旨，**不要编造案号、法院名称或当事人姓名**
 4. 量刑部分要列明基准刑和调节因素""" + _NO_CHITCHAT
+
+        if reference_cases:
+            system_prompt += f"""
+
+参考案例（以下来自《刑事审判参考》的真实案例，案号与内容均真实可查）：
+{build_reference_block(reference_cases)}
+
+引用要求：引用类案时仅可引用以上提供的案例，格式为「【案号】案例名 + 裁判要旨」；
+除上述案例外，仍不得引用或编造任何其他案号、法院名称或当事人姓名。"""
 
         # 先从阶段 1 结果中获取指控罪名
         stage1_md = ""
