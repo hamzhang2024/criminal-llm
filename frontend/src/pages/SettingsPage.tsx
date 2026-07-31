@@ -208,6 +208,14 @@ export function SettingsPage() {
   const [showToken, setShowToken] = useState(false)
   const [showApiKey, setShowApiKey] = useState(false)
   const [showPaddleocrToken, setShowPaddleocrToken] = useState(false)
+  // 案例检索 API 配置
+  const [caseApiKey, setCaseApiKey] = useState('')
+  const [caseServiceUrl, setCaseServiceUrl] = useState('')
+  const [initialCaseApiKey, setInitialCaseApiKey] = useState('')
+  const [initialCaseServiceUrl, setInitialCaseServiceUrl] = useState('')
+  const [caseKeyStatus, setCaseKeyStatus] = useState<'idle' | 'checking' | 'ok' | 'fail'>('idle')
+  const [caseKeyInfo, setCaseKeyInfo] = useState('')
+  const [showCaseKey, setShowCaseKey] = useState(false)
   const [appVersion, setAppVersion] = useState('')
   const [checkingUpdate, setCheckingUpdate] = useState(false)
 
@@ -224,9 +232,11 @@ export function SettingsPage() {
       config.pdf_convert_concurrency !== initialConfig.pdf_convert_concurrency ||
       config.mineru_model_version !== initialConfig.mineru_model_version ||
       config.evidence_concurrency !== initialConfig.evidence_concurrency ||
-      config.model_context_limit !== initialConfig.model_context_limit
+      config.model_context_limit !== initialConfig.model_context_limit ||
+      caseApiKey !== initialCaseApiKey ||
+      caseServiceUrl !== initialCaseServiceUrl
     )
-  }, [initialConfig, config])
+  }, [initialConfig, config, caseApiKey, initialCaseApiKey, caseServiceUrl, initialCaseServiceUrl])
 
   useEffect(() => {
     // 加载版本号
@@ -269,6 +279,13 @@ export function SettingsPage() {
       const loaded = { ...config, ...updates }
       setConfig(loaded)
       setInitialConfig(loaded)
+      // 案例检索 API 配置（后端 GET /api/config 返回 case_api_key_value / case_service_url）
+      const loadedCaseApiKey = data.case_api_key_value || ''
+      const loadedCaseServiceUrl = data.case_service_url || ''
+      setCaseApiKey(loadedCaseApiKey)
+      setCaseServiceUrl(loadedCaseServiceUrl)
+      setInitialCaseApiKey(loadedCaseApiKey)
+      setInitialCaseServiceUrl(loadedCaseServiceUrl)
     } catch (err) {
       console.error('加载配置状态失败:', err)
     }
@@ -305,6 +322,8 @@ export function SettingsPage() {
           llm_model: config.llm_model.trim(),
           evidence_concurrency: config.evidence_concurrency,
           model_context_limit: config.model_context_limit * 1000,
+          case_api_key: caseApiKey.trim(),
+          case_service_url: caseServiceUrl.trim(),
         }),
       })
       if (res.ok) {
@@ -551,6 +570,30 @@ export function SettingsPage() {
       showAlert({ title: '验证失败', message: msg, variant: 'danger' })
     } finally {
       setTesting(null)
+    }
+  }
+
+  /** 验证案例检索 API Key（调本地后端 /api/case-search/validate → 云端校验） */
+  const handleValidateCaseKey = async () => {
+    if (!caseApiKey.trim()) {
+      showAlert({ title: '验证失败', message: '请先输入 API Key', variant: 'danger' })
+      return
+    }
+    setCaseKeyStatus('checking')
+    setCaseKeyInfo('')
+    try {
+      const { validateCaseKey } = await import('../api/caseSearch')
+      const result = await validateCaseKey(caseApiKey.trim())
+      if (result.valid) {
+        setCaseKeyStatus('ok')
+        setCaseKeyInfo(`有效 · 今日已用 ${result.used_today ?? 0}/${result.quota_per_day ?? '-'}`)
+      } else {
+        setCaseKeyStatus('fail')
+        setCaseKeyInfo('Key 无效或已吊销')
+      }
+    } catch (e: unknown) {
+      setCaseKeyStatus('fail')
+      setCaseKeyInfo(e instanceof Error ? e.message : '验证失败')
     }
   }
 
@@ -1061,6 +1104,93 @@ export function SettingsPage() {
               <div style={{ marginTop: '6px', fontSize: '11px', color: '#86868b' }}>
                 影响证据提取的分块策略。值越大，单次处理的文本越多，提取越完整。
               </div>
+            </div>
+          </MacOSCard>
+
+          {/* 案例检索 API */}
+          <MacOSCard style={{ marginTop: '16px' }}>
+            <h2 style={{ fontSize: '15px', fontWeight: '600', marginBottom: '8px', color: '#1d1d1f' }}>
+              案例检索 API
+            </h2>
+            <div style={{ fontSize: '12px', color: '#86868b', lineHeight: '1.6', marginBottom: '16px' }}>
+              用于报告页检索《刑事审判参考》案例。
+              <a
+                href="https://casefix.cn/api-access"
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ color: 'var(--macos-accent)', textDecoration: 'none', cursor: 'pointer' }}
+                onMouseEnter={e => e.currentTarget.style.textDecoration = 'underline'}
+                onMouseLeave={e => e.currentTarget.style.textDecoration = 'none'}
+              >
+                前往申请 →
+              </a>
+            </div>
+
+            <div style={{ marginBottom: '16px' }}>
+              <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px', fontWeight: '500', marginBottom: '8px' }}>
+                API Key
+                <button
+                  onClick={handleValidateCaseKey}
+                  disabled={caseKeyStatus === 'checking'}
+                  style={{
+                    padding: '4px 10px', fontSize: '11px', borderRadius: '4px',
+                    border: '1px solid var(--macos-border)', background: 'transparent',
+                    cursor: caseKeyStatus === 'checking' ? 'not-allowed' : 'pointer',
+                    color: caseKeyStatus === 'checking' ? '#86868b' : 'var(--macos-accent)',
+                    opacity: caseKeyStatus === 'checking' ? 0.6 : 1,
+                  }}
+                >
+                  {caseKeyStatus === 'checking' ? '验证中...' : '验证'}
+                </button>
+              </label>
+              <div style={{ position: 'relative' }}>
+                <input
+                  type={showCaseKey ? 'text' : 'password'}
+                  value={caseApiKey}
+                  onChange={e => { setCaseApiKey(e.target.value); setCaseKeyStatus('idle'); setCaseKeyInfo('') }}
+                  placeholder="cca_xxxxxxxx"
+                  style={{
+                    width: '100%', padding: '10px 40px 10px 12px',
+                    border: '1px solid var(--macos-border)', borderRadius: '8px',
+                    fontSize: '14px', boxSizing: 'border-box',
+                  }}
+                />
+                <button
+                  onClick={() => setShowCaseKey(!showCaseKey)}
+                  style={{
+                    position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)',
+                    background: 'transparent', border: 'none', cursor: 'pointer', padding: '4px',
+                    display: 'flex', alignItems: 'center',
+                  }}
+                >
+                  {showCaseKey ? <EyeOff className="w-4 h-4" color="#86868b" /> : <Eye className="w-4 h-4" color="#86868b" />}
+                </button>
+              </div>
+              {caseKeyStatus !== 'idle' && caseKeyInfo && (
+                <div style={{
+                  marginTop: '6px', fontSize: '12px',
+                  color: caseKeyStatus === 'ok' ? '#34c759' : '#ff3b30',
+                }}>
+                  {caseKeyInfo}
+                </div>
+              )}
+            </div>
+
+            <div>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: '500', marginBottom: '8px' }}>
+                服务地址
+              </label>
+              <input
+                type="text"
+                value={caseServiceUrl}
+                onChange={e => setCaseServiceUrl(e.target.value)}
+                placeholder="服务地址（留空用默认）"
+                style={{
+                  width: '100%', padding: '10px 12px',
+                  border: '1px solid var(--macos-border)', borderRadius: '8px',
+                  fontSize: '14px', boxSizing: 'border-box',
+                }}
+              />
             </div>
           </MacOSCard>
 
