@@ -148,6 +148,13 @@ def test_charge_filter_and_size(monkeypatch):
     assert fr.calls[0]["size"] == 3
 
 
+def test_keywords_joined_into_query(monkeypatch):
+    fr = _patch(monkeypatch, {"results": []}, [])
+    fetch_case_rules(["寻衅滋事罪"], keywords=["未成年人", "轻微暴力"])
+    assert fr.calls[0]["q"] == "未成年人 轻微暴力"
+    assert fr.calls[0]["charge"] == "寻衅滋事罪"
+
+
 def test_zero_results_skipped(monkeypatch):
     _patch(monkeypatch, {"results": []}, [])
     assert fetch_case_rules(["不存在罪"]) == {}
@@ -215,9 +222,11 @@ def _format_rules_md(cards: list[dict]) -> str:
     return md
 
 
-def fetch_case_rules(charges: list[str], size: int = 3) -> dict[str, str]:
+def fetch_case_rules(charges: list[str], keywords: list[str] | None = None, size: int = 3) -> dict[str, str]:
     """按罪名检索类案卡片并格式化为 Markdown，返回 {罪名: md}。
 
+    - keywords：用户确认/LLM 推荐的案件特征关键词（如"未成年人""轻微暴力"），
+      与罪名过滤组合检索；空则仅罪名过滤
     - 单罪名 HTTP 错误：跳过该罪名继续下一个
     - 连接级失败（云端不可达）：终止剩余罪名
     - 无 API Key / 0 结果：静默降级
@@ -225,12 +234,13 @@ def fetch_case_rules(charges: list[str], size: int = 3) -> dict[str, str]:
     base, key = _service_config()
     if not key:
         return {}
+    q = " ".join(keywords) if keywords else ""
     rules: dict[str, str] = {}
     for charge in charges:
         try:
             resp = requests.get(
                 f"{base}/api/cases/search",
-                params={"charge": charge, "size": size},
+                params={"charge": charge, "q": q, "size": size},
                 headers={"X-API-Key": key},
                 timeout=TIMEOUT,
             )
@@ -345,6 +355,33 @@ def test_step4_order_4c_before_4b(tmp_path, monkeypatch):
     assert (wiki / "类案裁判规则-盗窃罪.md").exists()
 
 
+def test_suggested_keywords_saved_and_used(tmp_path, monkeypatch):
+    """4a 后 LLM 推荐关键词存 case.json；4c 检索使用有效关键词（用户编辑优先）"""
+    pipe = _make_pipeline(tmp_path)
+    captured = {}
+
+    async def fake_chat(messages, **kw):
+        user = messages[-1]["content"]
+        if "类案检索关键词" in messages[0]["content"]:
+            return "未成年人\n轻微暴力\n多次作案"
+        return "分析结果"
+
+    pipe.llm.chat = fake_chat
+    monkeypatch.setattr(analysis_pipeline.AnalysisPipeline, "_find_indictment_in_md_files",
+                        AsyncMock(return_value=("起诉书内容：指控张三盗窃。", "起诉书")))
+
+    def fake_rules(charges, keywords=None, size=3):
+        captured["keywords"] = keywords
+        return {}
+
+    monkeypatch.setattr("case_framework.fetch_case_rules", fake_rules)
+    asyncio.run(pipe.step4_build_case_wiki("张三", "盗窃罪"))
+
+    meta = json.loads((tmp_path / "case_001" / "case.json").read_text(encoding="utf-8"))
+    assert meta["suggested_keywords"] == ["未成年人", "轻微暴力", "多次作案"]
+    assert captured["keywords"] == ["未成年人", "轻微暴力", "多次作案"]
+
+
 def test_step4_case_rules_failure_degrades(tmp_path, monkeypatch):
     """类案检索失败：静默跳过，法条路径照常"""
     pipe = _make_pipeline(tmp_path)
@@ -374,14 +411,57 @@ Expected: FAIL（idx_4c > idx_4b / 无"法律框架" / 无类案文件）
 
 （b）修复 NameError：4c 内 `legal = self._search_legal_knowledge(charges)` 改为 `legal = self._search_legal_knowledge(crime_type)`；`_search_legal_knowledge` 签名改为 `def _search_legal_knowledge(self, crime_type: str | None = None) -> dict:`（方法体本来就用 crime_type，不需改）。
 
-（c）4c 扩展（适用法条.md 的 try/except 块之后、else 分支前）：
+（c）4a 完成后（`01-指控要素.md` 保存后、且为新分析非 skipped）新增 LLM 推荐关键词：
+
+```python
+            # LLM 推荐类案检索关键词（罪名除外），存 case.json suggested_keywords
+            try:
+                kw_text = await self.llm.chat([
+                    {"role": "system", "content": "你是刑事律师。请从指控要素分析中提取 3-5 个类案检索关键词（不要包含罪名本身），聚焦行为特征、情节要素、对象特征，每行一个，只输出关键词。"},
+                    {"role": "user", "content": indictment_content[:5000]},
+                ])
+                suggested = [line.strip("- •　 ") for line in kw_text.strip().split("\n") if line.strip()][:5]
+                if suggested:
+                    self._save_suggested_keywords(suggested)
+            except Exception as e:
+                print(f"[步骤 4a] 关键词推荐失败（不影响主流程）: {e}")
+```
+
+配套辅助方法（与 _case_charges 放一起）：
+
+```python
+    def _save_suggested_keywords(self, keywords: list[str]):
+        """LLM 推荐关键词写入 case.json（不覆盖用户已编辑的 search_keywords）"""
+        meta_file = self.case_dir / "case.json"
+        meta = {}
+        if meta_file.exists():
+            try:
+                meta = json.loads(meta_file.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        meta["suggested_keywords"] = keywords
+        meta_file.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _effective_keywords(self) -> list[str]:
+        """有效检索关键词：用户编辑 > LLM 推荐 > 空"""
+        meta_file = self.case_dir / "case.json"
+        if meta_file.exists():
+            try:
+                meta = json.loads(meta_file.read_text(encoding="utf-8"))
+                return meta.get("search_keywords") or meta.get("suggested_keywords") or []
+            except Exception:
+                pass
+        return []
+```
+
+（d）4c 扩展（适用法条.md 的 try/except 块之后、else 分支前）：
 
 ```python
             # 类案裁判规则（自动检索，供分析参考；失败静默降级）
             try:
                 from case_framework import fetch_case_rules
                 charge_list = self._case_charges(crime_type)
-                case_rules = fetch_case_rules(charge_list)
+                case_rules = fetch_case_rules(charge_list, keywords=self._effective_keywords())
                 for charge_name, rules_md in case_rules.items():
                     safe_name = charge_name.replace("/", "_")
                     self._save_wiki_page("04-法律依据", f"类案裁判规则-{safe_name}.md", rules_md)
@@ -391,7 +471,7 @@ Expected: FAIL（idx_4c > idx_4b / 无"法律框架" / 无类案文件）
                 print(f"[步骤 4c] 类案检索降级（不影响主流程）: {e}")
 ```
 
-（d）新增辅助方法（放在 _search_legal_knowledge 附近）：
+（e）新增辅助方法（放在 _search_legal_knowledge 附近）：
 
 ```python
     def _case_charges(self, crime_type: Optional[str] = None) -> list[str]:
@@ -408,7 +488,7 @@ Expected: FAIL（idx_4c > idx_4b / 无"法律框架" / 无类案文件）
         return [crime_type] if crime_type else []
 ```
 
-（e）4b prompt 注入法律框架：4b 循环开始前（`analyzed_evidence = []` 附近）加载：
+（f）4b prompt 注入法律框架：4b 循环开始前（`analyzed_evidence = []` 附近）加载：
 
 ```python
         # 法律框架（4c 产物：法条 + 司法解释 + 类案裁判规则）
