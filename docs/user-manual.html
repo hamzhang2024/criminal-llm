@@ -476,6 +476,7 @@
     <a href="#pipeline">流水线处理</a>
     <a href="#convert">PDF 转 MD</a>
     <a href="#analyze">智能分析</a>
+    <a href="#case-retrieval">案例检索</a>
     <a href="#report">辩护报告</a>
     <a href="#faq">常见问题</a>
   </div>
@@ -891,16 +892,74 @@ npm run build</code></pre>
   </div>
 </section>
 
-<!-- ── 9. 辩护报告 ── -->
-<section class="section" id="report">
+<!-- ── 9. 案例检索 ── -->
+<section class="section" id="case-retrieval">
   <div class="section-number">9</div>
+  <h2>案例检索</h2>
+  <p class="section-desc">检索《刑事审判参考》1750 篇精品案例（含裁判要旨），勾选真实案例后重新生成法律法规分析，让报告中出现可核验的真实案号引用。</p>
+
+  <h3>9.1 功能简介</h3>
+  <ul class="feature-list">
+    <li>内置《刑事审判参考》1750 篇精品案例库，每篇含裁判要旨</li>
+    <li>支持关键词检索与罪名筛选</li>
+    <li>勾选案例后可查看全文，一键引用并重新生成「法律法规」分析</li>
+    <li>重新生成的报告中将引用真实案号，替代模型自行虚构的参考案例</li>
+  </ul>
+
+  <h3>9.2 开通流程</h3>
+  <ol class="steps">
+    <li>
+      <h4>申请 API Key</h4>
+      <p>前往官网 <a href="https://casefix.cn/api-access" target="_blank">casefix.cn/api-access</a> 提交申请，审核通过后 API Key 将通过邮件发送。</p>
+    </li>
+    <li>
+      <h4>配置并验证</h4>
+      <p>在设置页「案例检索 API」区块粘贴 API Key，点击「验证」确认可用后保存。</p>
+    </li>
+    <li>
+      <h4>开始使用</h4>
+      <p>打开报告页「法律法规」标签，底部即出现案例库检索面板。</p>
+    </li>
+  </ol>
+
+  <h3>9.3 使用方法</h3>
+  <ol class="steps">
+    <li>
+      <h4>检索案例</h4>
+      <p>在检索面板输入关键词，或按罪名筛选，点击「检索」查看匹配案例列表。</p>
+    </li>
+    <li>
+      <h4>勾选案例</h4>
+      <p>勾选需要引用的案例，点击案例可展开查看全文（含裁判要旨）。</p>
+    </li>
+    <li>
+      <h4>引用并重新生成</h4>
+      <p>点击「引用选中案例并重新生成」，系统将选中案例注入阶段 4 分析，重新生成「法律法规」内容，报告中会出现真实案号引用。</p>
+    </li>
+  </ol>
+
+  <h3>9.4 配额说明</h3>
+  <ul class="feature-list">
+    <li>每日 <strong>200 次</strong>检索配额</li>
+    <li>勾选 N 篇案例重新生成会消耗 N 次配额（每篇案例需单独拉取卡片）</li>
+  </ul>
+
+  <div class="alert alert-warning">
+    <span class="alert-icon">⚠️</span>
+    <div><strong>注意：</strong>案例检索需要联网。案例库服务不可用时，仍可使用原有的联网版类案检索功能，不受影响。</div>
+  </div>
+</section>
+
+<!-- ── 10. 辩护报告 ── -->
+<section class="section" id="report">
+  <div class="section-number">10</div>
   <h2>辩护报告</h2>
   <p class="section-desc">分析完成后，可导出完整的辩护报告。</p>
 
-  <h3>9.1 查看报告</h3>
+  <h3>10.1 查看报告</h3>
   <p>在分析报告页面点击「完整报告」标签，查看所有分析结果合并后的完整报告。</p>
 
-  <h3>9.2 导出报告</h3>
+  <h3>10.2 导出报告</h3>
   <ol class="steps">
     <li>
       <h4>点击导出按钮</h4>
@@ -917,9 +976,9 @@ npm run build</code></pre>
   </ol>
 </section>
 
-<!-- ── 10. 常见问题 ── -->
+<!-- ── 11. 常见问题 ── -->
 <section class="section" id="faq">
-  <div class="section-number">10</div>
+  <div class="section-number">11</div>
   <h2>常见问题</h2>
   <p class="section-desc">使用过程中可能遇到的问题及解决方案。</p>
 

@@ -17,7 +17,7 @@ from config_manager import get_config_value
 
 router = APIRouter(prefix="/api/case-search", tags=["case-search"])
 
-DEFAULT_CASE_SERVICE_URL = "http://118.196.83.43:8001"
+DEFAULT_CASE_SERVICE_URL = "https://api.casefix.cn"
 TIMEOUT = 10
 
 
