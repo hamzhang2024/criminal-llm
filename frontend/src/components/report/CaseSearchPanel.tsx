@@ -1,19 +1,13 @@
 // 案例库检索面板 — 报告页法律法规 tab 内的独立组件
 // 检索刑事审判参考案例库，勾选案例后可注入阶段 4 重新生成
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Search, BookMarked, FileText, X } from 'lucide-react'
 import { searchCases, getCharges, getCaseFull, CaseSummary } from '../../api/caseSearch'
+import { colors } from './reportColors'
 
-// 设计令牌 — 与 ReportPage.tsx 本地 colors 保持一致（该文件未导出 colors）
-const colors = {
-  textPrimary: '#1d1d1f',
-  textSecondary: '#6e6e73',
-  textTertiary: '#86868b',
-  gold: '#b8860b',
-  goldBg: 'rgba(184,134,11,0.08)',
-  goldBorder: 'rgba(184,134,11,0.25)',
-}
+// 每页条数 — doSearch 与 totalPages 共用
+const PAGE_SIZE = 20
 
 interface Props {
   regenerating: boolean
@@ -32,24 +26,40 @@ export default function CaseSearchPanel({ regenerating, onRegenerate }: Props) {
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [fullText, setFullText] = useState<{ title: string; text: string } | null>(null)
 
+  // 检索竞态守卫：响应回来时若不是最新一次请求则丢弃
+  const seqRef = useRef(0)
+
   useEffect(() => {
     getCharges().then(d => setChargeOptions(d.charges)).catch(() => {})
   }, [])
 
+  // Escape 关闭全文弹窗
+  useEffect(() => {
+    if (!fullText) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setFullText(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [fullText])
+
   const doSearch = useCallback(async (pageNum: number) => {
+    const seq = ++seqRef.current
     setLoading(true)
     setError('')
     try {
-      const data = await searchCases(q, charge, pageNum)
+      const data = await searchCases(q, charge, pageNum, PAGE_SIZE)
+      if (seq !== seqRef.current) return
       setResults(data.results)
       setTotal(data.total)
       setPage(pageNum)
     } catch (e: unknown) {
+      if (seq !== seqRef.current) return
       setError(e instanceof Error ? e.message : '检索失败')
       setResults([])
       setTotal(0)
     } finally {
-      setLoading(false)
+      if (seq === seqRef.current) setLoading(false)
     }
   }, [q, charge])
 
@@ -71,7 +81,7 @@ export default function CaseSearchPanel({ regenerating, onRegenerate }: Props) {
     }
   }
 
-  const totalPages = Math.max(1, Math.ceil(total / 20))
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
 
   return (
     <div style={{ borderTop: '1px solid', borderColor: colors.goldBorder, marginTop: '28px', paddingTop: '20px' }}>
@@ -126,7 +136,7 @@ export default function CaseSearchPanel({ regenerating, onRegenerate }: Props) {
               background: selected.has(r.case_no) ? colors.goldBg : 'transparent',
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <input type="checkbox" checked={selected.has(r.case_no)} onChange={() => toggle(r.case_no)} />
+                <input type="checkbox" checked={selected.has(r.case_no)} onChange={() => toggle(r.case_no)} aria-label={`选择案例 ${r.case_no} ${r.title}`} />
                 <span style={{ fontSize: '12px', fontWeight: 600, color: colors.textPrimary, flex: 1 }}>
                   【{r.case_no}】{r.title}
                 </span>
@@ -145,7 +155,7 @@ export default function CaseSearchPanel({ regenerating, onRegenerate }: Props) {
                 {r.issue}
               </div>
               <div style={{ fontSize: '11px', color: colors.textTertiary, marginTop: '4px', paddingLeft: '22px' }}>
-                要旨：{r.holding_summary.slice(0, 80)}…
+                要旨：{r.holding_summary.length > 80 ? r.holding_summary.slice(0, 80) + '…' : r.holding_summary}
               </div>
             </div>
           ))}
@@ -189,13 +199,15 @@ export default function CaseSearchPanel({ regenerating, onRegenerate }: Props) {
           position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 1000,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
         }} onClick={() => setFullText(null)}>
-          <div style={{
-            background: '#fff', borderRadius: '12px', padding: '24px', maxWidth: '720px',
-            width: '90%', maxHeight: '80vh', overflowY: 'auto',
-          }} onClick={e => e.stopPropagation()}>
+          <div
+            role="dialog" aria-modal="true" aria-label={fullText.title}
+            style={{
+              background: '#fff', borderRadius: '12px', padding: '24px', maxWidth: '720px',
+              width: '90%', maxHeight: '80vh', overflowY: 'auto',
+            }} onClick={e => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
               <span style={{ fontSize: '14px', fontWeight: 600, color: colors.textPrimary }}>{fullText.title}</span>
-              <button onClick={() => setFullText(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: colors.textTertiary }}>
+              <button onClick={() => setFullText(null)} aria-label="关闭" style={{ background: 'none', border: 'none', cursor: 'pointer', color: colors.textTertiary }}>
                 <X className="w-4 h-4" />
               </button>
             </div>
