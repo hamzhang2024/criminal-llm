@@ -39,8 +39,8 @@ def fetch_case_rules(charges: list[str], size: int = 3) -> dict[str, str]:
                 headers={"X-API-Key": key},
                 timeout=TIMEOUT,
             )
-        except Exception:
-            # 连接级失败（含 requests 被替换/云端不可达）：终止剩余罪名
+        except requests.RequestException:
+            # 连接级失败（云端不可达）：终止剩余罪名
             break
         if resp.status_code != 200:
             continue

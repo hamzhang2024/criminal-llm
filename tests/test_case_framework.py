@@ -65,9 +65,11 @@ def test_connection_error_stops_remaining_charges(monkeypatch):
     monkeypatch.setattr(case_framework, "_service_config", lambda: ("http://cloud", "cca_x"))
 
     class BrokenRequests:
+        RequestException = __import__("requests").exceptions.RequestException
+
         @staticmethod
         def get(*a, **kw):
-            raise case_framework.requests.RequestException("down")
+            raise BrokenRequests.RequestException("down")
 
     monkeypatch.setattr(case_framework, "requests", BrokenRequests)
     assert fetch_case_rules(["盗窃罪", "诈骗罪"]) == {}
