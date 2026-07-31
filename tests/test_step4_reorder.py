@@ -119,3 +119,79 @@ def test_user_keywords_override_suggested(tmp_path, monkeypatch):
     monkeypatch.setattr("case_framework.fetch_case_rules", fake_rules)
     asyncio.run(pipe.step4_build_case_wiki("张三", "盗窃罪"))
     assert captured["keywords"] == ["入户", "未遂"]
+
+
+def test_case_rules_refetched_when_law_page_exists(tmp_path, monkeypatch):
+    """存量案件：适用法条.md 已存在（4c skipped），但无类案文件 → 类案仍应补检"""
+    pipe = _make_pipeline(tmp_path)
+    wiki = tmp_path / "case_001" / "analysis" / "indictment_wiki" / "04-法律依据"
+    wiki.mkdir(parents=True)
+    (wiki / "适用法条.md").write_text("已有法条分析", encoding="utf-8")
+
+    async def fake_chat(messages, **kw):
+        return "分析结果"
+
+    pipe.llm.chat = fake_chat
+    monkeypatch.setattr(analysis_pipeline.AnalysisPipeline, "_find_indictment_in_md_files",
+                        AsyncMock(return_value=("起诉书内容", "起诉书")))
+    monkeypatch.setattr("case_framework.fetch_case_rules",
+                        lambda charges, keywords=None, size=3: {"盗窃罪": "# 类案裁判规则\n\n补检内容"})
+
+    asyncio.run(pipe.step4_build_case_wiki("张三", "盗窃罪"))
+    assert (wiki / "类案裁判规则-盗窃罪.md").exists(), "存量案件重跑时应补检类案裁判规则"
+
+
+def test_legal_framework_total_cap(tmp_path, monkeypatch):
+    """4b 法律框架总量上限：5 个各 2000 字文件，注入 prompt 的框架段 ≤ 6500 字符"""
+    pipe = _make_pipeline(tmp_path)
+    wiki = tmp_path / "case_001" / "analysis" / "indictment_wiki" / "04-法律依据"
+    wiki.mkdir(parents=True)
+    for i in range(5):
+        (wiki / f"文件{i}.md").write_text("法" * 2000, encoding="utf-8")
+
+    calls = []
+
+    async def fake_chat(messages, **kw):
+        calls.append(messages[-1]["content"])
+        return "分析结果"
+
+    pipe.llm.chat = fake_chat
+    monkeypatch.setattr(analysis_pipeline.AnalysisPipeline, "_find_indictment_in_md_files",
+                        AsyncMock(return_value=("起诉书内容", "起诉书")))
+    monkeypatch.setattr("case_framework.fetch_case_rules", lambda charges, keywords=None, size=3: {})
+
+    asyncio.run(pipe.step4_build_case_wiki("张三", "盗窃罪"))
+
+    prompt_4b = next(c for c in calls if "待分析证据" in c)
+    start = prompt_4b.index("## 法律框架")
+    end = prompt_4b.index("## 待分析证据")
+    framework_section = prompt_4b[start:end]
+    assert len(framework_section) <= 6500, f"法律框架段超长: {len(framework_section)}"
+
+
+def test_keyword_parsing_numbered_list(tmp_path, monkeypatch):
+    """关键词解析：LLM 返回编号列表时应剥离编号/顿号/括号"""
+    pipe = _make_pipeline(tmp_path)
+
+    async def fake_chat(messages, **kw):
+        if "类案检索关键词" in messages[0]["content"]:
+            return "1. 未成年人\n2、轻微暴力\n- 多次作案"
+        return "分析结果"
+
+    pipe.llm.chat = fake_chat
+    monkeypatch.setattr(analysis_pipeline.AnalysisPipeline, "_find_indictment_in_md_files",
+                        AsyncMock(return_value=("起诉书内容", "起诉书")))
+    monkeypatch.setattr("case_framework.fetch_case_rules", lambda charges, keywords=None, size=3: {})
+
+    asyncio.run(pipe.step4_build_case_wiki("张三", "盗窃罪"))
+    meta = json.loads((tmp_path / "case_001" / "case.json").read_text(encoding="utf-8"))
+    assert meta["suggested_keywords"] == ["未成年人", "轻微暴力", "多次作案"]
+
+
+def test_case_charges_type_defense(tmp_path):
+    """_case_charges：case.json 的 charges 为非 list 类型时回退 crime_type"""
+    pipe = _make_pipeline(tmp_path)
+    (tmp_path / "case_001" / "case.json").write_text(json.dumps({
+        "charges": "盗窃罪"
+    }), encoding="utf-8")
+    assert pipe._case_charges("抢劫罪") == ["抢劫罪"]

@@ -929,7 +929,7 @@ class AnalysisPipeline:
             try:
                 meta = json.loads(meta_file.read_text(encoding="utf-8"))
                 charges = meta.get("charges") or []
-                if charges:
+                if isinstance(charges, list) and charges:
                     return charges
             except Exception:
                 pass
@@ -1059,7 +1059,13 @@ class AnalysisPipeline:
                     {"role": "system", "content": "你是刑事律师。请从指控要素分析中提取 3-5 个类案检索关键词（不要包含罪名本身），聚焦行为特征、情节要素、对象特征，每行一个，只输出关键词。"},
                     {"role": "user", "content": indictment_content[:5000]},
                 ])
-                suggested = [line.strip("- •　 ") for line in kw_text.strip().split("\n") if line.strip()][:5]
+                suggested = []
+                for line in kw_text.strip().split("\n"):
+                    # 剥离编号前缀（1. / 2、/ 3)）与列表符号，得到干净关键词
+                    line = re.sub(r"^\d+[.、\)]\s*", "", line.strip()).strip("- •　 ")
+                    if line:
+                        suggested.append(line)
+                suggested = suggested[:5]
                 if suggested:
                     self._save_suggested_keywords(suggested)
             except Exception as e:
@@ -1112,7 +1118,14 @@ class AnalysisPipeline:
                 self._save_wiki_page("04-法律依据", "适用法条.md", f"分析失败：{e}")
                 results_log["sub_steps"].append({"step": "4c", "name": "法律依据检索", "status": "failed", "error": str(e)})
 
-            # 类案裁判规则（自动检索，供分析参考；失败静默降级）
+        else:
+            results_log["sub_steps"].append({"step": "4c", "name": "法律依据检索", "status": "skipped"})
+
+        # 类案裁判规则（自动检索，供分析参考；失败静默降级）
+        # 独立于适用法条.md 的存在性：存量案件重跑时也可补检
+        if not self._list_wiki_pages("04-法律依据") or not any(
+            f.startswith("类案裁判规则-") for f in self._list_wiki_pages("04-法律依据")
+        ):
             try:
                 from case_framework import fetch_case_rules
                 charge_list = self._case_charges(crime_type)
@@ -1124,8 +1137,6 @@ class AnalysisPipeline:
                     print(f"[步骤 4c] 已检索类案 {len(case_rules)} 个罪名的裁判规则")
             except Exception as e:
                 print(f"[步骤 4c] 类案检索降级（不影响主流程）: {e}")
-        else:
-            results_log["sub_steps"].append({"step": "4c", "name": "法律依据检索", "status": "skipped"})
 
         sub_done = 2
         if progress_cb:
@@ -1151,8 +1162,11 @@ class AnalysisPipeline:
         analyzed_evidence = []
 
         # 法律框架（4c 产物：法条 + 司法解释 + 类案裁判规则）
+        # 成本控制：单文件截断 2000 字，合计超 6000 字停止追加，避免 4b prompt 膨胀
         legal_framework = ""
         for lf in self._list_wiki_pages("04-法律依据"):
+            if len(legal_framework) > 6000:
+                break
             legal_framework += f"\n### {lf}\n{self._load_wiki_page('04-法律依据', lf)[:2000]}\n"
 
         print(f"[步骤 4b] 开始逐人证据摄入（{len(evidence_list)} 份证据，串行）...")
