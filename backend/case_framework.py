@@ -20,9 +20,11 @@ def _format_rules_md(cards: list[dict]) -> str:
     return md
 
 
-def fetch_case_rules(charges: list[str], size: int = 3) -> dict[str, str]:
+def fetch_case_rules(charges: list[str], keywords: list[str] | None = None, size: int = 3) -> dict[str, str]:
     """按罪名检索类案卡片并格式化为 Markdown，返回 {罪名: md}。
 
+    - keywords：用户确认/LLM 推荐的案件特征关键词（如"未成年人""轻微暴力"），
+      与罪名过滤组合检索；空则仅罪名过滤
     - 单罪名 HTTP 错误：跳过该罪名继续下一个
     - 连接级失败（云端不可达）：终止剩余罪名
     - 无 API Key / 0 结果：静默降级
@@ -30,12 +32,13 @@ def fetch_case_rules(charges: list[str], size: int = 3) -> dict[str, str]:
     base, key = _service_config()
     if not key:
         return {}
+    q = " ".join(keywords) if keywords else ""
     rules: dict[str, str] = {}
     for charge in charges:
         try:
             resp = requests.get(
                 f"{base}/api/cases/search",
-                params={"charge": charge, "size": size},
+                params={"charge": charge, "q": q, "size": size},
                 headers={"X-API-Key": key},
                 timeout=TIMEOUT,
             )

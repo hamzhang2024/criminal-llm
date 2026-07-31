@@ -56,6 +56,13 @@ def test_charge_filter_and_size(monkeypatch):
     assert fr.calls[0]["size"] == 3
 
 
+def test_keywords_joined_into_query(monkeypatch):
+    fr = _patch(monkeypatch, {"results": []}, [])
+    fetch_case_rules(["寻衅滋事罪"], keywords=["未成年人", "轻微暴力"])
+    assert fr.calls[0]["q"] == "未成年人 轻微暴力"
+    assert fr.calls[0]["charge"] == "寻衅滋事罪"
+
+
 def test_zero_results_skipped(monkeypatch):
     _patch(monkeypatch, {"results": []}, [])
     assert fetch_case_rules(["不存在罪"]) == {}
