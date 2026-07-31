@@ -336,7 +336,7 @@ def test_step4_order_4c_before_4b(tmp_path, monkeypatch):
     pipe.llm.chat = fake_chat
     monkeypatch.setattr(analysis_pipeline.AnalysisPipeline, "_find_indictment_in_md_files",
                         AsyncMock(return_value=("起诉书内容：指控张三盗窃。", "起诉书")))
-    monkeypatch.setattr("case_framework.fetch_case_rules", lambda charges, size=3: {"盗窃罪": "# 类案裁判规则\n\n盗窃裁判规则内容"})
+    monkeypatch.setattr("case_framework.fetch_case_rules", lambda charges, keywords=None, size=3: {"盗窃罪": "# 类案裁判规则\n\n盗窃裁判规则内容"})
 
     asyncio.run(pipe.step4_build_case_wiki("张三", "盗窃罪"))
 
@@ -392,7 +392,7 @@ def test_step4_case_rules_failure_degrades(tmp_path, monkeypatch):
     pipe.llm.chat = fake_chat
     monkeypatch.setattr(analysis_pipeline.AnalysisPipeline, "_find_indictment_in_md_files",
                         AsyncMock(return_value=("起诉书内容", "起诉书")))
-    monkeypatch.setattr("case_framework.fetch_case_rules", lambda charges, size=3: {})
+    monkeypatch.setattr("case_framework.fetch_case_rules", lambda charges, keywords=None, size=3: {})
 
     asyncio.run(pipe.step4_build_case_wiki("张三", "盗窃罪"))
     wiki = tmp_path / "case_001" / "analysis" / "indictment_wiki" / "04-法律依据"
