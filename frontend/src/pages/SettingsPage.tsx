@@ -583,10 +583,10 @@ export function SettingsPage() {
     setCaseKeyInfo('')
     try {
       const { validateCaseKey } = await import('../api/caseSearch')
-      const result = await validateCaseKey(caseApiKey.trim())
+      const result = await validateCaseKey(caseApiKey.trim(), caseServiceUrl.trim())
       if (result.valid) {
         setCaseKeyStatus('ok')
-        setCaseKeyInfo(`有效 · 今日已用 ${result.used_today ?? 0}/${result.quota_per_day ?? '-'}`)
+        setCaseKeyInfo(`有效 · 今日已用 ${result.used_today ?? 0}/${result.quota_per_day ?? '-'}，请记得保存`)
       } else {
         setCaseKeyStatus('fail')
         setCaseKeyInfo('Key 无效或已吊销')
@@ -1183,7 +1183,7 @@ export function SettingsPage() {
               <input
                 type="text"
                 value={caseServiceUrl}
-                onChange={e => setCaseServiceUrl(e.target.value)}
+                onChange={e => { setCaseServiceUrl(e.target.value); setCaseKeyStatus('idle'); setCaseKeyInfo('') }}
                 placeholder="服务地址（留空用默认）"
                 style={{
                   width: '100%', padding: '10px 12px',

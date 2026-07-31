@@ -58,11 +58,11 @@ export function getCaseFull(caseNo: string): Promise<CaseFull> {
   return request<CaseFull>(`/case-search/${encodeURIComponent(caseNo)}/full`)
 }
 
-export async function validateCaseKey(apiKey: string): Promise<CaseKeyValidation> {
+export async function validateCaseKey(apiKey: string, serviceUrl?: string): Promise<CaseKeyValidation> {
   const res = await fetch(`${API_BASE}/case-search/validate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ api_key: apiKey }),
+    body: JSON.stringify({ api_key: apiKey, service_url: serviceUrl || undefined }),
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) {

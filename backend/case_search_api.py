@@ -23,6 +23,7 @@ TIMEOUT = 10
 
 class ValidateKeyRequest(BaseModel):
     api_key: str
+    service_url: Optional[str] = None
 
 
 def _service_config() -> tuple[str, str]:
@@ -76,8 +77,12 @@ def get_case_full(case_no: str):
 
 @router.post("/validate")
 def validate_key(req: ValidateKeyRequest):
-    """设置页「验证」按钮：用用户输入（可能未保存）的 Key 调云端校验"""
-    base, _ = _service_config()
+    """设置页「验证」按钮：用用户输入（可能未保存）的 Key 调云端校验
+
+    服务地址优先级：请求值 > 已保存 > 默认，避免用户改地址未保存时打到旧地址
+    """
+    saved_base, _ = _service_config()
+    base = (req.service_url or saved_base).rstrip("/")
     try:
         resp = requests.post(f"{base}/api/keys/validate", json={"api_key": req.api_key}, timeout=TIMEOUT)
     except RequestException:

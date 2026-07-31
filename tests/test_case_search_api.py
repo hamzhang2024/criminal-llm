@@ -82,6 +82,39 @@ def test_upstream_429_passthrough(client, monkeypatch):
     assert "配额" in resp.json()["detail"]
 
 
+def test_validate_uses_request_service_url(client, monkeypatch):
+    """请求里的 service_url 优先于已保存配置"""
+    seen = {}
+
+    class FakeRequests:
+        @staticmethod
+        def post(url, json=None, timeout=None):
+            seen["url"] = url
+            return FakeResp(200, {"valid": True})
+
+    monkeypatch.setattr(case_search_api, "_service_config", lambda: ("http://saved", "savedkey"))
+    monkeypatch.setattr(case_search_api, "requests", FakeRequests)
+    resp = client.post("/api/case-search/validate", json={"api_key": "cca_x", "service_url": "http://custom"})
+    assert resp.status_code == 200
+    assert seen["url"] == "http://custom/api/keys/validate"
+
+
+def test_validate_falls_back_to_saved_url(client, monkeypatch):
+    """未传 service_url 时回落到已保存配置"""
+    seen = {}
+
+    class FakeRequests:
+        @staticmethod
+        def post(url, json=None, timeout=None):
+            seen["url"] = url
+            return FakeResp(200, {"valid": True})
+
+    monkeypatch.setattr(case_search_api, "_service_config", lambda: ("http://saved", "savedkey"))
+    monkeypatch.setattr(case_search_api, "requests", FakeRequests)
+    resp = client.post("/api/case-search/validate", json={"api_key": "cca_x"})
+    assert seen["url"] == "http://saved/api/keys/validate"
+
+
 def test_fetch_case_cards_skips_failures(monkeypatch):
     class MixedRequests:
         @staticmethod
