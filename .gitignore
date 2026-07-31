@@ -35,3 +35,7 @@ data/cache/
 data/uploads/
 data/output/
 data/criminal-llm-config.json
+
+# 案例提炼产物（Task 4 全量生成，勿入库）
+scripts/cases.db
+scripts/failed_cases.json

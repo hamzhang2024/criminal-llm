@@ -21,6 +21,8 @@ import { MermaidRenderer } from '../components/MermaidRenderer'
 import { PdfViewer } from '../components/PdfViewer'
 import { StickyNoteOverlay } from '../components/StickyNoteOverlay'
 import { ReportRenderer } from '../components/report/ReportRenderer'
+import { colors } from '../components/report/reportColors'
+import CaseSearchPanel from '../components/report/CaseSearchPanel'
 import { PersonRelationGraph } from '../components/PersonRelationGraph'
 import { EventTimelineGraph } from '../components/EventTimelineGraph'
 
@@ -30,27 +32,7 @@ const ENABLE_EVIDENCE_REVIEW_PANEL = false // 证据质证意见（证据中心�
 const ENABLE_REVIEW_NOTES = false         // 阅卷笔录
 const ENABLE_CROSS_EXAM = false           // 质证意见（辩护意见面板内）
 
-// ====== 设计令牌 ======
-
-const colors = {
-  surface: '#ffffff',
-  surfaceAlt: '#f8f9fa',
-  surfaceElevated: '#ffffff',
-  border: '#e5e5ea',
-  borderStrong: '#d1d1d6',
-  textPrimary: '#1d1d1f',
-  textSecondary: '#6e6e73',
-  textTertiary: '#86868b',
-  accent: '#007AFF',
-  accentLight: 'rgba(0,122,255,0.08)',
-  accentBorder: 'rgba(0,122,255,0.2)',
-  gold: '#b8860b',
-  goldBg: 'rgba(184,134,11,0.08)',
-  goldBorder: 'rgba(184,134,11,0.25)',
-  userBubble: '#007AFF',
-  assistantBubble: '#f5f5f7',
-  systemBubble: 'rgba(184,134,11,0.08)',
-}
+// ====== 设计令牌（共享：reportColors.ts）======
 
 // 8 个精简标签 — 整合相关功能
 const TABS = [
@@ -1113,6 +1095,24 @@ export function ReportPage() {
     finally { setRegeneratingLegal(false) }
   }, [caseId, defendant, loadLegalKB])
 
+  // 引用选中案例重新生成法律法规（阶段 4）
+  const handleRegenerateWithCases = useCallback(async (caseNos: string[]) => {
+    if (!caseId || !defendant || caseNos.length === 0) return
+    setRegeneratingLegal(true)
+    try {
+      await api.runSingleStage(caseId, 4, defendant, undefined, undefined, caseNos)
+      // 重新加载阶段 4 内容
+      const result = await api.getStageResult(caseId, 4)
+      if (result.success && result.markdown) {
+        setStageContent(prev => ({ ...prev, stage_4: result.markdown }))
+      }
+      loadLegalKB()
+    } catch (e) {
+      showAlert({ title: '重新生成失败', message: `重新生成失败：${e instanceof Error ? e.message : '请检查网络或 API Key 配置'}`, variant: 'danger' })
+    }
+    finally { setRegeneratingLegal(false) }
+  }, [caseId, defendant, loadLegalKB])
+
   // ===== 渲染器 =====
 
   const activeTabDef = TABS.find(t => t.key === activeTab)
@@ -1508,6 +1508,7 @@ export function ReportPage() {
                     </h2>
                   </div>
                   {renderActiveTab()}
+                  {renderCaseSearchPanel()}
                   {renderLegalKBPanel()}
                   {/* 证据中心综合面板 */}
                   {renderEvidenceCenter()}
@@ -2553,6 +2554,17 @@ export function ReportPage() {
           </div>
         )}
       </div>
+    )
+  }
+
+  // ===== 案例库检索面板 =====
+  const renderCaseSearchPanel = () => {
+    if (activeTab !== 'stage_4') return null
+    return (
+      <CaseSearchPanel
+        regenerating={regeneratingLegal}
+        onRegenerate={handleRegenerateWithCases}
+      />
     )
   }
 

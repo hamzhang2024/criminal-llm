@@ -57,6 +57,7 @@ from case_manager import router as case_router
 from stage_api import router as stage_router
 from pipeline_api import router as pipeline_router
 from legal_kb_api import router as legal_kb_router
+from case_search_api import router as case_search_router
 from background_tasks import router as bg_task_router
 from data_dir_api import router as data_dir_router
 
@@ -85,6 +86,7 @@ app.include_router(case_router)
 app.include_router(pipeline_router)
 app.include_router(stage_router)
 app.include_router(legal_kb_router)
+app.include_router(case_search_router)
 app.include_router(bg_task_router)
 app.include_router(data_dir_router)
 

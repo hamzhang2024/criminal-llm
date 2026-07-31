@@ -23,6 +23,9 @@ DEFAULTS = {
     # MinerU 真批量配置
     "pdf_convert_concurrency": 10,    # PDF 转换上传并发数（1-50，真批量下提交/轮询已聚合）
     "mineru_model_version": "vlm",    # MinerU 模型版本：vlm（高精度）/ pipeline（快速）/ MinerU-HTML
+    # 案例检索云端服务
+    "case_service_url": "",           # 案例检索服务地址，空则用默认 http://118.196.83.43:8001
+    "case_api_key": "",               # 案例检索 API Key（设置页填写）
 }
 
 
@@ -70,6 +73,10 @@ def get_config_status() -> Dict[str, Any]:
         "mineru_model_version": config.get("mineru_model_version", "vlm"),
         # 模型上下文大小（tokens）
         "model_context_limit": config.get("model_context_limit", 250000),
+        # 案例检索云端服务
+        "case_service_url": config.get("case_service_url", ""),
+        "case_api_key": bool(config.get("case_api_key")),
+        "case_api_key_value": config.get("case_api_key", ""),
     }
 
 

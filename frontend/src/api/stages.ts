@@ -35,11 +35,15 @@ export async function getStageProgress(caseId: string): Promise<any> {
   return res.json()
 }
 
-export async function runSingleStage(caseId: string, stageNum: number, defendant: string, charges?: string[], indictmentFile?: string): Promise<any> {
+export async function runSingleStage(caseId: string, stageNum: number, defendant: string, charges?: string[], indictmentFile?: string, referenceCaseNos?: string[]): Promise<any> {
+  const body: Record<string, any> = { defendant, charges: charges, indictment_file: indictmentFile }
+  if (referenceCaseNos && referenceCaseNos.length > 0) {
+    body.reference_case_nos = referenceCaseNos
+  }
   const res = await fetch(`${API_BASE}/stage-analysis/${caseId}/run-stage/${stageNum}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ defendant, charges: charges, indictment_file: indictmentFile })
+    body: JSON.stringify(body)
   })
   return res.json()
 }
