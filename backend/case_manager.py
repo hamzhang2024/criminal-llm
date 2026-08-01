@@ -1106,7 +1106,6 @@ async def _extract_single_file(
     返回：(md_filename, evidence_list)
     evidence_list 中每项包含证据数据，文件保存在 temp_dir 中。
     """
-    from config_manager import get_config_value
     from llm_client import get_llm_client, LLMRetryExhaustedError
     client = get_llm_client()
 
@@ -1120,8 +1119,9 @@ async def _extract_single_file(
         charges_str = f"当前案件指控罪名：{'、'.join(charges)}"
 
     # 按 token 预算分块（用 tiktoken 精确计算，按 ## 标题边界拆分）
-    context_limit = int(get_config_value("model_context_limit", "250000"))
-    content_budget = context_limit - 38000  # 预留 system prompt + 提取规则 + 响应
+    import context_budget
+    # 字符预算转 token 预算（分块按 tiktoken 计数）：与统一公式保持一致
+    content_budget = int(context_budget.content_budget_chars() / context_budget.CHARS_PER_TOKEN)
     if content_budget < 50000:
         content_budget = 50000  # 最少保证 50K tokens
 

@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Optional
 
 from llm_client import get_llm_client
+import context_budget
 
 # 默认分析状态结构
 DEFAULT_STATE = {
@@ -300,7 +301,7 @@ class AnalysisPipeline:
                     # 用 LLM 确认类型
                     doc_type = await _classify_document_type(self.llm, f["text"][:5000])
                     if doc_type in ("起诉书", "起诉意见书"):
-                        return f["text"][:40000], doc_type
+                        return f["text"][:context_budget.content_budget_chars()], doc_type
                     # LLM 无法确认类型时，回退到自动检测
 
         md_files = self._load_md_files()
@@ -322,13 +323,13 @@ class AnalysisPipeline:
         for f in indictment_candidates:
             doc_type = await _classify_document_type(self.llm, f["text"][:5000])
             if doc_type == "起诉书":
-                return f["text"][:40000], "起诉书"
+                return f["text"][:context_budget.content_budget_chars()], "起诉书"
 
         # 再确认起诉意见书
         for f in opinion_candidates:
             doc_type = await _classify_document_type(self.llm, f["text"][:5000])
             if doc_type == "起诉意见书":
-                return f["text"][:40000], "起诉意见书"
+                return f["text"][:context_budget.content_budget_chars()], "起诉意见书"
 
         return "", ""
 
@@ -828,7 +829,7 @@ class AnalysisPipeline:
                     {"role": "system", "content": f"你是刑事律师，请对比{person}的多份{etype}，找出前后矛盾。"},
                     {"role": "user", "content": f"""{person}共有{session_count}次{etype}，以下是每次笔录的详细总结：
 
-{summary_text[:40000]}
+{summary_text[:context_budget.content_budget_chars()]}
 
 注意：本步骤仅分析同一人口供/证言的前后矛盾（供述内矛盾），不分析不同证据之间的矛盾（证据间矛盾在步骤 4 处理）。
 
@@ -1190,7 +1191,7 @@ class AnalysisPipeline:
 
             if not summary_text and etype == "其他证据":
                 if other_index_path.exists():
-                    summary_text = other_index_path.read_text(encoding="utf-8")[:30000]
+                    summary_text = other_index_path.read_text(encoding="utf-8")[:context_budget.content_budget_chars()]
 
             if not summary_text:
                 print(f"[步骤 4b] 跳过 {person}（无总结文件）")
@@ -1219,16 +1220,14 @@ class AnalysisPipeline:
 
             print(f"[步骤 4b] 摄入 {person}（{etype}）...")
             try:
-                analysis = await self.llm.chat([
-                    {"role": "system", "content": "你是刑事律师，正在进行案件证据分析。请基于证据材料，逐项分析该证据的证明力和证明内容。"},
-                    {"role": "user", "content": f"""## 指控要素
+                user_prompt = f"""## 指控要素
 {indictment_content or '无起诉意见书'}
 
 ## 法律框架（法条 + 司法解释 + 类案裁判规则）
 {legal_framework if legal_framework else '无'}
 
 ## 待分析证据：{person}（{etype}）
-{summary_text[:30000]}
+{summary_text[:context_budget.content_budget_chars()]}
 
 ## 该人的矛盾分析（如有）
 {contradiction_text if contradiction_text else '无'}
@@ -1243,7 +1242,11 @@ class AnalysisPipeline:
 4. 对辩方有利的内容
 5. 是否存在需要其他证据验证的点
 
-请输出 Markdown 格式的详细分析。"""},
+请输出 Markdown 格式的详细分析。"""
+                print(f"[预算] 步骤4b 单证据 prompt: {len(user_prompt)} 字符 / 预算 {context_budget.content_budget_chars()}")
+                analysis = await self.llm.chat([
+                    {"role": "system", "content": "你是刑事律师，正在进行案件证据分析。请基于证据材料，逐项分析该证据的证明力和证明内容。"},
+                    {"role": "user", "content": user_prompt},
                 ])
                 self._save_wiki_page("03-证据分析", wiki_filename, analysis)
                 analyzed_evidence.append(f"{person}（{etype}）")
@@ -1273,15 +1276,13 @@ class AnalysisPipeline:
                 legal_content += f"\n### {f}\n{content[:2000]}\n"
 
             try:
-                conclusion = await self.llm.chat([
-                    {"role": "system", "content": "你是刑事律师，请基于案件 Wiki 的所有分析结果，生成综合结论。"},
-                    {"role": "user", "content": f"""以下是本案的 Wiki 分析结果：
+                user_prompt = f"""以下是本案的 Wiki 分析结果：
 
 ## 指控要素
 {indictment_content[:3000]}
 
 ## 证据分析汇总
-{all_evidence_analysis[:15000]}
+{all_evidence_analysis[:context_budget.content_budget_chars()]}
 
 ## 法律依据
 {legal_content[:3000]}
@@ -1294,7 +1295,11 @@ class AnalysisPipeline:
 5. 对辩方有利的要点
 6. 对控方不利的要点
 
-请输出 Markdown 格式的综合结论。"""},
+请输出 Markdown 格式的综合结论。"""
+                print(f"[预算] 步骤4d 综合结论 prompt: {len(user_prompt)} 字符 / 预算 {context_budget.content_budget_chars()}")
+                conclusion = await self.llm.chat([
+                    {"role": "system", "content": "你是刑事律师，请基于案件 Wiki 的所有分析结果，生成综合结论。"},
+                    {"role": "user", "content": user_prompt},
                 ])
                 self._save_wiki_page("", "06-综合结论.md", conclusion)
                 results_log["sub_steps"].append({"step": "4d", "name": "综合结论", "status": "done"})

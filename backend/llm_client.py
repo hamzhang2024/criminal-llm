@@ -16,7 +16,8 @@ from analysis_engine import (
     _get_content_budget_chars,
     _get_indictment_budget_chars,
     _get_evidence_budget_chars,
-    _get_knowledge_budget_chars
+    _get_knowledge_budget_chars,
+    _get_report_budget_chars
 )
 
 logger = logging.getLogger(__name__)
@@ -611,7 +612,7 @@ class LLMClient:
 
 ## 原报告内容
 
-{original_report[:60000]}
+{original_report[:_get_report_budget_chars()]}
 
 ---
 
@@ -689,7 +690,7 @@ class LLMClient:
 
 ## 原辩护分析报告（仅供参考，修改部分需重新分析）
 
-{report_context[:50000]}
+{report_context[:_get_report_budget_chars()]}
 
 ---
 
