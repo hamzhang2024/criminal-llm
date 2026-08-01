@@ -39,3 +39,20 @@ def test_llm_client_evidence_slice_budget_aware():
 def test_pipeline_step2_no_hardcoded_slice():
     src = inspect.getsource(analysis_pipeline.AnalysisPipeline.step2_detailed_summaries)
     assert "[:30000]" not in src
+
+
+def test_stage_api_no_hardcoded_slices():
+    import stage_api
+    src = inspect.getsource(stage_api)
+    assert "[:50000]" not in src
+    assert "[:30000]" not in src
+
+
+def test_pipeline_step45_no_hardcoded_slice():
+    src = inspect.getsource(analysis_pipeline.AnalysisPipeline.step45_debate_simulation)
+    assert "[:50000]" not in src
+
+
+def test_llm_client_per_evidence_slice_budget_aware():
+    src = inspect.getsource(llm_client)
+    assert "e['text'][:50000]" not in src

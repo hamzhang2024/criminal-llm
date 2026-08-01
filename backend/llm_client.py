@@ -343,7 +343,7 @@ class LLMClient:
 
         # 构建证据部分
         evidence_section = "\n\n".join([
-            f"### {e['filename']} ({e['type']})\n{e['text'][:50000]}"  # 每份证据限制 5 万字
+            f"### {e['filename']} ({e['type']})\n{e['text'][:_get_evidence_budget_chars()]}"  # 每份证据按证据预算截断
             for e in evidence_texts
         ])
         

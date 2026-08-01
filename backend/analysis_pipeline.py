@@ -1398,7 +1398,7 @@ class AnalysisPipeline:
             f"## 证据分析\n{wiki_evidence_summary}" if wiki_evidence_summary else None,
             f"## 法律依据\n{wiki_legal}" if wiki_legal else None,
         ] if p]
-        context = "\n\n".join(context_parts)[:50000]
+        context = "\n\n".join(context_parts)[:context_budget.content_budget_chars()]
 
         step_name_map = {
             "45a": "控方沙箱",

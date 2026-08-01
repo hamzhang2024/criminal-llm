@@ -1127,6 +1127,26 @@ async def _extract_single_file(
 
     chunks = _split_content_by_tokens(md_text, content_budget, md_file.name)
 
+    # 块缓存失效机制：预算或文本长度变化后，旧块缓存（按块下标键控）会错配，需全部失效
+    meta_file = temp_dir / "_chunking_meta.json"
+    current_meta = {"budget": content_budget, "text_len": len(md_text), "chunks": len(chunks)}
+    if len(chunks) > 1 and meta_file.exists():
+        stale = True
+        try:
+            stale = json.loads(meta_file.read_text(encoding="utf-8")) != current_meta
+        except Exception:
+            stale = True  # meta 损坏视为失效
+        if stale:
+            for f in temp_dir.glob(".chunk_*.done"):
+                f.unlink(missing_ok=True)
+            for f in temp_dir.glob("_chunk_*_blocks.json"):
+                f.unlink(missing_ok=True)
+            logger.info(f"[证据提取] {md_file.name}: 分块参数变化，旧块缓存已失效，重新提取")
+    try:
+        meta_file.write_text(json.dumps(current_meta, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
     # 统计讯问笔录次数，提示LLM逐份提取
     interrog_count = len(re.findall(r'被讯问人[：:]\s*\S', md_text))
     ask_count = len(re.findall(r'被询问人[：:]\s*\S', md_text))

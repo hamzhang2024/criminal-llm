@@ -200,6 +200,8 @@ export function SettingsPage() {
   })
   const [status, setStatus] = useState<ConfigStatus | null>(null)
   const [modelWindowDetected, setModelWindowDetected] = useState<number | null>(null)
+  // 已保存的模型名：modelWindowDetected 是按已保存模型检测的，未保存的修改不应显示检测文案
+  const [savedLlmModel, setSavedLlmModel] = useState<string>('')
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState<string | null>(null)
   const [testResult, setTestResult] = useState<Record<string, 'ok' | 'fail' | null>>({
@@ -279,6 +281,7 @@ export function SettingsPage() {
       if (data.mineru_model_version) updates.mineru_model_version = data.mineru_model_version
       if (data.model_context_limit) updates.model_context_limit = Math.round(data.model_context_limit / 1000)
       setModelWindowDetected(data.model_window_detected ?? null)
+      setSavedLlmModel(data.llm_model || '')
       const loaded = { ...config, ...updates }
       setConfig(loaded)
       setInitialConfig(loaded)
@@ -1029,7 +1032,7 @@ export function SettingsPage() {
                   fontSize: '14px', boxSizing: 'border-box',
                 }}
               />
-              {modelWindowDetected && (
+              {modelWindowDetected && config.llm_model === savedLlmModel && (
                 <div style={{ marginTop: '6px', fontSize: '11px', color: '#86868b' }}>
                   检测到 {config.llm_model} 窗口为 {modelWindowDetected.toLocaleString()} tokens（可在下方覆盖）
                 </div>
