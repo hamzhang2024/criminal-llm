@@ -163,6 +163,7 @@ interface ConfigStatus {
     exceeded: boolean
   } | null
   model_context_limit: number
+  model_window_detected: number | null
 }
 
 interface ConfigForm {
@@ -198,6 +199,7 @@ export function SettingsPage() {
     model_context_limit: 250,
   })
   const [status, setStatus] = useState<ConfigStatus | null>(null)
+  const [modelWindowDetected, setModelWindowDetected] = useState<number | null>(null)
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState<string | null>(null)
   const [testResult, setTestResult] = useState<Record<string, 'ok' | 'fail' | null>>({
@@ -276,6 +278,7 @@ export function SettingsPage() {
       if (data.pdf_convert_concurrency) updates.pdf_convert_concurrency = data.pdf_convert_concurrency
       if (data.mineru_model_version) updates.mineru_model_version = data.mineru_model_version
       if (data.model_context_limit) updates.model_context_limit = Math.round(data.model_context_limit / 1000)
+      setModelWindowDetected(data.model_window_detected ?? null)
       const loaded = { ...config, ...updates }
       setConfig(loaded)
       setInitialConfig(loaded)
@@ -1026,6 +1029,11 @@ export function SettingsPage() {
                   fontSize: '14px', boxSizing: 'border-box',
                 }}
               />
+              {modelWindowDetected && (
+                <div style={{ marginTop: '6px', fontSize: '11px', color: '#86868b' }}>
+                  检测到 {config.llm_model} 窗口为 {modelWindowDetected.toLocaleString()} tokens（可在下方覆盖）
+                </div>
+              )}
             </div>
 
             <div style={{ marginBottom: '20px' }}>
