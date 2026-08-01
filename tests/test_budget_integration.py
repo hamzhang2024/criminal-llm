@@ -29,3 +29,13 @@ def test_llm_client_report_slice_budget_aware():
     src = inspect.getsource(llm_client)
     assert "report_context[:50000]" not in src
     assert "original_report[:60000]" not in src
+
+
+def test_llm_client_evidence_slice_budget_aware():
+    src = inspect.getsource(llm_client)
+    assert "evidence_context[:40000]" not in src
+
+
+def test_pipeline_step2_no_hardcoded_slice():
+    src = inspect.getsource(analysis_pipeline.AnalysisPipeline.step2_detailed_summaries)
+    assert "[:30000]" not in src

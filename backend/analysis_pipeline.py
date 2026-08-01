@@ -756,7 +756,7 @@ class AnalysisPipeline:
 - 其他明显的格式异常
 
 笔录内容：
-{session['content'][:30000]}"""},
+{session['content'][:context_budget.content_budget_chars()]}"""},
                     ])
                     session_summaries.append({"session_number": i, "time_range": session["time_range"], "summary": summary})
                     completed += 1

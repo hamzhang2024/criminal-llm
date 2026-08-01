@@ -618,7 +618,7 @@ class LLMClient:
 
 ## 相关证据材料（供重新分析使用）
 
-{evidence_context[:40000]}
+{evidence_context[:_get_evidence_budget_chars()]}
 
 ---
 
