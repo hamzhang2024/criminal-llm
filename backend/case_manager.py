@@ -1150,10 +1150,20 @@ async def _extract_single_file(
         )
         evidence_blocks = _parse_evidence_blocks(result, md_file.name)
     else:
-        # 多块，逐块提取后合并
+        # 多块，逐块提取后合并（块级断点续传：已完成块跳过）
         all_evidence_blocks = []
         for ci, chunk in enumerate(chunks):
             chunk_label = chunk["label"]
+            done_marker = temp_dir / f".chunk_{ci}.done"
+            blocks_file = temp_dir / f"_chunk_{ci}_blocks.json"
+            if done_marker.exists() and blocks_file.exists():
+                try:
+                    cached = json.loads(blocks_file.read_text(encoding="utf-8"))
+                    all_evidence_blocks.extend(cached)
+                    logger.info(f"[证据提取] {chunk_label}: 已完成，跳过（缓存 {len(cached)} 份）")
+                    continue
+                except Exception:
+                    pass  # 缓存损坏则重提该块
             chunk_text = chunk["text"]
             logger.info(f"[证据提取] {chunk_label}: 发送 {_count_tokens(chunk_text)} tokens")
             result = await asyncio.wait_for(
@@ -1165,6 +1175,11 @@ async def _extract_single_file(
             )
             blocks = _parse_evidence_blocks(result, chunk_label)
             logger.info(f"[证据提取] {chunk_label}: 提取 {len(blocks)} 份证据")
+            try:
+                blocks_file.write_text(json.dumps(blocks, ensure_ascii=False), encoding="utf-8")
+                done_marker.write_text("", encoding="utf-8")
+            except Exception:
+                pass
             all_evidence_blocks.extend(blocks)
         evidence_blocks = _merge_evidence_blocks(all_evidence_blocks)
         logger.info(f"[证据提取] {md_file.name}: {len(chunks)} 块合并后 {len(evidence_blocks)} 份证据")
@@ -2215,6 +2230,21 @@ def _count_tokens(text: str) -> int:
     return len(_tiktoken_enc.encode(text))
 
 
+# 块间重叠字符数（约 370 tokens），防止跨块事实被切断
+OVERLAP_CHARS = 500
+
+
+def _overlap_tail(text: str) -> str:
+    """取文本尾部 ≤OVERLAP_CHARS 字符作为下一块的重叠前缀（尽量段落边界）"""
+    if len(text) <= OVERLAP_CHARS:
+        return ""
+    tail = text[-OVERLAP_CHARS:]
+    para = tail.find("\n\n")
+    if para > 0:
+        tail = tail[para + 2:]
+    return tail.strip()
+
+
 def _split_content_by_tokens(text: str, budget: int, source_name: str) -> list:
     """
     按 token 预算分块，优先按 ## 标题边界拆分，不破坏文书结构。
@@ -2237,27 +2267,48 @@ def _split_content_by_tokens(text: str, budget: int, source_name: str) -> list:
     chunks = []
     current_parts: list[str] = []
     current_tokens = 0
+    pending_overlap = ""  # 上一个已发出块的尾部，作为下一块的重叠前缀
+
+    def _emit(text: str) -> None:
+        nonlocal pending_overlap
+        chunks.append({"label": source_name, "text": text})
+        pending_overlap = _overlap_tail(text)
+
+    def _start_parts(section: str, sec_tokens: int) -> None:
+        """开始新的 current_parts，带上前一块的重叠前缀（若有）"""
+        nonlocal current_tokens
+        if pending_overlap:
+            current_parts.append(pending_overlap + "\n\n" + section)
+            current_tokens = _count_tokens(pending_overlap) + sec_tokens
+        else:
+            current_parts.append(section)
+            current_tokens = sec_tokens
 
     for section in sections:
         sec_tokens = _count_tokens(section)
         if sec_tokens > budget:
             # 单段超过预算，先把前面积累的发出
             if current_parts:
-                chunks.append({"label": source_name, "text": "\n".join(current_parts)})
+                _emit("\n".join(current_parts))
                 current_parts = []
                 current_tokens = 0
             # 超长段内部按三级标题再拆
             sub_chunks = _split_content_by_tokens(section, budget, source_name)
             chunks.extend(sub_chunks)
+            if sub_chunks:
+                pending_overlap = _overlap_tail(sub_chunks[-1]["text"])
             continue
         if current_tokens + sec_tokens > budget:
             # 加上这段会超预算，先把当前积累发出
-            chunks.append({"label": source_name, "text": "\n".join(current_parts)})
-            current_parts = [section]
-            current_tokens = sec_tokens
+            _emit("\n".join(current_parts))
+            current_parts = []
+            _start_parts(section, sec_tokens)
         else:
-            current_parts.append(section)
-            current_tokens += sec_tokens
+            if not current_parts:
+                _start_parts(section, sec_tokens)
+            else:
+                current_parts.append(section)
+                current_tokens += sec_tokens
 
     if current_parts:
         chunks.append({"label": source_name, "text": "\n".join(current_parts)})
@@ -2272,14 +2323,15 @@ def _split_content_by_tokens(text: str, budget: int, source_name: str) -> list:
 
 
 def _split_by_token_count(text: str, budget: int, source_name: str) -> list:
-    """降级方案：无标题边界时按固定 token 数硬切"""
+    """降级方案：无标题边界时按固定 token 数硬切（块间回退 250 tokens 重叠）"""
     global _tiktoken_enc
     if _tiktoken_enc is None:
         _tiktoken_enc = tiktoken.get_encoding("cl100k_base")
 
     tokens = _tiktoken_enc.encode(text)
     chunks = []
-    for i in range(0, len(tokens), budget):
+    step = max(1, budget - 250)  # 每块步进 budget-250，重叠 250 tokens
+    for i in range(0, len(tokens), step):
         chunk_tokens = tokens[i:i + budget]
         chunk_text = _tiktoken_enc.decode(chunk_tokens)
         chunks.append({"label": source_name, "text": chunk_text})
