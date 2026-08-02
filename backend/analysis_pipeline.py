@@ -239,6 +239,9 @@ class AnalysisPipeline:
                     import json
                     index = json.loads(index_file.read_text(encoding="utf-8"))
                     for ev in index.get("evidence", []):
+                        # 跳过条目级标注的非证据（封面/目录等，旧案件无 doc_type 字段不受影响）
+                        if (ev.get("doc_type") or "evidence").startswith("non_evidence"):
+                            continue
                         md_file = evidence_dir / ev.get("md_file", "")
                         if md_file.exists():
                             text = md_file.read_text(encoding="utf-8")

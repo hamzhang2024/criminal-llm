@@ -9,6 +9,8 @@ import re
 
 NON_EVIDENCE_TYPES = ("封面", "目录", "封底", "备考表")
 
+VOLUME_MIN_CHARS = 3000  # 超过此长度视为"卷"（封面仅开头两页），一律证据
+
 _FILENAME_RULES = [
     (re.compile(r"封面"), "封面"),
     (re.compile(r"卷内.*目录|文书目录|(?<!卷内)目录"), "目录"),
@@ -16,14 +18,33 @@ _FILENAME_RULES = [
     (re.compile(r"备考表"), "备考表"),
 ]
 
+# 证据条目级非证据模式：卷内提取出的封面/目录等条目（条目保留，仅标注）
+_NON_EVIDENCE_ITEM_PATTERNS = [
+    (re.compile(r"卷宗封面|案卷封面|(?<!卷宗)封面"), "封面"),
+    (re.compile(r"卷内目录|卷内文书目录|(?<!卷内)目录"), "目录"),
+    (re.compile(r"封底"), "封底"),
+    (re.compile(r"备考表"), "备考表"),
+]
+
 _CONTENT_HINT = re.compile(r"刑事侦查卷宗|卷内文书目录|备\s*考\s*表|封\s*底")
 
 
-async def classify_document(filename: str, first_500_chars: str) -> str:
+def classify_evidence_item(name: str) -> str:
+    """证据条目级分类：封面/目录/封底/备考表条目标注非证据（条目保留）"""
+    for pattern, subtype in _NON_EVIDENCE_ITEM_PATTERNS:
+        if pattern.search(name or ""):
+            return f"non_evidence:{subtype}"
+    return "evidence"
+
+
+async def classify_document(filename: str, first_500_chars: str, file_size: int = 0) -> str:
     """返回 "evidence" 或 "non_evidence:<subtype>"
 
+    整卷豁免：文件超过 VOLUME_MIN_CHARS 一律证据（封面只是卷的开头两页）。
     文件名规则优先；内容高度吻合封面特征才走 LLM 兜底，否则直接归证据。
     """
+    if file_size > VOLUME_MIN_CHARS:
+        return "evidence"
     for pattern, subtype in _FILENAME_RULES:
         if pattern.search(filename):
             return f"non_evidence:{subtype}"

@@ -955,8 +955,8 @@ _EVIDENCE_EXTRACTION_RULES = """
 
 ### 封面/目录/三面照
 
-封面、卷内目录、封底、备考表已在提取前标注为非证据，不在你的输入中。
-若输入中仍混入此类内容，跳过不提取。嫌疑人三面照/照片是证据，提取为"嫌疑人三面照"。
+封面（刑事侦查卷宗信息）、卷内文书目录、封底、备考表：照常提取为独立条目（如"卷宗封面""卷内目录"），它们会在后续被标注为非证据，但必须保留在提取结果中以保证案卷完整性。
+嫌疑人三面照/照片是证据，提取为"嫌疑人三面照"。
 
 ### 起诉意见书/起诉书
 
@@ -1104,6 +1104,7 @@ async def _extract_single_file(
     evidence_list 中每项包含证据数据，文件保存在 temp_dir 中。
     """
     from llm_client import get_llm_client, LLMRetryExhaustedError
+    from doc_classifier import classify_evidence_item
     client = get_llm_client()
 
     # 不做预过滤，保留完整原始内容（封面、目录等由LLM自行判断）
@@ -1253,6 +1254,7 @@ async def _extract_single_file(
             "name": ev_name,
             "type": ev_block["type"],
             "source": md_file.name,
+            "doc_type": classify_evidence_item(ev_name),
             "page_range": ev_block.get("page_range", ""),
             "persons": ev_block.get("persons", ""),
             "related_entities": ev_block.get("related_entities", ""),
@@ -1548,7 +1550,7 @@ async def _do_extract_evidence(
             # 流式读取文件头，避免整文件载入内存只为取前 500 字
             with f.open(encoding="utf-8", errors="ignore") as fh:
                 head_text = fh.read(2000)
-            doc_type = await classify_document(f.name, head_text[:500])
+            doc_type = await classify_document(f.name, head_text[:500], f.stat().st_size)
             file_classifications[f.name] = doc_type
             if doc_type.startswith("non_evidence"):
                 logger.info(f"[证据提取] {f.name} 标注为非证据（{doc_type.split(':')[1]}），保留文件不入提取")
