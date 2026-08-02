@@ -107,3 +107,29 @@ def test_no_llm_call_when_fully_covered_non_key(monkeypatch):
     report = asyncio.run(completeness.check_completeness(files, extracted_by_file))
     assert spy.call_count == 0
     assert report["files"]["讯问笔录.md"]["llm_checked"] is False
+
+
+def test_covered_elsewhere_downgrades_missing(monkeypatch):
+    """本文件未提取但其他卷已覆盖：移到 covered_elsewhere，状态 ok"""
+    monkeypatch.setattr(completeness, "_llm_spot_check",
+                        AsyncMock(return_value={"covered": False, "missing_items": ["王兆威第一次询问笔录"]}))
+    files = {"第10卷.md": "一、王兆威第一次询问笔录"}
+    extracted_by_file = {"第10卷.md": ["其他证据"]}
+    all_names = ["其他证据", "王兆威第一次询问笔录"]  # 第8卷已提取
+    report = asyncio.run(completeness.check_completeness(files, extracted_by_file, all_names))
+    entry = report["files"]["第10卷.md"]
+    assert entry["status"] == "ok"
+    assert entry["missing"] == []
+    assert entry["covered_elsewhere"] == ["王兆威第一次询问笔录"]
+
+
+def test_true_missing_stays_suspect(monkeypatch):
+    """全案件都没有的条目：保持 suspect"""
+    monkeypatch.setattr(completeness, "_llm_spot_check",
+                        AsyncMock(return_value={"covered": False, "missing_items": ["根本不存在的笔录"]}))
+    files = {"第10卷.md": "一、根本不存在的笔录"}
+    extracted_by_file = {"第10卷.md": []}
+    report = asyncio.run(completeness.check_completeness(files, extracted_by_file, ["其他证据"]))
+    entry = report["files"]["第10卷.md"]
+    assert entry["status"] == "suspect"
+    assert entry["missing"] == ["根本不存在的笔录"]

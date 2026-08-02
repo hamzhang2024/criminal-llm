@@ -70,8 +70,12 @@ async def _llm_spot_check(source: str, extracted: list[str]) -> dict:
     return {"covered": True, "missing_items": []}
 
 
-async def check_completeness(files: dict, extracted_by_file: dict) -> dict:
-    """全量完整性校验。files: {文件名: 原文}；extracted_by_file: {文件名: [证据名]}"""
+async def check_completeness(files: dict, extracted_by_file: dict, all_evidence_names: list[str] | None = None) -> dict:
+    """全量完整性校验。files: {文件名: 原文}；extracted_by_file: {文件名: [证据名]}
+
+    all_evidence_names: 全案件已提取证据名列表，用于全局交叉核对——
+    本文件未提取但其他卷已提取的条目（补充卷内容重复是常态）不计为遗漏。
+    """
     report = {"files": {}, "summary": {"ok": 0, "suspect": 0, "failed": 0}}
     for fname, source in files.items():
         extracted = extracted_by_file.get(fname, [])
@@ -99,6 +103,12 @@ async def check_completeness(files: dict, extracted_by_file: dict) -> dict:
                     entry["missing"] = []
             except Exception:
                 pass
+        # 全局交叉核对：本文件未提取但其他卷已覆盖（补充卷重复是常态）
+        if entry["missing"] and all_evidence_names:
+            elsewhere = [m for m in entry["missing"] if _covered(m, all_evidence_names)]
+            if elsewhere:
+                entry["covered_elsewhere"] = elsewhere
+                entry["missing"] = [m for m in entry["missing"] if m not in elsewhere]
         # 状态判定：无编号项的文件不做遗漏判定
         if rec["source_items"] == 0:
             status = "ok"

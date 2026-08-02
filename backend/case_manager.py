@@ -1984,7 +1984,9 @@ async def _do_extract_evidence(
             extracted_by_file: dict = {}
             for ev in index_data.get("evidence", []):
                 extracted_by_file.setdefault(ev.get("source", ""), []).append(ev.get("name", ""))
-            completeness_report = await check_completeness(source_texts, extracted_by_file)
+            # 全案件证据名：全局交叉核对（本文件未提取但他卷已覆盖的不误报）
+            all_names = [ev.get("name", "") for ev in index_data.get("evidence", [])]
+            completeness_report = await check_completeness(source_texts, extracted_by_file, all_names)
             (evidence_dir / "completeness_report.json").write_text(
                 json.dumps(completeness_report, ensure_ascii=False, indent=2), encoding="utf-8")
             logger.info(f"[证据提取] 完整性校验: {completeness_report['summary']}")
