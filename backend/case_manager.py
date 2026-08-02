@@ -955,12 +955,8 @@ _EVIDENCE_EXTRACTION_RULES = """
 
 ### 封面/目录/三面照
 
-**必须提取为独立证据，不得遗漏。**
-
-- 封面（刑事侦查卷宗信息）：提取为"卷宗封面"
-- 卷内文书目录：提取为"卷内目录"
-- 犯罪嫌疑人三面照/照片：提取为"嫌疑人三面照"或"嫌疑人照片"
-- 其他程序性首页信息：提取为"案卷首页信息"
+封面、卷内目录、封底、备考表已在提取前标注为非证据，不在你的输入中。
+若输入中仍混入此类内容，跳过不提取。嫌疑人三面照/照片是证据，提取为"嫌疑人三面照"。
 
 ### 起诉意见书/起诉书
 
@@ -1543,8 +1539,25 @@ async def _do_extract_evidence(
             return sorted(files, key=lambda f: _parse_volume_sort_key(f.name))
 
         all_md_files = _sort_md_files(list(md_dir.glob("*.md")))
-        indictment_files = [f for f in all_md_files if _is_indictment(f.name)]
-        other_files = [f for f in all_md_files if not _is_indictment(f.name)]
+
+        # 文书分类：非证据（封面/目录/封底/备考表）标注后跳过提取（文件保留）
+        from doc_classifier import classify_document
+        file_classifications = {}  # filename -> doc_type
+        evidence_md_files = []
+        for f in all_md_files:
+            doc_type = await classify_document(f.name, f.read_text(encoding="utf-8")[:500])
+            file_classifications[f.name] = doc_type
+            if doc_type.startswith("non_evidence"):
+                logger.info(f"[证据提取] {f.name} 标注为非证据（{doc_type.split(':')[1]}），保留文件不入提取")
+                # 非证据也计入进度，避免进度条缺格
+                task = EXTRACT_TASKS.get(case_id)
+                if task:
+                    task["processed_files"] = task.get("processed_files", 0) + 1
+            else:
+                evidence_md_files.append(f)
+
+        indictment_files = [f for f in evidence_md_files if _is_indictment(f.name)]
+        other_files = [f for f in evidence_md_files if not _is_indictment(f.name)]
 
         # ── 第1步：普通文件并发提取（先处理，让用户快速看到进度）──
         pending_files = [f for f in other_files if f.name not in processed_sources]
@@ -1949,6 +1962,7 @@ async def _do_extract_evidence(
             "total_evidence": len(all_evidence),
             "evidence": all_evidence,
             "case_charges": case_charges,
+            "files": [{"name": n, "doc_type": t} for n, t in file_classifications.items()],
             "generated_at": datetime.now().isoformat(),
         }
         # 如果提取结果为 0，记录可能的原因供前端展示
@@ -2208,55 +2222,6 @@ async def clear_stage(case_id: str, stage_num: int):
 
 
 _tiktoken_enc = None
-
-# ── 非证据过滤 ──
-
-_SKIP_SECTION_KEYWORDS = {"卷内文书目录"}
-
-
-def _strip_cover_page(text: str) -> str:
-    """移除文件开头的封面（刑事侦查卷宗标识+卷内文书目录表格+三面照）。
-    只跳过开头的封面块，遇到第一个实质文书标题即保留。
-    """
-    lines = text.split("\n")
-    # 找第一个实质文书标题：跳过"刑事侦查卷宗"和"卷内文书目录"封面块
-    in_cover = True
-    for i, line in enumerate(lines):
-        stripped = line.strip()
-        # 封面标识：跳过
-        if stripped in ("# 刑事侦查卷宗", "# 封底", "## 卷内文书目录"):
-            continue
-        # 封面块内的目录表格行（<table>开头）和三面照也跳过
-        if in_cover and (stripped.startswith("<table>") or stripped.startswith("![]") or stripped == "" or "三面照" in stripped or re.match(r'^冯叶飞$', stripped) or re.match(r'^\d{18}$', stripped)):
-            continue
-        # 第一个实质标题（# 或 ##）或实质内容
-        if line.startswith("# ") or line.startswith("## "):
-            return "\n".join(lines[i:])
-        # 非标题实质内容，也停止跳过
-        if stripped and not stripped.startswith("|"):
-            return "\n".join(lines[i:])
-        in_cover = False
-    return text
-
-
-def _strip_non_evidence_sections(text: str) -> str:
-    """移除文件中的卷内文书目录段（表格目录），不破坏文书结构。
-    只删除开头的目录段，到下一个标题（#或##）即停止。
-    """
-    text = _strip_cover_page(text)
-    # 找开头的卷内文书目录段
-    match = re.search(r'^## 卷内文书目录', text, re.MULTILINE)
-    if match:
-        start = match.start()
-        # 找目录段结尾：下一个任意标题（# 或 ##）
-        rest = text[match.end():]
-        next_header = re.search(r'\n#{1,2} ', rest)
-        if next_header:
-            end = match.end() + next_header.start()
-            text = text[:start] + text[end:]
-        else:
-            text = text[:start]
-    return text
 
 
 def _count_tokens(text: str) -> int:
