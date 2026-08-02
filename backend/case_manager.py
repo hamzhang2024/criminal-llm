@@ -1099,6 +1099,7 @@ async def _extract_single_file(
     md_text: str,
     temp_dir: Path,
     charges: list = None,
+    framework_prefix: str = "",
 ) -> tuple:
     """
     提取单个 MD 文件的证据（不含信号量和重试控制，由调用方管理）。
@@ -1163,7 +1164,7 @@ async def _extract_single_file(
         # 单块，直接发送
         result = await asyncio.wait_for(
             client.chat([
-                {"role": "system", "content": _EVIDENCE_SYSTEM_PROMPT + "\n\n" + _EVIDENCE_EXTRACTION_RULES},
+                {"role": "system", "content": _EVIDENCE_SYSTEM_PROMPT + "\n\n" + _EVIDENCE_EXTRACTION_RULES + framework_prefix},
                 {"role": "user", "content": f"## 案卷文件：{md_file.name}\n\n{charges_str}{hint}\n\n{md_text}"},
             ]),
             timeout=timeout_seconds,
@@ -1188,7 +1189,7 @@ async def _extract_single_file(
             logger.info(f"[证据提取] {chunk_label}: 发送 {_count_tokens(chunk_text)} tokens")
             result = await asyncio.wait_for(
                 client.chat([
-                    {"role": "system", "content": _EVIDENCE_SYSTEM_PROMPT + "\n\n" + _EVIDENCE_EXTRACTION_RULES},
+                    {"role": "system", "content": _EVIDENCE_SYSTEM_PROMPT + "\n\n" + _EVIDENCE_EXTRACTION_RULES + framework_prefix},
                     {"role": "user", "content": f"## 案卷文件：{chunk_label}\n\n{charges_str}\n\n{chunk_text}"},
                 ]),
                 timeout=timeout_seconds,
@@ -1229,6 +1230,7 @@ async def _extract_single_file(
 | **证据类型** | {ev_block['type']} |
 | **来源文件** | {ev_block['source']} |
 | **涉案人员** | {ev_block.get('persons', '未识别')} |
+| **关联要件** | {'、'.join(ev_block.get('elements', [])) or '无'} |
 
 ## 关联信息
 
@@ -1259,6 +1261,7 @@ async def _extract_single_file(
             "persons": ev_block.get("persons", ""),
             "related_entities": ev_block.get("related_entities", ""),
             "charges": ev_block.get("charges", []),
+            "elements": ev_block.get("elements", []),
             "proves_facts": ev_block.get("proves_facts", []),
             "proves_details": ev_block.get("proves_details", {}),
             "summary_preview": ev_block["summary"][:200],
@@ -1277,6 +1280,7 @@ async def _extract_single_file_with_tracking(
     temp_dir: Path,
     semaphore: asyncio.Semaphore,
     charges: list = None,
+    framework_prefix: str = "",
 ) -> tuple:
     """
     包装 _extract_single_file，管理信号量和重试。
@@ -1289,7 +1293,7 @@ async def _extract_single_file_with_tracking(
         # 获取信号量，执行提取
         async with semaphore:
             try:
-                result = await _extract_single_file(md_file, md_text, temp_dir, charges)
+                result = await _extract_single_file(md_file, md_text, temp_dir, charges, framework_prefix)
                 return result
             except asyncio.TimeoutError:
                 last_error = f"LLM 调用超时（600s）"
@@ -1463,6 +1467,19 @@ async def _do_extract_evidence(
     if case_charges:
         logger.info(f"[证据提取] 案件罪名: {case_charges}")
 
+    # 提取指引法律框架（要件 + 类案裁判规则，每案件一次缓存）
+    from extraction_framework import build_extraction_framework, framework_prompt_prefix
+    _fw_keywords = []
+    try:
+        meta_for_kw = json.loads(case_json.read_text(encoding="utf-8")) if case_json.exists() else {}
+        _fw_keywords = meta_for_kw.get("search_keywords") or meta_for_kw.get("suggested_keywords") or []
+    except Exception:
+        pass
+    extraction_fw = await build_extraction_framework(evidence_dir, case_charges, _fw_keywords)
+    extraction_fw_prefix = framework_prompt_prefix(extraction_fw)
+    if extraction_fw_prefix:
+        logger.info(f"[证据提取] 法律框架已注入（要件 {len(extraction_fw.get('elements', []))} 个，类案 {len(extraction_fw.get('case_rules', {}))} 个罪名）")
+
     # 读取已提取的证据索引（断点续传：跳过已提取的 MD 文件）
     index_file = evidence_dir / "index.json"
     processed_sources = set()
@@ -1603,7 +1620,7 @@ async def _do_extract_evidence(
 
                     logger.info(f"[证据提取] 处理: {md_file.name}")
                     source_name, evidence_list = await _extract_single_file_with_tracking(
-                        md_file, md_text, file_temp_dir, semaphore, case_charges
+                        md_file, md_text, file_temp_dir, semaphore, case_charges, extraction_fw_prefix
                     )
 
                     # 停止心跳
@@ -2450,6 +2467,7 @@ def _parse_evidence_blocks(llm_output: str, source_file: str) -> list:
                             "original_quotes": item.get("original_quotes", item.get("原文摘录", "")),
                             "contradiction_hints": item.get("contradiction_hints", item.get("矛盾提示", "无")),
                             "related_entities": item.get("related_entities", item.get("关联信息", "")),
+                            "elements": item.get("elements", item.get("关联要件", [])) or [],
                             "proves_facts": item.get("proves_facts", []),
                             "proves_details": item.get("proves_details", {}),
                             "raw_text": json.dumps(item, ensure_ascii=False, indent=2),
@@ -2540,6 +2558,8 @@ def _parse_evidence_blocks(llm_output: str, source_file: str) -> list:
         related_entities = _extract_field(content, "关联信息") or ""
         ev_charges_str = _extract_field(content, "关联罪名") or ""
         ev_charges = [c.strip() for c in ev_charges_str.replace("、", ",").split(",") if c.strip()] if ev_charges_str else []
+        ev_elements_str = _extract_field(content, "关联要件") or ""
+        ev_elements = [c.strip() for c in ev_elements_str.replace("、", ",").split(",") if c.strip()] if ev_elements_str else []
 
         # ── 解析"证明对象"：LLM 对6个待证事实的逐项判断 ──
         proves_facts = []
@@ -2571,6 +2591,7 @@ def _parse_evidence_blocks(llm_output: str, source_file: str) -> list:
             "key_facts": key_facts.strip(),
             "summary": summary.strip(),
             "charges": ev_charges,
+            "elements": ev_elements,
             "proves_facts": proves_facts,
             "proves_details": proves_details,
             "original_quotes": original_quotes.strip(),
