@@ -41,12 +41,47 @@ export async function stopExtractEvidence(caseId: string) {
   }
 }
 
-export async function getEvidenceIndex(caseId: string): Promise<any> {
+// index.json 顶层 files 字段：文书分类结果（证据 / 非证据）
+export interface EvidenceIndexFile {
+  name: string
+  doc_type: string  // "evidence" | "non_evidence:封面" | ...
+}
+
+export interface EvidenceIndexResponse {
+  total_evidence: number
+  evidence: any[]
+  case_charges?: string[]
+  files?: EvidenceIndexFile[]
+  error_hint?: string
+  generated_at?: string
+}
+
+export async function getEvidenceIndex(caseId: string): Promise<EvidenceIndexResponse> {
   const res = await safeFetch(`${API_BASE}/cases/${caseId}/evidence-index`)
   if (!res.ok) {
     const text = await res.text().catch(() => '')
     throw new Error(`获取证据列表失败: ${res.status} ${text.slice(0, 100)}`)
   }
+  return res.json()
+}
+
+// 提取完整性报告（evidence/completeness_report.json）
+export interface CompletenessEntry {
+  source_items: number
+  covered: number
+  missing: string[]
+  llm_checked: boolean
+  needs_review?: boolean
+  status: 'ok' | 'suspect' | 'failed'
+}
+
+export interface CompletenessReport {
+  files: Record<string, CompletenessEntry>
+  summary: Record<string, number>
+}
+
+export async function getEvidenceCompleteness(caseId: string): Promise<CompletenessReport> {
+  const res = await fetch(`${API_BASE}/cases/${caseId}/evidence/completeness`)
   return res.json()
 }
 

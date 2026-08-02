@@ -2,11 +2,14 @@
 
 import { useState, useCallback, useRef } from 'react'
 import { api, API_BASE } from '../../../api'
+import type { EvidenceIndexFile, CompletenessReport } from '../../../api'
 import { showAlert, showConfirm } from '../../../components/MacOSDialog'
 
 export type ExtractResult = 'success' | 'cancelled' | 'failed'
 export function useEvidenceExtraction(caseId: string | undefined, onExtractComplete?: (result: ExtractResult) => void) {
   const [evidenceList, setEvidenceList] = useState<any[]>([])
+  const [evidenceFiles, setEvidenceFiles] = useState<EvidenceIndexFile[]>([])  // index.json files（文书分类）
+  const [completeness, setCompleteness] = useState<CompletenessReport | null>(null)  // 完整性报告
   const [evidenceExtracted, setEvidenceExtracted] = useState(false)
   const [extracting, setExtracting] = useState(false)
 
@@ -38,6 +41,7 @@ export function useEvidenceExtraction(caseId: string | undefined, onExtractCompl
     if (!caseId) return
     try {
       const data = await api.getEvidenceIndex(caseId)
+      if (Array.isArray(data.files)) setEvidenceFiles(data.files)
       if (data.total_evidence > 0) {
         setEvidenceList(data.evidence || [])
         setEvidenceExtracted(true)
@@ -45,6 +49,17 @@ export function useEvidenceExtraction(caseId: string | undefined, onExtractCompl
         // 之前提取失败
       }
     } catch { /* 无证据 */ }
+  }, [caseId])
+
+  // 加载提取完整性报告（进入证据列表时调用；无报告时返回空 files/summary）
+  const loadCompleteness = useCallback(async () => {
+    if (!caseId) return
+    try {
+      const report = await api.getEvidenceCompleteness(caseId)
+      setCompleteness(report && report.files ? report : null)
+    } catch {
+      setCompleteness(null)
+    }
   }, [caseId])
 
   // 轮询证据提取进度
@@ -77,11 +92,14 @@ export function useEvidenceExtraction(caseId: string | undefined, onExtractCompl
         if (st.status !== 'running') {
           stopPolling()
           const data = await api.getEvidenceIndex(caseId!)
+          if (Array.isArray(data.files)) setEvidenceFiles(data.files)
           const total = data.total_evidence || 0
           if (total > 0) {
             setEvidenceList(data.evidence || [])
             setEvidenceExtracted(true)
           }
+          // 提取结束后刷新完整性报告
+          loadCompleteness()
           setExtracting(false)
           // 区分取消/失败/成功：cancelled 状态或用户主动停止且无证据 = 取消
           const result: ExtractResult = st.status === 'cancelled' || extractUserStoppedRef.current
@@ -102,7 +120,7 @@ export function useEvidenceExtraction(caseId: string | undefined, onExtractCompl
         }
       }
     }, 3000)
-  }, [caseId, stopPolling, onExtractComplete])
+  }, [caseId, stopPolling, onExtractComplete, loadCompleteness])
 
   // 提取证据
   const handleExtractEvidence = useCallback(async () => {
@@ -149,6 +167,8 @@ export function useEvidenceExtraction(caseId: string | undefined, onExtractCompl
       const data = await res.json()
       if (data.success) {
         setEvidenceList([])
+        setEvidenceFiles([])
+        setCompleteness(null)
         setEvidenceExtracted(false)
       }
     } catch { /* ignore */ }
@@ -164,15 +184,20 @@ export function useEvidenceExtraction(caseId: string | undefined, onExtractCompl
         return
       }
       const data = await api.getEvidenceIndex(caseId)
+      if (Array.isArray(data.files)) setEvidenceFiles(data.files)
       if (data.total_evidence > 0) {
         setEvidenceList(data.evidence || [])
         setEvidenceExtracted(true)
       }
+      loadCompleteness()
     } catch { /* ignore */ }
-  }, [caseId])
+  }, [caseId, loadCompleteness])
 
   return {
     evidenceList, setEvidenceList,
+    evidenceFiles,
+    completeness,
+    loadCompleteness,
     evidenceExtracted, setEvidenceExtracted,
     extracting, setExtracting,
     checkExtractStatus, loadEvidence, pollExtractProgress,

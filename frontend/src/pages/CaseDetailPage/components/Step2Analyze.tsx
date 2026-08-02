@@ -3,8 +3,10 @@
 import React from 'react'
 import { Loader2 } from 'lucide-react'
 import { MacOSCard, MacOSButton } from '../../../components/MacOSLayout'
+import DocTypeBadge, { CompletenessDot } from '../../../components/DocTypeBadge'
 import { STAGES } from '../hooks/useStageAnalysis'
 import type { CaseFile } from '../hooks/useCaseFiles'
+import type { EvidenceIndexFile, CompletenessReport } from '../../../api'
 
 interface EvidenceItem {
   id: number | string
@@ -22,6 +24,8 @@ interface Step2AnalyzeProps {
   setCharges: (v: string[]) => void
   evidenceList: EvidenceItem[]
   evidenceExtracted: boolean
+  evidenceFiles?: EvidenceIndexFile[]      // index.json files（文书分类）
+  completeness?: CompletenessReport | null // 提取完整性报告
   stageStatus: Record<number, 'idle' | 'running' | 'completed' | 'error'>
   runningStage: number | null
   stageMessages: Record<number, string>
@@ -39,16 +43,22 @@ interface Step2AnalyzeProps {
 
 export function Step2Analyze({
   caseId, defendant, charges, setCharges,
-  evidenceList, evidenceExtracted,
+  evidenceList, evidenceExtracted, evidenceFiles = [], completeness,
   stageStatus, runningStage, stageMessages, stageErrors,
   onRunStage, onRunAll, onStopStage, onClearStage, onViewStage,
   onPreviewEvidence, onRefreshEvidence, onRefreshFiles,
   pipelineStatus,
 }: Step2AnalyzeProps) {
+  // 文书分类映射：来源文件名 → doc_type
+  const docTypeMap: Record<string, string> = {}
+  for (const f of evidenceFiles) docTypeMap[f.name] = f.doc_type
+  // 非证据文件（封面/目录等，不参与提取）
+  const nonEvidenceFiles = evidenceFiles.filter(f => f.doc_type.startsWith('non_evidence'))
+
   return (
     <>
       {/* 证据文件列表 */}
-      {evidenceList.length > 0 && (
+      {(evidenceList.length > 0 || nonEvidenceFiles.length > 0) && (
         <MacOSCard style={{ marginBottom: 12 }}>
           <div className="flex-between mb-sm">
             <div className="flex-row gap-sm">
@@ -64,7 +74,9 @@ export function Step2Analyze({
             </button>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '180px', overflowY: 'auto' }}>
-            {evidenceList.map((ev: any) => (
+            {evidenceList.map((ev: any) => {
+              const entry = ev.source ? completeness?.files?.[ev.source] : undefined
+              return (
               <div key={ev.id} style={{
                 display: 'flex', alignItems: 'center', gap: '10px',
                 padding: '8px 10px',
@@ -80,10 +92,16 @@ export function Step2Analyze({
                 }}>{ev.id}</div>
                 <div style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {ev.name}
+                  <DocTypeBadge docType={ev.source ? docTypeMap[ev.source] : undefined} />
                 </div>
                 <div style={{ color: 'var(--macos-text-tertiary)', fontSize: '11px' }}>
                   {ev.type}
                 </div>
+                <CompletenessDot
+                  status={entry?.status}
+                  missingCount={entry?.missing?.length || 0}
+                  needsReview={entry?.needs_review}
+                />
                 {ev.md_file && (
                   <button
                     onClick={() => onPreviewEvidence(ev.md_file, ev.id)}
@@ -98,6 +116,31 @@ export function Step2Analyze({
                     }}
                   >预览</button>
                 )}
+              </div>
+              )
+            })}
+            {nonEvidenceFiles.map(f => (
+              <div key={`non-${f.name}`} style={{
+                display: 'flex', alignItems: 'center', gap: '10px',
+                padding: '8px 10px',
+                background: 'var(--macos-bg-secondary)',
+                borderRadius: '6px',
+                fontSize: '12px',
+                opacity: 0.55,
+              }}>
+                <div style={{
+                  width: '24px', height: '24px', borderRadius: '6px',
+                  background: 'rgba(142,142,147,0.12)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: '11px', fontWeight: '600', color: '#8e8e93'
+                }}>—</div>
+                <div style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {f.name.replace(/\.md$/, '')}
+                  <DocTypeBadge docType={f.doc_type} />
+                </div>
+                <div style={{ color: 'var(--macos-text-tertiary)', fontSize: '11px' }}>
+                  不参与提取
+                </div>
               </div>
             ))}
           </div>

@@ -21,6 +21,7 @@ import { MermaidRenderer } from '../components/MermaidRenderer'
 import { PdfViewer } from '../components/PdfViewer'
 import { StickyNoteOverlay } from '../components/StickyNoteOverlay'
 import { ReportRenderer } from '../components/report/ReportRenderer'
+import DocTypeBadge from '../components/DocTypeBadge'
 import { colors } from '../components/report/reportColors'
 import CaseSearchPanel from '../components/report/CaseSearchPanel'
 import { PersonRelationGraph } from '../components/PersonRelationGraph'
@@ -107,6 +108,8 @@ export function ReportPage() {
   const [evidenceItems, setEvidenceItems] = useState<EvidenceItem[]>([])
   const [selectedEvidenceId, setSelectedEvidenceId] = useState<string>('')
   const [selectedEvidenceContent, setSelectedEvidenceContent] = useState('')
+  // 文书分类映射（index.json files）：文件名 → doc_type（evidence / non_evidence:封面 等）
+  const [docTypeMap, setDocTypeMap] = useState<Record<string, string>>({})
 
   // Chat
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
@@ -428,6 +431,12 @@ export function ReportPage() {
 
       try {
         const evIndex = await api.getEvidenceIndex(caseId)
+        // 文书分类（含非证据标注）
+        if (Array.isArray(evIndex.files)) {
+          const map: Record<string, string> = {}
+          for (const f of evIndex.files) map[f.name] = f.doc_type
+          setDocTypeMap(map)
+        }
         if (evIndex && evIndex.total_evidence > 0) {
           const items: EvidenceItem[] = (evIndex.evidence || []).map((ev: any) => {
             const fileName = ev.md_file || `${ev.name}.md`
@@ -2835,6 +2844,25 @@ export function ReportPage() {
           </div>
           {evidenceCenterPanels.evidenceList && (
             <div style={{ padding: '16px', background: colors.surface }}>
+              {/* 非证据文件（封面/目录等，不参与提取） */}
+              {Object.entries(docTypeMap).filter(([, t]) => t.startsWith('non_evidence')).length > 0 && (
+                <div style={{
+                  display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center',
+                  padding: '8px 12px', marginBottom: '12px',
+                  background: colors.surfaceAlt, border: `1px solid ${colors.border}`,
+                  borderRadius: '6px', opacity: 0.75,
+                }}>
+                  <span style={{ fontSize: '11px', color: colors.textTertiary }}>非证据文件（未参与提取）：</span>
+                  {Object.entries(docTypeMap)
+                    .filter(([, t]) => t.startsWith('non_evidence'))
+                    .map(([name, t]) => (
+                      <span key={name} style={{ fontSize: '11px', color: colors.textSecondary, display: 'inline-flex', alignItems: 'center', opacity: 0.55 }}>
+                        {name.replace(/\.md$/, '')}
+                        <DocTypeBadge docType={t} />
+                      </span>
+                    ))}
+                </div>
+              )}
               {/* 证据列表内容 - 使用原有的 stage_51 内容 */}
               {stageContent['stage_51'] ? (
                 <ReportRenderer
@@ -3759,8 +3787,11 @@ export function ReportPage() {
                       <div style={{ flex: 1, overflow: 'auto', padding: '8px 14px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
                         {chatEvidenceList.map(f => {
                           const isStatement = f.name.includes('讯问') || f.name.includes('询问')
+                          // doc_type 映射：md 目录文件名直接命中；证据文件去掉数字前缀后回退匹配
+                          const docType = docTypeMap[f.name] ?? docTypeMap[f.name.replace(/^\d+_/, '')]
+                          const isNonEvidence = docType?.startsWith('non_evidence')
                           return (
-                            <label key={f.name} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 8px', fontSize: '11px', cursor: 'pointer', borderRadius: '6px', background: chatEvidenceFilter.has(f.name) ? colors.accentLight : 'transparent' }}>
+                            <label key={f.name} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 8px', fontSize: '11px', cursor: 'pointer', borderRadius: '6px', background: chatEvidenceFilter.has(f.name) ? colors.accentLight : 'transparent', opacity: isNonEvidence ? 0.55 : 1 }}>
                               <input type="checkbox" checked={chatEvidenceFilter.has(f.name)}
                                 onChange={e => {
                                   setChatEvidenceFilter(prev => {
@@ -3773,6 +3804,7 @@ export function ReportPage() {
                               {isStatement && <span style={{ fontSize: '9px', background: 'rgba(156,102,27,0.1)', color: '#9c661b', borderRadius: '3px', padding: '1px 4px', flexShrink: 0 }}>笔录</span>}
                               <span style={{ color: chatEvidenceFilter.has(f.name) ? colors.accent : colors.textSecondary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                 {f.name}
+                                <DocTypeBadge docType={docType} />
                               </span>
                             </label>
                           )
