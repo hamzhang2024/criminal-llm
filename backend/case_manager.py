@@ -1970,6 +1970,22 @@ async def _do_extract_evidence(
             index_data["error_hint"] = "LLM 提取全部失败（详见后端日志），可能原因：API Key 无效、Base URL 不可达、模型名称错误、或所有 MD 文件解析失败"
         index_file.write_text(json.dumps(index_data, ensure_ascii=False, indent=2), encoding="utf-8")
 
+        # 完整性校验（规则对账 + LLM 抽检关键文书）
+        try:
+            from completeness import check_completeness
+            source_texts = {}
+            for f in evidence_md_files:
+                source_texts[f.name] = f.read_text(encoding="utf-8")
+            extracted_by_file: dict = {}
+            for ev in index_data.get("evidence", []):
+                extracted_by_file.setdefault(ev.get("source", ""), []).append(ev.get("name", ""))
+            completeness_report = await check_completeness(source_texts, extracted_by_file)
+            (evidence_dir / "completeness_report.json").write_text(
+                json.dumps(completeness_report, ensure_ascii=False, indent=2), encoding="utf-8")
+            logger.info(f"[证据提取] 完整性校验: {completeness_report['summary']}")
+        except Exception as e:
+            logger.warning(f"[证据提取] 完整性校验失败（不影响提取结果）: {e}")
+
         # 清理临时文件（无论走哪个分支都清理）
         old_temp = evidence_dir / "_temp_extract"
         if old_temp.exists():
@@ -2033,6 +2049,18 @@ async def get_evidence_index(case_id: str):
         return {"total_evidence": 0, "evidence": []}
 
     return json.loads(index_file.read_text(encoding="utf-8"))
+
+
+@router.get("/{case_id}/evidence/completeness")
+async def get_evidence_completeness(case_id: str):
+    """提取完整性报告"""
+    case_path = find_case_path(case_id)
+    if not case_path:
+        raise HTTPException(status_code=404, detail="案件不存在")
+    report_file = case_path / "evidence" / "completeness_report.json"
+    if not report_file.exists():
+        return {"files": {}, "summary": {}}
+    return json.loads(report_file.read_text(encoding="utf-8"))
 
 
 @router.get("/{case_id}/extract-status")

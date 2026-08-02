@@ -1,0 +1,103 @@
+"""提取完整性校验：规则对账 + LLM 抽检关键文书
+
+- 规则对账（全文件，零 LLM 成本）：编号项（第X笔/第X起/中文序号）与提取清单核对
+- LLM 抽检（仅起诉书/起诉意见书/判决书）：一次调用确认逐笔覆盖
+- 报告存 evidence/completeness_report.json；LLM 与规则冲突时以 LLM 为准并标注人工复核
+"""
+import json as _json
+import re
+
+KEY_DOC_PATTERN = re.compile(r"起诉书|起诉意见书|判决书")
+
+_CN_NUM = "一二三四五六七八九十"
+_ITEM_PATTERNS = [
+    re.compile(rf"^[\s>*-]*([{_CN_NUM}]+)、(.+)$", re.M),               # 一、xxx
+    re.compile(r"第([一二三四五六七八九十\d]+)[笔起][：:](.+)$", re.M),  # 第一笔：xxx / 第3起：xxx
+    re.compile(r"^[\s>*-]*(\d+)[.、]\s*(.+)$", re.M),                    # 1. xxx
+]
+
+
+def _extract_numbered_items(source: str) -> list[str]:
+    """从原文提取编号项（去重，保留顺序）"""
+    items: list[str] = []
+    for pattern in _ITEM_PATTERNS:
+        for m in pattern.finditer(source):
+            title = m.group(m.lastindex).strip()
+            if len(title) >= 4 and title not in items:
+                items.append(title)
+    return items
+
+
+def _covered(item: str, extracted: list[str]) -> bool:
+    """条目与提取清单的覆盖判断：双向子串命中或关键词重合"""
+    for ev in extracted:
+        if ev and (ev in item or item in ev):
+            return True
+    keywords = [kw for kw in re.split(r"[，,、\s。；;：:]", item) if len(kw) >= 2]
+    for ev in extracted:
+        for kw in keywords[:3]:
+            if kw in ev:
+                return True
+    return False
+
+
+def reconcile_numbered_items(source: str, extracted: list[str]) -> dict:
+    """规则对账：返回 {source_items, covered, missing}"""
+    items = _extract_numbered_items(source)
+    missing = [it for it in items if not _covered(it, extracted)]
+    return {
+        "source_items": len(items),
+        "covered": len(items) - len(missing),
+        "missing": missing,
+    }
+
+
+async def _llm_spot_check(source: str, extracted: list[str]) -> dict:
+    """LLM 抽检关键文书：返回 {covered, missing_items}"""
+    from llm_client import get_llm_client
+    client = get_llm_client()
+    extracted_str = "\n".join(f"- {e}" for e in extracted[:50])
+    result = await client.chat([
+        {"role": "system", "content": "你是案卷审查员。对照原文与提取清单，判断原文列出的每笔事实是否都被覆盖。只输出 JSON：{\"covered\": true/false, \"missing_items\": [\"遗漏的笔数简述\"]}"},
+        {"role": "user", "content": f"## 原文（编号事实）\n{source[:20000]}\n\n## 提取清单\n{extracted_str}"},
+    ])
+    m = re.search(r"\{.*\}", result, re.S)
+    if m:
+        return _json.loads(m.group(0))
+    return {"covered": True, "missing_items": []}
+
+
+async def check_completeness(files: dict, extracted_by_file: dict) -> dict:
+    """全量完整性校验。files: {文件名: 原文}；extracted_by_file: {文件名: [证据名]}"""
+    report = {"files": {}, "summary": {"ok": 0, "suspect": 0, "failed": 0}}
+    for fname, source in files.items():
+        extracted = extracted_by_file.get(fname, [])
+        rec = reconcile_numbered_items(source, extracted)
+        is_key = bool(KEY_DOC_PATTERN.search(fname))
+        entry = {
+            "source_items": rec["source_items"],
+            "covered": rec["covered"],
+            "missing": rec["missing"],
+            "llm_checked": False,
+        }
+        if is_key:
+            try:
+                spot = await _llm_spot_check(source, extracted)
+                entry["llm_checked"] = True
+                if not spot.get("covered", True):
+                    # LLM 与规则冲突时以 LLM 为准，标注人工复核
+                    entry["missing"] = spot.get("missing_items", rec["missing"])
+                    entry["needs_review"] = True
+            except Exception:
+                pass
+        # 状态判定：无编号项的文件不做遗漏判定
+        if rec["source_items"] == 0:
+            status = "ok"
+        elif entry["missing"]:
+            status = "suspect"
+        else:
+            status = "ok"
+        entry["status"] = status
+        report["files"][fname] = entry
+        report["summary"][status] = report["summary"].get(status, 0) + 1
+    return report
