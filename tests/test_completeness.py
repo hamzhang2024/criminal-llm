@@ -75,3 +75,35 @@ def test_check_completeness_suspect(monkeypatch):
     assert entry["status"] == "suspect"
     assert entry["needs_review"] is True
     assert "第二笔盗窃电脑" in entry["missing"]
+
+
+def test_boilerplate_rights_filtered():
+    source = "诉讼权利：\n一、不通晓当地语言时有权要求配备翻译\n二、对侵权行为有权提出控告\n三、2023年1月盗窃手机"
+    extracted = ["盗窃手机"]
+    result = reconcile_numbered_items(source, extracted)
+    assert result["source_items"] == 1  # 两条权利条款被过滤
+    assert result["covered"] == 1
+
+
+def test_llm_arbitration_for_non_key_suspect_files(monkeypatch):
+    """非关键文书但规则存疑：也走 LLM 仲裁，确认覆盖后清除误报"""
+    monkeypatch.setattr(completeness, "_llm_spot_check",
+                        AsyncMock(return_value={"covered": True, "missing_items": []}))
+    files = {"第10卷_去水印.md": "一、2023年1月在某小区盗窃手机一部\n二、2023年2月在某商场盗窃电脑一台"}
+    extracted_by_file = {"第10卷_去水印.md": ["手机被盗案", "电脑被盗案"]}
+    # 规则对账因表述差异判为遗漏，LLM 仲裁确认覆盖后清除误报
+    report = asyncio.run(completeness.check_completeness(files, extracted_by_file))
+    entry = report["files"]["第10卷_去水印.md"]
+    assert entry["llm_checked"] is True
+    assert entry["status"] == "ok"
+
+
+def test_no_llm_call_when_fully_covered_non_key(monkeypatch):
+    """非关键文书且规则无遗漏：不调 LLM（成本控制）"""
+    spy = AsyncMock(return_value={"covered": True, "missing_items": []})
+    monkeypatch.setattr(completeness, "_llm_spot_check", spy)
+    files = {"讯问笔录.md": "一、盗窃手机"}
+    extracted_by_file = {"讯问笔录.md": ["盗窃手机"]}
+    report = asyncio.run(completeness.check_completeness(files, extracted_by_file))
+    assert spy.call_count == 0
+    assert report["files"]["讯问笔录.md"]["llm_checked"] is False

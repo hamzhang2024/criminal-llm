@@ -9,6 +9,9 @@ import re
 
 KEY_DOC_PATTERN = re.compile(r"起诉书|起诉意见书|判决书")
 
+# 权利义务告知书等样板条款：不作为应提取事实
+_BOILERPLATE = re.compile(r"有权|权利|义务|告知")
+
 _CN_NUM = "一二三四五六七八九十"
 _ITEM_PATTERNS = [
     re.compile(rf"^[\s>*-]*([{_CN_NUM}]+)、(.+)$", re.M),               # 一、xxx
@@ -23,7 +26,7 @@ def _extract_numbered_items(source: str) -> list[str]:
     for pattern in _ITEM_PATTERNS:
         for m in pattern.finditer(source):
             title = m.group(m.lastindex).strip()
-            if len(title) >= 4 and title not in items:
+            if len(title) >= 4 and title not in items and not _BOILERPLATE.search(title):
                 items.append(title)
     return items
 
@@ -80,7 +83,9 @@ async def check_completeness(files: dict, extracted_by_file: dict) -> dict:
             "missing": rec["missing"],
             "llm_checked": False,
         }
-        if is_key:
+        # LLM 仲裁：关键文书必查；普通文件仅当规则对账存疑时平反误报
+        need_llm = is_key or bool(rec["missing"])
+        if need_llm:
             try:
                 spot = await _llm_spot_check(source, extracted)
                 entry["llm_checked"] = True
