@@ -51,6 +51,19 @@ def test_check_completeness_report(tmp_path, monkeypatch):
     assert report["summary"]["ok"] >= 1
 
 
+def test_llm_covered_clears_rule_false_positive(monkeypatch):
+    """LLM 确认覆盖时，规则误报（章节标题被误识别为编号项）被清除"""
+    monkeypatch.setattr(completeness, "_llm_spot_check",
+                        AsyncMock(return_value={"covered": True, "missing_items": []}))
+    files = {"起诉意见书.md": "一、犯罪嫌疑人基本情况\n二、犯罪事实\n三、盗窃手机"}
+    extracted_by_file = {"起诉意见书.md": ["盗窃手机"]}
+    report = asyncio.run(completeness.check_completeness(files, extracted_by_file))
+    entry = report["files"]["起诉意见书.md"]
+    assert entry["status"] == "ok"
+    assert entry["missing"] == []
+    assert len(entry["rule_missing"]) == 2  # 误报移入参考字段
+
+
 def test_check_completeness_suspect(monkeypatch):
     """有遗漏：状态 suspect"""
     monkeypatch.setattr(completeness, "_llm_spot_check",

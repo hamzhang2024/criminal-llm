@@ -88,6 +88,10 @@ async def check_completeness(files: dict, extracted_by_file: dict) -> dict:
                     # LLM 与规则冲突时以 LLM 为准，标注人工复核
                     entry["missing"] = spot.get("missing_items", rec["missing"])
                     entry["needs_review"] = True
+                else:
+                    # LLM 确认覆盖：规则侧 missing 多为章节标题误报，降级为参考字段
+                    entry["rule_missing"] = entry["missing"]
+                    entry["missing"] = []
             except Exception:
                 pass
         # 状态判定：无编号项的文件不做遗漏判定

@@ -6,9 +6,12 @@
 - 输出作为提取 prompt 的固定前缀（符合缓存优化：固定前缀在前）
 """
 import json
+import logging
 from pathlib import Path
 
 from llm_client import get_llm_client
+
+logger = logging.getLogger(__name__)
 
 CACHE_FILE = "legal_framework.json"
 
@@ -33,7 +36,7 @@ async def build_extraction_framework(evidence_dir: Path, charges: list[str], key
         ])
         elements = [line.strip("- •　 ") for line in text.strip().split("\n") if line.strip()][:8]
     except Exception as e:
-        print(f"[提取指引] 要件拆解失败（降级为仅罪名）: {e}")
+        logger.warning(f"[提取指引] 要件拆解失败（降级为仅罪名）: {e}")
 
     # 类案裁判规则（无 Key 静默降级）
     case_rules: dict = {}
@@ -41,7 +44,7 @@ async def build_extraction_framework(evidence_dir: Path, charges: list[str], key
         from case_framework import fetch_case_rules
         case_rules = fetch_case_rules(charges, keywords=keywords, size=2)
     except Exception as e:
-        print(f"[提取指引] 类案检索降级: {e}")
+        logger.warning(f"[提取指引] 类案检索降级: {e}")
 
     framework = {"charges": charges, "elements": elements, "case_rules": case_rules}
     try:

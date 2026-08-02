@@ -1545,7 +1545,10 @@ async def _do_extract_evidence(
         file_classifications = {}  # filename -> doc_type
         evidence_md_files = []
         for f in all_md_files:
-            doc_type = await classify_document(f.name, f.read_text(encoding="utf-8")[:500])
+            # 流式读取文件头，避免整文件载入内存只为取前 500 字
+            with f.open(encoding="utf-8", errors="ignore") as fh:
+                head_text = fh.read(2000)
+            doc_type = await classify_document(f.name, head_text[:500])
             file_classifications[f.name] = doc_type
             if doc_type.startswith("non_evidence"):
                 logger.info(f"[证据提取] {f.name} 标注为非证据（{doc_type.split(':')[1]}），保留文件不入提取")
