@@ -5,9 +5,9 @@ import { FileText, Loader2, Send, Download, Check,
   PanelLeftClose, Trash2, CheckSquare, RefreshCw,
   FileBarChart, GitCompareArrows, Clock, Users, BookOpen, Eye,
   Gavel, Phone, Mail, Building2, StickyNote, Edit3, Swords, Network, Search, ExternalLink, Printer,
-  BarChart3, Grid3x3, Maximize2, Minimize2, X
+  BarChart3, Grid3x3, Maximize2, Minimize2, X, Target
 } from 'lucide-react'
-import { api, reviewEvidence, getEvidenceReview, EvidenceReviewItem, EvidenceReviewResult, generateReviewNotes, getReviewNotes, generateCrossExamination, getCrossExamination, getPersonRelation, RelationGraphData, getEventTimeline, TimelineData, searchSimilarCases, SimilarCasesData } from '../api'
+import { api, reviewEvidence, getEvidenceReview, EvidenceReviewItem, EvidenceReviewResult, generateReviewNotes, getReviewNotes, generateCrossExamination, getCrossExamination, getPersonRelation, RelationGraphData, getEventTimeline, TimelineData, searchSimilarCases, SimilarCasesData, getDefenseStrategy, DefenseStrategy } from '../api'
 import { getEvidenceChain, EvidenceChainData } from '../api/stages'
 import { EvidenceChainMindmap } from '../components/EvidenceChainMindmap'
 import { EvidenceChainGraph } from '../components/EvidenceChainGraph'
@@ -44,6 +44,7 @@ const TABS = [
   { key: 'evidence_center', label: '证据中心', icon: Eye, color: '#1a6b6a', bgColor: 'rgba(26,107,106,0.08)' }, // 证据列表+三性审查+证据链+阅卷笔录
   { key: 'stage_52', label: '矛盾分析', icon: GitCompareArrows, color: '#991b1b', bgColor: 'rgba(153,27,27,0.08)' },
   { key: 'stage_6', label: '控辩对抗', icon: Swords, color: '#7c3aed', bgColor: 'rgba(124,58,237,0.08)' },
+  { key: 'defense_strategy', label: '辩护思路', icon: Target, color: '#8e5a2a', bgColor: 'rgba(142,90,42,0.08)' },
   { key: 'defense_opinion', label: '辩护意见', icon: Scale, color: '#831843', bgColor: 'rgba(131,24,67,0.08)' }, // 三阶层+质证意见+完整报告
 ]
 
@@ -160,6 +161,10 @@ export function ReportPage() {
   // 质证意见状态
   const [crossExamination, setCrossExamination] = useState<string>('')
   const [crossExaminationLoading, setCrossExaminationLoading] = useState(false)
+
+  // 辩护思路状态（步骤 4.75 确认稿）
+  const [defenseStrategy, setDefenseStrategy] = useState<DefenseStrategy | null>(null)
+  const [defenseStrategyLoading, setDefenseStrategyLoading] = useState(false)
 
   // 人物关系图状态
   const [personRelationData, setPersonRelationData] = useState<RelationGraphData | null>(null)
@@ -652,6 +657,16 @@ export function ReportPage() {
       loadCrossExamination()
     }
   }, [activeTab, caseId, crossExamination, loadCrossExamination])
+
+  // 切换到辩护思路 tab 时加载确认状态
+  useEffect(() => {
+    if (activeTab !== 'defense_strategy' || !caseId) return
+    setDefenseStrategyLoading(true)
+    getDefenseStrategy(caseId)
+      .then(data => setDefenseStrategy(data))
+      .catch(() => setDefenseStrategy(null))
+      .finally(() => setDefenseStrategyLoading(false))
+  }, [activeTab, caseId])
 
   // 加载人物关系图数据
   const loadPersonRelation = useCallback(async () => {
@@ -1184,6 +1199,82 @@ export function ReportPage() {
   })()
 
   const renderActiveTab = () => {
+    // 辩护思路 tab - 步骤 4.75 确认稿
+    if (activeTab === 'defense_strategy') {
+      if (defenseStrategyLoading) {
+        return (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '48px 20px', color: colors.textTertiary }}>
+            <Loader2 className="w-5 h-5 animate-spin" style={{ marginRight: '8px' }} />
+            加载辩护思路...
+          </div>
+        )
+      }
+
+      // 已确认：渲染确认稿 Markdown
+      if (defenseStrategy?.status === 'completed' && defenseStrategy.confirmation) {
+        return (
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '12px' }}>
+              <button
+                onClick={() => navigate(`/case/${caseId}`)}
+                style={{
+                  padding: '6px 14px', fontSize: '12px', borderRadius: '6px',
+                  background: '#8e5a2a', color: '#fff', border: 'none',
+                  cursor: 'pointer', fontWeight: 500,
+                  display: 'flex', alignItems: 'center', gap: '4px',
+                }}
+              >
+                <Edit3 className="w-3 h-3" />
+                重新编辑
+              </button>
+            </div>
+            <ReportRenderer
+              markdown={defenseStrategy.confirmation}
+              evidenceItems={evidenceItems}
+              onEvidenceClick={(mdFile) => {
+                if (viewModeState !== 'md') viewModeDispatch('md')
+                const item = evidenceItems.find(i => i.mdFile === mdFile)
+                if (item) {
+                  setSelectedEvidenceId(item.id)
+                  loadEvidenceContent(item)
+                }
+              }}
+            />
+          </div>
+        )
+      }
+
+      // 待确认：提示跳转案件详情页
+      if (defenseStrategy?.status === 'awaiting_confirmation') {
+        return (
+          <div style={{ textAlign: 'center', padding: '48px 20px', color: colors.textTertiary }}>
+            <Target className="w-10 h-10" style={{ opacity: 0.2, display: 'block', margin: '0 auto 12px' }} />
+            <div style={{ fontSize: '13px', fontWeight: 500, color: colors.textSecondary }}>辩护思路待确认</div>
+            <div style={{ fontSize: '12px', marginTop: '4px' }}>系统已生成辩护思路建议，请前往案件详情页确认</div>
+            <button
+              onClick={() => navigate(`/case/${caseId}`)}
+              style={{
+                marginTop: '16px', padding: '8px 16px', fontSize: '13px',
+                background: colors.accent, color: '#fff', border: 'none',
+                borderRadius: '6px', cursor: 'pointer',
+              }}
+            >
+              前往确认
+            </button>
+          </div>
+        )
+      }
+
+      // 未生成（idle 或无数据）
+      return (
+        <div style={{ textAlign: 'center', padding: '48px 20px', color: colors.textTertiary }}>
+          <Target className="w-10 h-10" style={{ opacity: 0.2, display: 'block', margin: '0 auto 12px' }} />
+          <div style={{ fontSize: '13px', fontWeight: 500 }}>辩护思路尚未生成</div>
+          <div style={{ fontSize: '12px', marginTop: '4px' }}>分析到辩护思路阶段后生成</div>
+        </div>
+      )
+    }
+
     // 证据中心 tab - 综合面板
     if (activeTab === 'evidence_center') {
       // 由 renderEvidenceCenter() 处理
@@ -1434,7 +1525,8 @@ export function ReportPage() {
           overflowX: 'auto',
         }}>
           {allTabs.map(tab => {
-            const hasContent = !!stageContent[tab.key]
+            // 辩护思路 tab 内容来自独立 API（不走 stageContent），始终可点击
+            const hasContent = !!stageContent[tab.key] || tab.key === 'defense_strategy'
             const isActive = activeTab === tab.key
             const Icon = tab.icon
             return (
