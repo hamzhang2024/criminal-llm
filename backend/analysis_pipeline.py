@@ -47,6 +47,7 @@ DEFAULT_STATE = {
                 "45e": "idle",
             },
         },
+        "4.75": {"status": "idle", "completed_at": None},
         "5": {
             "status": "idle",
             "completed_at": None,
@@ -475,13 +476,18 @@ class AnalysisPipeline:
             step_key = str(step_num)
             step_data = state["steps"].get(step_key, {})
             if step_data.get("status") != "completed":
-                # 步骤 5 待完成，但先检查 4.5
+                # 步骤 5 待完成，但先检查 4.5 和 4.75
                 if step_num == 5:
                     step4_data = state["steps"].get("4", {})
                     if step4_data.get("status") == "completed":
                         step45 = state["steps"].get("4.5", {})
                         if step45.get("status") != "completed":
                             return 4.5
+                        step475 = state["steps"].get("4.75", {})
+                        if step475.get("status") not in ("completed", "awaiting_confirmation"):
+                            return 4.75
+                        if step475.get("status") == "awaiting_confirmation":
+                            return 4.75  # 返回以便 API 层提示待确认（step 方法内部直接返回已有建议）
                 return step_num
 
         # 全部 5 步都完成了，检查是否需要补充步骤 4.5
@@ -1700,6 +1706,139 @@ class AnalysisPipeline:
         self._mark_step_done(4.5)
 
         return result
+
+    # ========== 步骤 4.75: 辩护思路确认 ==========
+
+    def _strategy_dir(self) -> Path:
+        return self.analysis_dir / "04.75-辩护思路"
+
+    async def step475_defense_strategy(self, defendant: str, crime_type: Optional[str] = None, progress_cb=None) -> dict:
+        """生成辩护思路建议并进入待确认状态。
+
+        待确认状态下重跑直接返回已有建议（不重复调 LLM）。
+        """
+        strategy_dir = self._strategy_dir()
+        strategy_dir.mkdir(parents=True, exist_ok=True)
+        suggestion_json = strategy_dir / "系统建议.json"
+
+        if suggestion_json.exists():
+            try:
+                suggestion = json.loads(suggestion_json.read_text(encoding="utf-8"))
+                return {"awaiting_confirmation": True, "suggestion": suggestion}
+            except Exception:
+                pass  # 损坏则重新生成
+
+        conclusion = self._load_wiki_page("", "06-综合结论.md")
+        contradictions = self._load_wiki_page("", "05-矛盾记录.md")
+        debate_file = self.analysis_dir / "04.5-控辩对抗" / "对抗分析.md"
+        debate = debate_file.read_text(encoding="utf-8") if debate_file.exists() else ""
+
+        raw = await self.llm.chat([
+            {"role": "system", "content": """你是资深刑事辩护律师。基于案件分析结果提出辩护思路建议。
+只输出严格 JSON：{"directions": [{"type": "主攻"|"备选", "direction": "方向简述", "basis": "依据（引用具体证据/矛盾点/裁判规则）", "risk": "风险点"}]}
+主攻方向 1-2 个，备选方向 1-3 个。"""},
+            {"role": "user", "content": f"""## 综合结论
+{conclusion[:8000]}
+
+## 矛盾记录
+{contradictions[:5000]}
+
+## 控辩对抗（法官裁决倾向）
+{debate[:5000]}
+
+被告人：{defendant}；罪名：{crime_type or '未知'}"""},
+        ])
+
+        m = re.search(r"\{.*\}", raw, re.S)
+        suggestion = json.loads(m.group(0)) if m else {"directions": []}
+        suggestion.setdefault("directions", [])
+
+        suggestion_json.write_text(json.dumps(suggestion, ensure_ascii=False, indent=2), encoding="utf-8")
+        (strategy_dir / "系统建议.md").write_text(self._render_suggestion_md(suggestion), encoding="utf-8")
+
+        # 状态：待确认（不是 completed）
+        state = self._load_analysis_state()
+        state["steps"].setdefault("4.75", {})["status"] = "awaiting_confirmation"
+        self._save_analysis_state(state)
+
+        return {"awaiting_confirmation": True, "suggestion": suggestion}
+
+    def _render_suggestion_md(self, suggestion: dict) -> str:
+        lines = ["# 辩护思路建议（系统生成）\n"]
+        for i, d in enumerate(suggestion.get("directions", [])):
+            lines.append(f"## {i + 1}. [{d.get('type', '备选')}] {d.get('direction', '')}\n")
+            lines.append(f"- 依据：{d.get('basis', '')}")
+            lines.append(f"- 风险：{d.get('risk', '')}\n")
+        return "\n".join(lines)
+
+    async def confirm_defense_strategy(
+        self,
+        selected: list[int] | None = None,
+        edited: dict | None = None,
+        user_additions: list[str] | None = None,
+        use_system_default: bool = False,
+    ) -> dict:
+        """确认辩护思路：写思路确认.md（含修改痕迹），状态置 completed。
+
+        - selected: 选中的建议下标（从 0 开始）；None 且非 default 视为空选择
+        - edited: {下标: 修改后的方向文本}
+        - user_additions: 律师补充的思路列表
+        - use_system_default: 一键采纳全部建议
+        """
+        suggestion_json = self._strategy_dir() / "系统建议.json"
+        if not suggestion_json.exists():
+            raise ValueError("尚未生成辩护思路建议，请先执行步骤 4.75")
+        suggestion = json.loads(suggestion_json.read_text(encoding="utf-8"))
+        directions = suggestion.get("directions", [])
+
+        # 应用律师修改（先改后选）
+        edited = edited or {}
+        for idx, new_text in edited.items():
+            i = int(idx)
+            if 0 <= i < len(directions):
+                directions[i] = {**directions[i], "direction": new_text, "_edited": True}
+
+        if use_system_default:
+            chosen = [(i, d) for i, d in enumerate(directions)]
+        else:
+            chosen = [(i, d) for i, d in enumerate(directions) if i in (selected or [])]
+
+        additions = user_additions or []
+        if not chosen and not additions:
+            # 空确认视为采纳系统建议
+            chosen = [(i, d) for i, d in enumerate(directions)]
+
+        lines = ["# 辩护思路（律师已确认）\n", "## 采纳的方向\n"]
+        for i, d in chosen:
+            edited_mark = "（律师已修改）" if d.get("_edited") else ""
+            lines.append(f"- **[{d.get('type', '备选')}] {d.get('direction', '')}**{edited_mark}")
+            lines.append(f"  依据：{d.get('basis', '')}；风险：{d.get('risk', '')}")
+        if additions:
+            lines.append("\n## 律师补充\n")
+            for a in additions:
+                lines.append(f"- {a}")
+
+        (self._strategy_dir() / "思路确认.md").write_text("\n".join(lines), encoding="utf-8")
+
+        state = self._load_analysis_state()
+        state["steps"].setdefault("4.75", {})["status"] = "completed"
+        state["steps"]["4.75"]["completed_at"] = datetime.now().isoformat()
+        self._save_analysis_state(state)
+        return {"success": True, "chosen_count": len(chosen), "additions_count": len(additions)}
+
+    def get_defense_strategy(self) -> dict:
+        """供 API 读取：系统建议 + 确认稿 + 状态"""
+        suggestion = {}
+        suggestion_json = self._strategy_dir() / "系统建议.json"
+        if suggestion_json.exists():
+            try:
+                suggestion = json.loads(suggestion_json.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        confirmation_file = self._strategy_dir() / "思路确认.md"
+        confirmation = confirmation_file.read_text(encoding="utf-8") if confirmation_file.exists() else None
+        status = self._load_analysis_state()["steps"].get("4.75", {}).get("status", "idle")
+        return {"suggestion": suggestion, "confirmation": confirmation, "status": status}
 
     # ========== 步骤 5: 辩护意见生成（分阶段渐进式） ==========
 
