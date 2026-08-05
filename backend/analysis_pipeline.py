@@ -189,6 +189,17 @@ def _contains_indictment_title(text: str) -> bool:
     return False
 
 
+def _extract_fulltext_section(text: str) -> str:
+    """提取件中的原文全文段（B'）；无则返回空"""
+    marker = "## 原文全文"
+    idx = text.find(marker)
+    if idx < 0:
+        return ""
+    rest = text[idx + len(marker):]
+    next_h = rest.find("\n## ")
+    return rest[:next_h].strip() if next_h > 0 else rest.strip()
+
+
 def _split_sessions(text: str) -> list[dict]:
     """
     按时间分隔出单次笔录
@@ -305,7 +316,8 @@ class AnalysisPipeline:
                     # 用 LLM 确认类型
                     doc_type = await _classify_document_type(self.llm, f["text"][:5000])
                     if doc_type in ("起诉书", "起诉意见书"):
-                        return f["text"][:context_budget.content_budget_chars()], doc_type
+                        fulltext = _extract_fulltext_section(f["text"])
+                        return (fulltext or f["text"])[:context_budget.content_budget_chars()], doc_type
                     # LLM 无法确认类型时，回退到自动检测
 
         md_files = self._load_md_files()
@@ -327,13 +339,15 @@ class AnalysisPipeline:
         for f in indictment_candidates:
             doc_type = await _classify_document_type(self.llm, f["text"][:5000])
             if doc_type == "起诉书":
-                return f["text"][:context_budget.content_budget_chars()], "起诉书"
+                fulltext = _extract_fulltext_section(f["text"])
+                return (fulltext or f["text"])[:context_budget.content_budget_chars()], "起诉书"
 
         # 再确认起诉意见书
         for f in opinion_candidates:
             doc_type = await _classify_document_type(self.llm, f["text"][:5000])
             if doc_type == "起诉意见书":
-                return f["text"][:context_budget.content_budget_chars()], "起诉意见书"
+                fulltext = _extract_fulltext_section(f["text"])
+                return (fulltext or f["text"])[:context_budget.content_budget_chars()], "起诉意见书"
 
         return "", ""
 
@@ -1282,16 +1296,20 @@ class AnalysisPipeline:
         # ===== 4d: 综合结论 =====
         if not self._wiki_page_exists("", "06-综合结论.md"):
             print("[步骤 4d] 生成综合结论...")
-            # 收集所有证据分析
+            # 收集所有证据分析（按页数均摊内容预算）
+            evidence_pages = self._list_wiki_pages("03-证据分析")
+            per_page = max(2000, context_budget.content_budget_chars() // max(1, len(evidence_pages)))
             all_evidence_analysis = ""
-            for f in self._list_wiki_pages("03-证据分析"):
+            for f in evidence_pages:
                 content = self._load_wiki_page("03-证据分析", f)
-                all_evidence_analysis += f"\n### {f}\n{content[:2000]}\n"
+                all_evidence_analysis += f"\n### {f}\n{content[:per_page]}\n"
 
+            legal_pages = self._list_wiki_pages("04-法律依据")
+            per_legal_page = max(2000, context_budget.content_budget_chars() // max(1, len(legal_pages)))
             legal_content = ""
-            for f in self._list_wiki_pages("04-法律依据"):
+            for f in legal_pages:
                 content = self._load_wiki_page("04-法律依据", f)
-                legal_content += f"\n### {f}\n{content[:2000]}\n"
+                legal_content += f"\n### {f}\n{content[:per_legal_page]}\n"
 
             try:
                 user_prompt = f"""以下是本案的 Wiki 分析结果：
@@ -1300,10 +1318,10 @@ class AnalysisPipeline:
 {indictment_content[:3000]}
 
 ## 证据分析汇总
-{all_evidence_analysis[:context_budget.content_budget_chars()]}
+{all_evidence_analysis[:int(context_budget.content_budget_chars() * 0.7)]}
 
 ## 法律依据
-{legal_content[:3000]}
+{legal_content[:int(context_budget.content_budget_chars() * 0.25)]}
 
 请综合分析：
 1. 指控事实的证据支撑程度
@@ -1335,13 +1353,14 @@ class AnalysisPipeline:
         # 更新索引
         self._save_wiki_page("", "00-index.md", self._build_wiki_index())
 
-        # 更新矛盾记录（从 contradiction 目录直接读取所有 MD 文件）
+        # 更新矛盾记录（从 contradiction 目录直接读取所有 MD 文件，按文件数均摊预算）
         contradiction_summary = ""
         contradiction_files = self._list_contradiction_files()
+        per_contra = max(2000, context_budget.content_budget_chars() // max(1, len(contradiction_files)))
         for cf in contradiction_files:
             ccontent = self._load_contradiction_file(cf["filename"])
             if ccontent:
-                contradiction_summary += f"\n### {cf['displayName']}\n{ccontent[:2000]}\n"
+                contradiction_summary += f"\n### {cf['displayName']}\n{ccontent[:per_contra]}\n"
         if contradiction_summary:
             self._save_wiki_page("", "05-矛盾记录.md", f"# 矛盾记录\n\n{contradiction_summary}")
 
@@ -1904,13 +1923,17 @@ class AnalysisPipeline:
         wiki_indictment = self._load_wiki_page("", "01-指控要素.md")
         wiki_conclusion = self._load_wiki_page("", "06-综合结论.md")
         wiki_contradictions = self._load_wiki_page("", "05-矛盾记录.md")
+        legal_pages = self._list_wiki_pages("04-法律依据")
+        per_legal_page = max(2000, context_budget.content_budget_chars() // max(1, len(legal_pages)))
         wiki_legal = ""
-        for f in self._list_wiki_pages("04-法律依据"):
-            wiki_legal += self._load_wiki_page("04-法律依据", f)[:3000] + "\n\n"
+        for f in legal_pages:
+            wiki_legal += self._load_wiki_page("04-法律依据", f)[:per_legal_page] + "\n\n"
+        evidence_pages = self._list_wiki_pages("03-证据分析")
+        per_evidence_page = max(2000, context_budget.content_budget_chars() // max(1, len(evidence_pages)))
         wiki_evidence_summary = ""
-        for f in self._list_wiki_pages("03-证据分析"):
+        for f in evidence_pages:
             content = self._load_wiki_page("03-证据分析", f)
-            wiki_evidence_summary += f"\n### {f}\n{content[:2000]}\n"
+            wiki_evidence_summary += f"\n### {f}\n{content[:per_evidence_page]}\n"
 
         # 读取控辩对抗结果（如有）
         debate_file = self.analysis_dir / "04.5-控辩对抗" / "对抗分析.md"
@@ -1924,7 +1947,7 @@ class AnalysisPipeline:
         if strategy_file.exists():
             strategy_prefix = (
                 "辩护思路（律师已确认，必须遵循；律师补充的思路优先级最高，与系统建议冲突时以律师为准）：\n"
-                + strategy_file.read_text(encoding="utf-8")[:3000]
+                + strategy_file.read_text(encoding="utf-8")[:context_budget.content_budget_chars()]
                 + "\n\n"
             )
 
@@ -1933,8 +1956,8 @@ class AnalysisPipeline:
 
         try:
             from legal_knowledge import THEORY_THREE_TIERS, CONSTITUTIVE_ELEMENT_ANALYSIS
-            theory_text = THEORY_THREE_TIERS[:3000]
-            element_text = CONSTITUTIVE_ELEMENT_ANALYSIS[:3000]
+            theory_text = THEORY_THREE_TIERS[:context_budget.content_budget_chars()]
+            element_text = CONSTITUTIVE_ELEMENT_ANALYSIS[:context_budget.content_budget_chars()]
         except ImportError:
             theory_text = "三阶层理论：构成要件符合性 → 违法性 → 有责性"
             element_text = "法条构成要件拆解分析法：提出问题 → 套入法条 → 是否符合 → 本罪/无罪/他罪"

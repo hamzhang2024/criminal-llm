@@ -863,6 +863,33 @@ def _get_source_from_evidence_file(ev_path: Path) -> str:
     return ""
 
 
+# 原文全文定位调用的输入预算（字符数）
+_FULLTEXT_LOCATE_BUDGET = 60000
+
+
+# 原文全文切片最小长度（字符数）：低于此长度视为定位失败（LLM 可能只定位到残片）
+_MIN_FULLTEXT_SLICE_CHARS = 200
+
+
+def _slice_section_by_markers(raw_text: str, first_line: str, last_line: str) -> str | None:
+    """按原文首行/末行切片（LLM 只定位，文本不经转述）。找不到、顺序颠倒或切片过短返回 None"""
+    first_line = first_line.strip()
+    last_line = last_line.strip()
+    if not first_line or not last_line:
+        return None
+    start = raw_text.find(first_line)
+    if start < 0:
+        return None
+    end = raw_text.find(last_line, start)
+    if end < 0:
+        return None
+    end += len(last_line)
+    sliced = raw_text[start:end].strip()
+    if len(sliced) < _MIN_FULLTEXT_SLICE_CHARS:
+        return None
+    return sliced
+
+
 async def _process_indictment_single(md_file: Path, md_text: str, evidence_dir: Path, next_id: int) -> Path:
     """将起诉书/起诉意见书作为一份独立证据提取，真实记录指控的全部事实。
 
@@ -924,6 +951,27 @@ async def _process_indictment_single(md_file: Path, md_text: str, evidence_dir: 
 （电话号码、微信号、银行账号、车牌号、地址信息等，每项格式：`[类型] 内容 — 涉及人员/说明`）"""},
     ])
 
+    # 原文全文切片：LLM 只给首行/末行定位，代码从原文切（不经转述）
+    fulltext_section = ""
+    try:
+        locate = await client.chat([
+            {"role": "system", "content": "你是案卷整理员。"},
+            {"role": "user", "content": f"给定以下文件内容，找出其中《{doc_type}》正文的**第一行原文**（首行）和**最后一行原文**（末行）（逐字引用，不要改写）。只输出两行：\n首行：xxx\n末行：xxx\n\n文件内容：\n{md_text[:_FULLTEXT_LOCATE_BUDGET]}"},
+        ])
+        first_line = last_line = ""
+        for line in locate.strip().split("\n"):
+            if line.startswith("首行"):
+                first_line = re.split(r"[：:]", line, maxsplit=1)[-1].strip()
+            elif line.startswith("末行"):
+                last_line = re.split(r"[：:]", line, maxsplit=1)[-1].strip()
+        sliced = _slice_section_by_markers(md_text, first_line, last_line)
+        if sliced:
+            fulltext_section = f"\n\n## 原文全文\n\n{sliced}\n"
+        else:
+            logger.warning(f"[证据提取] {md_file.name}: 起诉书原文定位失败，仅保留结构化提取")
+    except Exception as e:
+        logger.warning(f"[证据提取] {md_file.name}: 起诉书原文切片失败（不影响结构化提取）: {e}")
+
     # 保存为一份独立证据文件，使用传入的 next_id 编号
     safe_name = _sanitize_filename(f"{doc_type} — {md_file.stem}")
     ev_md_file = evidence_dir / f"{next_id:03d}_{safe_name}.md"
@@ -938,7 +986,7 @@ async def _process_indictment_single(md_file: Path, md_text: str, evidence_dir: 
 ## 详细提取
 
 {result}
-"""
+{fulltext_section}"""
     ev_md_file.write_text(content, encoding="utf-8")
     logger.info(f"[证据提取] 已保存{doc_type}完整记录: {ev_md_file.name}")
     return ev_md_file
@@ -996,7 +1044,7 @@ _EVIDENCE_EXTRACTION_RULES = """
 - **讯问/询问地点**：具体地址（如"江阴市公安局XX派出所XX讯问室"）
 - **讯问/询问人**：姓名及职务
 - **被讯问/被询问人**：姓名、身份证号、角色
-- **笔录全文要点**：保留关键问答原文摘录（问答形式），特别是：
+- **笔录全文要点（原文摘录要求）：以问答形式完整保留全部问答原文**——从第一问第一答到最后一问最后一答，不得筛选、不得省略、不得概括。只有与案情完全无关的程序性问答（如告知权利义务的固定问答）可省略，并标注"[程序性问答略]"。特别注意：
   - 关于案发时间、地点、参与人员的问答
   - 关于犯罪经过、分工、获利的问答
   - 关于主观明知、犯罪目的的问答
