@@ -82,6 +82,7 @@ export function CaseDetailPage() {
     handleClearStage, handleViewStage,
     pipelineStatus, pipelineRunning, currentPipelineStep, stepResults,
     analysisState, setAnalysisState, nextStep, setNextStep, liveProgress, setLiveProgress,
+    strategyAwaiting, strategyRefreshKey,
     executePipelineStep, executeAllSteps, executeSingleStep,
     handleResumeAnalysis, loadPipelineState,
     wikiPages, selectedWikiPage, wikiContent, wikiLoading,
@@ -512,12 +513,13 @@ export function CaseDetailPage() {
               <>
                 {/* 类案检索关键词编辑区（spec 9.1） */}
                 <SearchKeywordsEditor caseId={caseId!} charges={charges} />
-                {/* 辩护思路确认面板（步骤 4.75，awaiting_confirmation 时才渲染） */}
+                {/* 辩护思路确认面板（步骤 4.75，待确认/已确认可重新编辑时渲染） */}
                 <DefenseStrategyPanel
                   caseId={caseId!}
                   defendant={defendant}
                   charges={charges}
                   onConfirmed={loadPipelineState}
+                  refreshKey={strategyRefreshKey}
                 />
                 <Step2Analyze caseId={caseId!} defendant={defendant} charges={charges} setCharges={setCharges}
                 evidenceList={evidenceList} evidenceExtracted={evidenceExtracted}
@@ -530,7 +532,7 @@ export function CaseDetailPage() {
                   handleOpenFile({ id: String(evId), name: mdFile, size: 0, status: 'done', path: mdPath } as unknown as CaseFile)
                 }}
                 onRefreshEvidence={handleRefreshEvidence} onRefreshFiles={refreshFiles}
-                pipelineStatus={pipelineStatus} />
+                pipelineStatus={pipelineStatus} strategyAwaiting={strategyAwaiting} />
               </>
             )}
           </div>

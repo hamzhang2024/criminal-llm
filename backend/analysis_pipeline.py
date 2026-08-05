@@ -528,6 +528,15 @@ class AnalysisPipeline:
                 "detail": step45_data.get("sub_steps", {}),
             }
 
+        # 步骤 4.75 单独处理（辩护思路确认，可能处于 awaiting_confirmation）
+        step475_key = "4.75"
+        step475_data = state["steps"].get(step475_key, {})
+        if step475_data:
+            result[step475_key] = {
+                "status": step475_data.get("status", "idle"),
+                "detail": {},
+            }
+
         return result
 
     def _save_preprocess_file(self, subdir: str, filename: str, content: str):
@@ -1724,6 +1733,10 @@ class AnalysisPipeline:
         if suggestion_json.exists():
             try:
                 suggestion = json.loads(suggestion_json.read_text(encoding="utf-8"))
+                # 已确认后重跑：直接早退，不重复进入待确认状态
+                status = self._load_analysis_state()["steps"].get("4.75", {}).get("status", "idle")
+                if status == "completed":
+                    return {"awaiting_confirmation": False, "already_completed": True, "suggestion": suggestion}
                 return {"awaiting_confirmation": True, "suggestion": suggestion}
             except Exception:
                 pass  # 损坏则重新生成
@@ -1750,7 +1763,12 @@ class AnalysisPipeline:
         ])
 
         m = re.search(r"\{.*\}", raw, re.S)
-        suggestion = json.loads(m.group(0)) if m else {"directions": []}
+        try:
+            suggestion = json.loads(m.group(0)) if m else {"directions": []}
+        except (json.JSONDecodeError, ValueError):
+            # LLM 输出不是合法 JSON：降级为空建议，不抛 500
+            print(f"[步骤4.75] 警告：辩护思路建议 JSON 解析失败，使用空建议。原始输出前 200 字：{raw[:200]}")
+            suggestion = {"directions": []}
         suggestion.setdefault("directions", [])
 
         suggestion_json.write_text(json.dumps(suggestion, ensure_ascii=False, indent=2), encoding="utf-8")

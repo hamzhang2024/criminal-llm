@@ -1,6 +1,6 @@
 // 辩护思路确认面板（步骤 4.75）
-// 仅在流水线进入 awaiting_confirmation 状态时渲染：
-// 律师可勾选/编辑系统建议、补充自己的思路，确认后自动触发步骤 5（辩护意见生成）
+// awaiting_confirmation：律师可勾选/编辑系统建议、补充自己的思路，确认后自动触发步骤 5
+// completed：以编辑态渲染（预填确认稿），可修改后重新确认（将重跑步骤 5）
 
 import { useCallback, useEffect, useState } from 'react'
 import { Scale, Loader2, Plus, X } from 'lucide-react'
@@ -17,6 +17,7 @@ interface DefenseStrategyPanelProps {
   defendant: string
   charges: string[]
   onConfirmed?: () => void
+  refreshKey?: number  // 变化时重新拉取辩护思路状态
 }
 
 // 类型徽标配色：主攻=金，备选=灰蓝
@@ -27,7 +28,24 @@ function typeBadgeStyle(type: string): { background: string; color: string; bord
   return { background: 'rgba(142,142,147,0.12)', color: '#8e8e93', border: '1px solid rgba(142,142,147,0.2)' }
 }
 
-export default function DefenseStrategyPanel({ caseId, defendant, charges, onConfirmed }: DefenseStrategyPanelProps) {
+// 从确认稿 Markdown 解析已采纳的方向文本和律师补充（用于 completed 编辑态预填）
+function parseConfirmation(md: string | null): { directions: string[]; additions: string[] } {
+  if (!md) return { directions: [], additions: [] }
+  const directions: string[] = []
+  const additions: string[] = []
+  let inAdditions = false
+  for (const line of md.split('\n')) {
+    if (/^##\s*律师补充/.test(line)) { inAdditions = true; continue }
+    if (/^##\s/.test(line)) { inAdditions = false; continue }
+    const mDir = line.match(/^- \*\*\[(?:主攻|备选)\]\s*(.+?)\*\*/)
+    if (!inAdditions && mDir) { directions.push(mDir[1].trim()); continue }
+    const mAdd = line.match(/^- (.+)/)
+    if (inAdditions && mAdd) additions.push(mAdd[1].trim())
+  }
+  return { directions, additions }
+}
+
+export default function DefenseStrategyPanel({ caseId, defendant, charges, onConfirmed, refreshKey }: DefenseStrategyPanelProps) {
   const [strategy, setStrategy] = useState<DefenseStrategy | null>(null)
   const [loaded, setLoaded] = useState(false)
   const [selected, setSelected] = useState<Set<number>>(new Set())
@@ -38,6 +56,8 @@ export default function DefenseStrategyPanel({ caseId, defendant, charges, onCon
   const [confirming, setConfirming] = useState(false)
   const [progressMsg, setProgressMsg] = useState('')
   const [error, setError] = useState('')
+  // 本次会话内刚确认过：隐藏面板，避免步骤 5 运行期间重复确认
+  const [justConfirmed, setJustConfirmed] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -45,15 +65,29 @@ export default function DefenseStrategyPanel({ caseId, defendant, charges, onCon
       .then(data => {
         if (cancelled) return
         setStrategy(data)
+        const directions = data.suggestion?.directions || []
         if (data.status === 'awaiting_confirmation') {
+          setJustConfirmed(false)
           // 默认全部勾选
-          setSelected(new Set((data.suggestion?.directions || []).map((_, i) => i)))
+          setSelected(new Set(directions.map((_, i) => i)))
+          setEditedDirections({})
+          setAdditions([])
+        } else if (data.status === 'completed') {
+          // 已确认 → 编辑态预填：勾选全部、方向文本取确认稿、补充思路取确认稿
+          setSelected(new Set(directions.map((_, i) => i)))
+          const parsed = parseConfirmation(data.confirmation)
+          if (parsed.directions.length > 0 && parsed.directions.length === directions.length) {
+            const edited: Record<number, string> = {}
+            parsed.directions.forEach((t, i) => { if (t !== directions[i].direction) edited[i] = t })
+            setEditedDirections(edited)
+          }
+          if (parsed.additions.length > 0) setAdditions(parsed.additions)
         }
       })
       .catch(() => {})
       .finally(() => { if (!cancelled) setLoaded(true) })
     return () => { cancelled = true }
-  }, [caseId])
+  }, [caseId, refreshKey])
 
   const toggle = useCallback((idx: number) => {
     setSelected(prev => {
@@ -102,6 +136,9 @@ export default function DefenseStrategyPanel({ caseId, defendant, charges, onCon
       }
       await runStep5()
       setProgressMsg('')
+      // 本地置为已确认并隐藏面板，防止步骤 5 完成后重复确认
+      setStrategy(prev => prev ? { ...prev, status: 'completed' } : prev)
+      setJustConfirmed(true)
       onConfirmed?.()
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : '确认失败，请重试')
@@ -111,9 +148,11 @@ export default function DefenseStrategyPanel({ caseId, defendant, charges, onCon
     }
   }, [confirming, caseId, strategy, editedDirections, selected, additions, runStep5, onConfirmed])
 
-  // 仅待确认状态渲染（其余状态由报告页/步骤指示器呈现）
-  if (!loaded || !strategy || strategy.status !== 'awaiting_confirmation') return null
+  // 待确认 / 已确认（可重新编辑）状态渲染；刚确认过的会话内隐藏
+  if (!loaded || !strategy || justConfirmed) return null
+  if (strategy.status !== 'awaiting_confirmation' && strategy.status !== 'completed') return null
 
+  const isCompleted = strategy.status === 'completed'
   const directions = strategy.suggestion?.directions || []
 
   return (
@@ -124,11 +163,17 @@ export default function DefenseStrategyPanel({ caseId, defendant, charges, onCon
       {/* 标题 */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
         <Scale className="w-4 h-4" style={{ color: colors.gold }} />
-        <span style={{ fontSize: 14, fontWeight: 600, color: colors.textPrimary }}>辩护思路待确认</span>
-        <span style={{ fontSize: 11, color: colors.textTertiary }}>系统已生成建议，请勾选、修改或补充后确认</span>
+        <span style={{ fontSize: 14, fontWeight: 600, color: colors.textPrimary }}>
+          {isCompleted ? '辩护思路已确认' : '辩护思路待确认'}
+        </span>
+        <span style={{ fontSize: 11, color: colors.textTertiary }}>
+          {isCompleted ? '可修改后重新确认' : '系统已生成建议，请勾选、修改或补充后确认'}
+        </span>
       </div>
       <div style={{ fontSize: 11, color: colors.textSecondary, marginBottom: 12 }}>
-        确认后将自动开始生成辩护意见（步骤 5）；律师补充的思路优先级最高
+        {isCompleted
+          ? '已确认 · 可修改后重新确认（将重跑步骤 5）'
+          : '确认后将自动开始生成辩护意见（步骤 5）；律师补充的思路优先级最高'}
       </div>
 
       {/* 系统建议列表 */}
@@ -246,7 +291,7 @@ export default function DefenseStrategyPanel({ caseId, defendant, charges, onCon
           }}
         >
           {confirming && <Loader2 className="w-3 h-3 animate-spin" />}
-          确认并继续分析
+          {isCompleted ? '重新确认并重跑步骤 5' : '确认并继续分析'}
         </button>
         <button
           onClick={() => handleConfirm(true)}

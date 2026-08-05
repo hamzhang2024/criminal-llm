@@ -39,6 +39,7 @@ interface Step2AnalyzeProps {
   onRefreshEvidence: () => void
   onRefreshFiles: () => void
   pipelineStatus: Record<number | string, boolean>
+  strategyAwaiting?: boolean  // 步骤 4.75 辩护思路待确认（高亮阶段 5）
 }
 
 export function Step2Analyze({
@@ -47,7 +48,7 @@ export function Step2Analyze({
   stageStatus, runningStage, stageMessages, stageErrors,
   onRunStage, onRunAll, onStopStage, onClearStage, onViewStage,
   onPreviewEvidence, onRefreshEvidence, onRefreshFiles,
-  pipelineStatus,
+  pipelineStatus, strategyAwaiting = false,
 }: Step2AnalyzeProps) {
   // 文书分类映射：来源文件名 → doc_type
   const docTypeMap: Record<string, string> = {}
@@ -234,14 +235,16 @@ export function Step2Analyze({
             const evidenceDisabled = !evidenceExtracted
             const seqDisabled = !canStartStage(stage.num)
             const analysisDisabled = evidenceDisabled || seqDisabled
+            // 阶段 5（综合辩护）前置卡点：步骤 4.75 辩护思路待确认时高亮提示
+            const awaitingStrategy = stage.num === 5 && strategyAwaiting && status !== 'completed' && status !== 'running'
 
             return (
               <div key={stage.num} style={{
                 display: 'flex', alignItems: 'center', gap: '12px',
                 padding: '12px',
                 borderRadius: '8px',
-                border: `1px solid ${status === 'completed' ? 'rgba(59,89,152,0.2)' : status === 'error' ? 'rgba(102,102,102,0.15)' : 'var(--macos-border)'}`,
-                background: status === 'completed' ? 'rgba(59,89,152,0.04)' : status === 'error' ? 'rgba(102,102,102,0.03)' : 'var(--macos-bg-secondary)',
+                border: awaitingStrategy ? '1px solid rgba(255,149,0,0.45)' : `1px solid ${status === 'completed' ? 'rgba(59,89,152,0.2)' : status === 'error' ? 'rgba(102,102,102,0.15)' : 'var(--macos-border)'}`,
+                background: awaitingStrategy ? 'rgba(255,149,0,0.07)' : status === 'completed' ? 'rgba(59,89,152,0.04)' : status === 'error' ? 'rgba(102,102,102,0.03)' : 'var(--macos-bg-secondary)',
                 opacity: analysisDisabled ? 0.5 : 1,
                 transition: 'opacity 0.2s'
               }}>
@@ -257,6 +260,11 @@ export function Step2Analyze({
 
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: '13px', fontWeight: '500' }}>{stage.name}</div>
+                  {awaitingStrategy && (
+                    <div style={{ fontSize: '11px', color: '#ff9500', fontWeight: 500 }}>
+                      辩护思路待确认 — 请在上方确认面板中处理后再继续
+                    </div>
+                  )}
                   {msg && <div style={{ fontSize: '11px', color: 'var(--macos-accent)' }}>{msg}</div>}
                   {errMsg && <div style={{ fontSize: '11px', color: '#666666' }}>{errMsg}</div>}
                   {!msg && !errMsg && seqDisabled && (
