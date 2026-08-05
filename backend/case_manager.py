@@ -87,6 +87,8 @@ class CaseInfo(BaseModel):
     status: str
     file_count: int = 0
     case_dir: str  # 案件文件夹路径
+    search_keywords: list = []     # 律师确认的类案检索关键词
+    suggested_keywords: list = []  # LLM 推荐的类案检索关键词
 
 
 class CreateCaseRequest(BaseModel):
@@ -334,12 +336,9 @@ async def create_case(request: CreateCaseRequest) -> CaseInfo:
 
 @router.patch("/{case_id}")
 async def update_case(case_id: str, request: Request):
-    """更新案件信息（目前支持 charges）"""
+    """更新案件信息（支持 charges、search_keywords）"""
     import json as _json
     body = await request.json()
-    charges = body.get("charges", [])
-    # 输入校验
-    charges = [c.strip()[:100] for c in charges if c.strip()][:20]
     case_path = find_case_path(case_id)
     if not case_path:
         raise HTTPException(status_code=404, detail="案件不存在")
@@ -348,7 +347,13 @@ async def update_case(case_id: str, request: Request):
         raise HTTPException(status_code=404, detail="案件元数据不存在")
     with open(meta_file, 'r', encoding='utf-8') as f:
         meta = json.load(f)
-    meta["charges"] = charges
+    # 仅更新请求中携带的字段，避免单字段更新时误清其他字段
+    if "charges" in body:
+        # 输入校验
+        meta["charges"] = [c.strip()[:100] for c in body["charges"] if isinstance(c, str) and c.strip()][:20]
+    if "search_keywords" in body:
+        # 类案检索关键词（律师编辑确认）
+        meta["search_keywords"] = [k.strip()[:50] for k in body["search_keywords"] if isinstance(k, str) and k.strip()][:30]
     # 原子写入：先写临时文件再 rename，防止并发写入导致数据损坏
     import tempfile
     tmp_fd, tmp_path = tempfile.mkstemp(dir=str(case_path), suffix='.json')
@@ -360,8 +365,8 @@ async def update_case(case_id: str, request: Request):
         try: os.unlink(tmp_path)
         except OSError: pass
         raise
-    logger.info(f"[案件更新] {case_id}: charges={charges}")
-    return {"success": True, "charges": charges}
+    logger.info(f"[案件更新] {case_id}: charges={meta.get('charges', [])} search_keywords={meta.get('search_keywords', [])}")
+    return {"success": True, "charges": meta.get("charges", []), "search_keywords": meta.get("search_keywords", [])}
 
 
 @router.post("/import")

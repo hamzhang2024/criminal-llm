@@ -6,7 +6,8 @@ import { Upload, FileDown, Scale, Loader2, CheckCircle, FileText } from 'lucide-
 import { MacOSToolbar, MacOSButton, MacOSCard, PageLayout, StatusBar } from '../components/MacOSLayout'
 import { api, API_BASE } from '../api'
 import { showConfirm, showAlert } from '../components/MacOSDialog'
-import { FileList, Step0Upload, Step1Extract, Step2Analyze, Preview } from './CaseDetailPage/components'
+import { FileList, Step0Upload, Step1Extract, Step2Analyze, SearchKeywordsEditor, Preview } from './CaseDetailPage/components'
+import DefenseStrategyPanel from '../components/DefenseStrategyPanel'
 import type { CaseFile, PreviewFile } from './CaseDetailPage/hooks/useCaseFiles'
 import { useCaseFiles } from './CaseDetailPage/hooks/useCaseFiles'
 import { useEvidenceExtraction } from './CaseDetailPage/hooks/useEvidenceExtraction'
@@ -508,7 +509,17 @@ export function CaseDetailPage() {
             )}
 
             {currentStep === 2 && (
-              <Step2Analyze caseId={caseId!} defendant={defendant} charges={charges} setCharges={setCharges}
+              <>
+                {/* 类案检索关键词编辑区（spec 9.1） */}
+                <SearchKeywordsEditor caseId={caseId!} charges={charges} />
+                {/* 辩护思路确认面板（步骤 4.75，awaiting_confirmation 时才渲染） */}
+                <DefenseStrategyPanel
+                  caseId={caseId!}
+                  defendant={defendant}
+                  charges={charges}
+                  onConfirmed={loadPipelineState}
+                />
+                <Step2Analyze caseId={caseId!} defendant={defendant} charges={charges} setCharges={setCharges}
                 evidenceList={evidenceList} evidenceExtracted={evidenceExtracted}
                 evidenceFiles={evidenceFiles} completeness={completeness}
                 stageStatus={stageStatus} runningStage={runningStage} stageMessages={stageMessages} stageErrors={stageErrors}
@@ -520,6 +531,7 @@ export function CaseDetailPage() {
                 }}
                 onRefreshEvidence={handleRefreshEvidence} onRefreshFiles={refreshFiles}
                 pipelineStatus={pipelineStatus} />
+              </>
             )}
           </div>
         </div>
