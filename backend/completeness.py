@@ -102,15 +102,19 @@ async def check_completeness(files: dict, extracted_by_file: dict, all_evidence_
                     entry["rule_missing"] = entry["missing"]
                     entry["missing"] = []
             except Exception:
-                pass
+                # LLM 抽检失败：标记 failed（可区分"未抽检"与"抽检失败"），不静默吞掉
+                entry["llm_checked"] = False
+                entry["llm_error"] = True
         # 全局交叉核对：本文件未提取但其他卷已覆盖（补充卷重复是常态）
         if entry["missing"] and all_evidence_names:
             elsewhere = [m for m in entry["missing"] if _covered(m, all_evidence_names)]
             if elsewhere:
                 entry["covered_elsewhere"] = elsewhere
                 entry["missing"] = [m for m in entry["missing"] if m not in elsewhere]
-        # 状态判定：无编号项的文件不做遗漏判定
-        if rec["source_items"] == 0:
+        # 状态判定：LLM 抽检失败 → failed；无编号项的文件不做遗漏判定
+        if entry.get("llm_error"):
+            status = "failed"
+        elif rec["source_items"] == 0:
             status = "ok"
         elif entry["missing"]:
             status = "suspect"

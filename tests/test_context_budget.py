@@ -6,6 +6,8 @@ from context_budget import (
 
 def test_model_window_mapping():
     assert get_model_window("deepseek-v4-pro") == 1000000
+    assert get_model_window("deepseek-v4-flash") == 1000000
+    assert get_model_window("deepseek-v3") == 128000
     assert get_model_window("kimi-k3") == 262144
     assert get_model_window("qwen3.5-plus") == 131072
     assert get_model_window("unknown-model") is None
@@ -14,6 +16,12 @@ def test_model_window_mapping():
 def test_content_budget_chars(monkeypatch):
     monkeypatch.setattr(context_budget, "get_context_limit", lambda: 250000)
     assert content_budget_chars() == int((250000 - 38000) * 1.35)
+
+
+def test_content_budget_chars_floor(monkeypatch):
+    """小配置时预算不低于 30000 字符，杜绝负值"""
+    monkeypatch.setattr(context_budget, "get_context_limit", lambda: 32000)
+    assert content_budget_chars() == 30000
 
 
 def test_truncate_with_marker():

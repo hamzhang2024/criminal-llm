@@ -8,18 +8,21 @@
 from config_manager import get_config_value
 
 # 模型家族 → 上下文窗口（tokens），用于设置页展示与建议；实际预算以用户配置为准
-MODEL_CONTEXT_WINDOWS = {
-    "deepseek": 1000000,
-    "kimi": 262144,
-    "qwen": 131072,
-    "glm": 131072,
-    "gpt": 128000,
-    "claude": 200000,
-}
+# 有序列表：先匹配先生效（deepseek-v4 先于 deepseek 通用档）
+MODEL_CONTEXT_WINDOWS = [
+    ("deepseek-v4", 1000000),
+    ("deepseek", 128000),
+    ("kimi", 262144),
+    ("qwen", 131072),
+    ("glm", 131072),
+    ("gpt", 128000),
+    ("claude", 200000),
+]
 
 DEFAULT_CONTEXT_LIMIT = 250000
 DEFAULT_RESERVE_TOKENS = 38000   # system prompt + 输出预留
 CHARS_PER_TOKEN = 1.35           # 中文：1 token ≈ 1.35 字符
+MIN_CONTENT_BUDGET_CHARS = 30000  # 预算下限：小配置也不低于此值，杜绝负预算
 
 
 def get_context_limit() -> int:
@@ -33,15 +36,15 @@ def get_context_limit() -> int:
 def get_model_window(model: str) -> int | None:
     """按模型名识别上下文窗口（设置页展示/建议），未知返回 None"""
     model_lower = (model or "").lower()
-    for family, window in MODEL_CONTEXT_WINDOWS.items():
+    for family, window in MODEL_CONTEXT_WINDOWS:
         if family in model_lower:
             return window
     return None
 
 
 def content_budget_chars(reserve_tokens: int = DEFAULT_RESERVE_TOKENS) -> int:
-    """内容字符预算 = (context_limit - 预留) × 1.35"""
-    return int((get_context_limit() - reserve_tokens) * CHARS_PER_TOKEN)
+    """内容字符预算 = (context_limit - 预留) × 1.35；小配置时保底 MIN_CONTENT_BUDGET_CHARS，杜绝负值"""
+    return max(MIN_CONTENT_BUDGET_CHARS, int((get_context_limit() - reserve_tokens) * CHARS_PER_TOKEN))
 
 
 def truncate_with_marker(text: str, budget: int, label: str = "") -> str:

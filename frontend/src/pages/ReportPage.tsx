@@ -7,7 +7,7 @@ import { FileText, Loader2, Send, Download, Check,
   Gavel, Phone, Mail, Building2, StickyNote, Edit3, Swords, Network, Search, ExternalLink, Printer,
   BarChart3, Grid3x3, Maximize2, Minimize2, X, Target
 } from 'lucide-react'
-import { api, reviewEvidence, getEvidenceReview, EvidenceReviewItem, EvidenceReviewResult, generateReviewNotes, getReviewNotes, generateCrossExamination, getCrossExamination, getPersonRelation, RelationGraphData, getEventTimeline, TimelineData, searchSimilarCases, SimilarCasesData, getDefenseStrategy, DefenseStrategy } from '../api'
+import { api, reviewEvidence, getEvidenceReview, EvidenceReviewItem, EvidenceReviewResult, generateReviewNotes, getReviewNotes, generateCrossExamination, getCrossExamination, getPersonRelation, RelationGraphData, getEventTimeline, TimelineData, searchSimilarCases, SimilarCasesData, getDefenseStrategy, DefenseStrategy, getWikiIndex, getWikiPage } from '../api'
 import { getEvidenceChain, EvidenceChainData } from '../api/stages'
 import { EvidenceChainMindmap } from '../components/EvidenceChainMindmap'
 import { EvidenceChainGraph } from '../components/EvidenceChainGraph'
@@ -179,6 +179,9 @@ export function ReportPage() {
   const [similarCasesLoading, setSimilarCasesLoading] = useState(false)
   const [showSimilarCases, setShowSimilarCases] = useState(false)
 
+  // Wiki 类案裁判规则（04-法律依据/类案裁判规则-*.md，自动检索产物）
+  const [caseRulePages, setCaseRulePages] = useState<Array<{ path: string; content: string }>>([])
+
   // 证据中心折叠面板状态
   const [evidenceCenterPanels, setEvidenceCenterPanels] = useState({
     evidenceTypeChart: true,
@@ -320,6 +323,31 @@ export function ReportPage() {
     if (activeTab === 'stage_4' && caseId) {
       loadLegalKB()
     }
+  }, [activeTab, caseId])
+
+  // 切换至法律法规 tab 时加载 Wiki 类案裁判规则（04-法律依据/类案裁判规则-*.md）
+  useEffect(() => {
+    if (activeTab !== 'stage_4' || !caseId) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const index = await getWikiIndex(caseId)
+        const pages: Array<{ path: string }> = index?.pages || []
+        const rulePages = pages.filter(p => p.path.startsWith('04-法律依据/类案裁判规则-'))
+        const loaded: Array<{ path: string; content: string }> = []
+        for (const p of rulePages) {
+          try {
+            const page = await getWikiPage(caseId, p.path)
+            if (page?.content) loaded.push({ path: p.path, content: page.content })
+          } catch { /* 单页失败跳过，不影响其他页 */ }
+        }
+        if (!cancelled) setCaseRulePages(loaded)
+      } catch {
+        // Wiki 未构建或请求失败：不显示该小节
+        if (!cancelled) setCaseRulePages([])
+      }
+    })()
+    return () => { cancelled = true }
   }, [activeTab, caseId])
 
   // 切换 tab 时退出编辑模式
@@ -1609,6 +1637,7 @@ export function ReportPage() {
                     </h2>
                   </div>
                   {renderActiveTab()}
+                  {renderSimilarCaseRules()}
                   {renderCaseSearchPanel()}
                   {renderLegalKBPanel()}
                   {/* 证据中心综合面板 */}
@@ -2654,6 +2683,49 @@ export function ReportPage() {
             </div>
           </div>
         )}
+      </div>
+    )
+  }
+
+  // ===== Wiki 类案裁判规则小节（法律法规 tab，自动检索产物透出）=====
+  const renderSimilarCaseRules = () => {
+    if (activeTab !== 'stage_4' || caseRulePages.length === 0) return null
+    return (
+      <div style={{ marginBottom: '16px' }}>
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: '8px',
+          marginBottom: '10px',
+        }}>
+          <BookOpen className="w-4 h-4" style={{ color: '#6b2765' }} />
+          <span style={{ fontSize: '13px', fontWeight: 600, color: colors.textPrimary }}>类案裁判规则</span>
+          <span style={{
+            fontSize: '11px', color: colors.textTertiary,
+            padding: '2px 8px', background: colors.surfaceAlt,
+            borderRadius: '4px', border: `1px solid ${colors.border}`,
+          }}>
+            自动检索，供参考
+          </span>
+        </div>
+        {caseRulePages.map(page => (
+          <div key={page.path} style={{
+            padding: '16px', marginBottom: '10px',
+            background: colors.surface, borderRadius: '8px',
+            border: `1px solid ${colors.border}`,
+          }}>
+            <ReportRenderer
+              markdown={page.content}
+              evidenceItems={evidenceItems}
+              onEvidenceClick={(mdFile) => {
+                if (viewModeState !== 'md') viewModeDispatch('md')
+                const item = evidenceItems.find(i => i.mdFile === mdFile)
+                if (item) {
+                  setSelectedEvidenceId(item.id)
+                  loadEvidenceContent(item)
+                }
+              }}
+            />
+          </div>
+        ))}
       </div>
     )
   }

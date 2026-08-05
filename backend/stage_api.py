@@ -87,7 +87,7 @@ async def _run_sub_stage(engine, sub_stage_type: str, defendant: str, crime_type
         all_text = "\n\n".join([f"### {t['filename']}\n{t['text'][:context_budget.content_budget_chars()]}" for t in texts])
         result = await client.chat([
             {"role": "system", "content": "你是刑事辩护律师，正在识别证据间的矛盾和口供变化。"},
-            {"role": "user", "content": f"""## 辩护对象：{defendant}\n\n## 案卷材料\n{all_text[:150000]}\n\n请分析：1. 同一人多次笔录的变化 2. 不同证据对同一事实的矛盾 3. 证据链条薄弱环节"""},
+            {"role": "user", "content": f"""## 辩护对象：{defendant}\n\n## 案卷材料\n{all_text[:context_budget.content_budget_chars()]}\n\n请分析：1. 同一人多次笔录的变化 2. 不同证据对同一事实的矛盾 3. 证据链条薄弱环节"""},
         ])
         engine._save_stage(52, {"name": "矛盾分析"}, result)
         return {"success": True}

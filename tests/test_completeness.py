@@ -123,6 +123,19 @@ def test_covered_elsewhere_downgrades_missing(monkeypatch):
     assert entry["covered_elsewhere"] == ["王兆威第一次询问笔录"]
 
 
+def test_llm_spot_check_exception_marks_failed(monkeypatch):
+    """LLM 抽检抛异常：状态 failed（而非静默吞掉），llm_checked=False"""
+    monkeypatch.setattr(completeness, "_llm_spot_check",
+                        AsyncMock(side_effect=RuntimeError("LLM 服务不可用")))
+    files = {"起诉意见书.md": "一、盗窃手机\n二、盗窃电脑"}
+    extracted_by_file = {"起诉意见书.md": ["盗窃手机", "盗窃电脑"]}
+    report = asyncio.run(completeness.check_completeness(files, extracted_by_file))
+    entry = report["files"]["起诉意见书.md"]
+    assert entry["status"] == "failed"
+    assert entry["llm_checked"] is False
+    assert report["summary"]["failed"] == 1
+
+
 def test_true_missing_stays_suspect(monkeypatch):
     """全案件都没有的条目：保持 suspect"""
     monkeypatch.setattr(completeness, "_llm_spot_check",
