@@ -16,10 +16,32 @@ from analysis_engine import (
     _get_content_budget_chars,
     _get_indictment_budget_chars,
     _get_evidence_budget_chars,
-    _get_knowledge_budget_chars
+    _get_knowledge_budget_chars,
+    _get_report_budget_chars
 )
 
 logger = logging.getLogger(__name__)
+
+# 各模型家族的最大输出 token 上限（保守值，防 API 400）
+MODEL_OUTPUT_CAPS = {
+    "deepseek": 65536,
+    "qwen": 32768,
+    "kimi": 65536,
+    "glm": 32768,
+    "gpt": 32768,
+    "claude": 65536,
+}
+DEFAULT_OUTPUT_CAP = 32768
+
+
+def compute_max_output_tokens(context_limit: int, model: str) -> int:
+    """max_output_tokens = min(context_limit * 0.8, 模型输出上限)"""
+    computed = int(context_limit * 0.8)
+    model_lower = (model or "").lower()
+    for family, cap in MODEL_OUTPUT_CAPS.items():
+        if family in model_lower:
+            return min(computed, cap)
+    return min(computed, DEFAULT_OUTPUT_CAP)
 
 # 打包后 certifi 证书路径可能失效，macOS 用系统证书
 if sys.platform == "darwin" and getattr(sys, "frozen", False):
@@ -167,8 +189,9 @@ class LLMClient:
         # 根据模型上下文窗口动态计算最大输出 tokens（防止 API 默认值截断长输出）
         from config_manager import get_config_value
         context_limit = int(get_config_value("model_context_limit", "250000"))
-        # 预留 20% 给输入，其余作为输出上限
-        max_output_tokens = int(context_limit * 0.8)
+        # 预留 20% 给输入，其余作为输出上限；同时按模型家族上限截断，
+        # 防止 context_limit 过大导致 max_tokens 超过模型实际上限而 API 400
+        max_output_tokens = compute_max_output_tokens(context_limit, model or self.model)
 
         payload = {
             "model": model or self.model,
@@ -320,7 +343,7 @@ class LLMClient:
 
         # 构建证据部分
         evidence_section = "\n\n".join([
-            f"### {e['filename']} ({e['type']})\n{e['text'][:50000]}"  # 每份证据限制 5 万字
+            f"### {e['filename']} ({e['type']})\n{e['text'][:_get_evidence_budget_chars()]}"  # 每份证据按证据预算截断
             for e in evidence_texts
         ])
         
@@ -589,13 +612,13 @@ class LLMClient:
 
 ## 原报告内容
 
-{original_report[:60000]}
+{original_report[:_get_report_budget_chars()]}
 
 ---
 
 ## 相关证据材料（供重新分析使用）
 
-{evidence_context[:40000]}
+{evidence_context[:_get_evidence_budget_chars()]}
 
 ---
 
@@ -667,7 +690,7 @@ class LLMClient:
 
 ## 原辩护分析报告（仅供参考，修改部分需重新分析）
 
-{report_context[:50000]}
+{report_context[:_get_report_budget_chars()]}
 
 ---
 

@@ -6,7 +6,8 @@ import { Upload, FileDown, Scale, Loader2, CheckCircle, FileText } from 'lucide-
 import { MacOSToolbar, MacOSButton, MacOSCard, PageLayout, StatusBar } from '../components/MacOSLayout'
 import { api, API_BASE } from '../api'
 import { showConfirm, showAlert } from '../components/MacOSDialog'
-import { FileList, Step0Upload, Step1Extract, Step2Analyze, Preview } from './CaseDetailPage/components'
+import { FileList, Step0Upload, Step1Extract, Step2Analyze, SearchKeywordsEditor, Preview } from './CaseDetailPage/components'
+import DefenseStrategyPanel from '../components/DefenseStrategyPanel'
 import type { CaseFile, PreviewFile } from './CaseDetailPage/hooks/useCaseFiles'
 import { useCaseFiles } from './CaseDetailPage/hooks/useCaseFiles'
 import { useEvidenceExtraction } from './CaseDetailPage/hooks/useEvidenceExtraction'
@@ -58,6 +59,7 @@ export function CaseDetailPage() {
 
   const {
     evidenceList, evidenceExtracted, extracting, setEvidenceExtracted, setEvidenceList,
+    evidenceFiles, completeness, loadCompleteness,
     loadEvidence, handleExtractEvidence: extractEvidenceFn,
     handleStopExtract, handleClearEvidence, handleRefreshEvidence,
     checkExtractStatus, pollExtractProgress, stopPolling: stopExtractPolling,
@@ -80,6 +82,7 @@ export function CaseDetailPage() {
     handleClearStage, handleViewStage,
     pipelineStatus, pipelineRunning, currentPipelineStep, stepResults,
     analysisState, setAnalysisState, nextStep, setNextStep, liveProgress, setLiveProgress,
+    strategyAwaiting, strategyRefreshKey,
     executePipelineStep, executeAllSteps, executeSingleStep,
     handleResumeAnalysis, loadPipelineState,
     wikiPages, selectedWikiPage, wikiContent, wikiLoading,
@@ -190,6 +193,9 @@ export function CaseDetailPage() {
 
   // === 步骤 2 加载流水线状态 ===
   useEffect(() => { if (currentStep === 2 && caseId) loadPipelineState() }, [currentStep, caseId, loadPipelineState])
+
+  // === 进入证据提取步骤时加载完整性报告 ===
+  useEffect(() => { if (currentStep === 1 && caseId) loadCompleteness() }, [currentStep, caseId, loadCompleteness])
 
   // === 流水线实时进度轮询 ===
   useEffect(() => {
@@ -352,8 +358,10 @@ export function CaseDetailPage() {
         setTimeout(() => { clearInterval(pi); reject(new Error('提取超时')) }, 900000)
       })
       setCurrentStep(2); setProcessing(false)
+      // 转换+提取完成后刷新文书分类与完整性报告
+      loadEvidence(); loadCompleteness()
     } catch (err) { setError(err instanceof Error ? err.message : '操作失败'); setProgress(''); setProcessing(false) }
-  }, [caseId])
+  }, [caseId, loadEvidence, loadCompleteness])
 
   const handleRunAnalysis = useCallback(async () => {
     if (!defendant.trim()) { showAlert({ title: '提示', message: '缺少被告人信息', variant: 'warning' }); return }
@@ -496,13 +504,26 @@ export function CaseDetailPage() {
 
             {currentStep === 1 && (
               <Step1Extract files={files} evidenceList={evidenceList} evidenceExtracted={evidenceExtracted}
+                evidenceFiles={evidenceFiles} completeness={completeness}
                 processing={extracting} onExtract={handleExtractEvidence} onStop={handleStopExtract}
                 onClear={handleClearEvidence} onRefreshEvidence={handleRefreshEvidence} />
             )}
 
             {currentStep === 2 && (
-              <Step2Analyze caseId={caseId!} defendant={defendant} charges={charges} setCharges={setCharges}
+              <>
+                {/* 类案检索关键词编辑区（spec 9.1） */}
+                <SearchKeywordsEditor caseId={caseId!} charges={charges} />
+                {/* 辩护思路确认面板（步骤 4.75，待确认/已确认可重新编辑时渲染） */}
+                <DefenseStrategyPanel
+                  caseId={caseId!}
+                  defendant={defendant}
+                  charges={charges}
+                  onConfirmed={loadPipelineState}
+                  refreshKey={strategyRefreshKey}
+                />
+                <Step2Analyze caseId={caseId!} defendant={defendant} charges={charges} setCharges={setCharges}
                 evidenceList={evidenceList} evidenceExtracted={evidenceExtracted}
+                evidenceFiles={evidenceFiles} completeness={completeness}
                 stageStatus={stageStatus} runningStage={runningStage} stageMessages={stageMessages} stageErrors={stageErrors}
                 onRunStage={handleRunStage} onRunAll={handleRunAllAnalysis} onStopStage={handleStopStage}
                 onClearStage={handleClearStage} onViewStage={handleViewStage}
@@ -511,7 +532,8 @@ export function CaseDetailPage() {
                   handleOpenFile({ id: String(evId), name: mdFile, size: 0, status: 'done', path: mdPath } as unknown as CaseFile)
                 }}
                 onRefreshEvidence={handleRefreshEvidence} onRefreshFiles={refreshFiles}
-                pipelineStatus={pipelineStatus} />
+                pipelineStatus={pipelineStatus} strategyAwaiting={strategyAwaiting} />
+              </>
             )}
           </div>
         </div>

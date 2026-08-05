@@ -71,6 +71,43 @@ export async function getDefenseStages(caseId: string): Promise<any> {
   return res.json()
 }
 
+// ========== 辩护思路确认（步骤 4.75）==========
+
+export interface StrategyDirection {
+  type: string      // 主攻 | 备选
+  direction: string // 方向简述
+  basis: string     // 依据
+  risk: string      // 风险点
+}
+
+export interface DefenseStrategy {
+  suggestion: { directions: StrategyDirection[] }
+  confirmation: string | null
+  status: string  // idle | awaiting_confirmation | completed
+}
+
+export async function getDefenseStrategy(caseId: string): Promise<DefenseStrategy> {
+  const res = await fetch(`${API_BASE}/pipeline/${caseId}/defense-strategy`)
+  return res.json()
+}
+
+export interface ConfirmStrategyBody {
+  selected?: number[]
+  edited?: Record<string, string>
+  user_additions?: string[]
+  use_system_default?: boolean
+}
+
+export async function confirmDefenseStrategy(caseId: string, body: ConfirmStrategyBody): Promise<any> {
+  const res = await fetch(`${API_BASE}/pipeline/${caseId}/defense-strategy/confirm`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `请求失败（${res.status}）`)
+  return res.json()
+}
+
 export async function getDefenseStageContent(caseId: string, stageName: string): Promise<any> {
   const res = await fetch(`${API_BASE}/pipeline/${caseId}/defense-stage/${encodeURIComponent(stageName)}`)
   return res.json()

@@ -17,6 +17,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Body, HTTPException, Query
 
+import context_budget
 from analysis_engine import AnalysisEngine
 from analysis_pipeline import AnalysisPipeline, _contains_indictment_title
 from case_manager import find_case_path
@@ -55,7 +56,7 @@ async def _run_sub_stage(engine, sub_stage_type: str, defendant: str, crime_type
                 {"role": "system", "content": "你是刑事辩护律师，正在逐份审查证据，评估证据的合法性、真实性、关联性。"},
                 {"role": "user", "content": f"""## 证据文件：{ev["filename"]}（{ev["type"]}）
 
-{ev["text"][:50000]}
+{ev["text"][:context_budget.content_budget_chars()]}
 
 请从以下三个方面对每份证据进行审查：
 
@@ -83,10 +84,10 @@ async def _run_sub_stage(engine, sub_stage_type: str, defendant: str, crime_type
         return {"success": True}
 
     elif sub_stage_type == "contradiction_analysis":
-        all_text = "\n\n".join([f"### {t['filename']}\n{t['text'][:30000]}" for t in texts])
+        all_text = "\n\n".join([f"### {t['filename']}\n{t['text'][:context_budget.content_budget_chars()]}" for t in texts])
         result = await client.chat([
             {"role": "system", "content": "你是刑事辩护律师，正在识别证据间的矛盾和口供变化。"},
-            {"role": "user", "content": f"""## 辩护对象：{defendant}\n\n## 案卷材料\n{all_text[:150000]}\n\n请分析：1. 同一人多次笔录的变化 2. 不同证据对同一事实的矛盾 3. 证据链条薄弱环节"""},
+            {"role": "user", "content": f"""## 辩护对象：{defendant}\n\n## 案卷材料\n{all_text[:context_budget.content_budget_chars()]}\n\n请分析：1. 同一人多次笔录的变化 2. 不同证据对同一事实的矛盾 3. 证据链条薄弱环节"""},
         ])
         engine._save_stage(52, {"name": "矛盾分析"}, result)
         return {"success": True}

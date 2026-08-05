@@ -78,6 +78,7 @@ async def list_cases():
 # LLM 客户端
 from llm_client import get_llm_client
 from pdf_to_md import get_evidence_text, _read_cached_md  # PDF → MD 转换模块
+import context_budget  # 统一上下文预算
 
 
 # ========== 数据模型 ==========
@@ -1100,7 +1101,7 @@ async def chat(
 **重要**：分析必须基于原始证据，不能引用分析报告的结论作为既定事实。
 
 案卷证据材料：
-{evidence_context[:50000]}
+{evidence_context[:context_budget.content_budget_chars()]}
 
 用户问题：{message}
 

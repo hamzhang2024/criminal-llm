@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from fastapi import APIRouter, Body, HTTPException, UploadFile, File
+from pydantic import BaseModel
 
 from analysis_pipeline import AnalysisPipeline, _contains_indictment_title
 from case_manager import find_case_path
@@ -100,11 +101,12 @@ async def run_pipeline_step(
     3. 内部矛盾分析（多次笔录者对比差异）
     4. 案件 Wiki 构建（LLM Wiki 模式，串行）
     4.5. 控辩对抗模拟（红蓝辩论 + 交叉询问预演）
+    4.75. 辩护思路确认（生成建议，待律师确认后进入步骤 5）
     5. 辩护意见生成
     """
-    valid_steps = {1, 2, 3, 4, 4.5, 5}
+    valid_steps = {1, 2, 3, 4, 4.5, 4.75, 5}
     if step_num not in valid_steps:
-        raise HTTPException(status_code=400, detail="无效步骤编号，请输入 1-5 或 4.5")
+        raise HTTPException(status_code=400, detail="无效步骤编号，请输入 1-5、4.5 或 4.75")
 
     case_path = find_case_path(case_id)
     if not case_path:
@@ -132,6 +134,10 @@ async def run_pipeline_step(
             ),
             4.5: lambda: pipeline.step45_debate_simulation(
                 defendant, charges,
+                progress_cb=lambda current, total, msg: _set_progress(case_id, 4, msg, current, total),
+            ),
+            4.75: lambda: pipeline.step475_defense_strategy(
+                defendant, charges[0] if charges else None,
                 progress_cb=lambda current, total, msg: _set_progress(case_id, 4, msg, current, total),
             ),
             5: lambda: pipeline.step5_defense_opinion(
@@ -239,7 +245,10 @@ async def resume_pipeline(
     _set_progress(case_id, next_step, "从断点恢复...", 0, 0)
 
     try:
-        pipeline._mark_step_running(next_step)
+        # 4.75 由 step 方法自行管理状态（awaiting_confirmation/completed），
+        # 不能由 resume 统一标记，否则会绕过律师确认卡点
+        if next_step != 4.75:
+            pipeline._mark_step_running(next_step)
 
         step_methods = {
             1: lambda: pipeline.step1_merge_statements(defendant, charges[0] if charges else None),
@@ -259,13 +268,18 @@ async def resume_pipeline(
                 defendant, charges,
                 progress_cb=lambda current, total, msg: _set_progress(case_id, 4, msg, current, total),
             ),
+            4.75: lambda: pipeline.step475_defense_strategy(
+                defendant, charges[0] if charges else None,
+                progress_cb=lambda current, total, msg: _set_progress(case_id, 4, msg, current, total),
+            ),
             5: lambda: pipeline.step5_defense_opinion(
                 defendant, charges,
                 progress_cb=lambda current, total, msg: _set_progress(case_id, 5, msg, current, total),
             ),
         }
         result = await step_methods[next_step]()
-        pipeline._mark_step_done(next_step)
+        if next_step != 4.75:
+            pipeline._mark_step_done(next_step)
 
         return {
             "success": True,
@@ -280,6 +294,42 @@ async def resume_pipeline(
         raise HTTPException(status_code=500, detail=f"步骤 {next_step} 执行失败: {str(e)}")
     finally:
         _clear_progress(case_id)
+
+
+@router.get("/{case_id}/defense-strategy")
+async def get_defense_strategy(case_id: str):
+    """辩护思路：系统建议 + 确认稿 + 状态"""
+    case_path = find_case_path(case_id)
+    if not case_path:
+        raise HTTPException(status_code=404, detail="案件不存在")
+    pipeline = AnalysisPipeline(case_id, case_path)
+    return pipeline.get_defense_strategy()
+
+
+class ConfirmStrategyRequest(BaseModel):
+    selected: Optional[List[int]] = None
+    edited: Optional[dict] = None
+    user_additions: Optional[List[str]] = None
+    use_system_default: bool = False
+
+
+@router.post("/{case_id}/defense-strategy/confirm")
+async def confirm_defense_strategy(case_id: str, req: ConfirmStrategyRequest):
+    """确认辩护思路（律师确认后驱动步骤 5）"""
+    case_path = find_case_path(case_id)
+    if not case_path:
+        raise HTTPException(status_code=404, detail="案件不存在")
+    pipeline = AnalysisPipeline(case_id, case_path)
+    try:
+        result = await pipeline.confirm_defense_strategy(
+            selected=req.selected,
+            edited=req.edited,
+            user_additions=req.user_additions,
+            use_system_default=req.use_system_default,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {**result, "next_step": pipeline._get_next_unfinished_step()}
 
 
 @router.get("/{case_id}/step/{step_num}/result")

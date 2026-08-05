@@ -20,6 +20,7 @@ export const PIPELINE_STEPS = [
   { num: 3, name: '矛盾分析', desc: '多次笔录者对比差异' },
   { num: 4, name: '案件 Wiki', desc: 'LLM Wiki 模式构建证据知识库' },
   { num: 4.5, name: '控辩对抗', desc: '红蓝对抗，生成攻防对照表' },
+  { num: 4.75, name: '辩护思路确认', desc: '律师确认辩护思路（卡点，确认后才生成辩护意见）' },
   { num: 5, name: '辩护意见', desc: '综合前 4 步形成辩护意见' },
 ]
 
@@ -40,6 +41,9 @@ export function useStageAnalysis(caseId: string | undefined, defendant: string, 
   const [stepResults, setStepResults] = useState<Record<number, any>>({})
   const [analysisState, setAnalysisState] = useState<any>(null)
   const [nextStep, setNextStep] = useState<number | null>(null)
+  // 辩护思路（步骤 4.75）：待确认标记 + 面板刷新计数器
+  const [strategyAwaiting, setStrategyAwaiting] = useState(false)
+  const [strategyRefreshKey, setStrategyRefreshKey] = useState(0)
 
   // Wiki 浏览状态
   const [wikiPages, setWikiPages] = useState<Array<{path: string; filename: string}>>([])
@@ -184,7 +188,8 @@ export function useStageAnalysis(caseId: string | undefined, defendant: string, 
 
   // ========== 流水线操作 ==========
 
-  const executePipelineStep = useCallback(async (step: number) => {
+  // 返回步骤结果数据（失败返回 false）；4.75 返回 data.awaiting_confirmation 供调用方判断卡点
+  const executePipelineStep = useCallback(async (step: number): Promise<any> => {
     if (!defendant.trim() || !caseId) {
       showAlert({ title: '提示', message: '案件缺少被告人信息，无法开始分析', variant: 'warning' })
       return false
@@ -196,7 +201,7 @@ export function useStageAnalysis(caseId: string | undefined, defendant: string, 
       if (!result.success) throw new Error(result.detail || result.error || `步骤 ${step} 执行失败`)
       setStepResults(prev => ({ ...prev, [step]: result.data }))
       setPipelineStatus(prev => ({ ...prev, [step]: true }))
-      return true
+      return result.data
     } catch (err) {
       throw err
     } finally {
@@ -211,14 +216,21 @@ export function useStageAnalysis(caseId: string | undefined, defendant: string, 
       showAlert({ title: '提示', message: '案件缺少被告人信息，无法开始分析', variant: 'warning' })
       return
     }
-    for (const step of [1, 2, 3, 4, 5]) {
+    // 4.75 是律师确认卡点：返回 awaiting_confirmation 即中断，由确认面板接管步骤 5
+    for (const step of [1, 2, 3, 4, 4.5, 4.75]) {
       if (!pipelineStatus[step]) {
-        const ok = await executePipelineStep(step)
-        if (!ok) return
-        if (step === 5) {
-          navigate(`/case/${caseId}/report`)
+        const data = await executePipelineStep(step)
+        if (!data) return
+        if (step === 4.75 && data?.awaiting_confirmation === true) {
+          setStrategyAwaiting(true)
+          setStrategyRefreshKey(k => k + 1)  // 触发确认面板重新拉取建议
+          return
         }
       }
+    }
+    // 循环结束（4.75 已确认）：步骤 5 已完成则直达报告
+    if (pipelineStatus[5]) {
+      navigate(`/case/${caseId}/report`)
     }
   }, [caseId, defendant, charges, pipelineStatus, executePipelineStep, navigate])
 
@@ -237,7 +249,11 @@ export function useStageAnalysis(caseId: string | undefined, defendant: string, 
     try {
       const result = await api.resumePipeline(caseId, defendant, charges.length > 0 ? charges : [])
       if (result.success) {
-        if (result.all_done) {
+        // 4.75 卡点：待确认时刷新确认面板并停留，由律师确认后驱动步骤 5
+        if (result.data?.awaiting_confirmation === true) {
+          setStrategyAwaiting(true)
+          setStrategyRefreshKey(k => k + 1)
+        } else if (result.all_done) {
           navigate(`/case/${caseId}/report`)
         }
       } else {
@@ -261,6 +277,8 @@ export function useStageAnalysis(caseId: string | undefined, defendant: string, 
       for (let i = 1; i <= 5; i++) {
         if (statusData.status?.[`step_${i}`]?.completed) status[i] = true
       }
+      // 步骤 4.5（控辩对抗）单独透出
+      if (statusData.status?.['step_4.5']?.completed) status[4.5] = true
       setPipelineStatus(status)
 
       const results: Record<number, any> = {}
@@ -273,6 +291,11 @@ export function useStageAnalysis(caseId: string | undefined, defendant: string, 
         }
       }
       setStepResults(results)
+    } catch { /* ignore */ }
+    // 步骤 4.75 待确认状态（驱动步骤指示器高亮 + 确认面板）
+    try {
+      const ds = await api.getDefenseStrategy(caseId)
+      setStrategyAwaiting(ds?.status === 'awaiting_confirmation')
     } catch { /* ignore */ }
   }, [caseId])
 
@@ -396,6 +419,8 @@ export function useStageAnalysis(caseId: string | undefined, defendant: string, 
     stepResults, setStepResults,
     analysisState, setAnalysisState,
     nextStep, setNextStep,
+    strategyAwaiting, setStrategyAwaiting,
+    strategyRefreshKey,
     liveProgress, setLiveProgress,
     executePipelineStep, executeAllSteps,
     executeSingleStep, handleResumeAnalysis,

@@ -78,6 +78,16 @@ export async function updateCaseCharges(caseId: string, charges: string[]): Prom
   return res.json()
 }
 
+// 保存类案检索关键词（写 case.json 的 search_keywords）
+export async function updateCaseSearchKeywords(caseId: string, keywords: string[]): Promise<any> {
+  const res = await safeFetch(`${API_BASE}/cases/${caseId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ search_keywords: keywords })
+  })
+  return res.json()
+}
+
 export async function deleteCase(caseId: string): Promise<any> {
   const res = await fetch(`${API_BASE}/cases/${caseId}`, { method: 'DELETE' })
   return res.json()

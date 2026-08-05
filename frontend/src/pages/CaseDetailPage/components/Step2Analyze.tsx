@@ -3,8 +3,10 @@
 import React from 'react'
 import { Loader2 } from 'lucide-react'
 import { MacOSCard, MacOSButton } from '../../../components/MacOSLayout'
+import DocTypeBadge, { CompletenessDot } from '../../../components/DocTypeBadge'
 import { STAGES } from '../hooks/useStageAnalysis'
 import type { CaseFile } from '../hooks/useCaseFiles'
+import type { EvidenceIndexFile, CompletenessReport } from '../../../api'
 
 interface EvidenceItem {
   id: number | string
@@ -22,6 +24,8 @@ interface Step2AnalyzeProps {
   setCharges: (v: string[]) => void
   evidenceList: EvidenceItem[]
   evidenceExtracted: boolean
+  evidenceFiles?: EvidenceIndexFile[]      // index.json files（文书分类）
+  completeness?: CompletenessReport | null // 提取完整性报告
   stageStatus: Record<number, 'idle' | 'running' | 'completed' | 'error'>
   runningStage: number | null
   stageMessages: Record<number, string>
@@ -35,20 +39,27 @@ interface Step2AnalyzeProps {
   onRefreshEvidence: () => void
   onRefreshFiles: () => void
   pipelineStatus: Record<number | string, boolean>
+  strategyAwaiting?: boolean  // 步骤 4.75 辩护思路待确认（高亮阶段 5）
 }
 
 export function Step2Analyze({
   caseId, defendant, charges, setCharges,
-  evidenceList, evidenceExtracted,
+  evidenceList, evidenceExtracted, evidenceFiles = [], completeness,
   stageStatus, runningStage, stageMessages, stageErrors,
   onRunStage, onRunAll, onStopStage, onClearStage, onViewStage,
   onPreviewEvidence, onRefreshEvidence, onRefreshFiles,
-  pipelineStatus,
+  pipelineStatus, strategyAwaiting = false,
 }: Step2AnalyzeProps) {
+  // 文书分类映射：来源文件名 → doc_type
+  const docTypeMap: Record<string, string> = {}
+  for (const f of evidenceFiles) docTypeMap[f.name] = f.doc_type
+  // 非证据文件（封面/目录等，不参与提取）
+  const nonEvidenceFiles = evidenceFiles.filter(f => f.doc_type.startsWith('non_evidence'))
+
   return (
     <>
       {/* 证据文件列表 */}
-      {evidenceList.length > 0 && (
+      {(evidenceList.length > 0 || nonEvidenceFiles.length > 0) && (
         <MacOSCard style={{ marginBottom: 12 }}>
           <div className="flex-between mb-sm">
             <div className="flex-row gap-sm">
@@ -64,7 +75,9 @@ export function Step2Analyze({
             </button>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '180px', overflowY: 'auto' }}>
-            {evidenceList.map((ev: any) => (
+            {evidenceList.map((ev: any) => {
+              const entry = ev.source ? completeness?.files?.[ev.source] : undefined
+              return (
               <div key={ev.id} style={{
                 display: 'flex', alignItems: 'center', gap: '10px',
                 padding: '8px 10px',
@@ -80,10 +93,16 @@ export function Step2Analyze({
                 }}>{ev.id}</div>
                 <div style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {ev.name}
+                  <DocTypeBadge docType={ev.source ? docTypeMap[ev.source] : undefined} />
                 </div>
                 <div style={{ color: 'var(--macos-text-tertiary)', fontSize: '11px' }}>
                   {ev.type}
                 </div>
+                <CompletenessDot
+                  status={entry?.status}
+                  missingCount={entry?.missing?.length || 0}
+                  needsReview={entry?.needs_review}
+                />
                 {ev.md_file && (
                   <button
                     onClick={() => onPreviewEvidence(ev.md_file, ev.id)}
@@ -98,6 +117,31 @@ export function Step2Analyze({
                     }}
                   >预览</button>
                 )}
+              </div>
+              )
+            })}
+            {nonEvidenceFiles.map(f => (
+              <div key={`non-${f.name}`} style={{
+                display: 'flex', alignItems: 'center', gap: '10px',
+                padding: '8px 10px',
+                background: 'var(--macos-bg-secondary)',
+                borderRadius: '6px',
+                fontSize: '12px',
+                opacity: 0.55,
+              }}>
+                <div style={{
+                  width: '24px', height: '24px', borderRadius: '6px',
+                  background: 'rgba(142,142,147,0.12)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: '11px', fontWeight: '600', color: '#8e8e93'
+                }}>—</div>
+                <div style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {f.name.replace(/\.md$/, '')}
+                  <DocTypeBadge docType={f.doc_type} />
+                </div>
+                <div style={{ color: 'var(--macos-text-tertiary)', fontSize: '11px' }}>
+                  不参与提取
+                </div>
               </div>
             ))}
           </div>
@@ -191,14 +235,16 @@ export function Step2Analyze({
             const evidenceDisabled = !evidenceExtracted
             const seqDisabled = !canStartStage(stage.num)
             const analysisDisabled = evidenceDisabled || seqDisabled
+            // 阶段 5（综合辩护）前置卡点：步骤 4.75 辩护思路待确认时高亮提示
+            const awaitingStrategy = stage.num === 5 && strategyAwaiting && status !== 'completed' && status !== 'running'
 
             return (
               <div key={stage.num} style={{
                 display: 'flex', alignItems: 'center', gap: '12px',
                 padding: '12px',
                 borderRadius: '8px',
-                border: `1px solid ${status === 'completed' ? 'rgba(59,89,152,0.2)' : status === 'error' ? 'rgba(102,102,102,0.15)' : 'var(--macos-border)'}`,
-                background: status === 'completed' ? 'rgba(59,89,152,0.04)' : status === 'error' ? 'rgba(102,102,102,0.03)' : 'var(--macos-bg-secondary)',
+                border: awaitingStrategy ? '1px solid rgba(255,149,0,0.45)' : `1px solid ${status === 'completed' ? 'rgba(59,89,152,0.2)' : status === 'error' ? 'rgba(102,102,102,0.15)' : 'var(--macos-border)'}`,
+                background: awaitingStrategy ? 'rgba(255,149,0,0.07)' : status === 'completed' ? 'rgba(59,89,152,0.04)' : status === 'error' ? 'rgba(102,102,102,0.03)' : 'var(--macos-bg-secondary)',
                 opacity: analysisDisabled ? 0.5 : 1,
                 transition: 'opacity 0.2s'
               }}>
@@ -214,6 +260,11 @@ export function Step2Analyze({
 
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: '13px', fontWeight: '500' }}>{stage.name}</div>
+                  {awaitingStrategy && (
+                    <div style={{ fontSize: '11px', color: '#ff9500', fontWeight: 500 }}>
+                      辩护思路待确认 — 请在上方确认面板中处理后再继续
+                    </div>
+                  )}
                   {msg && <div style={{ fontSize: '11px', color: 'var(--macos-accent)' }}>{msg}</div>}
                   {errMsg && <div style={{ fontSize: '11px', color: '#666666' }}>{errMsg}</div>}
                   {!msg && !errMsg && seqDisabled && (

@@ -87,6 +87,8 @@ class CaseInfo(BaseModel):
     status: str
     file_count: int = 0
     case_dir: str  # 案件文件夹路径
+    search_keywords: list = []     # 律师确认的类案检索关键词
+    suggested_keywords: list = []  # LLM 推荐的类案检索关键词
 
 
 class CreateCaseRequest(BaseModel):
@@ -334,12 +336,9 @@ async def create_case(request: CreateCaseRequest) -> CaseInfo:
 
 @router.patch("/{case_id}")
 async def update_case(case_id: str, request: Request):
-    """更新案件信息（目前支持 charges）"""
+    """更新案件信息（支持 charges、search_keywords）"""
     import json as _json
     body = await request.json()
-    charges = body.get("charges", [])
-    # 输入校验
-    charges = [c.strip()[:100] for c in charges if c.strip()][:20]
     case_path = find_case_path(case_id)
     if not case_path:
         raise HTTPException(status_code=404, detail="案件不存在")
@@ -348,7 +347,13 @@ async def update_case(case_id: str, request: Request):
         raise HTTPException(status_code=404, detail="案件元数据不存在")
     with open(meta_file, 'r', encoding='utf-8') as f:
         meta = json.load(f)
-    meta["charges"] = charges
+    # 仅更新请求中携带的字段，避免单字段更新时误清其他字段
+    if "charges" in body:
+        # 输入校验
+        meta["charges"] = [c.strip()[:100] for c in body["charges"] if isinstance(c, str) and c.strip()][:20]
+    if "search_keywords" in body:
+        # 类案检索关键词（律师编辑确认）
+        meta["search_keywords"] = [k.strip()[:50] for k in body["search_keywords"] if isinstance(k, str) and k.strip()][:30]
     # 原子写入：先写临时文件再 rename，防止并发写入导致数据损坏
     import tempfile
     tmp_fd, tmp_path = tempfile.mkstemp(dir=str(case_path), suffix='.json')
@@ -360,8 +365,8 @@ async def update_case(case_id: str, request: Request):
         try: os.unlink(tmp_path)
         except OSError: pass
         raise
-    logger.info(f"[案件更新] {case_id}: charges={charges}")
-    return {"success": True, "charges": charges}
+    logger.info(f"[案件更新] {case_id}: charges={meta.get('charges', [])} search_keywords={meta.get('search_keywords', [])}")
+    return {"success": True, "charges": meta.get("charges", []), "search_keywords": meta.get("search_keywords", [])}
 
 
 @router.post("/import")
@@ -955,12 +960,8 @@ _EVIDENCE_EXTRACTION_RULES = """
 
 ### 封面/目录/三面照
 
-**必须提取为独立证据，不得遗漏。**
-
-- 封面（刑事侦查卷宗信息）：提取为"卷宗封面"
-- 卷内文书目录：提取为"卷内目录"
-- 犯罪嫌疑人三面照/照片：提取为"嫌疑人三面照"或"嫌疑人照片"
-- 其他程序性首页信息：提取为"案卷首页信息"
+封面（刑事侦查卷宗信息）、卷内文书目录、封底、备考表：照常提取为独立条目（如"卷宗封面""卷内目录"），它们会在后续被标注为非证据，但必须保留在提取结果中以保证案卷完整性。
+嫌疑人三面照/照片是证据，提取为"嫌疑人三面照"。
 
 ### 起诉意见书/起诉书
 
@@ -1099,6 +1100,7 @@ async def _extract_single_file(
     md_text: str,
     temp_dir: Path,
     charges: list = None,
+    framework_prefix: str = "",
 ) -> tuple:
     """
     提取单个 MD 文件的证据（不含信号量和重试控制，由调用方管理）。
@@ -1106,8 +1108,8 @@ async def _extract_single_file(
     返回：(md_filename, evidence_list)
     evidence_list 中每项包含证据数据，文件保存在 temp_dir 中。
     """
-    from config_manager import get_config_value
     from llm_client import get_llm_client, LLMRetryExhaustedError
+    from doc_classifier import classify_evidence_item
     client = get_llm_client()
 
     # 不做预过滤，保留完整原始内容（封面、目录等由LLM自行判断）
@@ -1120,12 +1122,33 @@ async def _extract_single_file(
         charges_str = f"当前案件指控罪名：{'、'.join(charges)}"
 
     # 按 token 预算分块（用 tiktoken 精确计算，按 ## 标题边界拆分）
-    context_limit = int(get_config_value("model_context_limit", "250000"))
-    content_budget = context_limit - 38000  # 预留 system prompt + 提取规则 + 响应
+    import context_budget
+    # 字符预算转 token 预算（分块按 tiktoken 计数）：与统一公式保持一致
+    content_budget = int(context_budget.content_budget_chars() / context_budget.CHARS_PER_TOKEN)
     if content_budget < 50000:
         content_budget = 50000  # 最少保证 50K tokens
 
     chunks = _split_content_by_tokens(md_text, content_budget, md_file.name)
+
+    # 块缓存失效机制：预算或文本长度变化后，旧块缓存（按块下标键控）会错配，需全部失效
+    meta_file = temp_dir / "_chunking_meta.json"
+    current_meta = {"budget": content_budget, "text_len": len(md_text), "chunks": len(chunks)}
+    if len(chunks) > 1 and meta_file.exists():
+        stale = True
+        try:
+            stale = json.loads(meta_file.read_text(encoding="utf-8")) != current_meta
+        except Exception:
+            stale = True  # meta 损坏视为失效
+        if stale:
+            for f in temp_dir.glob(".chunk_*.done"):
+                f.unlink(missing_ok=True)
+            for f in temp_dir.glob("_chunk_*_blocks.json"):
+                f.unlink(missing_ok=True)
+            logger.info(f"[证据提取] {md_file.name}: 分块参数变化，旧块缓存已失效，重新提取")
+    try:
+        meta_file.write_text(json.dumps(current_meta, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
 
     # 统计讯问笔录次数，提示LLM逐份提取
     interrog_count = len(re.findall(r'被讯问人[：:]\s*\S', md_text))
@@ -1143,28 +1166,43 @@ async def _extract_single_file(
         # 单块，直接发送
         result = await asyncio.wait_for(
             client.chat([
-                {"role": "system", "content": _EVIDENCE_SYSTEM_PROMPT + "\n\n" + _EVIDENCE_EXTRACTION_RULES},
+                {"role": "system", "content": _EVIDENCE_SYSTEM_PROMPT + "\n\n" + _EVIDENCE_EXTRACTION_RULES + framework_prefix},
                 {"role": "user", "content": f"## 案卷文件：{md_file.name}\n\n{charges_str}{hint}\n\n{md_text}"},
             ]),
             timeout=timeout_seconds,
         )
         evidence_blocks = _parse_evidence_blocks(result, md_file.name)
     else:
-        # 多块，逐块提取后合并
+        # 多块，逐块提取后合并（块级断点续传：已完成块跳过）
         all_evidence_blocks = []
         for ci, chunk in enumerate(chunks):
             chunk_label = chunk["label"]
+            done_marker = temp_dir / f".chunk_{ci}.done"
+            blocks_file = temp_dir / f"_chunk_{ci}_blocks.json"
+            if done_marker.exists() and blocks_file.exists():
+                try:
+                    cached = json.loads(blocks_file.read_text(encoding="utf-8"))
+                    all_evidence_blocks.extend(cached)
+                    logger.info(f"[证据提取] {chunk_label}: 已完成，跳过（缓存 {len(cached)} 份）")
+                    continue
+                except Exception:
+                    pass  # 缓存损坏则重提该块
             chunk_text = chunk["text"]
             logger.info(f"[证据提取] {chunk_label}: 发送 {_count_tokens(chunk_text)} tokens")
             result = await asyncio.wait_for(
                 client.chat([
-                    {"role": "system", "content": _EVIDENCE_SYSTEM_PROMPT + "\n\n" + _EVIDENCE_EXTRACTION_RULES},
+                    {"role": "system", "content": _EVIDENCE_SYSTEM_PROMPT + "\n\n" + _EVIDENCE_EXTRACTION_RULES + framework_prefix},
                     {"role": "user", "content": f"## 案卷文件：{chunk_label}\n\n{charges_str}\n\n{chunk_text}"},
                 ]),
                 timeout=timeout_seconds,
             )
             blocks = _parse_evidence_blocks(result, chunk_label)
             logger.info(f"[证据提取] {chunk_label}: 提取 {len(blocks)} 份证据")
+            try:
+                blocks_file.write_text(json.dumps(blocks, ensure_ascii=False), encoding="utf-8")
+                done_marker.write_text("", encoding="utf-8")
+            except Exception:
+                pass
             all_evidence_blocks.extend(blocks)
         evidence_blocks = _merge_evidence_blocks(all_evidence_blocks)
         logger.info(f"[证据提取] {md_file.name}: {len(chunks)} 块合并后 {len(evidence_blocks)} 份证据")
@@ -1194,6 +1232,7 @@ async def _extract_single_file(
 | **证据类型** | {ev_block['type']} |
 | **来源文件** | {ev_block['source']} |
 | **涉案人员** | {ev_block.get('persons', '未识别')} |
+| **关联要件** | {'、'.join(ev_block.get('elements', [])) or '无'} |
 
 ## 关联信息
 
@@ -1220,10 +1259,12 @@ async def _extract_single_file(
             "name": ev_name,
             "type": ev_block["type"],
             "source": md_file.name,
+            "doc_type": classify_evidence_item(ev_name),
             "page_range": ev_block.get("page_range", ""),
             "persons": ev_block.get("persons", ""),
             "related_entities": ev_block.get("related_entities", ""),
             "charges": ev_block.get("charges", []),
+            "elements": ev_block.get("elements", []),
             "proves_facts": ev_block.get("proves_facts", []),
             "proves_details": ev_block.get("proves_details", {}),
             "summary_preview": ev_block["summary"][:200],
@@ -1242,6 +1283,7 @@ async def _extract_single_file_with_tracking(
     temp_dir: Path,
     semaphore: asyncio.Semaphore,
     charges: list = None,
+    framework_prefix: str = "",
 ) -> tuple:
     """
     包装 _extract_single_file，管理信号量和重试。
@@ -1254,7 +1296,7 @@ async def _extract_single_file_with_tracking(
         # 获取信号量，执行提取
         async with semaphore:
             try:
-                result = await _extract_single_file(md_file, md_text, temp_dir, charges)
+                result = await _extract_single_file(md_file, md_text, temp_dir, charges, framework_prefix)
                 return result
             except asyncio.TimeoutError:
                 last_error = f"LLM 调用超时（600s）"
@@ -1428,6 +1470,19 @@ async def _do_extract_evidence(
     if case_charges:
         logger.info(f"[证据提取] 案件罪名: {case_charges}")
 
+    # 提取指引法律框架（要件 + 类案裁判规则，每案件一次缓存）
+    from extraction_framework import build_extraction_framework, framework_prompt_prefix
+    _fw_keywords = []
+    try:
+        meta_for_kw = json.loads(case_json.read_text(encoding="utf-8")) if case_json.exists() else {}
+        _fw_keywords = meta_for_kw.get("search_keywords") or meta_for_kw.get("suggested_keywords") or []
+    except Exception:
+        pass
+    extraction_fw = await build_extraction_framework(evidence_dir, case_charges, _fw_keywords)
+    extraction_fw_prefix = framework_prompt_prefix(extraction_fw)
+    if extraction_fw_prefix:
+        logger.info(f"[证据提取] 法律框架已注入（要件 {len(extraction_fw.get('elements', []))} 个，类案 {len(extraction_fw.get('case_rules', {}))} 个罪名）")
+
     # 读取已提取的证据索引（断点续传：跳过已提取的 MD 文件）
     index_file = evidence_dir / "index.json"
     processed_sources = set()
@@ -1491,8 +1546,28 @@ async def _do_extract_evidence(
             return sorted(files, key=lambda f: _parse_volume_sort_key(f.name))
 
         all_md_files = _sort_md_files(list(md_dir.glob("*.md")))
-        indictment_files = [f for f in all_md_files if _is_indictment(f.name)]
-        other_files = [f for f in all_md_files if not _is_indictment(f.name)]
+
+        # 文书分类：非证据（封面/目录/封底/备考表）标注后跳过提取（文件保留）
+        from doc_classifier import classify_document
+        file_classifications = {}  # filename -> doc_type
+        evidence_md_files = []
+        for f in all_md_files:
+            # 流式读取文件头，避免整文件载入内存只为取前 500 字
+            with f.open(encoding="utf-8", errors="ignore") as fh:
+                head_text = fh.read(2000)
+            doc_type = await classify_document(f.name, head_text[:500], f.stat().st_size)
+            file_classifications[f.name] = doc_type
+            if doc_type.startswith("non_evidence"):
+                logger.info(f"[证据提取] {f.name} 标注为非证据（{doc_type.split(':')[1]}），保留文件不入提取")
+                # 非证据也计入进度，避免进度条缺格
+                task = EXTRACT_TASKS.get(case_id)
+                if task:
+                    task["processed_files"] = task.get("processed_files", 0) + 1
+            else:
+                evidence_md_files.append(f)
+
+        indictment_files = [f for f in evidence_md_files if _is_indictment(f.name)]
+        other_files = [f for f in evidence_md_files if not _is_indictment(f.name)]
 
         # ── 第1步：普通文件并发提取（先处理，让用户快速看到进度）──
         pending_files = [f for f in other_files if f.name not in processed_sources]
@@ -1568,7 +1643,7 @@ async def _do_extract_evidence(
 
                     logger.info(f"[证据提取] 处理: {md_file.name}")
                     source_name, evidence_list = await _extract_single_file_with_tracking(
-                        md_file, md_text, file_temp_dir, semaphore, case_charges
+                        md_file, md_text, file_temp_dir, semaphore, case_charges, extraction_fw_prefix
                     )
 
                     # 停止心跳
@@ -1897,12 +1972,31 @@ async def _do_extract_evidence(
             "total_evidence": len(all_evidence),
             "evidence": all_evidence,
             "case_charges": case_charges,
+            "files": [{"name": n, "doc_type": t} for n, t in file_classifications.items()],
             "generated_at": datetime.now().isoformat(),
         }
         # 如果提取结果为 0，记录可能的原因供前端展示
         if len(all_evidence) == 0:
             index_data["error_hint"] = "LLM 提取全部失败（详见后端日志），可能原因：API Key 无效、Base URL 不可达、模型名称错误、或所有 MD 文件解析失败"
         index_file.write_text(json.dumps(index_data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        # 完整性校验（规则对账 + LLM 抽检关键文书）
+        try:
+            from completeness import check_completeness
+            source_texts = {}
+            for f in evidence_md_files:
+                source_texts[f.name] = f.read_text(encoding="utf-8")
+            extracted_by_file: dict = {}
+            for ev in index_data.get("evidence", []):
+                extracted_by_file.setdefault(ev.get("source", ""), []).append(ev.get("name", ""))
+            # 全案件证据名：全局交叉核对（本文件未提取但他卷已覆盖的不误报）
+            all_names = [ev.get("name", "") for ev in index_data.get("evidence", [])]
+            completeness_report = await check_completeness(source_texts, extracted_by_file, all_names)
+            (evidence_dir / "completeness_report.json").write_text(
+                json.dumps(completeness_report, ensure_ascii=False, indent=2), encoding="utf-8")
+            logger.info(f"[证据提取] 完整性校验: {completeness_report['summary']}")
+        except Exception as e:
+            logger.warning(f"[证据提取] 完整性校验失败（不影响提取结果）: {e}")
 
         # 清理临时文件（无论走哪个分支都清理）
         old_temp = evidence_dir / "_temp_extract"
@@ -1967,6 +2061,18 @@ async def get_evidence_index(case_id: str):
         return {"total_evidence": 0, "evidence": []}
 
     return json.loads(index_file.read_text(encoding="utf-8"))
+
+
+@router.get("/{case_id}/evidence/completeness")
+async def get_evidence_completeness(case_id: str):
+    """提取完整性报告"""
+    case_path = find_case_path(case_id)
+    if not case_path:
+        raise HTTPException(status_code=404, detail="案件不存在")
+    report_file = case_path / "evidence" / "completeness_report.json"
+    if not report_file.exists():
+        return {"files": {}, "summary": {}}
+    return json.loads(report_file.read_text(encoding="utf-8"))
 
 
 @router.get("/{case_id}/extract-status")
@@ -2157,55 +2263,6 @@ async def clear_stage(case_id: str, stage_num: int):
 
 _tiktoken_enc = None
 
-# ── 非证据过滤 ──
-
-_SKIP_SECTION_KEYWORDS = {"卷内文书目录"}
-
-
-def _strip_cover_page(text: str) -> str:
-    """移除文件开头的封面（刑事侦查卷宗标识+卷内文书目录表格+三面照）。
-    只跳过开头的封面块，遇到第一个实质文书标题即保留。
-    """
-    lines = text.split("\n")
-    # 找第一个实质文书标题：跳过"刑事侦查卷宗"和"卷内文书目录"封面块
-    in_cover = True
-    for i, line in enumerate(lines):
-        stripped = line.strip()
-        # 封面标识：跳过
-        if stripped in ("# 刑事侦查卷宗", "# 封底", "## 卷内文书目录"):
-            continue
-        # 封面块内的目录表格行（<table>开头）和三面照也跳过
-        if in_cover and (stripped.startswith("<table>") or stripped.startswith("![]") or stripped == "" or "三面照" in stripped or re.match(r'^冯叶飞$', stripped) or re.match(r'^\d{18}$', stripped)):
-            continue
-        # 第一个实质标题（# 或 ##）或实质内容
-        if line.startswith("# ") or line.startswith("## "):
-            return "\n".join(lines[i:])
-        # 非标题实质内容，也停止跳过
-        if stripped and not stripped.startswith("|"):
-            return "\n".join(lines[i:])
-        in_cover = False
-    return text
-
-
-def _strip_non_evidence_sections(text: str) -> str:
-    """移除文件中的卷内文书目录段（表格目录），不破坏文书结构。
-    只删除开头的目录段，到下一个标题（#或##）即停止。
-    """
-    text = _strip_cover_page(text)
-    # 找开头的卷内文书目录段
-    match = re.search(r'^## 卷内文书目录', text, re.MULTILINE)
-    if match:
-        start = match.start()
-        # 找目录段结尾：下一个任意标题（# 或 ##）
-        rest = text[match.end():]
-        next_header = re.search(r'\n#{1,2} ', rest)
-        if next_header:
-            end = match.end() + next_header.start()
-            text = text[:start] + text[end:]
-        else:
-            text = text[:start]
-    return text
-
 
 def _count_tokens(text: str) -> int:
     """用 tiktoken 精确计算 token 数"""
@@ -2213,6 +2270,21 @@ def _count_tokens(text: str) -> int:
     if _tiktoken_enc is None:
         _tiktoken_enc = tiktoken.get_encoding("cl100k_base")
     return len(_tiktoken_enc.encode(text))
+
+
+# 块间重叠字符数（约 370 tokens），防止跨块事实被切断
+OVERLAP_CHARS = 500
+
+
+def _overlap_tail(text: str) -> str:
+    """取文本尾部 ≤OVERLAP_CHARS 字符作为下一块的重叠前缀（尽量段落边界）"""
+    if len(text) <= OVERLAP_CHARS:
+        return ""
+    tail = text[-OVERLAP_CHARS:]
+    para = tail.find("\n\n")
+    if para > 0:
+        tail = tail[para + 2:]
+    return tail.strip()
 
 
 def _split_content_by_tokens(text: str, budget: int, source_name: str) -> list:
@@ -2237,27 +2309,48 @@ def _split_content_by_tokens(text: str, budget: int, source_name: str) -> list:
     chunks = []
     current_parts: list[str] = []
     current_tokens = 0
+    pending_overlap = ""  # 上一个已发出块的尾部，作为下一块的重叠前缀
+
+    def _emit(text: str) -> None:
+        nonlocal pending_overlap
+        chunks.append({"label": source_name, "text": text})
+        pending_overlap = _overlap_tail(text)
+
+    def _start_parts(section: str, sec_tokens: int) -> None:
+        """开始新的 current_parts，带上前一块的重叠前缀（若有）"""
+        nonlocal current_tokens
+        if pending_overlap:
+            current_parts.append(pending_overlap + "\n\n" + section)
+            current_tokens = _count_tokens(pending_overlap) + sec_tokens
+        else:
+            current_parts.append(section)
+            current_tokens = sec_tokens
 
     for section in sections:
         sec_tokens = _count_tokens(section)
         if sec_tokens > budget:
             # 单段超过预算，先把前面积累的发出
             if current_parts:
-                chunks.append({"label": source_name, "text": "\n".join(current_parts)})
+                _emit("\n".join(current_parts))
                 current_parts = []
                 current_tokens = 0
             # 超长段内部按三级标题再拆
             sub_chunks = _split_content_by_tokens(section, budget, source_name)
             chunks.extend(sub_chunks)
+            if sub_chunks:
+                pending_overlap = _overlap_tail(sub_chunks[-1]["text"])
             continue
         if current_tokens + sec_tokens > budget:
             # 加上这段会超预算，先把当前积累发出
-            chunks.append({"label": source_name, "text": "\n".join(current_parts)})
-            current_parts = [section]
-            current_tokens = sec_tokens
+            _emit("\n".join(current_parts))
+            current_parts = []
+            _start_parts(section, sec_tokens)
         else:
-            current_parts.append(section)
-            current_tokens += sec_tokens
+            if not current_parts:
+                _start_parts(section, sec_tokens)
+            else:
+                current_parts.append(section)
+                current_tokens += sec_tokens
 
     if current_parts:
         chunks.append({"label": source_name, "text": "\n".join(current_parts)})
@@ -2272,14 +2365,15 @@ def _split_content_by_tokens(text: str, budget: int, source_name: str) -> list:
 
 
 def _split_by_token_count(text: str, budget: int, source_name: str) -> list:
-    """降级方案：无标题边界时按固定 token 数硬切"""
+    """降级方案：无标题边界时按固定 token 数硬切（块间回退 250 tokens 重叠）"""
     global _tiktoken_enc
     if _tiktoken_enc is None:
         _tiktoken_enc = tiktoken.get_encoding("cl100k_base")
 
     tokens = _tiktoken_enc.encode(text)
     chunks = []
-    for i in range(0, len(tokens), budget):
+    step = max(1, budget - 250)  # 每块步进 budget-250，重叠 250 tokens
+    for i in range(0, len(tokens), step):
         chunk_tokens = tokens[i:i + budget]
         chunk_text = _tiktoken_enc.decode(chunk_tokens)
         chunks.append({"label": source_name, "text": chunk_text})
@@ -2378,6 +2472,7 @@ def _parse_evidence_blocks(llm_output: str, source_file: str) -> list:
                             "original_quotes": item.get("original_quotes", item.get("原文摘录", "")),
                             "contradiction_hints": item.get("contradiction_hints", item.get("矛盾提示", "无")),
                             "related_entities": item.get("related_entities", item.get("关联信息", "")),
+                            "elements": item.get("elements", item.get("关联要件", [])) or [],
                             "proves_facts": item.get("proves_facts", []),
                             "proves_details": item.get("proves_details", {}),
                             "raw_text": json.dumps(item, ensure_ascii=False, indent=2),
@@ -2468,6 +2563,8 @@ def _parse_evidence_blocks(llm_output: str, source_file: str) -> list:
         related_entities = _extract_field(content, "关联信息") or ""
         ev_charges_str = _extract_field(content, "关联罪名") or ""
         ev_charges = [c.strip() for c in ev_charges_str.replace("、", ",").split(",") if c.strip()] if ev_charges_str else []
+        ev_elements_str = _extract_field(content, "关联要件") or ""
+        ev_elements = [c.strip() for c in ev_elements_str.replace("、", ",").split(",") if c.strip()] if ev_elements_str else []
 
         # ── 解析"证明对象"：LLM 对6个待证事实的逐项判断 ──
         proves_facts = []
@@ -2499,6 +2596,7 @@ def _parse_evidence_blocks(llm_output: str, source_file: str) -> list:
             "key_facts": key_facts.strip(),
             "summary": summary.strip(),
             "charges": ev_charges,
+            "elements": ev_elements,
             "proves_facts": proves_facts,
             "proves_details": proves_details,
             "original_quotes": original_quotes.strip(),

@@ -2,6 +2,8 @@
 
 import React from 'react'
 import { MacOSCard, MacOSButton } from '../../../components/MacOSLayout'
+import DocTypeBadge, { CompletenessDot } from '../../../components/DocTypeBadge'
+import type { EvidenceIndexFile, CompletenessReport } from '../../../api'
 
 interface EvidenceItem {
   id: number | string
@@ -15,6 +17,8 @@ interface Step1ExtractProps {
   files: Array<{ status: string }>
   evidenceList: EvidenceItem[]
   evidenceExtracted: boolean
+  evidenceFiles?: EvidenceIndexFile[]      // index.json files（文书分类）
+  completeness?: CompletenessReport | null // 提取完整性报告
   processing: boolean
   onExtract: () => void
   onStop: () => void
@@ -23,10 +27,25 @@ interface Step1ExtractProps {
 }
 
 export function Step1Extract({
-  files, evidenceList, evidenceExtracted, processing,
-  onExtract, onStop, onClear,
+  files, evidenceList, evidenceExtracted, evidenceFiles = [], completeness,
+  processing, onExtract, onStop, onClear,
 }: Step1ExtractProps) {
   const mdConversionComplete = files.length > 0 && files.every(f => f.status === 'done')
+
+  // 文书分类映射：来源文件名 → doc_type
+  const docTypeMap: Record<string, string> = {}
+  for (const f of evidenceFiles) docTypeMap[f.name] = f.doc_type
+  // 非证据文件（封面/目录等，不参与提取）
+  const nonEvidenceFiles = evidenceFiles.filter(f => f.doc_type.startsWith('non_evidence'))
+
+  // 完整性摘要：N 份证据完整 · N 份疑似遗漏 · N 份非证据
+  const summary = completeness?.summary || {}
+  const okCount = summary.ok || 0
+  const suspectCount = (summary.suspect || 0) + (summary.failed || 0)
+  const summaryParts: string[] = []
+  if (okCount > 0) summaryParts.push(`${okCount} 份证据完整`)
+  if (suspectCount > 0) summaryParts.push(`${suspectCount} 份疑似遗漏`)
+  if (nonEvidenceFiles.length > 0) summaryParts.push(`${nonEvidenceFiles.length} 份非证据`)
 
   return (
     <MacOSCard style={{ marginTop: 12 }}>
@@ -50,28 +69,74 @@ export function Step1Extract({
           )}
         </div>
       </div>
-      {evidenceList.length > 0 && (
+      {summaryParts.length > 0 && (
+        <div style={{
+          fontSize: '11px', color: suspectCount > 0 ? '#ff9500' : 'var(--macos-text-secondary)',
+          padding: '6px 10px', marginBottom: '8px',
+          background: suspectCount > 0 ? 'rgba(255,149,0,0.06)' : 'var(--macos-bg-secondary)',
+          borderRadius: '6px',
+          border: `1px solid ${suspectCount > 0 ? 'rgba(255,149,0,0.2)' : 'var(--macos-border)'}`,
+        }}>
+          {summaryParts.join(' · ')}
+        </div>
+      )}
+      {(evidenceList.length > 0 || nonEvidenceFiles.length > 0) && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '300px', overflowY: 'auto' }}>
-          {evidenceList.map(ev => (
-            <div key={ev.id} style={{
+          {evidenceList.map(ev => {
+            const entry = ev.source ? completeness?.files?.[ev.source] : undefined
+            return (
+              <div key={ev.id} style={{
+                display: 'flex', alignItems: 'center', gap: '12px',
+                padding: '10px 12px',
+                background: 'var(--macos-bg-secondary)',
+                borderRadius: '8px',
+                border: '1px solid var(--macos-border)'
+              }}>
+                <div style={{
+                  width: '28px', height: '28px', borderRadius: '6px',
+                  background: 'var(--macos-accent-light)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: '12px', fontWeight: '600', color: 'var(--macos-accent)'
+                }}>{ev.id}</div>
+                <div style={{ flex: 1, overflow: 'hidden' }}>
+                  <div style={{ fontSize: '13px', fontWeight: '500', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {ev.name}
+                    <DocTypeBadge docType={ev.source ? docTypeMap[ev.source] : undefined} />
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--macos-text-secondary)' }}>
+                    {ev.type} · {ev.source}{ev.page_range ? ' · ' + ev.page_range : ''}
+                  </div>
+                </div>
+                <CompletenessDot
+                  status={entry?.status}
+                  missingCount={entry?.missing?.length || 0}
+                  needsReview={entry?.needs_review}
+                />
+              </div>
+            )
+          })}
+          {nonEvidenceFiles.map(f => (
+            <div key={`non-${f.name}`} style={{
               display: 'flex', alignItems: 'center', gap: '12px',
               padding: '10px 12px',
               background: 'var(--macos-bg-secondary)',
               borderRadius: '8px',
-              border: '1px solid var(--macos-border)'
+              border: '1px solid var(--macos-border)',
+              opacity: 0.55,
             }}>
               <div style={{
                 width: '28px', height: '28px', borderRadius: '6px',
-                background: 'var(--macos-accent-light)',
+                background: 'rgba(142,142,147,0.12)',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: '12px', fontWeight: '600', color: 'var(--macos-accent)'
-              }}>{ev.id}</div>
+                fontSize: '12px', fontWeight: '600', color: '#8e8e93'
+              }}>—</div>
               <div style={{ flex: 1, overflow: 'hidden' }}>
                 <div style={{ fontSize: '13px', fontWeight: '500', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {ev.name}
+                  {f.name.replace(/\.md$/, '')}
+                  <DocTypeBadge docType={f.doc_type} />
                 </div>
                 <div style={{ fontSize: '11px', color: 'var(--macos-text-secondary)' }}>
-                  {ev.type} · {ev.source}{ev.page_range ? ' · ' + ev.page_range : ''}
+                  {f.name} · 不参与证据提取
                 </div>
               </div>
             </div>

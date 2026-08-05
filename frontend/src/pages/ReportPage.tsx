@@ -5,9 +5,9 @@ import { FileText, Loader2, Send, Download, Check,
   PanelLeftClose, Trash2, CheckSquare, RefreshCw,
   FileBarChart, GitCompareArrows, Clock, Users, BookOpen, Eye,
   Gavel, Phone, Mail, Building2, StickyNote, Edit3, Swords, Network, Search, ExternalLink, Printer,
-  BarChart3, Grid3x3, Maximize2, Minimize2, X
+  BarChart3, Grid3x3, Maximize2, Minimize2, X, Target
 } from 'lucide-react'
-import { api, reviewEvidence, getEvidenceReview, EvidenceReviewItem, EvidenceReviewResult, generateReviewNotes, getReviewNotes, generateCrossExamination, getCrossExamination, getPersonRelation, RelationGraphData, getEventTimeline, TimelineData, searchSimilarCases, SimilarCasesData } from '../api'
+import { api, reviewEvidence, getEvidenceReview, EvidenceReviewItem, EvidenceReviewResult, generateReviewNotes, getReviewNotes, generateCrossExamination, getCrossExamination, getPersonRelation, RelationGraphData, getEventTimeline, TimelineData, searchSimilarCases, SimilarCasesData, getDefenseStrategy, DefenseStrategy, getWikiIndex, getWikiPage } from '../api'
 import { getEvidenceChain, EvidenceChainData } from '../api/stages'
 import { EvidenceChainMindmap } from '../components/EvidenceChainMindmap'
 import { EvidenceChainGraph } from '../components/EvidenceChainGraph'
@@ -21,6 +21,7 @@ import { MermaidRenderer } from '../components/MermaidRenderer'
 import { PdfViewer } from '../components/PdfViewer'
 import { StickyNoteOverlay } from '../components/StickyNoteOverlay'
 import { ReportRenderer } from '../components/report/ReportRenderer'
+import DocTypeBadge from '../components/DocTypeBadge'
 import { colors } from '../components/report/reportColors'
 import CaseSearchPanel from '../components/report/CaseSearchPanel'
 import { PersonRelationGraph } from '../components/PersonRelationGraph'
@@ -43,6 +44,7 @@ const TABS = [
   { key: 'evidence_center', label: '证据中心', icon: Eye, color: '#1a6b6a', bgColor: 'rgba(26,107,106,0.08)' }, // 证据列表+三性审查+证据链+阅卷笔录
   { key: 'stage_52', label: '矛盾分析', icon: GitCompareArrows, color: '#991b1b', bgColor: 'rgba(153,27,27,0.08)' },
   { key: 'stage_6', label: '控辩对抗', icon: Swords, color: '#7c3aed', bgColor: 'rgba(124,58,237,0.08)' },
+  { key: 'defense_strategy', label: '辩护思路', icon: Target, color: '#8e5a2a', bgColor: 'rgba(142,90,42,0.08)' },
   { key: 'defense_opinion', label: '辩护意见', icon: Scale, color: '#831843', bgColor: 'rgba(131,24,67,0.08)' }, // 三阶层+质证意见+完整报告
 ]
 
@@ -107,6 +109,8 @@ export function ReportPage() {
   const [evidenceItems, setEvidenceItems] = useState<EvidenceItem[]>([])
   const [selectedEvidenceId, setSelectedEvidenceId] = useState<string>('')
   const [selectedEvidenceContent, setSelectedEvidenceContent] = useState('')
+  // 文书分类映射（index.json files）：文件名 → doc_type（evidence / non_evidence:封面 等）
+  const [docTypeMap, setDocTypeMap] = useState<Record<string, string>>({})
 
   // Chat
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
@@ -158,6 +162,10 @@ export function ReportPage() {
   const [crossExamination, setCrossExamination] = useState<string>('')
   const [crossExaminationLoading, setCrossExaminationLoading] = useState(false)
 
+  // 辩护思路状态（步骤 4.75 确认稿）
+  const [defenseStrategy, setDefenseStrategy] = useState<DefenseStrategy | null>(null)
+  const [defenseStrategyLoading, setDefenseStrategyLoading] = useState(false)
+
   // 人物关系图状态
   const [personRelationData, setPersonRelationData] = useState<RelationGraphData | null>(null)
   const [personRelationLoading, setPersonRelationLoading] = useState(false)
@@ -170,6 +178,9 @@ export function ReportPage() {
   const [similarCasesData, setSimilarCasesData] = useState<SimilarCasesData | null>(null)
   const [similarCasesLoading, setSimilarCasesLoading] = useState(false)
   const [showSimilarCases, setShowSimilarCases] = useState(false)
+
+  // Wiki 类案裁判规则（04-法律依据/类案裁判规则-*.md，自动检索产物）
+  const [caseRulePages, setCaseRulePages] = useState<Array<{ path: string; content: string }>>([])
 
   // 证据中心折叠面板状态
   const [evidenceCenterPanels, setEvidenceCenterPanels] = useState({
@@ -314,6 +325,31 @@ export function ReportPage() {
     }
   }, [activeTab, caseId])
 
+  // 切换至法律法规 tab 时加载 Wiki 类案裁判规则（04-法律依据/类案裁判规则-*.md）
+  useEffect(() => {
+    if (activeTab !== 'stage_4' || !caseId) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const index = await getWikiIndex(caseId)
+        const pages: Array<{ path: string }> = index?.pages || []
+        const rulePages = pages.filter(p => p.path.startsWith('04-法律依据/类案裁判规则-'))
+        const loaded: Array<{ path: string; content: string }> = []
+        for (const p of rulePages) {
+          try {
+            const page = await getWikiPage(caseId, p.path)
+            if (page?.content) loaded.push({ path: p.path, content: page.content })
+          } catch { /* 单页失败跳过，不影响其他页 */ }
+        }
+        if (!cancelled) setCaseRulePages(loaded)
+      } catch {
+        // Wiki 未构建或请求失败：不显示该小节
+        if (!cancelled) setCaseRulePages([])
+      }
+    })()
+    return () => { cancelled = true }
+  }, [activeTab, caseId])
+
   // 切换 tab 时退出编辑模式
   useEffect(() => {
     if (editMode) {
@@ -428,6 +464,12 @@ export function ReportPage() {
 
       try {
         const evIndex = await api.getEvidenceIndex(caseId)
+        // 文书分类（含非证据标注）
+        if (Array.isArray(evIndex.files)) {
+          const map: Record<string, string> = {}
+          for (const f of evIndex.files) map[f.name] = f.doc_type
+          setDocTypeMap(map)
+        }
         if (evIndex && evIndex.total_evidence > 0) {
           const items: EvidenceItem[] = (evIndex.evidence || []).map((ev: any) => {
             const fileName = ev.md_file || `${ev.name}.md`
@@ -643,6 +685,16 @@ export function ReportPage() {
       loadCrossExamination()
     }
   }, [activeTab, caseId, crossExamination, loadCrossExamination])
+
+  // 切换到辩护思路 tab 时加载确认状态
+  useEffect(() => {
+    if (activeTab !== 'defense_strategy' || !caseId) return
+    setDefenseStrategyLoading(true)
+    getDefenseStrategy(caseId)
+      .then(data => setDefenseStrategy(data))
+      .catch(() => setDefenseStrategy(null))
+      .finally(() => setDefenseStrategyLoading(false))
+  }, [activeTab, caseId])
 
   // 加载人物关系图数据
   const loadPersonRelation = useCallback(async () => {
@@ -1175,6 +1227,82 @@ export function ReportPage() {
   })()
 
   const renderActiveTab = () => {
+    // 辩护思路 tab - 步骤 4.75 确认稿
+    if (activeTab === 'defense_strategy') {
+      if (defenseStrategyLoading) {
+        return (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '48px 20px', color: colors.textTertiary }}>
+            <Loader2 className="w-5 h-5 animate-spin" style={{ marginRight: '8px' }} />
+            加载辩护思路...
+          </div>
+        )
+      }
+
+      // 已确认：渲染确认稿 Markdown
+      if (defenseStrategy?.status === 'completed' && defenseStrategy.confirmation) {
+        return (
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '12px' }}>
+              <button
+                onClick={() => navigate(`/case/${caseId}`)}
+                style={{
+                  padding: '6px 14px', fontSize: '12px', borderRadius: '6px',
+                  background: '#8e5a2a', color: '#fff', border: 'none',
+                  cursor: 'pointer', fontWeight: 500,
+                  display: 'flex', alignItems: 'center', gap: '4px',
+                }}
+              >
+                <Edit3 className="w-3 h-3" />
+                重新编辑
+              </button>
+            </div>
+            <ReportRenderer
+              markdown={defenseStrategy.confirmation}
+              evidenceItems={evidenceItems}
+              onEvidenceClick={(mdFile) => {
+                if (viewModeState !== 'md') viewModeDispatch('md')
+                const item = evidenceItems.find(i => i.mdFile === mdFile)
+                if (item) {
+                  setSelectedEvidenceId(item.id)
+                  loadEvidenceContent(item)
+                }
+              }}
+            />
+          </div>
+        )
+      }
+
+      // 待确认：提示跳转案件详情页
+      if (defenseStrategy?.status === 'awaiting_confirmation') {
+        return (
+          <div style={{ textAlign: 'center', padding: '48px 20px', color: colors.textTertiary }}>
+            <Target className="w-10 h-10" style={{ opacity: 0.2, display: 'block', margin: '0 auto 12px' }} />
+            <div style={{ fontSize: '13px', fontWeight: 500, color: colors.textSecondary }}>辩护思路待确认</div>
+            <div style={{ fontSize: '12px', marginTop: '4px' }}>系统已生成辩护思路建议，请前往案件详情页确认</div>
+            <button
+              onClick={() => navigate(`/case/${caseId}`)}
+              style={{
+                marginTop: '16px', padding: '8px 16px', fontSize: '13px',
+                background: colors.accent, color: '#fff', border: 'none',
+                borderRadius: '6px', cursor: 'pointer',
+              }}
+            >
+              前往确认
+            </button>
+          </div>
+        )
+      }
+
+      // 未生成（idle 或无数据）
+      return (
+        <div style={{ textAlign: 'center', padding: '48px 20px', color: colors.textTertiary }}>
+          <Target className="w-10 h-10" style={{ opacity: 0.2, display: 'block', margin: '0 auto 12px' }} />
+          <div style={{ fontSize: '13px', fontWeight: 500 }}>辩护思路尚未生成</div>
+          <div style={{ fontSize: '12px', marginTop: '4px' }}>分析到辩护思路阶段后生成</div>
+        </div>
+      )
+    }
+
     // 证据中心 tab - 综合面板
     if (activeTab === 'evidence_center') {
       // 由 renderEvidenceCenter() 处理
@@ -1425,7 +1553,8 @@ export function ReportPage() {
           overflowX: 'auto',
         }}>
           {allTabs.map(tab => {
-            const hasContent = !!stageContent[tab.key]
+            // 辩护思路 tab 内容来自独立 API（不走 stageContent），始终可点击
+            const hasContent = !!stageContent[tab.key] || tab.key === 'defense_strategy'
             const isActive = activeTab === tab.key
             const Icon = tab.icon
             return (
@@ -1508,6 +1637,7 @@ export function ReportPage() {
                     </h2>
                   </div>
                   {renderActiveTab()}
+                  {renderSimilarCaseRules()}
                   {renderCaseSearchPanel()}
                   {renderLegalKBPanel()}
                   {/* 证据中心综合面板 */}
@@ -2557,6 +2687,49 @@ export function ReportPage() {
     )
   }
 
+  // ===== Wiki 类案裁判规则小节（法律法规 tab，自动检索产物透出）=====
+  const renderSimilarCaseRules = () => {
+    if (activeTab !== 'stage_4' || caseRulePages.length === 0) return null
+    return (
+      <div style={{ marginBottom: '16px' }}>
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: '8px',
+          marginBottom: '10px',
+        }}>
+          <BookOpen className="w-4 h-4" style={{ color: '#6b2765' }} />
+          <span style={{ fontSize: '13px', fontWeight: 600, color: colors.textPrimary }}>类案裁判规则</span>
+          <span style={{
+            fontSize: '11px', color: colors.textTertiary,
+            padding: '2px 8px', background: colors.surfaceAlt,
+            borderRadius: '4px', border: `1px solid ${colors.border}`,
+          }}>
+            自动检索，供参考
+          </span>
+        </div>
+        {caseRulePages.map(page => (
+          <div key={page.path} style={{
+            padding: '16px', marginBottom: '10px',
+            background: colors.surface, borderRadius: '8px',
+            border: `1px solid ${colors.border}`,
+          }}>
+            <ReportRenderer
+              markdown={page.content}
+              evidenceItems={evidenceItems}
+              onEvidenceClick={(mdFile) => {
+                if (viewModeState !== 'md') viewModeDispatch('md')
+                const item = evidenceItems.find(i => i.mdFile === mdFile)
+                if (item) {
+                  setSelectedEvidenceId(item.id)
+                  loadEvidenceContent(item)
+                }
+              }}
+            />
+          </div>
+        ))}
+      </div>
+    )
+  }
+
   // ===== 案例库检索面板 =====
   const renderCaseSearchPanel = () => {
     if (activeTab !== 'stage_4') return null
@@ -2835,6 +3008,25 @@ export function ReportPage() {
           </div>
           {evidenceCenterPanels.evidenceList && (
             <div style={{ padding: '16px', background: colors.surface }}>
+              {/* 非证据文件（封面/目录等，不参与提取） */}
+              {Object.entries(docTypeMap).filter(([, t]) => t.startsWith('non_evidence')).length > 0 && (
+                <div style={{
+                  display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center',
+                  padding: '8px 12px', marginBottom: '12px',
+                  background: colors.surfaceAlt, border: `1px solid ${colors.border}`,
+                  borderRadius: '6px', opacity: 0.75,
+                }}>
+                  <span style={{ fontSize: '11px', color: colors.textTertiary }}>非证据文件（未参与提取）：</span>
+                  {Object.entries(docTypeMap)
+                    .filter(([, t]) => t.startsWith('non_evidence'))
+                    .map(([name, t]) => (
+                      <span key={name} style={{ fontSize: '11px', color: colors.textSecondary, display: 'inline-flex', alignItems: 'center', opacity: 0.55 }}>
+                        {name.replace(/\.md$/, '')}
+                        <DocTypeBadge docType={t} />
+                      </span>
+                    ))}
+                </div>
+              )}
               {/* 证据列表内容 - 使用原有的 stage_51 内容 */}
               {stageContent['stage_51'] ? (
                 <ReportRenderer
@@ -3759,8 +3951,11 @@ export function ReportPage() {
                       <div style={{ flex: 1, overflow: 'auto', padding: '8px 14px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
                         {chatEvidenceList.map(f => {
                           const isStatement = f.name.includes('讯问') || f.name.includes('询问')
+                          // doc_type 映射：md 目录文件名直接命中；证据文件去掉数字前缀后回退匹配
+                          const docType = docTypeMap[f.name] ?? docTypeMap[f.name.replace(/^\d+_/, '')]
+                          const isNonEvidence = docType?.startsWith('non_evidence')
                           return (
-                            <label key={f.name} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 8px', fontSize: '11px', cursor: 'pointer', borderRadius: '6px', background: chatEvidenceFilter.has(f.name) ? colors.accentLight : 'transparent' }}>
+                            <label key={f.name} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 8px', fontSize: '11px', cursor: 'pointer', borderRadius: '6px', background: chatEvidenceFilter.has(f.name) ? colors.accentLight : 'transparent', opacity: isNonEvidence ? 0.55 : 1 }}>
                               <input type="checkbox" checked={chatEvidenceFilter.has(f.name)}
                                 onChange={e => {
                                   setChatEvidenceFilter(prev => {
@@ -3773,6 +3968,7 @@ export function ReportPage() {
                               {isStatement && <span style={{ fontSize: '9px', background: 'rgba(156,102,27,0.1)', color: '#9c661b', borderRadius: '3px', padding: '1px 4px', flexShrink: 0 }}>笔录</span>}
                               <span style={{ color: chatEvidenceFilter.has(f.name) ? colors.accent : colors.textSecondary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                 {f.name}
+                                <DocTypeBadge docType={docType} />
                               </span>
                             </label>
                           )

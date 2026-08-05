@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Optional
 
 from llm_client import get_llm_client
+import context_budget
 
 # 默认分析状态结构
 DEFAULT_STATE = {
@@ -46,6 +47,7 @@ DEFAULT_STATE = {
                 "45e": "idle",
             },
         },
+        "4.75": {"status": "idle", "completed_at": None},
         "5": {
             "status": "idle",
             "completed_at": None,
@@ -238,6 +240,9 @@ class AnalysisPipeline:
                     import json
                     index = json.loads(index_file.read_text(encoding="utf-8"))
                     for ev in index.get("evidence", []):
+                        # 跳过条目级标注的非证据（封面/目录等，旧案件无 doc_type 字段不受影响）
+                        if (ev.get("doc_type") or "evidence").startswith("non_evidence"):
+                            continue
                         md_file = evidence_dir / ev.get("md_file", "")
                         if md_file.exists():
                             text = md_file.read_text(encoding="utf-8")
@@ -300,7 +305,7 @@ class AnalysisPipeline:
                     # 用 LLM 确认类型
                     doc_type = await _classify_document_type(self.llm, f["text"][:5000])
                     if doc_type in ("起诉书", "起诉意见书"):
-                        return f["text"][:40000], doc_type
+                        return f["text"][:context_budget.content_budget_chars()], doc_type
                     # LLM 无法确认类型时，回退到自动检测
 
         md_files = self._load_md_files()
@@ -322,13 +327,13 @@ class AnalysisPipeline:
         for f in indictment_candidates:
             doc_type = await _classify_document_type(self.llm, f["text"][:5000])
             if doc_type == "起诉书":
-                return f["text"][:40000], "起诉书"
+                return f["text"][:context_budget.content_budget_chars()], "起诉书"
 
         # 再确认起诉意见书
         for f in opinion_candidates:
             doc_type = await _classify_document_type(self.llm, f["text"][:5000])
             if doc_type == "起诉意见书":
-                return f["text"][:40000], "起诉意见书"
+                return f["text"][:context_budget.content_budget_chars()], "起诉意见书"
 
         return "", ""
 
@@ -471,13 +476,18 @@ class AnalysisPipeline:
             step_key = str(step_num)
             step_data = state["steps"].get(step_key, {})
             if step_data.get("status") != "completed":
-                # 步骤 5 待完成，但先检查 4.5
+                # 步骤 5 待完成，但先检查 4.5 和 4.75
                 if step_num == 5:
                     step4_data = state["steps"].get("4", {})
                     if step4_data.get("status") == "completed":
                         step45 = state["steps"].get("4.5", {})
                         if step45.get("status") != "completed":
                             return 4.5
+                        step475 = state["steps"].get("4.75", {})
+                        if step475.get("status") not in ("completed", "awaiting_confirmation"):
+                            return 4.75
+                        if step475.get("status") == "awaiting_confirmation":
+                            return 4.75  # 返回以便 API 层提示待确认（step 方法内部直接返回已有建议）
                 return step_num
 
         # 全部 5 步都完成了，检查是否需要补充步骤 4.5
@@ -516,6 +526,15 @@ class AnalysisPipeline:
             result[step45_key] = {
                 "status": step45_data.get("status", "idle"),
                 "detail": step45_data.get("sub_steps", {}),
+            }
+
+        # 步骤 4.75 单独处理（辩护思路确认，可能处于 awaiting_confirmation）
+        step475_key = "4.75"
+        step475_data = state["steps"].get(step475_key, {})
+        if step475_data:
+            result[step475_key] = {
+                "status": step475_data.get("status", "idle"),
+                "detail": {},
             }
 
         return result
@@ -755,7 +774,7 @@ class AnalysisPipeline:
 - 其他明显的格式异常
 
 笔录内容：
-{session['content'][:30000]}"""},
+{session['content'][:context_budget.content_budget_chars()]}"""},
                     ])
                     session_summaries.append({"session_number": i, "time_range": session["time_range"], "summary": summary})
                     completed += 1
@@ -828,7 +847,9 @@ class AnalysisPipeline:
                     {"role": "system", "content": f"你是刑事律师，请对比{person}的多份{etype}，找出前后矛盾。"},
                     {"role": "user", "content": f"""{person}共有{session_count}次{etype}，以下是每次笔录的详细总结：
 
-{summary_text[:40000]}
+{summary_text[:context_budget.content_budget_chars()]}
+
+注意：本步骤仅分析同一人口供/证言的前后矛盾（供述内矛盾），不分析不同证据之间的矛盾（证据间矛盾在步骤 4 处理）。
 
 请逐维度对比每次笔录的差异：
 1. 关键事实描述的变化（时间、金额、参与人、行为方式）
@@ -890,7 +911,7 @@ class AnalysisPipeline:
             return []
         return sorted([f.name for f in d.iterdir() if f.is_file()])
 
-    def _search_legal_knowledge(self, charges: list = None) -> dict:
+    def _search_legal_knowledge(self, crime_type: str | None = None) -> dict:
         """从内置刑法中搜索相关法条"""
         from legal_knowledge import CRIME_ARTICLE_MAP, load_criminal_law, load_criminal_procedure_law
 
@@ -919,6 +940,42 @@ class AnalysisPipeline:
                 print(f"[法律知识库] 加载内置刑法失败: {e}")
 
         return result
+
+    def _case_charges(self, crime_type: Optional[str] = None) -> list[str]:
+        """案件罪名列表：优先 case.json 的 charges，回退 crime_type 单罪名"""
+        meta_file = self.case_dir / "case.json"
+        if meta_file.exists():
+            try:
+                meta = json.loads(meta_file.read_text(encoding="utf-8"))
+                charges = meta.get("charges") or []
+                if isinstance(charges, list) and charges:
+                    return charges
+            except Exception:
+                pass
+        return [crime_type] if crime_type else []
+
+    def _save_suggested_keywords(self, keywords: list[str]):
+        """LLM 推荐关键词写入 case.json（不覆盖用户已编辑的 search_keywords）"""
+        meta_file = self.case_dir / "case.json"
+        meta = {}
+        if meta_file.exists():
+            try:
+                meta = json.loads(meta_file.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        meta["suggested_keywords"] = keywords
+        meta_file.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _effective_keywords(self) -> list[str]:
+        """有效检索关键词：用户编辑 > LLM 推荐 > 空"""
+        meta_file = self.case_dir / "case.json"
+        if meta_file.exists():
+            try:
+                meta = json.loads(meta_file.read_text(encoding="utf-8"))
+                return meta.get("search_keywords") or meta.get("suggested_keywords") or []
+            except Exception:
+                pass
+        return []
 
     def _build_wiki_index(self) -> str:
         """生成 Wiki 索引"""
@@ -964,7 +1021,7 @@ class AnalysisPipeline:
             (wiki_dir / subdir).mkdir(exist_ok=True)
 
         # 定义所有子步骤总数，用于进度报告
-        SUB_STEPS = ["4a-指控要素", "4b-证据摄入", "4c-法律依据", "4d-综合结论"]
+        SUB_STEPS = ["4a-指控要素", "4c-法律框架", "4b-证据摄入", "4d-综合结论"]
         sub_done = 0
         sub_total = len(SUB_STEPS)
         if progress_cb:
@@ -973,6 +1030,7 @@ class AnalysisPipeline:
         results_log = {"sub_steps": [], "wiki_dir": str(wiki_dir)}
 
         # ===== 4a: 指控要素分析（起诉书 > 起诉意见书） =====
+        indictment_analyzed = False
         if not self._wiki_page_exists("", "01-指控要素.md"):
             indictment_text, indictment_type = await self._find_indictment_in_md_files()
 
@@ -995,6 +1053,7 @@ class AnalysisPipeline:
 请以 Markdown 格式输出分析结果。"""},
                     ])
                     self._save_wiki_page("", "01-指控要素.md", analysis)
+                    indictment_analyzed = True
                     results_log["sub_steps"].append({"step": "4a", "name": "指控要素分析", "status": "done"})
                     print("[步骤 4a] 完成指控要素分析")
                 except Exception as e:
@@ -1007,120 +1066,34 @@ class AnalysisPipeline:
             results_log["sub_steps"].append({"step": "4a", "name": "指控要素分析", "status": "skipped"})
         sub_done = 1
         if progress_cb:
-            progress_cb(sub_done, sub_total, "步骤 4：逐人证据摄入（证据分析）")
+            progress_cb(sub_done, sub_total, "步骤 4：构建法律框架（法条+类案）")
 
         # 读取指控要素（用于后续步骤）
         indictment_content = self._load_wiki_page("", "01-指控要素.md")
 
-        # ===== 4b: 逐人证据摄入（串行） =====
-        evidence_list = []
-        for mf in step1["merged_files"]:
-            person = mf["person"]
-            etype = mf["type"]
-            session_count = mf["session_count"]
-            summary_file = f"{person}_共{session_count}次_总结.md"
-            summary_path = self.analysis_dir / "summaries" / etype / summary_file
-            if summary_path.exists():
-                evidence_list.append({"person": person, "type": etype, "summary_file": summary_file})
-
-        # 其他证据
-        other_index_path = self.analysis_dir / "preprocess" / "其他证据索引.md"
-        if other_index_path.exists():
-            evidence_list.append({"person": "其他证据", "type": "其他证据", "summary_file": None})
-
-        # 读取已分析的证据列表（用于交叉引用）
-        analyzed_evidence = []
-
-        print(f"[步骤 4b] 开始逐人证据摄入（{len(evidence_list)} 份证据，串行）...")
-        for ev in evidence_list:
-            person = ev["person"]
-            etype = ev["type"]
-            wiki_filename = f"{person}_{etype.replace('笔录', '')}.md".replace("/", "_")
-            # 简化文件名
-            wiki_filename = f"{person}_{etype}.md"
-
-            if self._wiki_page_exists("03-证据分析", wiki_filename):
-                analyzed_evidence.append(f"{person}（{etype}）")
-                continue
-
-            # 读取总结
-            summary_text = ""
-            if ev["summary_file"]:
-                sp = self.analysis_dir / "summaries" / etype / ev["summary_file"]
-                if sp.exists():
-                    summary_text = sp.read_text(encoding="utf-8")
-
-            if not summary_text and etype == "其他证据":
-                if other_index_path.exists():
-                    summary_text = other_index_path.read_text(encoding="utf-8")[:30000]
-
-            if not summary_text:
-                print(f"[步骤 4b] 跳过 {person}（无总结文件）")
-                continue
-
-            # 读取矛盾分析
-            contradiction_text = ""
-            if person != "其他证据":
-                # 查找该人的矛盾分析文件（可能有多个，取第一个）
-                contradiction_files = self._list_contradiction_files()
-                for cf in contradiction_files:
-                    if cf["displayName"].startswith(person):
-                        contradiction_text = self._load_contradiction_file(cf["filename"]) or ""
-                        break
-                if contradiction_text:
-                    contradiction_text = contradiction_text[:3000]
-
-            # 构建已分析证据摘要（用于交叉引用）
-            analyzed_summary = ""
-            if analyzed_evidence:
-                for ae in analyzed_evidence[-5:]:  # 最近 5 份
-                    ae_filename = f"{ae.split('（')[0]}_{ae.split('（')[1].replace('）', '')}.md" if "（" in ae else ""
-                    if ae_filename and self._wiki_page_exists("03-证据分析", ae_filename):
-                        ae_content = self._load_wiki_page("03-证据分析", ae_filename)
-                        analyzed_summary += f"\n### {ae}\n{ae_content[:1500]}\n"
-
-            print(f"[步骤 4b] 摄入 {person}（{etype}）...")
+        # LLM 推荐类案检索关键词（罪名除外），存 case.json suggested_keywords
+        if indictment_analyzed:
             try:
-                analysis = await self.llm.chat([
-                    {"role": "system", "content": "你是刑事律师，正在进行案件证据分析。请基于证据材料，逐项分析该证据的证明力和证明内容。"},
-                    {"role": "user", "content": f"""## 指控要素
-{indictment_content or '无起诉意见书'}
-
-## 待分析证据：{person}（{etype}）
-{summary_text[:30000]}
-
-## 该人的矛盾分析（如有）
-{contradiction_text if contradiction_text else '无'}
-
-## 已分析的其他证据（供交叉参考）
-{analyzed_summary if analyzed_summary else '暂无'}
-
-请分析：
-1. 该证据证明了指控中的哪些事实？
-2. 证明力（强/中/弱）及理由
-3. 与其他已分析证据的关系（印证/矛盾/补充）
-4. 对辩方有利的内容
-5. 是否存在需要其他证据验证的点
-
-请输出 Markdown 格式的详细分析。"""},
+                kw_text = await self.llm.chat([
+                    {"role": "system", "content": "你是刑事律师。请从指控要素分析中提取 3-5 个类案检索关键词（不要包含罪名本身），聚焦行为特征、情节要素、对象特征，每行一个，只输出关键词。"},
+                    {"role": "user", "content": indictment_content[:5000]},
                 ])
-                self._save_wiki_page("03-证据分析", wiki_filename, analysis)
-                analyzed_evidence.append(f"{person}（{etype}）")
-                results_log["sub_steps"].append({"step": "4b", "name": f"{person}（{etype}）", "status": "done"})
-                print(f"[步骤 4b] 完成 {person} 证据摄入")
+                suggested = []
+                for line in kw_text.strip().split("\n"):
+                    # 剥离编号前缀（1. / 2、/ 3)）与列表符号，得到干净关键词
+                    line = re.sub(r"^\d+[.、\)]\s*", "", line.strip()).strip("- •　 ")
+                    if line:
+                        suggested.append(line)
+                suggested = suggested[:5]
+                if suggested:
+                    self._save_suggested_keywords(suggested)
             except Exception as e:
-                self._save_wiki_page("03-证据分析", wiki_filename, f"分析失败：{e}")
-                results_log["sub_steps"].append({"step": "4b", "name": f"{person}（{etype}）", "status": "failed", "error": str(e)})
-                print(f"[步骤 4b] {person} 分析失败: {e}")
-
-        sub_done = 2
-        if progress_cb:
-            progress_cb(sub_done, sub_total, "步骤 4：法律依据检索")
+                print(f"[步骤 4a] 关键词推荐失败（不影响主流程）: {e}")
 
         # ===== 4c: 法律依据检索 =====
         if not self._wiki_page_exists("04-法律依据", "适用法条.md"):
             print("[步骤 4c] 检索法律依据...")
-            legal = self._search_legal_knowledge(charges)
+            legal = self._search_legal_knowledge(crime_type)
 
             # 读取用户提供的参考材料
             user_ref_text = ""
@@ -1163,8 +1136,144 @@ class AnalysisPipeline:
             except Exception as e:
                 self._save_wiki_page("04-法律依据", "适用法条.md", f"分析失败：{e}")
                 results_log["sub_steps"].append({"step": "4c", "name": "法律依据检索", "status": "failed", "error": str(e)})
+
         else:
             results_log["sub_steps"].append({"step": "4c", "name": "法律依据检索", "status": "skipped"})
+
+        # 类案裁判规则（自动检索，供分析参考；失败静默降级）
+        # 独立于适用法条.md 的存在性：存量案件重跑时也可补检
+        if not self._list_wiki_pages("04-法律依据") or not any(
+            f.startswith("类案裁判规则-") for f in self._list_wiki_pages("04-法律依据")
+        ):
+            try:
+                from case_framework import fetch_case_rules
+                charge_list = self._case_charges(crime_type)
+                case_rules = fetch_case_rules(charge_list, keywords=self._effective_keywords())
+                for charge_name, rules_md in case_rules.items():
+                    safe_name = charge_name.replace("/", "_")
+                    self._save_wiki_page("04-法律依据", f"类案裁判规则-{safe_name}.md", rules_md)
+                if case_rules:
+                    print(f"[步骤 4c] 已检索类案 {len(case_rules)} 个罪名的裁判规则")
+            except Exception as e:
+                print(f"[步骤 4c] 类案检索降级（不影响主流程）: {e}")
+
+        sub_done = 2
+        if progress_cb:
+            progress_cb(sub_done, sub_total, "步骤 4：逐人证据摄入（证据分析）")
+
+        # ===== 4b: 逐人证据摄入（串行） =====
+        evidence_list = []
+        for mf in step1["merged_files"]:
+            person = mf["person"]
+            etype = mf["type"]
+            session_count = mf["session_count"]
+            summary_file = f"{person}_共{session_count}次_总结.md"
+            summary_path = self.analysis_dir / "summaries" / etype / summary_file
+            if summary_path.exists():
+                evidence_list.append({"person": person, "type": etype, "summary_file": summary_file})
+
+        # 其他证据
+        other_index_path = self.analysis_dir / "preprocess" / "其他证据索引.md"
+        if other_index_path.exists():
+            evidence_list.append({"person": "其他证据", "type": "其他证据", "summary_file": None})
+
+        # 读取已分析的证据列表（用于交叉引用）
+        analyzed_evidence = []
+
+        # 法律框架（4c 产物：法条 + 司法解释 + 类案裁判规则）
+        # 成本控制：单文件截断 2000 字，合计超 6000 字停止追加，避免 4b prompt 膨胀
+        legal_framework = ""
+        for lf in self._list_wiki_pages("04-法律依据"):
+            if len(legal_framework) > 6000:
+                break
+            legal_framework += f"\n### {lf}\n{self._load_wiki_page('04-法律依据', lf)[:2000]}\n"
+
+        print(f"[步骤 4b] 开始逐人证据摄入（{len(evidence_list)} 份证据，串行）...")
+        for ev in evidence_list:
+            person = ev["person"]
+            etype = ev["type"]
+            wiki_filename = f"{person}_{etype.replace('笔录', '')}.md".replace("/", "_")
+            # 简化文件名
+            wiki_filename = f"{person}_{etype}.md"
+
+            if self._wiki_page_exists("03-证据分析", wiki_filename):
+                analyzed_evidence.append(f"{person}（{etype}）")
+                continue
+
+            # 读取总结
+            summary_text = ""
+            if ev["summary_file"]:
+                sp = self.analysis_dir / "summaries" / etype / ev["summary_file"]
+                if sp.exists():
+                    summary_text = sp.read_text(encoding="utf-8")
+
+            if not summary_text and etype == "其他证据":
+                if other_index_path.exists():
+                    summary_text = other_index_path.read_text(encoding="utf-8")[:context_budget.content_budget_chars()]
+
+            if not summary_text:
+                print(f"[步骤 4b] 跳过 {person}（无总结文件）")
+                continue
+
+            # 读取矛盾分析
+            contradiction_text = ""
+            if person != "其他证据":
+                # 查找该人的矛盾分析文件（可能有多个，取第一个）
+                contradiction_files = self._list_contradiction_files()
+                for cf in contradiction_files:
+                    if cf["displayName"].startswith(person):
+                        contradiction_text = self._load_contradiction_file(cf["filename"]) or ""
+                        break
+                if contradiction_text:
+                    contradiction_text = contradiction_text[:3000]
+
+            # 构建已分析证据摘要（用于交叉引用）
+            analyzed_summary = ""
+            if analyzed_evidence:
+                for ae in analyzed_evidence[-5:]:  # 最近 5 份
+                    ae_filename = f"{ae.split('（')[0]}_{ae.split('（')[1].replace('）', '')}.md" if "（" in ae else ""
+                    if ae_filename and self._wiki_page_exists("03-证据分析", ae_filename):
+                        ae_content = self._load_wiki_page("03-证据分析", ae_filename)
+                        analyzed_summary += f"\n### {ae}\n{ae_content[:1500]}\n"
+
+            print(f"[步骤 4b] 摄入 {person}（{etype}）...")
+            try:
+                user_prompt = f"""## 指控要素
+{indictment_content or '无起诉意见书'}
+
+## 法律框架（法条 + 司法解释 + 类案裁判规则）
+{legal_framework if legal_framework else '无'}
+
+## 待分析证据：{person}（{etype}）
+{summary_text[:context_budget.content_budget_chars()]}
+
+## 该人的矛盾分析（如有）
+{contradiction_text if contradiction_text else '无'}
+
+## 已分析的其他证据（供交叉参考）
+{analyzed_summary if analyzed_summary else '暂无'}
+
+请分析：
+1. 该证据证明了指控中的哪些事实？
+2. 证明力（强/中/弱）及理由
+3. 与其他已分析证据的关系（印证/矛盾/补充）——此处只关注不同证据之间的矛盾（证据间矛盾）；同一人口供前后矛盾已在步骤 3 完成，不要重复分析
+4. 对辩方有利的内容
+5. 是否存在需要其他证据验证的点
+
+请输出 Markdown 格式的详细分析。"""
+                print(f"[预算] 步骤4b 单证据 prompt: {len(user_prompt)} 字符 / 预算 {context_budget.content_budget_chars()}")
+                analysis = await self.llm.chat([
+                    {"role": "system", "content": "你是刑事律师，正在进行案件证据分析。请基于证据材料，逐项分析该证据的证明力和证明内容。"},
+                    {"role": "user", "content": user_prompt},
+                ])
+                self._save_wiki_page("03-证据分析", wiki_filename, analysis)
+                analyzed_evidence.append(f"{person}（{etype}）")
+                results_log["sub_steps"].append({"step": "4b", "name": f"{person}（{etype}）", "status": "done"})
+                print(f"[步骤 4b] 完成 {person} 证据摄入")
+            except Exception as e:
+                self._save_wiki_page("03-证据分析", wiki_filename, f"分析失败：{e}")
+                results_log["sub_steps"].append({"step": "4b", "name": f"{person}（{etype}）", "status": "failed", "error": str(e)})
+                print(f"[步骤 4b] {person} 分析失败: {e}")
 
         sub_done = 3
         if progress_cb:
@@ -1185,15 +1294,13 @@ class AnalysisPipeline:
                 legal_content += f"\n### {f}\n{content[:2000]}\n"
 
             try:
-                conclusion = await self.llm.chat([
-                    {"role": "system", "content": "你是刑事律师，请基于案件 Wiki 的所有分析结果，生成综合结论。"},
-                    {"role": "user", "content": f"""以下是本案的 Wiki 分析结果：
+                user_prompt = f"""以下是本案的 Wiki 分析结果：
 
 ## 指控要素
 {indictment_content[:3000]}
 
 ## 证据分析汇总
-{all_evidence_analysis[:15000]}
+{all_evidence_analysis[:context_budget.content_budget_chars()]}
 
 ## 法律依据
 {legal_content[:3000]}
@@ -1206,7 +1313,11 @@ class AnalysisPipeline:
 5. 对辩方有利的要点
 6. 对控方不利的要点
 
-请输出 Markdown 格式的综合结论。"""},
+请输出 Markdown 格式的综合结论。"""
+                print(f"[预算] 步骤4d 综合结论 prompt: {len(user_prompt)} 字符 / 预算 {context_budget.content_budget_chars()}")
+                conclusion = await self.llm.chat([
+                    {"role": "system", "content": "你是刑事律师，请基于案件 Wiki 的所有分析结果，生成综合结论。"},
+                    {"role": "user", "content": user_prompt},
                 ])
                 self._save_wiki_page("", "06-综合结论.md", conclusion)
                 results_log["sub_steps"].append({"step": "4d", "name": "综合结论", "status": "done"})
@@ -1305,7 +1416,7 @@ class AnalysisPipeline:
             f"## 证据分析\n{wiki_evidence_summary}" if wiki_evidence_summary else None,
             f"## 法律依据\n{wiki_legal}" if wiki_legal else None,
         ] if p]
-        context = "\n\n".join(context_parts)[:50000]
+        context = "\n\n".join(context_parts)[:context_budget.content_budget_chars()]
 
         step_name_map = {
             "45a": "控方沙箱",
@@ -1605,6 +1716,148 @@ class AnalysisPipeline:
 
         return result
 
+    # ========== 步骤 4.75: 辩护思路确认 ==========
+
+    def _strategy_dir(self) -> Path:
+        return self.analysis_dir / "04.75-辩护思路"
+
+    async def step475_defense_strategy(self, defendant: str, crime_type: Optional[str] = None, progress_cb=None) -> dict:
+        """生成辩护思路建议并进入待确认状态。
+
+        待确认状态下重跑直接返回已有建议（不重复调 LLM）。
+        """
+        strategy_dir = self._strategy_dir()
+        strategy_dir.mkdir(parents=True, exist_ok=True)
+        suggestion_json = strategy_dir / "系统建议.json"
+
+        if suggestion_json.exists():
+            try:
+                suggestion = json.loads(suggestion_json.read_text(encoding="utf-8"))
+                # 已确认后重跑：直接早退，不重复进入待确认状态
+                status = self._load_analysis_state()["steps"].get("4.75", {}).get("status", "idle")
+                if status == "completed":
+                    return {"awaiting_confirmation": False, "already_completed": True, "suggestion": suggestion}
+                return {"awaiting_confirmation": True, "suggestion": suggestion}
+            except Exception:
+                pass  # 损坏则重新生成
+
+        conclusion = self._load_wiki_page("", "06-综合结论.md")
+        contradictions = self._load_wiki_page("", "05-矛盾记录.md")
+        debate_file = self.analysis_dir / "04.5-控辩对抗" / "对抗分析.md"
+        debate = debate_file.read_text(encoding="utf-8") if debate_file.exists() else ""
+
+        raw = await self.llm.chat([
+            {"role": "system", "content": """你是资深刑事辩护律师。基于案件分析结果提出辩护思路建议。
+只输出严格 JSON：{"directions": [{"type": "主攻"|"备选", "direction": "方向简述", "basis": "依据（引用具体证据/矛盾点/裁判规则）", "risk": "风险点"}]}
+主攻方向 1-2 个，备选方向 1-3 个。"""},
+            {"role": "user", "content": f"""## 综合结论
+{conclusion[:8000]}
+
+## 矛盾记录
+{contradictions[:5000]}
+
+## 控辩对抗（法官裁决倾向）
+{debate[:5000]}
+
+被告人：{defendant}；罪名：{crime_type or '未知'}"""},
+        ])
+
+        m = re.search(r"\{.*\}", raw, re.S)
+        try:
+            suggestion = json.loads(m.group(0)) if m else {"directions": []}
+        except (json.JSONDecodeError, ValueError):
+            # LLM 输出不是合法 JSON：降级为空建议，不抛 500
+            print(f"[步骤4.75] 警告：辩护思路建议 JSON 解析失败，使用空建议。原始输出前 200 字：{raw[:200]}")
+            suggestion = {"directions": []}
+        suggestion.setdefault("directions", [])
+
+        suggestion_json.write_text(json.dumps(suggestion, ensure_ascii=False, indent=2), encoding="utf-8")
+        (strategy_dir / "系统建议.md").write_text(self._render_suggestion_md(suggestion), encoding="utf-8")
+
+        # 状态：待确认（不是 completed）
+        state = self._load_analysis_state()
+        state["steps"].setdefault("4.75", {})["status"] = "awaiting_confirmation"
+        self._save_analysis_state(state)
+
+        return {"awaiting_confirmation": True, "suggestion": suggestion}
+
+    def _render_suggestion_md(self, suggestion: dict) -> str:
+        lines = ["# 辩护思路建议（系统生成）\n"]
+        for i, d in enumerate(suggestion.get("directions", [])):
+            lines.append(f"## {i + 1}. [{d.get('type', '备选')}] {d.get('direction', '')}\n")
+            lines.append(f"- 依据：{d.get('basis', '')}")
+            lines.append(f"- 风险：{d.get('risk', '')}\n")
+        return "\n".join(lines)
+
+    async def confirm_defense_strategy(
+        self,
+        selected: list[int] | None = None,
+        edited: dict | None = None,
+        user_additions: list[str] | None = None,
+        use_system_default: bool = False,
+    ) -> dict:
+        """确认辩护思路：写思路确认.md（含修改痕迹），状态置 completed。
+
+        - selected: 选中的建议下标（从 0 开始）；None 且非 default 视为空选择
+        - edited: {下标: 修改后的方向文本}
+        - user_additions: 律师补充的思路列表
+        - use_system_default: 一键采纳全部建议
+        """
+        suggestion_json = self._strategy_dir() / "系统建议.json"
+        if not suggestion_json.exists():
+            raise ValueError("尚未生成辩护思路建议，请先执行步骤 4.75")
+        suggestion = json.loads(suggestion_json.read_text(encoding="utf-8"))
+        directions = suggestion.get("directions", [])
+
+        # 应用律师修改（先改后选）
+        edited = edited or {}
+        for idx, new_text in edited.items():
+            i = int(idx)
+            if 0 <= i < len(directions):
+                directions[i] = {**directions[i], "direction": new_text, "_edited": True}
+
+        if use_system_default:
+            chosen = [(i, d) for i, d in enumerate(directions)]
+        else:
+            chosen = [(i, d) for i, d in enumerate(directions) if i in (selected or [])]
+
+        additions = user_additions or []
+        if not chosen and not additions:
+            # 空确认视为采纳系统建议
+            chosen = [(i, d) for i, d in enumerate(directions)]
+
+        lines = ["# 辩护思路（律师已确认）\n", "## 采纳的方向\n"]
+        for i, d in chosen:
+            edited_mark = "（律师已修改）" if d.get("_edited") else ""
+            lines.append(f"- **[{d.get('type', '备选')}] {d.get('direction', '')}**{edited_mark}")
+            lines.append(f"  依据：{d.get('basis', '')}；风险：{d.get('risk', '')}")
+        if additions:
+            lines.append("\n## 律师补充\n")
+            for a in additions:
+                lines.append(f"- {a}")
+
+        (self._strategy_dir() / "思路确认.md").write_text("\n".join(lines), encoding="utf-8")
+
+        state = self._load_analysis_state()
+        state["steps"].setdefault("4.75", {})["status"] = "completed"
+        state["steps"]["4.75"]["completed_at"] = datetime.now().isoformat()
+        self._save_analysis_state(state)
+        return {"success": True, "chosen_count": len(chosen), "additions_count": len(additions)}
+
+    def get_defense_strategy(self) -> dict:
+        """供 API 读取：系统建议 + 确认稿 + 状态"""
+        suggestion = {}
+        suggestion_json = self._strategy_dir() / "系统建议.json"
+        if suggestion_json.exists():
+            try:
+                suggestion = json.loads(suggestion_json.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        confirmation_file = self._strategy_dir() / "思路确认.md"
+        confirmation = confirmation_file.read_text(encoding="utf-8") if confirmation_file.exists() else None
+        status = self._load_analysis_state()["steps"].get("4.75", {}).get("status", "idle")
+        return {"suggestion": suggestion, "confirmation": confirmation, "status": status}
+
     # ========== 步骤 5: 辩护意见生成（分阶段渐进式） ==========
 
     def _defense_dir(self) -> Path:
@@ -1664,6 +1917,16 @@ class AnalysisPipeline:
         debate_context = ""
         if debate_file.exists():
             debate_context = debate_file.read_text(encoding="utf-8")[:10000]
+
+        # 辩护思路（4.75 律师确认稿，存在则注入每节 prompt 最前面）
+        strategy_file = self.analysis_dir / "04.75-辩护思路" / "思路确认.md"
+        strategy_prefix = ""
+        if strategy_file.exists():
+            strategy_prefix = (
+                "辩护思路（律师已确认，必须遵循；律师补充的思路优先级最高，与系统建议冲突时以律师为准）：\n"
+                + strategy_file.read_text(encoding="utf-8")[:3000]
+                + "\n\n"
+            )
 
         if not wiki_indictment and not wiki_conclusion:
             raise ValueError("请先完成步骤 4（案件 Wiki 构建）")
@@ -1767,7 +2030,7 @@ class AnalysisPipeline:
             try:
                 section_content = await self.llm.chat([
                     {"role": "system", "content": "你是一位资深的刑事辩护律师，综合前 4 步分析结果，形成全面、深入的辩护意见。\n\n重要：起诉书/起诉意见书是指控文书不是证据。引用时写'据起诉书'/'据起诉意见书'，不要用'见证据XXX'格式。只有正式证据（笔录、证言、鉴定意见、书证等）才用'见证据XXX'格式。"},
-                    {"role": "user", "content": prompt},
+                    {"role": "user", "content": strategy_prefix + prompt},
                 ])
                 self._save_defense_section(filename, section_content)
                 results_log["sub_steps"].append({"step": stage_key, "name": stage_name, "status": "done"})
