@@ -189,6 +189,17 @@ def _contains_indictment_title(text: str) -> bool:
     return False
 
 
+def _extract_fulltext_section(text: str) -> str:
+    """提取件中的原文全文段（B'）；无则返回空"""
+    marker = "## 原文全文"
+    idx = text.find(marker)
+    if idx < 0:
+        return ""
+    rest = text[idx + len(marker):]
+    next_h = rest.find("\n## ")
+    return rest[:next_h].strip() if next_h > 0 else rest.strip()
+
+
 def _split_sessions(text: str) -> list[dict]:
     """
     按时间分隔出单次笔录
@@ -305,7 +316,8 @@ class AnalysisPipeline:
                     # 用 LLM 确认类型
                     doc_type = await _classify_document_type(self.llm, f["text"][:5000])
                     if doc_type in ("起诉书", "起诉意见书"):
-                        return f["text"][:context_budget.content_budget_chars()], doc_type
+                        fulltext = _extract_fulltext_section(f["text"])
+                        return (fulltext or f["text"])[:context_budget.content_budget_chars()], doc_type
                     # LLM 无法确认类型时，回退到自动检测
 
         md_files = self._load_md_files()
@@ -327,13 +339,15 @@ class AnalysisPipeline:
         for f in indictment_candidates:
             doc_type = await _classify_document_type(self.llm, f["text"][:5000])
             if doc_type == "起诉书":
-                return f["text"][:context_budget.content_budget_chars()], "起诉书"
+                fulltext = _extract_fulltext_section(f["text"])
+                return (fulltext or f["text"])[:context_budget.content_budget_chars()], "起诉书"
 
         # 再确认起诉意见书
         for f in opinion_candidates:
             doc_type = await _classify_document_type(self.llm, f["text"][:5000])
             if doc_type == "起诉意见书":
-                return f["text"][:context_budget.content_budget_chars()], "起诉意见书"
+                fulltext = _extract_fulltext_section(f["text"])
+                return (fulltext or f["text"])[:context_budget.content_budget_chars()], "起诉意见书"
 
         return "", ""
 

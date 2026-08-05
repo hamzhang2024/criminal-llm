@@ -863,6 +863,26 @@ def _get_source_from_evidence_file(ev_path: Path) -> str:
     return ""
 
 
+# 原文全文定位调用的输入预算（字符数）
+_FULLTEXT_LOCATE_BUDGET = 60000
+
+
+def _slice_section_by_markers(raw_text: str, first_line: str, last_line: str) -> str | None:
+    """按原文首行/末行切片（LLM 只定位，文本不经转述）。找不到或顺序颠倒返回 None"""
+    first_line = first_line.strip()
+    last_line = last_line.strip()
+    if not first_line or not last_line:
+        return None
+    start = raw_text.find(first_line)
+    if start < 0:
+        return None
+    end = raw_text.find(last_line, start)
+    if end < 0:
+        return None
+    end += len(last_line)
+    return raw_text[start:end].strip()
+
+
 async def _process_indictment_single(md_file: Path, md_text: str, evidence_dir: Path, next_id: int) -> Path:
     """将起诉书/起诉意见书作为一份独立证据提取，真实记录指控的全部事实。
 
@@ -924,6 +944,27 @@ async def _process_indictment_single(md_file: Path, md_text: str, evidence_dir: 
 （电话号码、微信号、银行账号、车牌号、地址信息等，每项格式：`[类型] 内容 — 涉及人员/说明`）"""},
     ])
 
+    # 原文全文切片：LLM 只给首行/末行定位，代码从原文切（不经转述）
+    fulltext_section = ""
+    try:
+        locate = await client.chat([
+            {"role": "system", "content": "你是案卷整理员。"},
+            {"role": "user", "content": f"给定以下文件内容，找出其中《{doc_type}》正文的**第一行原文**（首行）和**最后一行原文**（末行）（逐字引用，不要改写）。只输出两行：\n首行：xxx\n末行：xxx\n\n文件内容：\n{md_text[:_FULLTEXT_LOCATE_BUDGET]}"},
+        ])
+        first_line = last_line = ""
+        for line in locate.strip().split("\n"):
+            if line.startswith("首行"):
+                first_line = line.split("：", 1)[-1].strip()
+            elif line.startswith("末行"):
+                last_line = line.split("：", 1)[-1].strip()
+        sliced = _slice_section_by_markers(md_text, first_line, last_line)
+        if sliced:
+            fulltext_section = f"\n\n## 原文全文\n\n{sliced}\n"
+        else:
+            logger.warning(f"[证据提取] {md_file.name}: 起诉书原文定位失败，仅保留结构化提取")
+    except Exception as e:
+        logger.warning(f"[证据提取] {md_file.name}: 起诉书原文切片失败（不影响结构化提取）: {e}")
+
     # 保存为一份独立证据文件，使用传入的 next_id 编号
     safe_name = _sanitize_filename(f"{doc_type} — {md_file.stem}")
     ev_md_file = evidence_dir / f"{next_id:03d}_{safe_name}.md"
@@ -938,7 +979,7 @@ async def _process_indictment_single(md_file: Path, md_text: str, evidence_dir: 
 ## 详细提取
 
 {result}
-"""
+{fulltext_section}"""
     ev_md_file.write_text(content, encoding="utf-8")
     logger.info(f"[证据提取] 已保存{doc_type}完整记录: {ev_md_file.name}")
     return ev_md_file
