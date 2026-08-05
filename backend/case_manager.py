@@ -867,8 +867,12 @@ def _get_source_from_evidence_file(ev_path: Path) -> str:
 _FULLTEXT_LOCATE_BUDGET = 60000
 
 
+# 原文全文切片最小长度（字符数）：低于此长度视为定位失败（LLM 可能只定位到残片）
+_MIN_FULLTEXT_SLICE_CHARS = 200
+
+
 def _slice_section_by_markers(raw_text: str, first_line: str, last_line: str) -> str | None:
-    """按原文首行/末行切片（LLM 只定位，文本不经转述）。找不到或顺序颠倒返回 None"""
+    """按原文首行/末行切片（LLM 只定位，文本不经转述）。找不到、顺序颠倒或切片过短返回 None"""
     first_line = first_line.strip()
     last_line = last_line.strip()
     if not first_line or not last_line:
@@ -880,7 +884,10 @@ def _slice_section_by_markers(raw_text: str, first_line: str, last_line: str) ->
     if end < 0:
         return None
     end += len(last_line)
-    return raw_text[start:end].strip()
+    sliced = raw_text[start:end].strip()
+    if len(sliced) < _MIN_FULLTEXT_SLICE_CHARS:
+        return None
+    return sliced
 
 
 async def _process_indictment_single(md_file: Path, md_text: str, evidence_dir: Path, next_id: int) -> Path:
@@ -954,9 +961,9 @@ async def _process_indictment_single(md_file: Path, md_text: str, evidence_dir: 
         first_line = last_line = ""
         for line in locate.strip().split("\n"):
             if line.startswith("首行"):
-                first_line = line.split("：", 1)[-1].strip()
+                first_line = re.split(r"[：:]", line, maxsplit=1)[-1].strip()
             elif line.startswith("末行"):
-                last_line = line.split("：", 1)[-1].strip()
+                last_line = re.split(r"[：:]", line, maxsplit=1)[-1].strip()
         sliced = _slice_section_by_markers(md_text, first_line, last_line)
         if sliced:
             fulltext_section = f"\n\n## 原文全文\n\n{sliced}\n"

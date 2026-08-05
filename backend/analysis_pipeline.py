@@ -1318,10 +1318,10 @@ class AnalysisPipeline:
 {indictment_content[:3000]}
 
 ## 证据分析汇总
-{all_evidence_analysis[:context_budget.content_budget_chars()]}
+{all_evidence_analysis[:int(context_budget.content_budget_chars() * 0.7)]}
 
 ## 法律依据
-{legal_content[:context_budget.content_budget_chars()]}
+{legal_content[:int(context_budget.content_budget_chars() * 0.25)]}
 
 请综合分析：
 1. 指控事实的证据支撑程度
