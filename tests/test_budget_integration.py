@@ -56,3 +56,14 @@ def test_pipeline_step45_no_hardcoded_slice():
 def test_llm_client_per_evidence_slice_budget_aware():
     src = inspect.getsource(llm_client)
     assert "e['text'][:50000]" not in src
+
+
+def test_pipeline_step4d_no_perfile_hardcoded_slice():
+    src = inspect.getsource(analysis_pipeline.AnalysisPipeline.step4_build_case_wiki)
+    assert "content[:2000]" not in src
+
+
+def test_pipeline_step5_no_perfile_hardcoded_slice():
+    src = inspect.getsource(analysis_pipeline.AnalysisPipeline.step5_defense_opinion)
+    assert "[:3000]" not in src
+    assert "[:2000]" not in src
