@@ -1900,6 +1900,16 @@ class AnalysisPipeline:
         if debate_file.exists():
             debate_context = debate_file.read_text(encoding="utf-8")[:10000]
 
+        # 辩护思路（4.75 律师确认稿，存在则注入每节 prompt 最前面）
+        strategy_file = self.analysis_dir / "04.75-辩护思路" / "思路确认.md"
+        strategy_prefix = ""
+        if strategy_file.exists():
+            strategy_prefix = (
+                "辩护思路（律师已确认，必须遵循；律师补充的思路优先级最高，与系统建议冲突时以律师为准）：\n"
+                + strategy_file.read_text(encoding="utf-8")[:3000]
+                + "\n\n"
+            )
+
         if not wiki_indictment and not wiki_conclusion:
             raise ValueError("请先完成步骤 4（案件 Wiki 构建）")
 
@@ -2002,7 +2012,7 @@ class AnalysisPipeline:
             try:
                 section_content = await self.llm.chat([
                     {"role": "system", "content": "你是一位资深的刑事辩护律师，综合前 4 步分析结果，形成全面、深入的辩护意见。\n\n重要：起诉书/起诉意见书是指控文书不是证据。引用时写'据起诉书'/'据起诉意见书'，不要用'见证据XXX'格式。只有正式证据（笔录、证言、鉴定意见、书证等）才用'见证据XXX'格式。"},
-                    {"role": "user", "content": prompt},
+                    {"role": "user", "content": strategy_prefix + prompt},
                 ])
                 self._save_defense_section(filename, section_content)
                 results_log["sub_steps"].append({"step": stage_key, "name": stage_name, "status": "done"})

@@ -114,3 +114,47 @@ def test_next_unfinished_step_includes_475(tmp_path):
     (tmp_path / "case_001" / "analysis" / "analysis_state.json").write_text(
         json.dumps(state), encoding="utf-8")
     assert pipe._get_next_unfinished_step() == 5
+
+
+def test_step5_injects_confirmed_strategy(tmp_path):
+    """步骤 5 各节 prompt 头部注入已确认辩护思路"""
+    pipe = _make_pipeline(tmp_path)
+    # 预置 Wiki 与确认稿
+    wiki = tmp_path / "case_001" / "analysis" / "indictment_wiki"
+    (wiki / "01-指控要素.md").write_text("指控要素", encoding="utf-8")
+    strategy_dir = tmp_path / "case_001" / "analysis" / "04.75-辩护思路"
+    strategy_dir.mkdir(parents=True)
+    (strategy_dir / "思路确认.md").write_text("# 辩护思路（律师已确认）\n\n主攻：排非", encoding="utf-8")
+
+    captured = []
+
+    async def fake_chat(messages, **kw):
+        captured.append(messages[-1]["content"])
+        return "小节内容"
+
+    pipe.llm.chat = fake_chat
+    asyncio.run(pipe.step5_defense_opinion("张三", "盗窃罪"))
+
+    assert captured, "步骤 5 应有 LLM 调用"
+    for prompt in captured:
+        assert "辩护思路（律师已确认" in prompt
+        assert "主攻：排非" in prompt
+        assert "律师补充的思路优先级最高" in prompt
+
+
+def test_step5_without_strategy_unchanged(tmp_path):
+    """无确认稿：prompt 不含辩护思路段（向后兼容）"""
+    pipe = _make_pipeline(tmp_path)
+    wiki = tmp_path / "case_001" / "analysis" / "indictment_wiki"
+    (wiki / "01-指控要素.md").write_text("指控要素", encoding="utf-8")
+
+    captured = []
+
+    async def fake_chat(messages, **kw):
+        captured.append(messages[-1]["content"])
+        return "小节内容"
+
+    pipe.llm.chat = fake_chat
+    asyncio.run(pipe.step5_defense_opinion("张三", "盗窃罪"))
+    for prompt in captured:
+        assert "辩护思路（律师已确认" not in prompt
