@@ -7,10 +7,11 @@ import { FileText, Loader2, Send, Download, Check,
   Gavel, Phone, Mail, Building2, StickyNote, Edit3, Swords, Network, Search, ExternalLink, Printer,
   BarChart3, Grid3x3, Maximize2, Minimize2, X, Target
 } from 'lucide-react'
-import { api, reviewEvidence, getEvidenceReview, EvidenceReviewItem, EvidenceReviewResult, generateReviewNotes, getReviewNotes, generateCrossExamination, getCrossExamination, getPersonRelation, RelationGraphData, getEventTimeline, TimelineData, searchSimilarCases, SimilarCasesData, getDefenseStrategy, DefenseStrategy, getWikiIndex, getWikiPage } from '../api'
+import { api, reviewEvidence, getEvidenceReview, EvidenceReviewItem, EvidenceReviewResult, generateReviewNotes, getReviewNotes, generateCrossExamination, getCrossExamination, getPersonRelation, RelationGraphData, getEventTimeline, TimelineData, getDefenseStrategy, DefenseStrategy, getWikiIndex, getWikiPage } from '../api'
 import { getEvidenceChain, EvidenceChainData } from '../api/stages'
 import { EvidenceChainMindmap } from '../components/EvidenceChainMindmap'
 import { EvidenceChainGraph } from '../components/EvidenceChainGraph'
+import DefenseStrategyPanel from '../components/DefenseStrategyPanel'
 import { showAlert } from '../components/MacOSDialog'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
@@ -165,6 +166,8 @@ export function ReportPage() {
   // 辩护思路状态（步骤 4.75 确认稿）
   const [defenseStrategy, setDefenseStrategy] = useState<DefenseStrategy | null>(null)
   const [defenseStrategyLoading, setDefenseStrategyLoading] = useState(false)
+  // 已确认状态下点"重新编辑"：在本页内嵌确认面板，而不是跳回案件详情页
+  const [editingStrategy, setEditingStrategy] = useState(false)
 
   // 人物关系图状态
   const [personRelationData, setPersonRelationData] = useState<RelationGraphData | null>(null)
@@ -173,11 +176,6 @@ export function ReportPage() {
   // 事件时间线状态
   const [timelineData, setTimelineData] = useState<TimelineData | null>(null)
   const [timelineLoading, setTimelineLoading] = useState(false)
-
-  // 类案检索状态
-  const [similarCasesData, setSimilarCasesData] = useState<SimilarCasesData | null>(null)
-  const [similarCasesLoading, setSimilarCasesLoading] = useState(false)
-  const [showSimilarCases, setShowSimilarCases] = useState(false)
 
   // Wiki 类案裁判规则（04-法律依据/类案裁判规则-*.md，自动检索产物）
   const [caseRulePages, setCaseRulePages] = useState<Array<{ path: string; content: string }>>([])
@@ -686,15 +684,22 @@ export function ReportPage() {
     }
   }, [activeTab, caseId, crossExamination, loadCrossExamination])
 
-  // 切换到辩护思路 tab 时加载确认状态
-  useEffect(() => {
-    if (activeTab !== 'defense_strategy' || !caseId) return
+  // 辩护思路确认状态加载（切换到该 tab 或确认完成后刷新）
+  const loadDefenseStrategy = useCallback(async () => {
+    if (!caseId) return
     setDefenseStrategyLoading(true)
-    getDefenseStrategy(caseId)
-      .then(data => setDefenseStrategy(data))
-      .catch(() => setDefenseStrategy(null))
-      .finally(() => setDefenseStrategyLoading(false))
-  }, [activeTab, caseId])
+    try {
+      setDefenseStrategy(await getDefenseStrategy(caseId))
+    } catch {
+      setDefenseStrategy(null)
+    } finally {
+      setDefenseStrategyLoading(false)
+    }
+  }, [caseId])
+
+  useEffect(() => {
+    if (activeTab === 'defense_strategy') loadDefenseStrategy()
+  }, [activeTab, loadDefenseStrategy])
 
   // 加载人物关系图数据
   const loadPersonRelation = useCallback(async () => {
@@ -737,24 +742,6 @@ export function ReportPage() {
       loadTimeline()
     }
   }, [activeTab, caseId, timelineData, loadTimeline])
-
-  // 类案检索
-  const handleSearchSimilarCases = useCallback(async () => {
-    if (!caseId || similarCasesLoading) return
-    setSimilarCasesLoading(true)
-    try {
-      const data = await searchSimilarCases(caseId)
-      setSimilarCasesData(data)
-      if (data.error) {
-        showAlert({ title: '提示', message: data.error, variant: 'warning' })
-      }
-    } catch (e) {
-      console.error('类案检索失败:', e)
-      showAlert({ title: '检索失败', message: `类案检索失败：${e instanceof Error ? e.message : '未知错误'}`, variant: 'danger' })
-    } finally {
-      setSimilarCasesLoading(false)
-    }
-  }, [caseId, similarCasesLoading])
 
   // Save chat
   useEffect(() => {
@@ -1238,13 +1225,13 @@ export function ReportPage() {
         )
       }
 
-      // 已确认：渲染确认稿 Markdown
-      if (defenseStrategy?.status === 'completed' && defenseStrategy.confirmation) {
+      // 已确认：渲染确认稿 Markdown；点"重新编辑"则内嵌确认面板（不再跳转案件详情页）
+      if (defenseStrategy?.status === 'completed' && defenseStrategy.confirmation && !editingStrategy) {
         return (
           <div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '12px' }}>
               <button
-                onClick={() => navigate(`/case/${caseId}`)}
+                onClick={() => setEditingStrategy(true)}
                 style={{
                   padding: '6px 14px', fontSize: '12px', borderRadius: '6px',
                   background: '#8e5a2a', color: '#fff', border: 'none',
@@ -1272,24 +1259,18 @@ export function ReportPage() {
         )
       }
 
-      // 待确认：提示跳转案件详情页
-      if (defenseStrategy?.status === 'awaiting_confirmation') {
+      // 待确认 / 重新编辑：在本页内嵌确认面板（勾选、修改、补充、确认一气呵成）
+      if (defenseStrategy?.status === 'awaiting_confirmation' || (defenseStrategy?.status === 'completed' && editingStrategy)) {
         return (
-          <div style={{ textAlign: 'center', padding: '48px 20px', color: colors.textTertiary }}>
-            <Target className="w-10 h-10" style={{ opacity: 0.2, display: 'block', margin: '0 auto 12px' }} />
-            <div style={{ fontSize: '13px', fontWeight: 500, color: colors.textSecondary }}>辩护思路待确认</div>
-            <div style={{ fontSize: '12px', marginTop: '4px' }}>系统已生成辩护思路建议，请前往案件详情页确认</div>
-            <button
-              onClick={() => navigate(`/case/${caseId}`)}
-              style={{
-                marginTop: '16px', padding: '8px 16px', fontSize: '13px',
-                background: colors.accent, color: '#fff', border: 'none',
-                borderRadius: '6px', cursor: 'pointer',
-              }}
-            >
-              前往确认
-            </button>
-          </div>
+          <DefenseStrategyPanel
+            caseId={caseId!}
+            defendant={defendant}
+            charges={charges}
+            onConfirmed={() => {
+              setEditingStrategy(false)
+              loadDefenseStrategy()
+            }}
+          />
         )
       }
 
@@ -1812,75 +1793,6 @@ export function ReportPage() {
             )}
           </button>
         </div>
-
-        {/* 类案参考（可折叠面板） */}
-        <div style={{
-          borderTop: `1px solid ${colors.border}`,
-          marginTop: '20px', paddingTop: '20px',
-        }}>
-          <div
-            onClick={() => setShowSimilarCases(v => !v)}
-            style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-              padding: '12px 16px', background: colors.surfaceAlt,
-              borderRadius: '8px', cursor: 'pointer',
-              border: `1px solid ${colors.border}`,
-            }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <Search className="w-4 h-4" style={{ color: '#059669' }} />
-              <span style={{ fontSize: '13px', fontWeight: 600, color: colors.textPrimary }}>类案参考</span>
-            </div>
-            <svg
-              className="w-4 h-4"
-              style={{ transform: showSimilarCases ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}
-              fill="none" viewBox="0 0 24 24" stroke="currentColor"
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-            </svg>
-          </div>
-          {showSimilarCases && (
-            <div style={{ padding: '16px', marginTop: '8px', background: colors.surface, borderRadius: '8px', border: `1px solid ${colors.border}` }}>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '12px' }}>
-                <button onClick={handleSearchSimilarCases} disabled={similarCasesLoading}
-                  style={{
-                    padding: '6px 14px', fontSize: '12px', borderRadius: '6px',
-                    background: similarCasesLoading ? 'rgba(5,150,105,0.05)' : '#059669',
-                    color: similarCasesLoading ? colors.textTertiary : '#fff',
-                    border: 'none', cursor: similarCasesLoading ? 'default' : 'pointer', fontWeight: 500,
-                    display: 'flex', alignItems: 'center', gap: '4px',
-                  }}>
-                  {similarCasesLoading ? <><Loader2 className="w-3 h-3 animate-spin" /> 搜索中...</> : <><Search className="w-3 h-3" /> 搜索类案</>}
-                </button>
-              </div>
-              {similarCasesData ? (
-                similarCasesData.similar_cases.length > 0 ? (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '400px', overflow: 'auto' }}>
-                    {similarCasesData.similar_cases.map((c, i) => (
-                      <div key={i} style={{ padding: '10px', background: colors.surfaceAlt, borderRadius: '6px', border: `1px solid ${colors.border}` }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '6px' }}>
-                          <span style={{ fontSize: '12px', fontWeight: 600, color: colors.textPrimary, flex: 1 }}>{c.title}</span>
-                          {c.link && <a href={c.link} target="_blank" rel="noopener noreferrer" style={{ fontSize: '10px', color: colors.accent, textDecoration: 'none', marginLeft: '8px' }}>查看原文</a>}
-                        </div>
-                        <div style={{ fontSize: '11px', color: colors.textSecondary, marginBottom: '4px' }}>
-                          <span style={{ marginRight: '8px' }}>{c.court}</span>
-                          <span style={{ marginRight: '8px' }}>{c.crime_type}</span>
-                        </div>
-                        <div style={{ fontSize: '11px', color: colors.gold, fontWeight: 500, marginBottom: '4px' }}>判决：{c.result}</div>
-                        <div style={{ fontSize: '11px', color: colors.textSecondary, lineHeight: 1.5 }}>裁判要旨：{c.key_point}</div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div style={{ textAlign: 'center', padding: '20px', color: colors.textTertiary }}>{similarCasesData.error || '未找到相似案例'}</div>
-                )
-              ) : (
-                <div style={{ textAlign: 'center', padding: '20px', color: colors.textTertiary, border: `1px dashed ${colors.border}`, borderRadius: '6px' }}>
-                  点击"搜索类案"查找相似案例
-                </div>
-              )}
-            </div>
-          )}
-        </div>
       </div>
     )
   }
@@ -2360,328 +2272,6 @@ export function ReportPage() {
             }}
             dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(marked.parse(crossExamination, { async: false }) as string) }}
           />
-        )}
-      </div>
-    )
-  }
-
-  // ===== 类案参考面板 =====
-  const renderSimilarCasesPanel = () => {
-    if (activeTab !== 'similar_cases') return null
-
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-        {/* 顶部操作栏 */}
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '12px 16px',
-          background: 'rgba(5,150,105,0.06)',
-          border: '1px solid rgba(5,150,105,0.15)',
-          borderRadius: '8px',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Search className="w-4 h-4" style={{ color: '#059669' }} />
-            <span style={{ fontSize: '13px', fontWeight: 600, color: colors.textPrimary }}>类案智能检索</span>
-            {similarCasesData?.similar_cases && (
-              <span style={{
-                fontSize: '11px',
-                padding: '2px 8px',
-                background: 'rgba(5,150,105,0.1)',
-                borderRadius: '10px',
-                color: '#059669',
-              }}>
-                {similarCasesData.similar_cases.length} 个相似案例
-              </span>
-            )}
-          </div>
-          <button
-            onClick={handleSearchSimilarCases}
-            disabled={similarCasesLoading}
-            style={{
-              padding: '6px 16px',
-              fontSize: '12px',
-              background: similarCasesLoading ? 'rgba(5,150,105,0.3)' : '#059669',
-              color: '#fff',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: similarCasesLoading ? 'default' : 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              fontWeight: 500,
-            }}
-          >
-            {similarCasesLoading ? (
-              <>
-                <Loader2 className="w-3 h-3 animate-spin" />
-                检索中...
-              </>
-            ) : (
-              <>
-                <Search className="w-3 h-3" />
-                {similarCasesData ? '重新检索' : '开始检索'}
-              </>
-            )}
-          </button>
-        </div>
-
-        {similarCasesData ? (
-          <>
-            {/* 本案信息卡片 */}
-            {similarCasesData.crime_type && (
-              <div style={{
-                padding: '14px 16px',
-                background: colors.surface,
-                borderRadius: '8px',
-                border: `1px solid ${colors.border}`,
-              }}>
-                <div style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  marginBottom: '10px',
-                }}>
-                  <span style={{
-                    fontSize: '11px',
-                    fontWeight: 600,
-                    color: '#059669',
-                    background: 'rgba(5,150,105,0.1)',
-                    padding: '3px 8px',
-                    borderRadius: '4px',
-                  }}>
-                    本案罪名
-                  </span>
-                  <span style={{ fontSize: '13px', fontWeight: 600, color: colors.textPrimary }}>
-                    {similarCasesData.crime_type}
-                  </span>
-                </div>
-                {similarCasesData.key_facts.length > 0 && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                    <span style={{ fontSize: '11px', fontWeight: 500, color: colors.textSecondary }}>
-                      关键事实要素：
-                    </span>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                      {similarCasesData.key_facts.map((fact, i) => (
-                        <span key={i} style={{
-                          fontSize: '11px',
-                          padding: '4px 10px',
-                          background: colors.surfaceAlt,
-                          borderRadius: '4px',
-                          color: colors.textSecondary,
-                          border: `1px solid ${colors.border}`,
-                        }}>
-                          {fact.length > 40 ? fact.slice(0, 40) + '...' : fact}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* 类案列表 */}
-            {similarCasesData.similar_cases.length > 0 ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                {similarCasesData.similar_cases.map((c, i) => (
-                  <div
-                    key={i}
-                    style={{
-                      padding: '14px 16px',
-                      background: colors.surface,
-                      borderRadius: '8px',
-                      border: `1px solid ${colors.border}`,
-                    }}
-                  >
-                    {/* 标题和链接 */}
-                    <div style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'flex-start',
-                      marginBottom: '10px',
-                      gap: '12px',
-                    }}>
-                      <div style={{ flex: 1 }}>
-                        <div style={{
-                          display: 'inline-block',
-                          fontSize: '10px',
-                          fontWeight: 600,
-                          color: '#059669',
-                          background: 'rgba(5,150,105,0.1)',
-                          padding: '2px 6px',
-                          borderRadius: '3px',
-                          marginRight: '8px',
-                        }}>
-                          案例{i + 1}
-                        </div>
-                        <span style={{ fontSize: '13px', fontWeight: 600, color: colors.textPrimary }}>
-                          {c.title}
-                        </span>
-                      </div>
-                      {c.link && (
-                        <a
-                          href={c.link}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '3px',
-                            fontSize: '11px',
-                            color: colors.accent,
-                            textDecoration: 'none',
-                            padding: '4px 10px',
-                            background: colors.accentLight,
-                            borderRadius: '4px',
-                            flexShrink: 0,
-                          }}
-                        >
-                          查看 <ExternalLink className="w-3 h-3" />
-                        </a>
-                      )}
-                    </div>
-
-                    {/* 元信息标签 */}
-                    <div style={{
-                      display: 'flex',
-                      flexWrap: 'wrap',
-                      gap: '6px',
-                      marginBottom: '10px',
-                    }}>
-                      {c.court && (
-                        <span style={{
-                          fontSize: '11px',
-                          padding: '3px 8px',
-                          background: colors.surfaceAlt,
-                          borderRadius: '4px',
-                          color: colors.textSecondary,
-                        }}>
-                          {c.court}
-                        </span>
-                      )}
-                      {c.crime_type && (
-                        <span style={{
-                          fontSize: '11px',
-                          padding: '3px 8px',
-                          background: 'rgba(107,39,101,0.08)',
-                          borderRadius: '4px',
-                          color: '#6b2765',
-                        }}>
-                          {c.crime_type}
-                        </span>
-                      )}
-                      {c.amount && (
-                        <span style={{
-                          fontSize: '11px',
-                          padding: '3px 8px',
-                          background: 'rgba(180,83,9,0.08)',
-                          borderRadius: '4px',
-                          color: '#b45309',
-                        }}>
-                          涉案 {c.amount}
-                        </span>
-                      )}
-                    </div>
-
-                    {/* 判决结果 */}
-                    {c.result && (
-                      <div style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '6px',
-                        marginBottom: '8px',
-                      }}>
-                        <span style={{
-                          fontSize: '11px',
-                          fontWeight: 500,
-                          color: colors.textSecondary,
-                        }}>
-                          判决：
-                        </span>
-                        <span style={{
-                          fontSize: '12px',
-                          fontWeight: 600,
-                          color: colors.gold,
-                        }}>
-                          {c.result}
-                        </span>
-                      </div>
-                    )}
-
-                    {/* 裁判要旨 */}
-                    {c.key_point && (
-                      <div style={{
-                        fontSize: '12px',
-                        color: colors.textSecondary,
-                        lineHeight: 1.6,
-                        padding: '10px 12px',
-                        background: colors.surfaceAlt,
-                        borderRadius: '6px',
-                        borderLeft: '3px solid #059669',
-                      }}>
-                        <span style={{ fontWeight: 500, color: colors.textPrimary }}>裁判要旨：</span>
-                        {c.key_point}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div style={{
-                textAlign: 'center',
-                padding: '40px',
-                color: colors.textTertiary,
-                fontSize: '13px',
-                background: colors.surface,
-                borderRadius: '8px',
-                border: `1px dashed ${colors.border}`,
-              }}>
-                <Search className="w-8 h-8" style={{ opacity: 0.3, marginBottom: '8px' }} />
-                <div>{similarCasesData.error || '未找到相似案例'}</div>
-              </div>
-            )}
-          </>
-        ) : (
-          <div style={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: '60px 40px',
-            color: colors.textTertiary,
-            gap: '12px',
-            background: colors.surface,
-            borderRadius: '8px',
-            border: `1px dashed ${colors.border}`,
-          }}>
-            <div style={{
-              width: '56px',
-              height: '56px',
-              borderRadius: '50%',
-              background: 'rgba(5,150,105,0.08)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}>
-              <Search className="w-6 h-6" style={{ color: '#059669', opacity: 0.6 }} />
-            </div>
-            <div style={{ fontSize: '14px', fontWeight: 500, color: colors.textSecondary }}>
-              类案智能检索
-            </div>
-            <div style={{ fontSize: '12px', textAlign: 'center', maxWidth: '280px' }}>
-              基于本案罪名和关键事实，检索相似案例的裁判要旨
-            </div>
-            <div style={{
-              fontSize: '11px',
-              padding: '6px 12px',
-              background: colors.surfaceAlt,
-              borderRadius: '4px',
-              color: colors.textTertiary,
-            }}>
-              需要先完成「指控要素」分析
-            </div>
-          </div>
         )}
       </div>
     )
