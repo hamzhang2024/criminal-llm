@@ -1748,15 +1748,18 @@ async def _do_extract_evidence(
 
             # 卡死检测监视器：如果超过 N 秒没有任何文件完成，发出警告
             last_progress_time = time.time()
-            stall_threshold = 600  # 10 分钟无进展视为可能卡死（大文件 LLM 可能需要 5-8 分钟）
+            stall_threshold = 900  # 15 分钟无进展视为可能卡死
 
             async def stall_detector():
-                """检测长时间无进展，自动取消任务"""
+                """检测长时间无进展，自动取消任务（LLM 调用进行中不算卡死）"""
                 nonlocal last_progress_time
                 while True:
                     await asyncio.sleep(10)
                     if gather_task and gather_task.done():
                         return  # gather 已完成，自动退出
+                    task = EXTRACT_TASKS.get(case_id)
+                    if isinstance(task, dict) and task.get("llm_waiting"):
+                        continue  # LLM 调用进行中（慢模型单次可达数分钟），不算卡死
                     elapsed = time.time() - last_progress_time
                     if elapsed > stall_threshold:
                         logger.info(f"[证据提取] 检测到卡死：{elapsed:.0f}s 无进展（阈值 {stall_threshold}s），自动取消提取")
