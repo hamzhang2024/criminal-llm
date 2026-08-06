@@ -20,9 +20,30 @@ MODEL_CONTEXT_WINDOWS = [
 ]
 
 DEFAULT_CONTEXT_LIMIT = 250000
-DEFAULT_RESERVE_TOKENS = 38000   # system prompt + 输出预留
+PROMPT_OVERHEAD_TOKENS = 8000    # system prompt + 罪名上下文等固定开销
 CHARS_PER_TOKEN = 1.35           # 中文：1 token ≈ 1.35 字符
 MIN_CONTENT_BUDGET_CHARS = 30000  # 预算下限：小配置也不低于此值，杜绝负预算
+
+# 各模型家族的最大输出 token 上限（保守值，防 API 400）
+MODEL_OUTPUT_CAPS = {
+    "deepseek": 65536,
+    "qwen": 32768,
+    "kimi": 65536,
+    "glm": 32768,
+    "gpt": 32768,
+    "claude": 65536,
+}
+DEFAULT_OUTPUT_CAP = 32768
+
+
+def compute_max_output_tokens(context_limit: int, model: str) -> int:
+    """max_output_tokens = min(context_limit * 0.8, 模型输出上限)"""
+    computed = int(context_limit * 0.8)
+    model_lower = (model or "").lower()
+    for family, cap in MODEL_OUTPUT_CAPS.items():
+        if family in model_lower:
+            return min(computed, cap)
+    return min(computed, DEFAULT_OUTPUT_CAP)
 
 
 def get_context_limit() -> int:
@@ -42,8 +63,28 @@ def get_model_window(model: str) -> int | None:
     return None
 
 
-def content_budget_chars(reserve_tokens: int = DEFAULT_RESERVE_TOKENS) -> int:
-    """内容字符预算 = (context_limit - 预留) × 1.35；小配置时保底 MIN_CONTENT_BUDGET_CHARS，杜绝负值"""
+def get_output_reserve_tokens() -> int:
+    """输出预留 = chat() 实际请求的 max_tokens + system prompt 固定开销
+
+    chat() 按 compute_max_output_tokens 设置 max_tokens（deepseek 等可达 65536），
+    预算若不把这部分扣除，input 打满后 input+max_tokens 必然超上下文上限，
+    被 API 以 400 拒绝（如 162000 分块 + 65536 输出 > 200000 上下文）。
+    """
+    limit = get_context_limit()
+    try:
+        model = str(get_config_value("llm_model", ""))
+    except Exception:
+        model = ""
+    return compute_max_output_tokens(limit, model) + PROMPT_OVERHEAD_TOKENS
+
+
+def content_budget_chars(reserve_tokens: int | None = None) -> int:
+    """内容字符预算 = (context_limit - 预留) × 1.35；小配置时保底 MIN_CONTENT_BUDGET_CHARS，杜绝负值
+
+    预留缺省为动态计算：输出 max_tokens（随模型/上下文配置变化）+ prompt 固定开销
+    """
+    if reserve_tokens is None:
+        reserve_tokens = get_output_reserve_tokens()
     return max(MIN_CONTENT_BUDGET_CHARS, int((get_context_limit() - reserve_tokens) * CHARS_PER_TOKEN))
 
 

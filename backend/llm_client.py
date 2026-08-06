@@ -22,26 +22,9 @@ from analysis_engine import (
 
 logger = logging.getLogger(__name__)
 
-# 各模型家族的最大输出 token 上限（保守值，防 API 400）
-MODEL_OUTPUT_CAPS = {
-    "deepseek": 65536,
-    "qwen": 32768,
-    "kimi": 65536,
-    "glm": 32768,
-    "gpt": 32768,
-    "claude": 65536,
-}
-DEFAULT_OUTPUT_CAP = 32768
-
-
-def compute_max_output_tokens(context_limit: int, model: str) -> int:
-    """max_output_tokens = min(context_limit * 0.8, 模型输出上限)"""
-    computed = int(context_limit * 0.8)
-    model_lower = (model or "").lower()
-    for family, cap in MODEL_OUTPUT_CAPS.items():
-        if family in model_lower:
-            return min(computed, cap)
-    return min(computed, DEFAULT_OUTPUT_CAP)
+# 各模型家族的最大输出 token 上限与计算函数已移至 context_budget，
+# 供预算公式（输入侧）与 chat()（输出侧）共用同一事实源，防止 input+output 超上下文
+from context_budget import DEFAULT_OUTPUT_CAP, compute_max_output_tokens
 
 # 打包后 certifi 证书路径可能失效，macOS 用系统证书
 if sys.platform == "darwin" and getattr(sys, "frozen", False):
