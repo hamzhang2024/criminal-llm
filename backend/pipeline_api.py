@@ -555,8 +555,8 @@ async def get_evidence_summaries(case_id: str):
         files = []
         for f in sorted(cat_dir.iterdir()):
             if f.suffix == ".md":
-                # 从文件名提取 displayName: "顾君燕_共11次_总结.md" -> "顾君燕（共11次）"
-                name = f.stem  # 顾君燕_共11次_总结
+                # 从文件名提取 displayName: "张某_共11次_总结.md" -> "张某（共11次）"
+                name = f.stem  # 张某_共11次_总结
                 display = name.replace("_总结", "").replace("_共", "（共").replace("次", "次）")
                 files.append({
                     "name": f.name,
@@ -653,7 +653,7 @@ async def get_contradiction_files(case_id: str):
     files = []
     for f in sorted(contradictions_dir.iterdir()):
         if f.is_file() and f.suffix == ".md":
-            name = f.stem  # "顾君燕_共11次_矛盾分析"
+            name = f.stem  # "张某_共11次_矛盾分析"
             files.append({
                 "filename": f.name,
                 "displayName": name.replace("_矛盾分析", ""),
