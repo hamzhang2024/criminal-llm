@@ -5,7 +5,7 @@
 """
 import requests
 
-from case_search_api import _service_config, fetch_case_cards, TIMEOUT
+from case_search_api import _service_config, TIMEOUT
 
 DISCLAIMER = "# 类案裁判规则（自动检索，供分析参考，正式引用需人工确认）\n\n"
 
@@ -23,6 +23,8 @@ def _format_rules_md(cards: list[dict]) -> str:
 def fetch_case_rules(charges: list[str], keywords: list[str] | None = None, size: int = 3) -> dict[str, str]:
     """按罪名检索类案卡片并格式化为 Markdown，返回 {罪名: md}。
 
+    - 每罪名 1 次请求（full=true 直接返回完整卡片），不逐篇拉详情——
+      云端详情接口也计每日配额，两段式会让一次分析消耗数倍配额
     - keywords：用户确认/LLM 推荐的案件特征关键词（如"未成年人""轻微暴力"），
       与罪名过滤组合检索；空则仅罪名过滤
     - 单罪名 HTTP 错误：跳过该罪名继续下一个
@@ -38,7 +40,7 @@ def fetch_case_rules(charges: list[str], keywords: list[str] | None = None, size
         try:
             resp = requests.get(
                 f"{base}/api/cases/search",
-                params={"charge": charge, "q": q, "size": size},
+                params={"charge": charge, "q": q, "size": size, "full": "true"},
                 headers={"X-API-Key": key},
                 timeout=TIMEOUT,
             )
@@ -47,10 +49,7 @@ def fetch_case_rules(charges: list[str], keywords: list[str] | None = None, size
             break
         if resp.status_code != 200:
             continue
-        case_nos = [r["case_no"] for r in resp.json().get("results", [])]
-        if not case_nos:
-            continue
-        cards = fetch_case_cards(case_nos)
+        cards = resp.json().get("results", [])
         if cards:
             rules[charge] = _format_rules_md(cards)
     return rules
