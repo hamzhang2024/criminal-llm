@@ -338,16 +338,18 @@ function processEvidenceLinks(html: string, evidenceItems: Array<{ id: string; m
   const sep = '[、，,\\-—\\s]'
 
   // 只在 HTML 标签之间的文本中替换，避免破坏标签属性
-  html = html.replace(/(?<=>)([^<]*?)(?=<)/g, (textMatch) => {
+  // 兼容说明：不用后行断言 (?<=>)（Safari < 16.4 / 旧版 WebView 会抛
+  // "invalid group specifier"），改为消费 > < 边界字符再原样拼回
+  html = html.replace(/>([^<]*?)</g, (_full, inner: string) => {
     // 格式1: 证据第XXX（带"第"，可选"号"结尾，分隔符连接多个编号或范围）
-    textMatch = textMatch.replace(new RegExp(`证据第(\\d{1,4})(?:号)?(${sep}\\d{1,4})*`, 'g'), (fullMatch: string, firstNum: string) => {
+    inner = inner.replace(new RegExp(`证据第(\\d{1,4})(?:号)?(${sep}\\d{1,4})*`, 'g'), (fullMatch: string, firstNum: string) => {
       return buildEvidenceLinks(fullMatch, firstNum, numMap, '证据第')
     })
     // 格式2: 证据XXX（不带"第"，分隔符连接多个编号或范围）
-    textMatch = textMatch.replace(new RegExp(`证据(\\d{1,4})(${sep}\\d{1,4})*`, 'g'), (fullMatch: string, firstNum: string) => {
+    inner = inner.replace(new RegExp(`证据(\\d{1,4})(${sep}\\d{1,4})*`, 'g'), (fullMatch: string, firstNum: string) => {
       return buildEvidenceLinks(fullMatch, firstNum, numMap, '证据')
     })
-    return textMatch
+    return '>' + inner + '<'
   })
 
   return html
