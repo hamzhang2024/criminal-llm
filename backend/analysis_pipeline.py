@@ -120,7 +120,7 @@ def _extract_person_from_filename(filename: str) -> Optional[str]:
         if name_match:
             return name_match.group(1)
 
-        # 格式 3：人名_（如 顾君燕_讯问笔录 → 顾君燕）
+        # 格式 3：人名_（如 张某_讯问笔录 → 张某）
         name_match2 = re.search(r'([\u4e00-\u9fff]{2,4})_+$', prefix)
         if name_match2:
             return name_match2.group(1)
@@ -599,8 +599,8 @@ class AnalysisPipeline:
         files = []
         for f in sorted(target_dir.iterdir()):
             if f.is_file() and f.suffix == ".md":
-                # 从文件名提取信息: "顾君燕_共11次_矛盾分析.md"
-                name = f.stem  # "顾君燕_共11次_矛盾分析"
+                # 从文件名提取信息: "张某_共11次_矛盾分析.md"
+                name = f.stem  # "张某_共11次_矛盾分析"
                 files.append({
                     "filename": f.name,
                     "displayName": name.replace("_矛盾分析", ""),
@@ -1765,6 +1765,30 @@ class AnalysisPipeline:
         debate_file = self.analysis_dir / "04.5-控辩对抗" / "对抗分析.md"
         debate = debate_file.read_text(encoding="utf-8") if debate_file.exists() else ""
 
+        # 回退：案件走的是 5 阶段引擎时，pipeline wiki 不存在，改读 stage 产物
+        if not contradictions:
+            stage52 = self.analysis_dir / "stage_52" / "output.md"
+            if stage52.exists():
+                contradictions = stage52.read_text(encoding="utf-8")
+        if not conclusion:
+            stage53 = self.analysis_dir / "stage_53" / "output.md"
+            if stage53.exists():
+                conclusion = stage53.read_text(encoding="utf-8")
+
+        # 类案裁判规则（案例库检索的真实案例，思路依据可援引案号）
+        case_rules_parts = []
+        for page in self._list_wiki_pages("04-法律依据"):
+            if page.startswith("类案裁判规则-"):
+                content = self._load_wiki_page("04-法律依据", page)
+                if content:
+                    case_rules_parts.append(content)
+        case_rules = "\n\n".join(case_rules_parts)
+
+        case_rules_section = (
+            f"\n## 类案裁判规则（真实案例，依据中可援引案号）\n{case_rules[:4000]}\n"
+            if case_rules else ""
+        )
+
         raw = await self.llm.chat([
             {"role": "system", "content": """你是资深刑事辩护律师。基于案件分析结果提出辩护思路建议。
 只输出严格 JSON：{"directions": [{"type": "主攻"|"备选", "direction": "方向简述", "basis": "依据（引用具体证据/矛盾点/裁判规则）", "risk": "风险点"}]}
@@ -1773,11 +1797,11 @@ class AnalysisPipeline:
 {conclusion[:8000]}
 
 ## 矛盾记录
-{contradictions[:5000]}
+{contradictions[:8000]}
 
 ## 控辩对抗（法官裁决倾向）
 {debate[:5000]}
-
+{case_rules_section}
 被告人：{defendant}；罪名：{crime_type or '未知'}"""},
         ])
 
