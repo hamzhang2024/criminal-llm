@@ -1221,29 +1221,30 @@ async def _extract_single_file(
         )
         evidence_blocks = _parse_evidence_blocks(result, md_file.name)
     else:
-        # 多块，逐块提取后合并（块级断点续传：已完成块跳过）
-        all_evidence_blocks = []
-        for ci, chunk in enumerate(chunks):
+        # 多块并发提取（块级断点续传：已完成块跳过），合并保持块顺序
+        chunk_sem = asyncio.Semaphore(2)
+
+        async def extract_chunk(ci: int, chunk: dict) -> list:
             chunk_label = chunk["label"]
             done_marker = temp_dir / f".chunk_{ci}.done"
             blocks_file = temp_dir / f"_chunk_{ci}_blocks.json"
             if done_marker.exists() and blocks_file.exists():
                 try:
                     cached = json.loads(blocks_file.read_text(encoding="utf-8"))
-                    all_evidence_blocks.extend(cached)
                     logger.info(f"[证据提取] {chunk_label}: 已完成，跳过（缓存 {len(cached)} 份）")
-                    continue
+                    return cached
                 except Exception:
                     pass  # 缓存损坏则重提该块
-            chunk_text = chunk["text"]
-            logger.info(f"[证据提取] {chunk_label}: 发送 {_count_tokens(chunk_text)} tokens")
-            result = await asyncio.wait_for(
-                client.chat([
-                    {"role": "system", "content": _EVIDENCE_SYSTEM_PROMPT + "\n\n" + _EVIDENCE_EXTRACTION_RULES + framework_prefix},
-                    {"role": "user", "content": f"## 案卷文件：{chunk_label}\n\n{charges_str}\n\n{chunk_text}"},
-                ]),
-                timeout=timeout_seconds,
-            )
+            async with chunk_sem:
+                chunk_text = chunk["text"]
+                logger.info(f"[证据提取] {chunk_label}: 发送 {_count_tokens(chunk_text)} tokens")
+                result = await asyncio.wait_for(
+                    client.chat([
+                        {"role": "system", "content": _EVIDENCE_SYSTEM_PROMPT + "\n\n" + _EVIDENCE_EXTRACTION_RULES + framework_prefix},
+                        {"role": "user", "content": f"## 案卷文件：{chunk_label}\n\n{charges_str}\n\n{chunk_text}"},
+                    ]),
+                    timeout=timeout_seconds,
+                )
             blocks = _parse_evidence_blocks(result, chunk_label)
             logger.info(f"[证据提取] {chunk_label}: 提取 {len(blocks)} 份证据")
             try:
@@ -1251,7 +1252,10 @@ async def _extract_single_file(
                 done_marker.write_text("", encoding="utf-8")
             except Exception:
                 pass
-            all_evidence_blocks.extend(blocks)
+            return blocks
+
+        chunk_results = await asyncio.gather(*[extract_chunk(ci, c) for ci, c in enumerate(chunks)])
+        all_evidence_blocks = [b for blocks in chunk_results for b in blocks]
         evidence_blocks = _merge_evidence_blocks(all_evidence_blocks)
         logger.info(f"[证据提取] {md_file.name}: {len(chunks)} 块合并后 {len(evidence_blocks)} 份证据")
 
