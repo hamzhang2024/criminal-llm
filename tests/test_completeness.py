@@ -146,3 +146,11 @@ def test_true_missing_stays_suspect(monkeypatch):
     entry = report["files"]["第10卷.md"]
     assert entry["status"] == "suspect"
     assert entry["missing"] == ["根本不存在的笔录"]
+
+
+def test_spot_check_prompt_semantic_matching():
+    """抽检 prompt 要求语义覆盖判断（防命名差异误报）"""
+    import inspect
+    src = inspect.getsource(completeness._llm_spot_check)
+    assert "语义" in src
+    assert "合并命名" in src or "并入" in src

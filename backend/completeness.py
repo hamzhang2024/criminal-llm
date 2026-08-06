@@ -61,7 +61,13 @@ async def _llm_spot_check(source: str, extracted: list[str]) -> dict:
     client = get_llm_client()
     extracted_str = "\n".join(f"- {e}" for e in extracted[:50])
     result = await client.chat([
-        {"role": "system", "content": "你是案卷审查员。对照原文与提取清单，判断原文列出的每笔事实是否都被覆盖。只输出 JSON：{\"covered\": true/false, \"missing_items\": [\"遗漏的笔数简述\"]}"},
+        {"role": "system", "content": (
+            "你是案卷审查员。对照原文与提取清单，判断原文列出的每笔事实/每份文书是否都被覆盖。"
+            "判断覆盖时按**语义**而非字面名称：清单条目可能合并命名（如「告知书（两份）」覆盖多份单独命名的告知书）、"
+            "可能以附件形式并入其他条目（如「XX询问笔录（附接受证据材料清单）」覆盖了该清单）、可能名称略有差异。"
+            "只有确认某份文书/某笔事实在清单中完全没有对应内容时才算遗漏。"
+            "只输出 JSON：{\"covered\": true/false, \"missing_items\": [\"遗漏的笔数简述\"]}"
+        )},
         {"role": "user", "content": f"## 原文（编号事实）\n{source[:20000]}\n\n## 提取清单\n{extracted_str}"},
     ])
     m = re.search(r"\{.*\}", result, re.S)
