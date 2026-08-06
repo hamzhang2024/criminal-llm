@@ -57,6 +57,13 @@ hiddenimports = [
     'data_dir_api',
     'llm_client',
     'power_manager',
+    # 案例检索与工作流重构新增模块（动态导入，必须显式包含）
+    'case_search_api',
+    'case_framework',
+    'extraction_framework',
+    'context_budget',
+    'completeness',
+    'doc_classifier',
     # 主要依赖
     'requests',
     'fastapi',
