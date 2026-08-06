@@ -361,33 +361,3 @@ export async function getEventTimeline(caseId: string): Promise<TimelineData> {
   }
   return res.json()
 }
-
-// ========== 类案检索 ==========
-
-export interface SimilarCase {
-  title: string
-  court: string
-  crime_type: string
-  amount?: string
-  result: string
-  key_point: string
-  link?: string
-}
-
-export interface SimilarCasesData {
-  crime_type: string
-  key_facts: string[]
-  similar_cases: SimilarCase[]
-  error?: string
-}
-
-/** 搜索类似案例 */
-export async function searchSimilarCases(caseId: string): Promise<SimilarCasesData> {
-  const res = await fetch(`${API_BASE}/stage-analysis/${caseId}/similar-cases`, {
-    method: 'POST',
-  })
-  if (!res.ok) {
-    return { crime_type: '', key_facts: [], similar_cases: [], error: '搜索失败' }
-  }
-  return res.json()
-}
