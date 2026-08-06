@@ -108,6 +108,23 @@ pub fn run() {
                 } else {
                     eprintln!("[START] 启动后端: {:?}", backend_exe);
 
+                    // 清理僵尸后端：旧版本退出时未杀死的进程会占住 8080，导致新后端 bind 失败
+                    #[cfg(unix)]
+                    {
+                        // 只杀本应用的后端二进制（按打包路径特征匹配），不误伤其他进程
+                        let _ = std::process::Command::new("pkill")
+                            .args(["-f", "resources/backend/criminal-llm"])
+                            .output();
+                        // 等待端口释放
+                        std::thread::sleep(std::time::Duration::from_millis(500));
+                    }
+                    #[cfg(windows)]
+                    {
+                        let _ = std::process::Command::new("taskkill")
+                            .args(["/F", "/IM", "criminal-llm.exe"])
+                            .output();
+                    }
+
                     // 设置工作目录为后端所在目录（确保能找到 legal_db 等资源）
                     let backend_dir = backend_exe.parent().unwrap().to_path_buf();
 

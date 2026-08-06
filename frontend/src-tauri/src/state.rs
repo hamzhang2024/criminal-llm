@@ -146,5 +146,20 @@ pub fn kill_backend_process(app: &tauri::AppHandle) {
                 .output();
         }
         eprintln!("[OK] 后端已退出");
+    } else {
+        // 兜底：BackendPid 为空（如崩溃后状态丢失）但 8080 可能仍被遗留后端占用，
+        // 按打包路径特征匹配清理，不误伤其他进程
+        #[cfg(unix)]
+        {
+            let _ = std::process::Command::new("pkill")
+                .args(["-f", "resources/backend/criminal-llm"])
+                .output();
+        }
+        #[cfg(windows)]
+        {
+            let _ = std::process::Command::new("taskkill")
+                .args(["/F", "/IM", "criminal-llm.exe"])
+                .output();
+        }
     }
 }
