@@ -1061,6 +1061,119 @@ class AnalysisEngine:
         self._save_stage(4, data, md_output, charge=crime_type)
         return data
 
+    # ========== 5B：矛盾分析 + 口供对比（阶段 5 与独立子阶段 52 共用）==========
+
+    async def stage_5b_contradiction_analysis(
+        self,
+        defendant: str,
+        progress_cb: Optional[Callable] = None,
+    ) -> str:
+        """矛盾分析：口供纵向对比 + 横向矛盾 + 证据链薄弱，返回完整 Markdown 并落盘 stage_52
+
+        分步精简原则：输入为提取的证据摘要（evidence/），不回读案卷原文；
+        拆成 3 次单任务聚焦调用——单次调用让模型一口气输出多板块时，
+        长输入下模型容易只交第一块就收尾（2026-08-06 生产环境实测翻车）
+        """
+        texts = self._load_evidence_texts()
+        indictment_catalog, _, evidence_catalog_text, _ = _split_indictment_and_evidence(texts)
+
+        from llm_client import get_llm_client
+        client = get_llm_client()
+        budget = _get_content_budget_chars()
+
+        # 第 1 步：口供稳定性（只喂供述类证据摘要，输入精准）
+        if progress_cb:
+            progress_cb("正在进行口供稳定性对比...")
+        confession_texts = _select_confession_texts(texts)
+        if confession_texts:
+            confession_blob = _truncate_all(confession_texts, max_total=budget)
+            stability_md = await client.chat([
+                {"role": "system", "content": "你是刑事辩护律师，本次只做口供纵向对比，不做其他分析。\n\n" + _NO_CHITCHAT + "\n\n引用格式：正式证据用'见证据XXX'。"},
+                {"role": "user", "content": f"""## 辩护对象
+被告人：**{defendant}**
+
+## 供述类证据摘要（讯问笔录）
+{confession_blob}
+
+---
+
+## 任务（仅此一项）：口供稳定性分析
+对同一人的多次讯问笔录做纵向对比，输出表格：
+
+| 时间 | 关键陈述 | 变化 | 可能原因 |
+|------|---------|------|---------|
+
+重点：首次供述与后续供述的差异、翻供与回避、趋利避害的角色变化。同案犯供述之间的推诿也要列出。"""},
+            ])
+        else:
+            stability_md = "（本案无供述类证据）"
+
+        # 第 2 步：横向矛盾（全部证据摘要在 1M 预算内可完整装入，单任务聚焦）
+        if progress_cb:
+            progress_cb("正在进行横向矛盾对比...")
+        all_text = _truncate_all(texts, max_total=budget)
+        horizontal_md = await client.chat([
+            {"role": "system", "content": "你是刑事辩护律师，本次只做证据间横向矛盾比对，不做其他分析。\n\n" + _NO_CHITCHAT + "\n\n重要：起诉书/起诉意见书引用时写'据起诉书'/'据起诉意见书'，正式证据用'见证据XXX'格式。"},
+            {"role": "user", "content": f"""## 辩护对象
+被告人：**{defendant}**
+
+## 指控文书（非证据）
+{indictment_catalog}
+
+## 全部证据摘要（提取精简版）
+{all_text}
+
+---
+
+## 任务（仅此一项）：横向矛盾分析
+对不同证据就同一事实的记载逐一比对，输出表格：
+
+| 比对维度 | 被告人供述 | 证人证言 | 书证/物证 | 是否矛盾 |
+|----------|-----------|---------|----------|----------|
+
+矛盾类型：直接矛盾、间接矛盾、隐性矛盾。
+硬性要求：
+1. 必须覆盖 供述 vs 证言、证言 vs 书证、同案犯供述之间 三个方向，不得只做口供内部对比
+2. 按犯罪事实逐笔比对（每笔交易/每个事件一行起）
+3. 无矛盾的方向也要说明"已比对，无矛盾"和比对依据"""},
+        ])
+
+        # 第 3 步：证据链薄弱（基于前两步结论综合，再次精简后的产物）
+        if progress_cb:
+            progress_cb("正在梳理证据链薄弱环节...")
+        chain_md = await client.chat([
+            {"role": "system", "content": "你是刑事辩护律师，本次只做证据链薄弱环节评估。\n\n" + _NO_CHITCHAT},
+            {"role": "user", "content": f"""## 辩护对象
+被告人：**{defendant}**
+
+## 证据目录
+{evidence_catalog_text}
+
+## 口供对比结论
+{stability_md}
+
+## 横向矛盾结论
+{horizontal_md}
+
+---
+
+## 任务（仅此一项）：证据链条薄弱环节
+基于以上结论，指出：
+- 仅靠言词证据支撑、无客观证据印证的环节
+- 证据链断裂处（有指控无证据、或证据无法到达指控事实）
+- 孤证不能定案的位置
+每处注明涉及的证据编号。"""},
+        ])
+
+        contradiction_md = (
+            f"# 一、口供稳定性分析（同一人多次笔录对比）\n\n{stability_md}\n\n"
+            f"# 二、横向矛盾分析\n\n{horizontal_md}\n\n"
+            f"# 三、证据链条薄弱环节\n\n{chain_md}"
+        )
+
+        self._save_stage(52, {"name": "矛盾分析"}, contradiction_md)
+        return contradiction_md
+
     # ========== 阶段 5：证据分析 + 矛盾分析 + 口供对比 + 三阶层辩护 ==========
 
     async def stage_5_full_defense(
@@ -1108,55 +1221,8 @@ class AnalysisEngine:
 
         self._save_stage(51, {"name": "证据目录", "evidence_count": len(evidence_only)}, evidence_list_md)
 
-        # ----- 5B：矛盾分析 + 口供对比 -----
-        if progress_cb:
-            progress_cb("正在进行矛盾分析和口供对比...")
-
-        from llm_client import get_llm_client
-        client = get_llm_client()
-
-        # 矛盾分析需跨证据对比，不适合分批，用优先级截断（起诉书完整、口供优先）
-        all_text = _truncate_all(texts, max_total=_get_content_budget_chars())
-
-        contradiction_prompt = f"""## 辩护对象
-被告人：**{defendant}**
-
-## 指控文书（非证据）
-{indictment_catalog}
-
-## 证据目录
-{evidence_catalog_text}
-
-## 全部案卷材料
-{all_text}
-
----
-
-## 请完成以下分析
-
-### 一、口供稳定性分析（同一人多次笔录对比）
-
-| 时间 | 关键陈述 | 变化 | 可能原因 |
-|------|---------|------|---------|
-
-### 二、横向矛盾分析
-
-| 比对维度 | 被告人供述 | 证人证言 | 书证/物证 | 是否矛盾 |
-|----------|-----------|---------|----------|----------|
-
-矛盾类型：直接矛盾、间接矛盾、隐性矛盾。
-影响：核心事实矛盾->动摇指控基础，细节矛盾->影响可信度。
-
-### 三、证据链条薄弱环节
-- 仅靠言词证据的环节
-- 证据链断裂处"""
-
-        contradiction_md = await client.chat([
-            {"role": "system", "content": "识别证据间的矛盾和证据链薄弱环节。\n\n" + _NO_CHITCHAT + "\n\n重要：起诉书/起诉意见书引用时写'据起诉书'/'据起诉意见书'，正式证据用'见证据XXX'格式。"},
-            {"role": "user", "content": contradiction_prompt},
-        ])
-
-        self._save_stage(52, {"name": "矛盾分析"}, contradiction_md)
+        # ----- 5B：矛盾分析 + 口供对比（共用方法，三次聚焦调用）-----
+        contradiction_md = await self.stage_5b_contradiction_analysis(defendant, progress_cb)
 
         # ----- 5C：三阶层辩护报告 -----
         if progress_cb:
@@ -2677,6 +2743,17 @@ def _extract_facts_to_prove(analysis_dir: Path, defendant: str = "") -> Dict[str
         pass
 
     return facts_content
+
+
+def _select_confession_texts(texts: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    """筛选供述类证据（讯问笔录/供述辩解），供口供纵向对比专用
+
+    匹配依据：类型含"供述"（如"犯罪嫌疑人供述和辩解"）或名称含"讯问"
+    """
+    return [
+        t for t in texts
+        if "供述" in t.get("type", "") or "讯问" in t.get("filename", "")
+    ]
 
 
 def _infer_evidence_type(filename: str) -> str:
