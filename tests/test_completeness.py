@@ -148,6 +148,23 @@ def test_true_missing_stays_suspect(monkeypatch):
     assert entry["missing"] == ["根本不存在的笔录"]
 
 
+def test_spot_checks_run_concurrently(monkeypatch):
+    """多个存疑文件的 LLM 抽检并发执行（总耗时 < 串行）"""
+    import time
+
+    async def slow_spot(source, extracted):
+        await asyncio.sleep(0.3)
+        return {"covered": True, "missing_items": []}
+
+    monkeypatch.setattr(completeness, "_llm_spot_check", slow_spot)
+    files = {f"起诉意见书{i}.md": "一、盗窃手机" for i in range(3)}
+    extracted = {f"起诉意见书{i}.md": ["盗窃手机"] for i in range(3)}
+    start = time.time()
+    asyncio.run(completeness.check_completeness(files, extracted))
+    elapsed = time.time() - start
+    assert elapsed < 0.6  # 串行要 0.9s+
+
+
 def test_spot_check_prompt_semantic_matching():
     """抽检 prompt 要求语义覆盖判断（防命名差异误报）"""
     import inspect

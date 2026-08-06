@@ -4,6 +4,7 @@
 - LLM 抽检（仅起诉书/起诉意见书/判决书）：一次调用确认逐笔覆盖
 - 报告存 evidence/completeness_report.json；LLM 与规则冲突时以 LLM 为准并标注人工复核
 """
+import asyncio
 import json as _json
 import re
 
@@ -83,34 +84,52 @@ async def check_completeness(files: dict, extracted_by_file: dict, all_evidence_
     本文件未提取但其他卷已提取的条目（补充卷内容重复是常态）不计为遗漏。
     """
     report = {"files": {}, "summary": {"ok": 0, "suspect": 0, "failed": 0}}
+    entries = {}
+    llm_tasks = {}  # fname -> (source, extracted)，保持插入顺序
     for fname, source in files.items():
         extracted = extracted_by_file.get(fname, [])
         rec = reconcile_numbered_items(source, extracted)
         is_key = bool(KEY_DOC_PATTERN.search(fname))
-        entry = {
+        entries[fname] = {
             "source_items": rec["source_items"],
             "covered": rec["covered"],
             "missing": rec["missing"],
             "llm_checked": False,
         }
         # LLM 仲裁：关键文书必查；普通文件仅当规则对账存疑时平反误报
-        need_llm = is_key or bool(rec["missing"])
-        if need_llm:
-            try:
-                spot = await _llm_spot_check(source, extracted)
-                entry["llm_checked"] = True
-                if not spot.get("covered", True):
-                    # LLM 与规则冲突时以 LLM 为准，标注人工复核
-                    entry["missing"] = spot.get("missing_items", rec["missing"])
-                    entry["needs_review"] = True
-                else:
-                    # LLM 确认覆盖：规则侧 missing 多为章节标题误报，降级为参考字段
-                    entry["rule_missing"] = entry["missing"]
-                    entry["missing"] = []
-            except Exception:
-                # LLM 抽检失败：标记 failed（可区分"未抽检"与"抽检失败"），不静默吞掉
-                entry["llm_checked"] = False
-                entry["llm_error"] = True
+        if is_key or rec["missing"]:
+            llm_tasks[fname] = (source, extracted)
+
+    # LLM 抽检并发执行（semaphore=3 限流）；单个失败不影响其他，对应条目标 failed
+    sem = asyncio.Semaphore(3)
+
+    async def _spot(source: str, extracted: list[str]) -> dict:
+        async with sem:
+            return await _llm_spot_check(source, extracted)
+
+    task_fnames = list(llm_tasks.keys())
+    results = await asyncio.gather(
+        *[_spot(s, e) for s, e in llm_tasks.values()],
+        return_exceptions=True,
+    )
+    for fname, res in zip(task_fnames, results):
+        entry = entries[fname]
+        if isinstance(res, Exception):
+            # LLM 抽检失败：标记 failed（可区分"未抽检"与"抽检失败"），不静默吞掉
+            entry["llm_error"] = True
+            continue
+        entry["llm_checked"] = True
+        if not res.get("covered", True):
+            # LLM 与规则冲突时以 LLM 为准，标注人工复核
+            entry["missing"] = res.get("missing_items", entry["missing"])
+            entry["needs_review"] = True
+        else:
+            # LLM 确认覆盖：规则侧 missing 多为章节标题误报，降级为参考字段
+            entry["rule_missing"] = entry["missing"]
+            entry["missing"] = []
+
+    # 全局交叉核对 + 状态判定
+    for fname, entry in entries.items():
         # 全局交叉核对：本文件未提取但其他卷已覆盖（补充卷重复是常态）
         if entry["missing"] and all_evidence_names:
             elsewhere = [m for m in entry["missing"] if _covered(m, all_evidence_names)]
@@ -120,7 +139,7 @@ async def check_completeness(files: dict, extracted_by_file: dict, all_evidence_
         # 状态判定：LLM 抽检失败 → failed；无编号项的文件不做遗漏判定
         if entry.get("llm_error"):
             status = "failed"
-        elif rec["source_items"] == 0:
+        elif entry["source_items"] == 0:
             status = "ok"
         elif entry["missing"]:
             status = "suspect"

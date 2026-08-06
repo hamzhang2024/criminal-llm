@@ -132,3 +132,38 @@ def test_chunk_cache_kept_when_meta_matches(tmp_path, monkeypatch):
     calls.clear()
     asyncio.run(case_manager._extract_single_file(md_file, md_text, file_temp, []))
     assert len(calls) == 0
+
+
+def test_chunks_run_concurrently(tmp_path, monkeypatch):
+    """多块并发：3 块各自 sleep 0.3s，总耗时应远小于串行的 0.9s"""
+    import time
+
+    md_text = "## 段一\n\n" + "甲。" * 500 + "\n## 段二\n\n" + "乙。" * 500 + "\n## 段三\n\n" + "丙。" * 500
+    md_file = tmp_path / "大文件.md"
+    md_file.write_text(md_text, encoding="utf-8")
+    file_temp = tmp_path / "temp" / "大文件"
+    file_temp.mkdir(parents=True)
+
+    calls = []
+
+    class FakeClient:
+        async def chat(self, messages, **kw):
+            label = messages[-1]["content"].split("## 案卷文件：")[1].split("\n")[0]
+            await asyncio.sleep(0.3)
+            calls.append(label)
+            return "[]"
+
+    monkeypatch.setattr("llm_client.get_llm_client", lambda: FakeClient())
+    monkeypatch.setattr(case_manager, "_split_content_by_tokens", lambda text, budget, name: [
+        {"label": "大文件.md - 分块 1/3", "text": "块1"},
+        {"label": "大文件.md - 分块 2/3", "text": "块2"},
+        {"label": "大文件.md - 分块 3/3", "text": "块3"},
+    ])
+
+    start = time.time()
+    asyncio.run(case_manager._extract_single_file(md_file, md_text, file_temp, []))
+    elapsed = time.time() - start
+
+    assert len(calls) == 3  # 3 块全部完成
+    # 块级并发度 2：2 波 × 0.3s ≈ 0.6s；串行为 0.9s+
+    assert elapsed < 0.75
