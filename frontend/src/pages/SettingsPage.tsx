@@ -1126,7 +1126,7 @@ export function SettingsPage() {
             <div style={{ fontSize: '12px', color: '#86868b', lineHeight: '1.6', marginBottom: '16px' }}>
               用于报告页检索《刑事审判参考》案例。
               <a
-                href="https://casefix.cn/api-access"
+                href="https://www.casefix.cn/api-access"
                 target="_blank"
                 rel="noopener noreferrer"
                 style={{ color: 'var(--macos-accent)', textDecoration: 'none', cursor: 'pointer' }}
