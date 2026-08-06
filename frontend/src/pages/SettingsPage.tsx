@@ -622,7 +622,7 @@ export function SettingsPage() {
           variant: 'info',
         })
         if (confirmed) {
-          window.open(info.download_url || 'http://118.196.83.43:8000/', '_blank')
+          window.open(info.download_url || 'https://www.casefix.cn/', '_blank')
         }
       } else {
         showAlert({

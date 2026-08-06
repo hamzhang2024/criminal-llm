@@ -2,7 +2,7 @@ use crate::state::{call_auth, AuthResponse, BackendClient};
 use tauri::State;
 
 /// 认证服务器地址
-const AUTH_SERVER_URL: &str = "http://118.196.83.43:8000";
+const AUTH_SERVER_URL: &str = "https://www.casefix.cn";
 
 /// 认证：登录
 #[tauri::command]

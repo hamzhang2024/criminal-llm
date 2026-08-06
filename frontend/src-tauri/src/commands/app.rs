@@ -14,7 +14,7 @@ pub async fn check_update(
     client: State<'_, BackendClient>,
 ) -> Result<UpdateInfo, String> {
     let current = app.package_info().version.to_string();
-    const AUTH_SERVER_URL: &str = "http://118.196.83.43:8000";
+    const AUTH_SERVER_URL: &str = "https://www.casefix.cn";
 
     let resp = client
         .0
