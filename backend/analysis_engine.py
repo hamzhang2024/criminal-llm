@@ -1190,6 +1190,9 @@ class AnalysisEngine:
         """
         texts = self._load_evidence_texts()
 
+        from llm_client import get_llm_client
+        client = get_llm_client()
+
         # 获取之前阶段的结果
         stage1_md = _read_stage_md(self.analysis_dir, 1)
         stage2_md = _read_stage_md(self.analysis_dir, 2)
