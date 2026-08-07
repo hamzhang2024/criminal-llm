@@ -222,6 +222,28 @@ jobs:
           projectPath: frontend/src-tauri
           args: ${{ matrix.platform.tauri-args }}
 
+      # ---- DMG 格式防护：非 UDZO 自动转换（v1.8.9 曾产出裸 UDRW 致用户无法挂载） ----
+      - name: Ensure DMG is UDZO format
+        if: matrix.platform.os == 'macos-14'
+        shell: bash
+        run: |
+          DMG_PATH=$(find frontend/src-tauri/target -name "*.dmg" | head -1)
+          if [ -z "$DMG_PATH" ]; then
+            echo "::error::未找到 DMG 产物"
+            exit 1
+          fi
+          FORMAT=$(hdiutil imageinfo "$DMG_PATH" | grep '^Format:' | awk '{print $2}')
+          echo "DMG 格式: $FORMAT"
+          if [ "$FORMAT" != "UDZO" ]; then
+            echo "⚠️ 非标准格式（$FORMAT），转换为 UDZO..."
+            hdiutil convert "$DMG_PATH" -format UDZO -o "${DMG_PATH%.dmg}_udzo.dmg"
+            mv "${DMG_PATH%.dmg}_udzo.dmg" "$DMG_PATH"
+            echo "✅ 已转换: $(hdiutil imageinfo "$DMG_PATH" | grep '^Format:')"
+          fi
+          # 冒烟验证：能挂载才放行
+          hdiutil attach "$DMG_PATH" -nobrowse -readonly
+          hdiutil detach $(hdiutil info | grep -B5 "$DMG_PATH" | grep '^/dev/' | head -1 | awk '{print $1}') -quiet || true
+
       # ---- macOS 公证（可选） ----
       - name: Notarize macOS app
         if: matrix.platform.os == 'macos-14' && env.APPLE_ID != ''
