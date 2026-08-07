@@ -1940,24 +1940,51 @@ class AnalysisPipeline:
     async def step5_defense_opinion(self, defendant: str, crime_type: Optional[str] = None, progress_cb=None) -> dict:
         """辩护意见生成（分阶段渐进式，每阶段独立保存）"""
         step1 = self._load_step_result(1)
-        if not step1:
-            raise ValueError("请先完成步骤 1（合并笔录）")
 
         # 从 Wiki 读取分析结果
         wiki_indictment = self._load_wiki_page("", "01-指控要素.md")
         wiki_conclusion = self._load_wiki_page("", "06-综合结论.md")
         wiki_contradictions = self._load_wiki_page("", "05-矛盾记录.md")
+
+        # 回退：案件走的是 5 阶段引擎时，pipeline 步骤/wiki 产物不存在，改读 stage 输出
+        if not step1 or not wiki_indictment:
+            stage1_file = self.analysis_dir / "stage_1" / "output.md"
+            if stage1_file.exists():
+                if not step1:
+                    step1 = {"stage_fallback": True}
+                if not wiki_indictment:
+                    wiki_indictment = stage1_file.read_text(encoding="utf-8")
+        if not step1:
+            raise ValueError("请先完成步骤 1（合并笔录）")
+        if not wiki_conclusion:
+            stage53_file = self.analysis_dir / "stage_53" / "output.md"
+            if stage53_file.exists():
+                wiki_conclusion = stage53_file.read_text(encoding="utf-8")
+        if not wiki_contradictions:
+            stage52_file = self.analysis_dir / "stage_52" / "output.md"
+            if stage52_file.exists():
+                wiki_contradictions = stage52_file.read_text(encoding="utf-8")
+
         legal_pages = self._list_wiki_pages("04-法律依据")
         per_legal_page = max(2000, context_budget.content_budget_chars() // max(1, len(legal_pages)))
         wiki_legal = ""
         for f in legal_pages:
             wiki_legal += self._load_wiki_page("04-法律依据", f)[:per_legal_page] + "\n\n"
+        if not wiki_legal.strip():
+            stage4_file = self.analysis_dir / "stage_4" / "output.md"
+            if stage4_file.exists():
+                wiki_legal = stage4_file.read_text(encoding="utf-8")[:context_budget.content_budget_chars()]
+
         evidence_pages = self._list_wiki_pages("03-证据分析")
         per_evidence_page = max(2000, context_budget.content_budget_chars() // max(1, len(evidence_pages)))
         wiki_evidence_summary = ""
         for f in evidence_pages:
             content = self._load_wiki_page("03-证据分析", f)
             wiki_evidence_summary += f"\n### {f}\n{content[:per_evidence_page]}\n"
+        if not wiki_evidence_summary.strip():
+            stage51_file = self.analysis_dir / "stage_51" / "output.md"
+            if stage51_file.exists():
+                wiki_evidence_summary = stage51_file.read_text(encoding="utf-8")[:context_budget.content_budget_chars()]
 
         # 读取控辩对抗结果（如有）
         debate_file = self.analysis_dir / "04.5-控辩对抗" / "对抗分析.md"
