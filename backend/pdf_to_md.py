@@ -621,7 +621,14 @@ def _fold_consecutive_images(text: str, min_count: int = 1) -> Tuple[str, int]:
 
     # 预处理：标记每行是否为图片行
     lines = text.split('\n')
-    is_image = [bool(re.match(r'^!\[.*\]\([^)]+\)$', line.strip())) for line in lines]
+    # 同时匹配 MinerU 的 ![]() 和 PaddleOCR 的 <img> 单行标签
+    is_image = [
+        bool(
+            re.match(r'^!\[.*\]\([^)]+\)$', line.strip())
+            or re.match(r'^<img\s[^>]*>$', line.strip())
+        )
+        for line in lines
+    ]
 
     # 找到连续图片块（允许中间有空行）
     result = []

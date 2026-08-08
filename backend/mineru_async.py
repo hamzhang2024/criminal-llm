@@ -259,8 +259,16 @@ def _protect_signatures_as_images(text: str) -> str:
 
 def _fold_consecutive_images(text: str, min_count: int = 1) -> Tuple[str, int]:
     """将连续图片折叠为 <details> 块"""
-    lines = text.split('\\n')
-    is_image = [bool(re.match(r'^!\\[.*\\]\\([^)]+\\)$', line.strip())) for line in lines]
+    lines = text.split('\n')
+    # 同时匹配 MinerU 的 ![]() 和 PaddleOCR 的 <img> 单行标签
+    # （原副本此处为正则双重转义，从不匹配任何内容，已一并修正为与 pdf_to_md.py 一致）
+    is_image = [
+        bool(
+            re.match(r'^!\[.*\]\([^)]+\)$', line.strip())
+            or re.match(r'^<img\s[^>]*>$', line.strip())
+        )
+        for line in lines
+    ]
 
     result = []
     block_count = 0
@@ -286,7 +294,7 @@ def _fold_consecutive_images(text: str, min_count: int = 1) -> Tuple[str, int]:
                     break
 
             if len(block_lines) >= min_count:
-                result.append(f'<details><summary>📎 签名/印章图片（共 {len(block_lines)} 张，点击展开）</summary>\\n')
+                result.append(f'<details><summary>📎 签名/印章图片（共 {len(block_lines)} 张，点击展开）</summary>\n')
                 result.extend(block_lines)
                 result.append('</details>')
                 block_count += 1
@@ -297,7 +305,7 @@ def _fold_consecutive_images(text: str, min_count: int = 1) -> Tuple[str, int]:
             result.append(lines[i])
             i += 1
 
-    return '\\n'.join(result), block_count
+    return '\n'.join(result), block_count
 
 
 # ═══════════════════════════════════════════════════════════
