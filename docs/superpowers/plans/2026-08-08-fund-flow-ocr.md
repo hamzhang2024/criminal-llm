@@ -320,9 +320,109 @@ git commit -m "feat: PaddleOCR 开启图片块文字识别与印章识别，payl
 
 ---
 
-### Task 4: 图片折叠正则修复（条件任务）
+### Task 3A: 修复后处理吞数字缺陷（实测发现，必须修复）
 
-**前置条件**：仅当 Task 1 实测确认开启图片识别后 `<img>` 标签仍保留在 MD 中时执行；否则跳过并在设计文档 5.3 标注原因。
+实测发现 `backend/paddleocr_remote.py:393-394` 的清理规则 8 `re.sub(r'>\d+>{0,3}-?\)?', '', text)` 会吞掉 `<td>` 后紧跟的数字：`<td>8,051</td>` 中的 `>8` 被当作乱码删除，导致表格金额全部被破坏（如 `8,051` → `,051`）。该规则本意是清理 `>12>>-)` 类 OCR 噪声，但 `>{0,3}` 允许零个 `>`，误伤正常表格单元格。
+
+**Files:**
+- Modify: `backend/paddleocr_remote.py:393-394`
+- Test: `tests/test_latex_cleanup_digits.py`
+
+- [ ] **Step 1: 写失败测试**
+
+```python
+"""后处理吞数字缺陷回归测试（实测发现：规则 8 吃掉 <td> 后的金额）"""
+from paddleocr_remote import _clean_latex_markup
+
+
+def test_table_cell_amount_preserved():
+    """表格单元格中的金额必须完整保留"""
+    text = "<td>8,051</td><td>25,578</td><td>-10,404</td>"
+    assert _clean_latex_markup(text) == text
+
+
+def test_table_cell_plain_digit_preserved():
+    """单元格内容为纯数字时保留"""
+    text = "<td>8</td><td>0</td><td>14</td>"
+    assert _clean_latex_markup(text) == text
+
+
+def test_noise_still_removed():
+    """原目标噪声 >数字>>-) 仍被清理"""
+    assert _clean_latex_markup("正文>12>>-)正文") == "正文正文"
+
+
+def test_inline_gt_digit_without_trailing_gt_preserved():
+    """无尾 > 的 >数字 不是目标噪声，保留（误伤面收窄的边界锁定）"""
+    assert ">5人" in _clean_latex_markup("见证人>5人在场")
+```
+
+- [ ] **Step 2: 运行确认失败**
+
+Run: `python3 -m pytest tests/test_latex_cleanup_digits.py -v`
+Expected: `test_table_cell_amount_preserved` 和 `test_table_cell_plain_digit_preserved` FAIL
+
+- [ ] **Step 3: 实现**
+
+`backend/paddleocr_remote.py` 第 393-394 行，把：
+
+```python
+    # 8. 残留乱码：>数字>>-)（OCR 把表格边框识别成尖括号序列）
+    text = re.sub(r'>\d+>{0,3}-?\)?', '', text)
+```
+
+改为：
+
+```python
+    # 8. 残留乱码：>数字>>-)（OCR 把表格边框识别成尖括号序列）
+    # 注意：数字后必须至少跟一个 > 才算噪声，否则会吞掉 <td>8,051</td> 中的 >8（实测教训）
+    text = re.sub(r'>\d+>+-?\)?', '', text)
+```
+
+- [ ] **Step 4: 运行确认通过**
+
+Run: `python3 -m pytest tests/test_latex_cleanup_digits.py -v`
+Expected: 4 passed
+
+- [ ] **Step 5: 离线复验（用实测保存的原始 JSONL，不消耗 API）**
+
+```bash
+python3 << 'EOF'
+import json, re
+from pathlib import Path
+import sys
+sys.path.insert(0, 'backend')
+from paddleocr_remote import _apply_postprocessing
+
+raw = Path('/var/folders/5l/9n828fys6lx8zm9wcnqjmd180000gn/T/paddle_image_ocr_nofty66o/实测_第7卷_p110-117_json/content_list.jsonl').read_text(encoding='utf-8')
+# 拼接原始 markdown 文本，跑后处理，验证金额存活
+texts = []
+for line in raw.strip().split('\n'):
+    for pr in json.loads(line).get('result', {}).get('layoutParsingResults', []):
+        md = pr.get('markdown', {})
+        if isinstance(md, dict):
+            texts.append(md.get('text', ''))
+processed = _apply_postprocessing('\n\n'.join(texts))
+for num in ['8,051', '25,578', '17,576', '9,508', '32,494', '9,292']:
+    n = processed.count(num)
+    print(f'{num}: {n} 次', '✅' if n > 0 else '❌ 被吞')
+assert all(processed.count(num) > 0 for num in ['8,051', '25,578', '17,576']), '金额仍被吞'
+print('复验通过：金额字段在后处理后完整存活')
+EOF
+```
+
+Expected: 全部 ✅，最后一行打印"复验通过"
+
+- [ ] **Step 6: 提交**
+
+```bash
+git add backend/paddleocr_remote.py tests/test_latex_cleanup_digits.py
+git commit -m "fix: 后处理规则8吞掉表格单元格数字（实测发现），收窄为数字后必须跟>"
+```
+
+---
+
+### Task 4: 图片折叠正则修复（实测已确认 `<img>` 保留，本任务执行）
 
 **Files:**
 - Modify: `backend/pdf_to_md.py:612-666`（_fold_consecutive_images）
