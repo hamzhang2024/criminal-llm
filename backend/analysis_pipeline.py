@@ -2119,14 +2119,15 @@ class AnalysisPipeline:
             theory_text = "三阶层理论：构成要件符合性 → 违法性 → 有责性"
             element_text = "法条构成要件拆解分析法：提出问题 → 套入法条 → 是否符合 → 本罪/无罪/他罪"
 
+        # 前三项截断 8000 字 + 资金流前移，防止 context[:20000] 把资金流段整体切掉（审查发现）
         context = "\n\n".join([
             part for part in [
-                f"## 指控要素\n{wiki_indictment}" if wiki_indictment else None,
-                f"## 案件综合结论\n{wiki_conclusion}" if wiki_conclusion else None,
-                f"## 矛盾记录\n{wiki_contradictions}" if wiki_contradictions else None,
+                f"## 指控要素\n{wiki_indictment[:8000]}" if wiki_indictment else None,
+                f"## 案件综合结论\n{wiki_conclusion[:8000]}" if wiki_conclusion else None,
+                f"## 矛盾记录\n{wiki_contradictions[:8000]}" if wiki_contradictions else None,
+                f"## 资金流梳理\n{wiki_fund_flow}" if wiki_fund_flow.strip() else None,
                 f"## 法律依据\n{wiki_legal}" if wiki_legal else None,
                 f"## 证据分析汇总\n{wiki_evidence_summary}" if wiki_evidence_summary else None,
-                f"## 资金流梳理\n{wiki_fund_flow}" if wiki_fund_flow.strip() else None,
                 f"## 控辩对抗结果\n{debate_context}" if debate_context else None,
             ] if part
         ])

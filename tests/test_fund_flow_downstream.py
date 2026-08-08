@@ -79,3 +79,39 @@ def test_step5_context_includes_fund_flow(tmp_path, monkeypatch):
     asyncio.run(pipe.step5_defense_opinion("张三", "诈骗罪"))
 
     assert any("仅言词证据支撑" in c for c in calls), "步骤 5 prompt 应包含资金流梳理内容"
+
+
+def test_step5_fund_flow_survives_large_context(tmp_path, monkeypatch):
+    """大案件中资金流段不被 context[:20000] 截掉（前三项截断 + 资金流前移的回归锁定）"""
+    pipe = _make_pipeline_with_fund_page(tmp_path)
+    wiki = tmp_path / "case_001" / "analysis" / "indictment_wiki"
+    # 构造超大前置内容（超过 20000 字符的场景）
+    (wiki / "01-指控要素.md").write_text("指控" * 9000, encoding="utf-8")
+    (wiki / "06-综合结论.md").write_text("结论" * 9000, encoding="utf-8")
+    calls = []
+
+    async def fake_chat(messages, **kw):
+        calls.append(messages[-1]["content"])
+        return "辩护章节"
+
+    pipe.llm.chat = fake_chat
+    asyncio.run(pipe.step5_defense_opinion("张三", "诈骗罪"))
+
+    assert any("仅言词证据支撑" in c for c in calls), "大案件中资金流段应存活"
+
+
+def test_no_fund_page_no_injection(tmp_path, monkeypatch):
+    """负路径：无资金流页时 prompt 不含资金流段（旧案件兼容）"""
+    pipe = _make_pipeline_with_fund_page(tmp_path)
+    # 删除资金流页
+    (tmp_path / "case_001" / "analysis" / "indictment_wiki" / "02-事实要素" / "资金流梳理.md").unlink()
+    calls = []
+
+    async def fake_chat(messages, **kw):
+        calls.append(messages[-1]["content"])
+        return "辩护章节"
+
+    pipe.llm.chat = fake_chat
+    asyncio.run(pipe.step5_defense_opinion("张三", "诈骗罪"))
+
+    assert not any("资金流梳理" in c for c in calls)
