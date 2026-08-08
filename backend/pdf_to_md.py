@@ -325,44 +325,46 @@ def _fix_ocr_errors(text: str) -> str:
 
 
 # ═══════════════════════════════════════════════════════════
-# VLM 幻觉检测：表格中同一单元格内容重复超阈值视为幻觉
+# VLM 幻觉检测：表格中整行内容完全重复超阈值视为幻觉
 # ═══════════════════════════════════════════════════════════
 def _strip_hallucinated_tables(text: str) -> str:
     """检测并移除 VLM 模型产生的整页幻觉表格
 
-    判据：HTML 表格中，若同一个 <td> 内容在同一列重复出现 ≥5 次，
-    且该内容不是纯数字/常见标签（如年份、合计），则视为幻觉，
+    判据（行级）：整行内容完全相同的行重复 ≥5 次，视为 VLM 循环幻觉，
     将整个 <table>...</table> 块替换为注释标记。
+
+    注意：不要按"单列内容重复"判断——真实台账中交易对方/产品名
+    同列合法重复（实测教训：重复 20 次的真实流水表被误删）。
     """
     import re
 
     def _check_table(match: re.Match) -> str:
         table_html = match.group(0)
-        # 提取所有 <td> 内容
-        cells = re.findall(r'<td>(.*?)</td>', table_html, re.DOTALL)
-        if len(cells) < 10:
+        rows = re.findall(r'<tr[^>]*>(.*?)</tr>', table_html, re.DOTALL)
+        if len(rows) < 5:
             return table_html  # 小表格不检测
 
-        # 统计每个单元格文本出现次数
-        cell_counts: dict[str, int] = {}
-        for c in cells:
-            c_stripped = c.strip()
-            if not c_stripped:
+        # 行级签名：整行单元格内容完全一致才算重复（真实台账每行单号/金额不同）
+        row_counts: dict[tuple, int] = {}
+        for r in rows:
+            cells = tuple(
+                re.sub(r'<[^>]+>', '', c).strip()
+                for c in re.findall(r'<td[^>]*>(.*?)</td>', r, re.DOTALL)
+            )
+            if not any(cells):
                 continue
-            # 跳过纯数字、常见年份、百分比等
-            if re.match(r'^[\d,.\s%年]+$', c_stripped):
-                continue
-            cell_counts[c_stripped] = cell_counts.get(c_stripped, 0) + 1
+            row_counts[cells] = row_counts.get(cells, 0) + 1
 
-        # 如果某个非数字单元格重复 ≥5 次，判定为幻觉
-        for content, count in cell_counts.items():
-            if count >= 5 and len(content) < 20:
-                print(f"[幻觉检测] 表格中「{content}」重复 {count} 次，移除幻觉表格")
-                return f'\n<!-- 幻觉表格已移除：行名「{content}」重复 {count} 次 -->\n'
+        for sig, count in row_counts.items():
+            if count >= 5:
+                preview = " ".join(sig)[:20]
+                print(f"[幻觉检测] 表格中相同行重复 {count} 次（「{preview}」），移除幻觉表格")
+                return f'\n<!-- 幻觉表格已移除：相同行重复 {count} 次 -->\n'
 
         return table_html
 
-    return re.sub(r'<table>.*?</table>', _check_table, text, flags=re.DOTALL)
+    # 兼容 PaddleOCR 带属性的 <table border=1 ...>
+    return re.sub(r'<table[^>]*>.*?</table>', _check_table, text, flags=re.DOTALL)
 
 
 # ═══════════════════════════════════════════════════════════
