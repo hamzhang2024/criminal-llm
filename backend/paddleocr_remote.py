@@ -63,6 +63,25 @@ PADDLEOCR_OPTIONAL_PAYLOAD = {
     "visualize": False,                  # 不需要可视化结果
 }
 
+
+def build_optional_payload() -> dict:
+    """构建 optionalPayload，按 image_ocr_enabled 配置注入图片识别参数
+
+    useOcrForImageBlock：识别图片块中的文字（转账凭证/银行流水截图）
+    useSealRecognition：印章识别（流水/凭证常见印章）
+    """
+    payload = dict(PADDLEOCR_OPTIONAL_PAYLOAD)
+    try:
+        from config_manager import get_config_value
+        enabled = get_config_value("image_ocr_enabled", True)
+    except ImportError:
+        enabled = True
+    if enabled:
+        payload["useOcrForImageBlock"] = True
+        payload["useSealRecognition"] = True
+    return payload
+
+
 # ═══════════════════════════════════════════════════════════
 # 每日配额跟踪
 # ═══════════════════════════════════════════════════════════
@@ -135,7 +154,7 @@ def _submit_job(pdf_path: Path, token: str) -> Optional[str]:
     headers = {"Authorization": f"bearer {token}"}
     data = {
         "model": PADDLEOCR_MODEL,
-        "optionalPayload": json.dumps(PADDLEOCR_OPTIONAL_PAYLOAD),
+        "optionalPayload": json.dumps(build_optional_payload()),
     }
 
     try:

@@ -31,6 +31,8 @@ from dataclasses import dataclass, field
 import aiohttp
 import logging
 
+from paddleocr_remote import build_optional_payload
+
 logger = logging.getLogger(__name__)
 
 
@@ -70,32 +72,7 @@ DEFAULT_MAX_CONCURRENT = 3  # 默认并发数（与 MinerU 一致，避免 API �
 PADDLEOCR_MAX_PAGES = 100  # 单次提交建议页数（超过会自动拆分以保证质量）
 PADDLEOCR_MAX_FILE_SIZE = 80 * 1024 * 1024  # 单次提交最大文件大小 (80MB)
 
-# 刑事案卷专用参数（优化讯问时间等关键信息识别）
-PADDLEOCR_OPTIONAL_PAYLOAD = {
-    # 预处理：扫描件可能有旋转/弯曲
-    "useDocOrientationClassify": True,   # 自动纠正文档旋转
-    "useDocUnwarping": True,             # 修复几何弯曲
-
-    # 版面分析
-    "useLayoutDetection": True,          # 开启版面分析，识别表格/标题/段落
-    "useChartRecognition": False,        # 案卷基本无图表，关闭节省资源
-    "layoutThreshold": 0.5,              # 版面检测置信度阈值
-
-    # 生成参数（优化准确性，降低幻觉）
-    "repetitionPenalty": 1.2,            # 抑制重复输出（降低以减少对数字的影响）
-    "temperature": 0.1,                  # 稍提高温度，改善日期/时间识别
-    "topP": 0.7,                         # 提高采样范围，改善多样性
-    "minPixels": 640 * 640,              # 提高最小分辨率，改善小字识别
-    "maxPixels": 1600 * 1600,            # 提高最大分辨率，改善细节识别
-
-    # 输出格式
-    "restructurePages": False,           # 不跨页重构（案卷按原始页序）
-    "mergeTables": True,                 # 跨页表格合并
-    "relevelTitles": True,               # 自动识别标题层级
-    "prettifyMarkdown": True,            # 美化 Markdown 排版
-    "showFormulaNumber": False,          # 案卷无公式，关闭编号
-    "visualize": False,                  # 不需要可视化结果
-}
+# optionalPayload 由 paddleocr_remote.build_optional_payload 统一构建（含图片识别参数）
 
 
 @dataclass
@@ -622,7 +599,7 @@ class AsyncPaddleOCRConverter:
             data = aiohttp.FormData()
             data.add_field("file", file_content, filename=pdf_path.name, content_type="application/pdf")
             data.add_field("model", PADDLEOCR_MODEL)
-            data.add_field("optionalPayload", json.dumps(PADDLEOCR_OPTIONAL_PAYLOAD))
+            data.add_field("optionalPayload", json.dumps(build_optional_payload()))
 
             async with session.post(
                 PADDLEOCR_API_URL,
