@@ -410,7 +410,8 @@ def _clean_latex_markup(text: str) -> str:
     for i, ch in enumerate('①②③④⑤⑥⑦⑧⑨⑩⑪⑫', 1):
         text = text.replace(ch, str(i))
     # 8. 残留乱码：>数字>>-)（OCR 把表格边框识别成尖括号序列）
-    text = re.sub(r'>\d+>{0,3}-?\)?', '', text)
+    # 注意：数字后必须至少跟一个 > 才算噪声，否则会吞掉 <td>8,051</td> 中的 >8（实测教训）
+    text = re.sub(r'>\d+>+-?\)?', '', text)
     # 9. 杂项数学符号：⊥（笔录里没意义）
     text = text.replace('⊥', '')
     # 10. 日期/时间字段前缀的散落标点：".1月" → "1月"，"1_月" → "1月"
