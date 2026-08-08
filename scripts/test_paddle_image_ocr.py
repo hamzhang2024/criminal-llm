@@ -29,7 +29,7 @@ def analyze_md(md_path: Path) -> None:
     """分析产物 MD：统计 <img> 标签数量，并打印每个标签后的识别文字片段"""
     text = md_path.read_text(encoding="utf-8")
     img_tags = re.findall(r"<img\s[^>]*>", text)
-    print(f"\n===== 产物分析 =====")
+    print("\n===== 产物分析 =====")
     print(f"MD 文件: {md_path}")
     print(f"总字符数: {len(text)}")
     print(f"<img> 标签数: {len(img_tags)}（>0 说明图片引用保留，折叠修复有意义）")
@@ -43,6 +43,10 @@ def analyze_md(md_path: Path) -> None:
 
 def main() -> None:
     if len(sys.argv) < 2:
+        print(__doc__)
+        sys.exit(1)
+
+    if sys.argv[1].startswith("--"):
         print(__doc__)
         sys.exit(1)
 
@@ -73,8 +77,9 @@ def main() -> None:
         sys.exit(1)
 
     print(f"\n[实测] 转换耗时: {elapsed:.0f} 秒")
+    print("[实测] 注意：耗时含 API 排队等待，排队深度不同可能主导差异；判断耗时增幅时建议两种模式各跑 2 次取较小值")
     analyze_md(out_dir / f"{pdf_path.stem}.md")
-    print(f"\n产物目录: {out_dir}（图片在 {{stem}}_images/，可对照原图人工核验）")
+    print(f"\n产物目录: {out_dir}（图片在 {out_dir / (pdf_path.stem + '_images')}，可对照原图人工核验）")
 
 
 if __name__ == "__main__":
