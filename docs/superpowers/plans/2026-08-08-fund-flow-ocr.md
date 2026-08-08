@@ -422,6 +422,150 @@ git commit -m "fix: 后处理规则8吞掉表格单元格数字（实测发现�
 
 ---
 
+### Task 3B: 修复幻觉表格过滤器误删真实台账（审查发现，必须修复）
+
+Task 3A 审查发现第二个吞金额成因：`backend/pdf_to_md.py:330-365` 的 `_strip_hallucinated_tables` 判据是"非数字单元格内容重复 ≥5 次即整表删除"。真实台账中交易对方/产品名同列合法重复（如实测案中"3G时尚莫尼卡"重复 20+ 次），整张流水表被误删。且该过滤器只匹配无属性的 `<table>`/`<td>`，PaddleOCR 产物（`<table border=1 ...>`、`<td style=...>`）从未被检测——覆盖也有缺陷。
+
+修复方向：判据改为**行级重复**——整行内容完全相同的行重复 ≥5 次才判幻觉（VLM 循环幻觉的特征是整行复读；真实台账每行的单号/时间/金额不同）。表格/单元格正则放宽到允许属性。
+
+**Files:**
+- Modify: `backend/pdf_to_md.py:330-365`（_strip_hallucinated_tables）
+- Test: `tests/test_hallucination_filter.py`
+
+- [ ] **Step 1: 写失败测试**
+
+```python
+"""幻觉表格过滤器误伤修复测试（真实台账同列重复不应被删）"""
+from pdf_to_md import _strip_hallucinated_tables
+
+
+def _make_ledger_table(rows: int) -> str:
+    """构造真实台账：交易对方同列重复，但单号/金额逐行不同"""
+    body = "".join(
+        f"<tr><td>2400{i:02d}</td><td>3G时尚莫尼卡</td><td>唐某</td>"
+        f"<td>{8000 + i},051</td><td>未付</td></tr>"
+        for i in range(rows)
+    )
+    return f"<table><tr><td>单号</td><td>对方</td><td>经手</td><td>金额</td><td>状态</td></tr>{body}</table>"
+
+
+def test_real_ledger_preserved():
+    """同列重复 ≥5 次但逐行内容不同的真实台账必须保留（实测误伤回归）"""
+    text = f"前文\n\n{_make_ledger_table(10)}\n\n后文"
+    result = _strip_hallucinated_tables(text)
+    assert "3G时尚莫尼卡" in result
+    assert "幻觉表格已移除" not in result
+
+
+def test_identical_rows_hallucination_removed():
+    """整行完全重复 ≥5 次（VLM 循环幻觉特征）仍判定幻觉并移除"""
+    row = "<tr><td>项目</td><td>3G时尚莫尼卡</td><td>8,051</td><td>未付</td></tr>"
+    table = f"<table>{row * 6}</table>"
+    result = _strip_hallucinated_tables(f"前文\n\n{table}\n\n后文")
+    assert "幻觉表格已移除" in result
+    assert "前文" in result and "后文" in result
+
+
+def test_small_table_untouched():
+    """行数不足 5 的小表格不检测"""
+    table = _make_ledger_table(3)
+    assert _strip_hallucinated_tables(table) == table
+
+
+def test_paddle_style_table_attributes_supported():
+    """PaddleOCR 风格（<table border=1 ...> / <td style=...>）也纳入行级检测"""
+    row = ("<tr><td style='text-align: center;'>项目</td>"
+           "<td style='text-align: center;'>幻觉内容</td></tr>")
+    table = f"<table border=1 style='margin: auto;'>{row * 6}</table>"
+    result = _strip_hallucinated_tables(table)
+    assert "幻觉表格已移除" in result
+```
+
+- [ ] **Step 2: 运行确认失败**
+
+Run: `python3 -m pytest tests/test_hallucination_filter.py -v`
+Expected: `test_real_ledger_preserved` FAIL（被误删）；`test_paddle_style_table_attributes_supported` FAIL（带属性表格未纳入检测）
+
+- [ ] **Step 3: 实现**
+
+`backend/pdf_to_md.py` 的 `_strip_hallucinated_tables` 整体替换为：
+
+```python
+def _strip_hallucinated_tables(text: str) -> str:
+    """检测并移除 VLM 模型产生的整页幻觉表格
+
+    判据（行级）：整行内容完全相同的行重复 ≥5 次，视为 VLM 循环幻觉，
+    将整个 <table>...</table> 块替换为注释标记。
+
+    注意：不要按"单列内容重复"判断——真实台账中交易对方/产品名
+    同列合法重复（实测教训：重复 20 次的真实流水表被误删）。
+    """
+    import re
+
+    def _check_table(match: re.Match) -> str:
+        table_html = match.group(0)
+        rows = re.findall(r'<tr[^>]*>(.*?)</tr>', table_html, re.DOTALL)
+        if len(rows) < 5:
+            return table_html  # 小表格不检测
+
+        # 行级签名：整行单元格内容完全一致才算重复（真实台账每行单号/金额不同）
+        row_counts: dict[tuple, int] = {}
+        for r in rows:
+            cells = tuple(
+                re.sub(r'<[^>]+>', '', c).strip()
+                for c in re.findall(r'<td[^>]*>(.*?)</td>', r, re.DOTALL)
+            )
+            if not any(cells):
+                continue
+            row_counts[cells] = row_counts.get(cells, 0) + 1
+
+        for sig, count in row_counts.items():
+            if count >= 5:
+                preview = " ".join(sig)[:20]
+                print(f"[幻觉检测] 表格中相同行重复 {count} 次（「{preview}」），移除幻觉表格")
+                return f'\n<!-- 幻觉表格已移除：相同行重复 {count} 次 -->\n'
+
+        return table_html
+
+    # 兼容 PaddleOCR 带属性的 <table border=1 ...>
+    return re.sub(r'<table[^>]*>.*?</table>', _check_table, text, flags=re.DOTALL)
+```
+
+- [ ] **Step 4: 运行确认通过**
+
+Run: `python3 -m pytest tests/test_hallucination_filter.py tests/test_latex_cleanup_digits.py -v`
+Expected: 全部 passed
+
+- [ ] **Step 5: 真实数据复验**
+
+```bash
+python3 << 'EOF'
+import sys
+sys.path.insert(0, 'backend')
+from pdf_to_md import _strip_hallucinated_tables
+from pathlib import Path
+# 用实测案卷的 MinerU 产物（含真实流水表）验证不再误删
+md = Path.home() / 'Documents/.criminal-llm-data/cases/case_6330558b/案件_顾某某诈骗罪_20260714/md/顾某某第7卷_去水印.md'
+text = md.read_text(encoding='utf-8')
+before = text.count('3G时尚莫尼卡')
+after = _strip_hallucinated_tables(text).count('3G时尚莫尼卡')
+print(f'修复前过滤器输入中 3G时尚莫尼卡: {before} 次, 过滤后存活: {after} 次')
+assert after == before, '真实台账仍被误删'
+print('复验通过：真实台账完整保留')
+EOF
+```
+
+Expected: 复验通过
+
+- [ ] **Step 6: 提交**
+
+```bash
+git add backend/pdf_to_md.py tests/test_hallucination_filter.py
+git commit -m "fix: 幻觉表格过滤器改为行级重复判据，修复真实台账同列重复被误删"
+```
+
+---
+
 ### Task 4: 图片折叠正则修复（实测已确认 `<img>` 保留，本任务执行）
 
 **Files:**
