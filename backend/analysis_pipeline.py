@@ -1405,6 +1405,10 @@ class AnalysisPipeline:
                 content = self._load_wiki_page("04-法律依据", f)
                 legal_content += f"\n### {f}\n{content[:per_legal_page]}\n"
 
+            # 资金流梳理（4e 产物，存在则注入）
+            fund_flow = self._load_wiki_page("02-事实要素", "资金流梳理.md")
+            fund_flow_section = f"\n## 资金流梳理\n{fund_flow[:5000]}\n" if fund_flow.strip() else ""
+
             try:
                 user_prompt = f"""以下是本案的 Wiki 分析结果：
 
@@ -1416,7 +1420,7 @@ class AnalysisPipeline:
 
 ## 法律依据
 {legal_content[:int(context_budget.content_budget_chars() * 0.25)]}
-
+{fund_flow_section}
 请综合分析：
 1. 指控事实的证据支撑程度
 2. 证据链条的完整性
@@ -1424,6 +1428,7 @@ class AnalysisPipeline:
 4. 法律适用的关键问题
 5. 对辩方有利的要点
 6. 对控方不利的要点
+7. 资金流与指控金额的印证情况（如提供了资金流梳理）
 
 请输出 Markdown 格式的综合结论。"""
                 print(f"[预算] 步骤4d 综合结论 prompt: {len(user_prompt)} 字符 / 预算 {context_budget.content_budget_chars()}")
@@ -1500,6 +1505,9 @@ class AnalysisPipeline:
         for f in self._list_wiki_pages("04-法律依据"):
             wiki_legal += self._load_wiki_page("04-法律依据", f)[:2000] + "\n\n"
 
+        # 资金流梳理（4e 产物，存在则注入）
+        wiki_fund_flow = self._load_wiki_page("02-事实要素", "资金流梳理.md")[:5000]
+
         # 回退：从 stage_api 格式（stage_N/output.md）读取旧案件数据
         if not wiki_indictment:
             stage1 = self.analysis_dir / "stage_1" / "output.md"
@@ -1528,6 +1536,7 @@ class AnalysisPipeline:
             f"## 矛盾记录\n{wiki_contradictions}" if wiki_contradictions else None,
             f"## 证据分析\n{wiki_evidence_summary}" if wiki_evidence_summary else None,
             f"## 法律依据\n{wiki_legal}" if wiki_legal else None,
+            f"## 资金流梳理\n{wiki_fund_flow}" if wiki_fund_flow.strip() else None,
         ] if p]
         context = "\n\n".join(context_parts)[:context_budget.content_budget_chars()]
 
@@ -2040,6 +2049,9 @@ class AnalysisPipeline:
         wiki_conclusion = self._load_wiki_page("", "06-综合结论.md")
         wiki_contradictions = self._load_wiki_page("", "05-矛盾记录.md")
 
+        # 资金流梳理（4e 产物，存在则注入）
+        wiki_fund_flow = self._load_wiki_page("02-事实要素", "资金流梳理.md")[:5000]
+
         # 回退：案件走的是 5 阶段引擎时，pipeline 步骤/wiki 产物不存在，改读 stage 输出
         if not step1 or not wiki_indictment:
             stage1_file = self.analysis_dir / "stage_1" / "output.md"
@@ -2114,6 +2126,7 @@ class AnalysisPipeline:
                 f"## 矛盾记录\n{wiki_contradictions}" if wiki_contradictions else None,
                 f"## 法律依据\n{wiki_legal}" if wiki_legal else None,
                 f"## 证据分析汇总\n{wiki_evidence_summary}" if wiki_evidence_summary else None,
+                f"## 资金流梳理\n{wiki_fund_flow}" if wiki_fund_flow.strip() else None,
                 f"## 控辩对抗结果\n{debate_context}" if debate_context else None,
             ] if part
         ])
