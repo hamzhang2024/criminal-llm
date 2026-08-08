@@ -222,6 +222,13 @@ def _split_sessions(text: str) -> list[dict]:
     return sessions
 
 
+# 资金类内容关键词（覆盖流水/凭证/言词证据中的资金表述）
+_FUND_KEYWORDS_RE = re.compile(
+    r"(转账|汇款|收款|付款|银行流水|交易明细|银行卡|卡号|账号|支付宝|"
+    r"微信(?:支付|红包|转账)|借条|欠条|涉案金额|资金|现金|取现|万元|\d+元)"
+)
+
+
 class AnalysisPipeline:
     """案卷分析 5 步流水线（重构版）"""
 
@@ -303,22 +310,13 @@ class AnalysisPipeline:
 
         return files
 
-    # 资金类内容关键词（覆盖流水/凭证/言词证据中的资金表述）
-    _FUND_KEYWORDS_RE = None  # 惰性编译，见 _collect_fund_evidence
-
     def _collect_fund_evidence(self, max_chars: int) -> str:
         """从证据全文中抽取资金相关段落，控制 token 预算
 
         逐份证据按空行分段，保留命中资金关键词的段落；单份证据上限 3000 字，
         总量超 max_chars 停止追加。无命中返回空串。
         """
-        import re as _re
-        if AnalysisPipeline._FUND_KEYWORDS_RE is None:
-            AnalysisPipeline._FUND_KEYWORDS_RE = _re.compile(
-                r"(转账|汇款|收款|付款|银行流水|交易明细|银行卡|卡号|账号|支付宝|"
-                r"微信(?:支付|红包|转账)|借条|欠条|涉案金额|资金|万元|\d+元)"
-            )
-        pattern = AnalysisPipeline._FUND_KEYWORDS_RE
+        pattern = _FUND_KEYWORDS_RE
 
         try:
             files = self._load_md_files()
@@ -1342,7 +1340,8 @@ class AnalysisPipeline:
                 print("[步骤 4e] 无资金类证据，跳过")
             else:
                 # 无起诉书时只做资金流重建，不做对照验证
-                has_indictment = bool(indictment_content) and "未发现起诉书" not in indictment_content
+                # 4a 降级页（未发现起诉书）或失败页（分析失败）都不算有效指控要素
+                has_indictment = bool(indictment_content) and not indictment_content.startswith(("本案未发现", "分析失败"))
                 indictment_section = (
                     f"## 指控要素（含涉案金额及计算方式）\n{indictment_content[:5000]}"
                     if has_indictment else
@@ -1359,7 +1358,7 @@ class AnalysisPipeline:
    | 时间 | 付款方 | 收款方 | 金额 | 渠道 | 来源类型 | 证据出处 |
    来源类型必须标注：客观证据·银行流水 / 客观证据·转账凭证 / 言词证据·被告人供述 / 言词证据·被害人陈述 / 言词证据·证人证言 等
 2. 【逐笔对照验证】（仅当提供了指控要素时执行）以起诉书指控的每笔涉案金额为基准逐笔核对，输出对照表：
-   | 指控笔次 | 指控金额 | 指控时间 | 来源类型 | 证据出处 | 核对结论 |
+   | 指控笔次 | 指控金额 | 指控时间 | 来源类型 | 证据出处 | 流水金额 | 核对结论 |
    核对结论分四档：
    - ✅客观证据印证：有流水/凭证直接支撑
    - 🗣仅言词证据：只有供述/证言提及、无客观证据印证（指出刑诉法第55条：重证据、不轻信口供，只有被告人供述不能定案）

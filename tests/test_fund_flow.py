@@ -52,11 +52,24 @@ def test_collect_fund_evidence_filters(tmp_path, monkeypatch):
 
 
 def test_collect_fund_evidence_budget_cap(tmp_path, monkeypatch):
-    """预算上限：超出 max_chars 的内容被截断"""
+    """预算上限：总量超 max_chars 时截断后续文件（行为锁定：删掉预算逻辑则此测试必败）"""
     _patch_common(monkeypatch)
-    pipe = _make_pipeline(tmp_path)
-    result = pipe._collect_fund_evidence(max_chars=50)
-    assert len(result) <= 200  # 允许单块超出少量，但绝不能全量装入
+    # 不复用 _make_pipeline，临时造两份各约 2000 字的资金证据（总量远超 max_chars=2500）
+    case_path = tmp_path / "case_001"
+    evidence_dir = case_path / "evidence"
+    evidence_dir.mkdir(parents=True)
+    para_a = "2024年3月 张某向李某转账 50000元，银行流水有记录。"
+    para_b = "2024年4月 王某向赵某汇款 30000元，交易明细可查。"
+    text_a = (para_a + "\n\n") * (2000 // len(para_a) + 1)
+    text_b = (para_b + "\n\n") * (2000 // len(para_b) + 1)
+    (evidence_dir / "001_资金流水甲.md").write_text(text_a, encoding="utf-8")
+    (evidence_dir / "002_资金流水乙.md").write_text(text_b, encoding="utf-8")
+
+    pipe = AnalysisPipeline("case_001", case_path)
+    result = pipe._collect_fund_evidence(max_chars=2500)
+    # 第一份装入后即逼近预算上限，第二份必须被总量截断
+    assert "001_资金流水甲.md" in result
+    assert "002_资金流水乙.md" not in result, "总量超预算时后续文件应被截断"
 
 
 def test_step4e_creates_fund_flow_page(tmp_path, monkeypatch):
