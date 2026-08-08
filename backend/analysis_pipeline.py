@@ -303,6 +303,42 @@ class AnalysisPipeline:
 
         return files
 
+    # 资金类内容关键词（覆盖流水/凭证/言词证据中的资金表述）
+    _FUND_KEYWORDS_RE = None  # 惰性编译，见 _collect_fund_evidence
+
+    def _collect_fund_evidence(self, max_chars: int) -> str:
+        """从证据全文中抽取资金相关段落，控制 token 预算
+
+        逐份证据按空行分段，保留命中资金关键词的段落；单份证据上限 3000 字，
+        总量超 max_chars 停止追加。无命中返回空串。
+        """
+        import re as _re
+        if AnalysisPipeline._FUND_KEYWORDS_RE is None:
+            AnalysisPipeline._FUND_KEYWORDS_RE = _re.compile(
+                r"(转账|汇款|收款|付款|银行流水|交易明细|银行卡|卡号|账号|支付宝|"
+                r"微信(?:支付|红包|转账)|借条|欠条|涉案金额|资金|万元|\d+元)"
+            )
+        pattern = AnalysisPipeline._FUND_KEYWORDS_RE
+
+        try:
+            files = self._load_md_files()
+        except ValueError:
+            return ""
+
+        parts = []
+        total = 0
+        for f in files:
+            paragraphs = [p for p in f["text"].split("\n\n") if pattern.search(p)]
+            if not paragraphs:
+                continue
+            excerpt = "\n\n".join(paragraphs)[:3000]
+            block = f"### {f['filename']}\n{excerpt}\n"
+            if total + len(block) > max_chars:
+                break
+            parts.append(block)
+            total += len(block)
+        return "\n".join(parts)
+
     async def _find_indictment_in_md_files(self) -> tuple[str, str]:
         """在所有 MD 文件中找到起诉书或起诉意见书。
         返回 (文书内容, 文书类型)，都没找到返回 ("", "")。
@@ -1035,7 +1071,7 @@ class AnalysisPipeline:
             (wiki_dir / subdir).mkdir(exist_ok=True)
 
         # 定义所有子步骤总数，用于进度报告
-        SUB_STEPS = ["4a-指控要素", "4c-法律框架", "4b-证据摄入", "4d-综合结论"]
+        SUB_STEPS = ["4a-指控要素", "4c-法律框架", "4b-证据摄入", "4e-资金流", "4d-综合结论"]
         sub_done = 0
         sub_total = len(SUB_STEPS)
         if progress_cb:
@@ -1291,6 +1327,65 @@ class AnalysisPipeline:
 
         sub_done = 3
         if progress_cb:
+            progress_cb(sub_done, sub_total, "步骤 4：资金流梳理")
+
+        # ===== 4e: 资金流梳理（4b 之后、4d 之前） =====
+        if not self._wiki_page_exists("02-事实要素", "资金流梳理.md"):
+            print("[步骤 4e] 梳理资金流...")
+            fund_evidence = self._collect_fund_evidence(
+                max_chars=int(context_budget.content_budget_chars() * 0.6)
+            )
+            if not fund_evidence.strip():
+                self._save_wiki_page("02-事实要素", "资金流梳理.md",
+                                     "本案证据中未检测到资金类内容，无需进行资金流梳理。")
+                results_log["sub_steps"].append({"step": "4e", "name": "资金流梳理", "status": "no_fund_evidence"})
+                print("[步骤 4e] 无资金类证据，跳过")
+            else:
+                # 无起诉书时只做资金流重建，不做对照验证
+                has_indictment = bool(indictment_content) and "未发现起诉书" not in indictment_content
+                indictment_section = (
+                    f"## 指控要素（含涉案金额及计算方式）\n{indictment_content[:5000]}"
+                    if has_indictment else
+                    "## 指控要素\n本案未发现起诉书/起诉意见书，跳过对照验证，只做资金流重建"
+                )
+                try:
+                    fund_prompt = f"""{indictment_section}
+
+## 证据中的资金相关内容
+{fund_evidence}
+
+请完成以下分析：
+1. 【资金流重建】从证据中抽取全部资金往来记录，输出时间序表格：
+   | 时间 | 付款方 | 收款方 | 金额 | 渠道 | 来源类型 | 证据出处 |
+   来源类型必须标注：客观证据·银行流水 / 客观证据·转账凭证 / 言词证据·被告人供述 / 言词证据·被害人陈述 / 言词证据·证人证言 等
+2. 【逐笔对照验证】（仅当提供了指控要素时执行）以起诉书指控的每笔涉案金额为基准逐笔核对，输出对照表：
+   | 指控笔次 | 指控金额 | 指控时间 | 来源类型 | 证据出处 | 核对结论 |
+   核对结论分四档：
+   - ✅客观证据印证：有流水/凭证直接支撑
+   - 🗣仅言词证据：只有供述/证言提及、无客观证据印证（指出刑诉法第55条：重证据、不轻信口供，只有被告人供述不能定案）
+   - ⚠️证据矛盾：言词与客观证据之间、或不同言词证据间金额/时间冲突（说明冲突点）
+   - ❌无证据支撑：指控金额找不到任何来源
+   另列 🔍反向发现：证据中有、起诉书未指控的大额资金往来
+3. 【差异与疑点分析】
+4. 【对辩护的意义】
+
+请输出 Markdown 格式。"""
+                    print(f"[预算] 步骤4e 资金流 prompt: {len(fund_prompt)} 字符 / 预算 {context_budget.content_budget_chars()}")
+                    fund_analysis = await self.llm.chat([
+                        {"role": "system", "content": "你是刑事律师，擅长经济犯罪案件的资金流分析。请基于证据材料梳理资金链条并验证指控金额。"},
+                        {"role": "user", "content": fund_prompt},
+                    ])
+                    self._save_wiki_page("02-事实要素", "资金流梳理.md", fund_analysis)
+                    results_log["sub_steps"].append({"step": "4e", "name": "资金流梳理", "status": "done"})
+                    print("[步骤 4e] 完成资金流梳理")
+                except Exception as e:
+                    self._save_wiki_page("02-事实要素", "资金流梳理.md", f"分析失败：{e}")
+                    results_log["sub_steps"].append({"step": "4e", "name": "资金流梳理", "status": "failed", "error": str(e)})
+        else:
+            results_log["sub_steps"].append({"step": "4e", "name": "资金流梳理", "status": "skipped"})
+
+        sub_done = 4
+        if progress_cb:
             progress_cb(sub_done, sub_total, "步骤 4：生成综合结论")
 
         # ===== 4d: 综合结论 =====
@@ -1346,7 +1441,7 @@ class AnalysisPipeline:
         else:
             results_log["sub_steps"].append({"step": "4d", "name": "综合结论", "status": "skipped"})
 
-        sub_done = 4
+        sub_done = 5
         if progress_cb:
             progress_cb(sub_done, sub_total, "完成！案件 Wiki 构建完成")
 
