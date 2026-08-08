@@ -174,6 +174,7 @@ interface ConfigForm {
   evidence_concurrency: number
   pdf_engine: 'mineru' | 'paddleocr'
   paddleocr_token: string
+  image_ocr_enabled: boolean
   pdf_convert_concurrency: number
   mineru_model_version: string
   model_context_limit: number
@@ -194,6 +195,7 @@ export function SettingsPage() {
     evidence_concurrency: 3,
     pdf_engine: 'mineru',
     paddleocr_token: '',
+    image_ocr_enabled: true,
     pdf_convert_concurrency: 10,
     mineru_model_version: 'vlm',
     model_context_limit: 250,
@@ -230,6 +232,7 @@ export function SettingsPage() {
       config.pdf_engine !== initialConfig.pdf_engine ||
       config.mineru_token !== initialConfig.mineru_token ||
       config.paddleocr_token !== initialConfig.paddleocr_token ||
+      config.image_ocr_enabled !== initialConfig.image_ocr_enabled ||
       config.llm_api_key !== initialConfig.llm_api_key ||
       config.llm_base_url !== initialConfig.llm_base_url ||
       config.llm_model !== initialConfig.llm_model ||
@@ -273,6 +276,7 @@ export function SettingsPage() {
       if (data.pdf_engine) updates.pdf_engine = data.pdf_engine
       if (data.mineru_token_value) updates.mineru_token = data.mineru_token_value
       if (data.paddleocr_token_value) updates.paddleocr_token = data.paddleocr_token_value
+      if (data.image_ocr_enabled !== undefined) updates.image_ocr_enabled = data.image_ocr_enabled
       if (data.llm_api_key_value) updates.llm_api_key = data.llm_api_key_value
       if (data.llm_base_url) updates.llm_base_url = data.llm_base_url
       if (data.llm_model) updates.llm_model = data.llm_model
@@ -323,6 +327,7 @@ export function SettingsPage() {
           pdf_engine: config.pdf_engine,
           mineru_token: config.mineru_token.trim(),
           paddleocr_token: config.paddleocr_token.trim(),
+          image_ocr_enabled: config.image_ocr_enabled,
           llm_api_key: config.llm_api_key.trim(),
           llm_base_url: config.llm_base_url.trim(),
           llm_model: config.llm_model.trim(),
@@ -852,6 +857,17 @@ export function SettingsPage() {
             {/* PaddleOCR 配置（仅在选择 PaddleOCR 时显示） */}
             {config.pdf_engine === 'paddleocr' && (
               <div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', cursor: 'pointer', marginBottom: '16px' }}>
+                  <input
+                    type="checkbox"
+                    checked={config.image_ocr_enabled}
+                    onChange={e => setConfig(prev => ({ ...prev, image_ocr_enabled: e.target.checked }))}
+                    style={{ accentColor: 'var(--macos-accent)' }}
+                  />
+                  <span>
+                    识别图片中的文字（转账凭证、银行流水截图等；关闭可回退旧行为）
+                  </span>
+                </label>
                 <div style={{ marginBottom: '16px' }}>
                   <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px', fontWeight: '500', marginBottom: '8px' }}>
                     Token
