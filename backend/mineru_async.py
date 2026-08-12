@@ -33,6 +33,8 @@ import aiohttp
 import fitz
 import logging
 
+from pdf_to_md import _OCR_FIXES  # 共享完整纠错表，根除复制漂移
+
 # 配置日志（PyInstaller --noconsole 模式下 print() 不可见，必须用 logger）
 logger = logging.getLogger(__name__)
 
@@ -209,28 +211,8 @@ def _split_pdf_pages(pdf_path: Path, chunk_size: int = MINERU_MAX_PAGES) -> List
 
 
 # ═══════════════════════════════════════════════════════════
-# OCR 纠错规则（复用自 pdf_to_md.py）
+# OCR 纠错规则（自 pdf_to_md.py 导入共享，见文件顶部 import）
 # ═══════════════════════════════════════════════════════════
-_OCR_FIXES = [
-    ("日本語の語", "日平均额"),
-    ("国語の語", "增值税"),
-    ("の口", "的口"),
-    ("の诗", "的诗"),
-    ("の菠萝", "的菠萝"),
-    ("倘若の", "倘若的"),
-    ("的の", "的的"),
-    ("讯间笔录", "讯问笔录"),
-    ("讯 间 笔 录", "讯问笔录"),
-    ("询间笔录", "询问笔录"),
-    ("询 间 笔 录", "询问笔录"),
-    ("讯间人", "讯问人"),
-    ("询间人", "询问人"),
-    ("被讯间人", "被讯问人"),
-    ("被询间人", "被询问人"),
-    ("曰", "日"),
-    ("巳", "已"),
-    ("末", "未"),
-]
 
 _SIGNATURE_HTML = '<div style="text-align:center;color:#aaa;border-bottom:1px dashed #ccc;padding:2px 20px;margin:2px 0;font-size:11px;user-select:none;">[手写签名]</div>'
 _SIGNATURE_PATTERNS = [
