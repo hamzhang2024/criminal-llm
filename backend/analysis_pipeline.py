@@ -1485,7 +1485,9 @@ class AnalysisPipeline:
         return ""
 
     def _debate_file_exists(self, filename: str) -> bool:
-        return (self._debate_dir() / filename).exists()
+        # 文件存在且内容非空才视为已完成——0 字节空文件（LLM 返回空串的残留）应触发重跑自愈
+        p = self._debate_dir() / filename
+        return p.exists() and p.stat().st_size > 0
 
     async def step45_debate_simulation(self, defendant: str, crime_type: Optional[str] = None, progress_cb=None) -> dict:
         """步骤 4.5：控辩对抗模拟（沙箱模式 + 交叉对决 + 法官裁决）
@@ -1806,10 +1808,18 @@ class AnalysisPipeline:
 用一段话给出法官的综合评估：哪一方的论点更有说服力，本案的核心争议是什么，最可能影响判决的因素是什么。
 """},
                 ])
-                self._save_debate_file("对抗分析.md", judge_verdict)
-                results_log["sub_steps"].append({"step": "45d", "name": "法官裁决", "status": "done"})
-                self._mark_substep_done("4.5", "45d", "done")
-                print("[步骤 4.5d] 完成法官裁决")
+                if not judge_verdict.strip():
+                    # LLM 返回空内容：不保存成功产物、不标记 done，保留重跑自愈机会
+                    print("[步骤 4.5d] 法官裁决失败：LLM 返回空内容")
+                    results_log["sub_steps"].append({
+                        "step": "45d", "name": "法官裁决",
+                        "status": "failed", "error": "LLM 返回空内容",
+                    })
+                else:
+                    self._save_debate_file("对抗分析.md", judge_verdict)
+                    results_log["sub_steps"].append({"step": "45d", "name": "法官裁决", "status": "done"})
+                    self._mark_substep_done("4.5", "45d", "done")
+                    print("[步骤 4.5d] 完成法官裁决")
             except Exception as e:
                 self._save_debate_file("对抗分析.md", f"分析失败：{e}")
                 results_log["sub_steps"].append({"step": "45d", "name": "法官裁决", "status": "failed", "error": str(e)})
@@ -1822,7 +1832,7 @@ class AnalysisPipeline:
 
         # 合并所有子文件为完整对抗报告
         full_report = f"# 控辩对抗分析\n\n被告人：{defendant}\n生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
-        for filename in ["01-红方指控.md", "02-蓝方辩护.md", "03-红方反驳.md", "04-蓝方回应.md", "对抗分析.md"]:
+        for filename in ["01-控方指控.md", "02-辩方辩护.md", "03-交叉对决.md", "对抗分析.md"]:
             content = self._load_debate_file(filename)
             if content:
                 full_report += f"\n---\n\n{content}\n\n"

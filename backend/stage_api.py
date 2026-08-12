@@ -129,8 +129,8 @@ def _resolve_stage_path(case_path: Path, stage_num: int, charge: Optional[str] =
     """解析阶段 Markdown 文件的存储路径（共享层 vs 罪名层）
 
     - 共享层(stage_1/2/3/51/52): analysis/stage_N/output.md
-    - 罪名层(stage_4/5/6): analysis/{charge}/stage_N/output.md
-    - stage_6 固定映射到 04.5-控辩对抗/对抗分析.md
+    - 罪名层(stage_4/5): analysis/{charge}/stage_N/output.md
+    - stage_6 固定映射到共享层 04.5-控辩对抗/对抗分析.md（写入端从不写罪名层）
     - stage_5 完整报告映射到 full_defense_report.md
     - 安全: 拒绝目录穿越字符
     """
@@ -139,8 +139,8 @@ def _resolve_stage_path(case_path: Path, stage_num: int, charge: Optional[str] =
 
     # 确定基础目录和文件名
     if stage_num == 6:
-        filename = "对抗分析.md"
-        subdir = "04.5-控辩对抗"
+        # stage_6（控辩对抗）写入端固定写共享层 analysis/04.5-控辩对抗/，读取端也固定走共享层
+        return case_path / "analysis" / "04.5-控辩对抗" / "对抗分析.md"
     elif stage_num == 5 and charge:  # 罪名层的 stage_5 完整报告
         return case_path / "analysis" / charge / "full_defense_report.md"
     else:
