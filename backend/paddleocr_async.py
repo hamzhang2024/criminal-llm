@@ -65,12 +65,12 @@ PADDLEOCR_MODEL = "PaddleOCR-VL-1.6"
 PADDLEOCR_DAILY_PAGE_LIMIT = 20000  # 每日转换页数配额（PaddleOCR-VL-1.6 限制）
 DEFAULT_TIMEOUT = 3600  # 1 小时
 POLL_INTERVAL = 3  # 轮询间隔 3 秒（加快响应）
-DEFAULT_MAX_CONCURRENT = 3  # 默认并发数（与 MinerU 一致，避免 API 限流）
+DEFAULT_MAX_CONCURRENT = 5  # 默认并发数（任务级共享信号量，文件与分块共用）
 
 # 分段限制（大文件自动拆分）
 # PaddleOCR-VL-1.6 建议 100 页以内，超过会处理但可能影响质量
 PADDLEOCR_MAX_PAGES = 100  # 单次提交建议页数（超过会自动拆分以保证质量）
-PADDLEOCR_MAX_FILE_SIZE = 80 * 1024 * 1024  # 单次提交最大文件大小 (80MB)
+PADDLEOCR_MAX_FILE_SIZE = 50 * 1024 * 1024  # 单次提交最大文件大小（官方本地上传限制 50MB）
 
 # optionalPayload 由 paddleocr_remote.build_optional_payload 统一构建（含图片识别参数）
 
@@ -155,6 +155,17 @@ def _get_paddleocr_token() -> str:
         pass
 
     return ""
+
+
+def resolve_max_concurrent() -> int:
+    """解析 PaddleOCR 并发数：读 pdf_convert_concurrency 配置，clamp 1-10，默认 5"""
+    try:
+        from config_manager import get_config_value
+        raw = get_config_value("pdf_convert_concurrency", 5)
+        value = int(raw)
+    except Exception:
+        value = DEFAULT_MAX_CONCURRENT
+    return max(1, min(10, value))
 
 
 def _split_pdf_pages(pdf_path: Path, chunk_size: int = PADDLEOCR_MAX_PAGES) -> List[Tuple[Path, int, int]]:
@@ -314,10 +325,12 @@ class AsyncPaddleOCRConverter:
         )
     """
 
-    def __init__(self, token: Optional[str] = None):
+    def __init__(self, token: Optional[str] = None, max_concurrent: int = DEFAULT_MAX_CONCURRENT):
         self.token = token or _get_paddleocr_token()
         if not self.token:
             raise ValueError("PaddleOCR Token 未配置，请设置 PADDLEOCR_TOKEN 环境变量或在设置中配置")
+        # 任务级共享信号量：文件与分块共用，限制同时在跑的 API 任务总数
+        self._job_semaphore = asyncio.Semaphore(max_concurrent)
 
     async def convert_single(
         self,
@@ -330,7 +343,7 @@ class AsyncPaddleOCRConverter:
 
         支持大文件自动分段处理
         """
-        # 检查是否需要分段（捕获异常）
+        # 检查是否需要分段（本地 CPU 操作，不占用 API 并发额度，在信号量外执行）
         try:
             chunks = _split_pdf_pages(pdf_path)
         except RuntimeError as e:
@@ -342,7 +355,9 @@ class AsyncPaddleOCRConverter:
         if chunks:
             return await self._convert_chunks(chunks, pdf_path, output_dir, timeout, progress_cb)
 
-        return await self._convert_single_file(pdf_path, output_dir, timeout, progress_cb)
+        # 单文件路径：通过任务级共享信号量限制并发
+        async with self._job_semaphore:
+            return await self._convert_single_file(pdf_path, output_dir, timeout, progress_cb)
 
     async def _convert_single_file(
         self,
@@ -424,41 +439,54 @@ class AsyncPaddleOCRConverter:
         timeout: int,
         progress_cb: Optional[Callable[[str, str], None]] = None,
     ) -> ConvertResult:
-        """分段处理超大 PDF
+        """分段处理超大 PDF（分块并行转换）
 
         Args:
             chunks: List of (chunk_path, start_page, end_page) tuples
         """
-        logger.info(f"[PaddleOCR] 分段转换 {original_pdf.name}: 共 {len(chunks)} 个 chunk")
+        logger.info(f"[PaddleOCR] 分段转换 {original_pdf.name}: 共 {len(chunks)} 个 chunk（并行处理）")
 
-        chunk_results = []
-        all_images_dirs = []
         temp_prefix = f"_temp_{original_pdf.stem}"
 
-        for i, (chunk_path, start_page, end_page) in enumerate(chunks):
+        # 并行下进度消息统一提示一次，避免错乱
+        if progress_cb:
+            progress_cb("processing", f"正在并行处理 {len(chunks)} 个分段...")
+
+        async def _convert_one_chunk(i: int, chunk_path: Path, start_page: int, end_page: int):
+            """转换单个分块：acquire 共享信号量，临时文件在 finally 中清理"""
             chunk_output = output_dir / f"{temp_prefix}_{i}"
             chunk_output.mkdir(parents=True, exist_ok=True)
+            try:
+                async with self._job_semaphore:
+                    result = await self._convert_single_file(
+                        chunk_path, chunk_output, timeout, None
+                    )
 
-            if progress_cb:
-                progress_cb("processing", f"正在处理分段 {i+1}/{len(chunks)} (第{start_page}-{end_page}页)...")
+                if result.success and result.text:
+                    logger.info(f"[PaddleOCR] 分段转换 chunk {i} 成功 (第{start_page}-{end_page}页)")
+                else:
+                    logger.error(f"[PaddleOCR] 分段转换 chunk {i} 失败: {result.error}")
+                return result
+            finally:
+                # 无论成败都清理临时分块 PDF 和临时输出目录
+                chunk_path.unlink(missing_ok=True)
+                shutil.rmtree(chunk_output, ignore_errors=True)
 
-            result = await self._convert_single_file(
-                chunk_path, chunk_output, timeout, None
-            )
+        # 分块并行执行，每个分块各自 acquire 任务级共享信号量
+        results = await asyncio.gather(*(
+            _convert_one_chunk(i, chunk_path, start_page, end_page)
+            for i, (chunk_path, start_page, end_page) in enumerate(chunks)
+        ))
 
-            chunk_path.unlink(missing_ok=True)
-
+        # 汇总成功分块（记录失败分块，其他分块照常合并）
+        chunk_results = []
+        all_images_dirs = []
+        for i, result in enumerate(results):
+            _, start_page, end_page = chunks[i]
             if result.success and result.text:
-                # 保存结果和页码范围
                 chunk_results.append((result.text, start_page, end_page))
                 if result.images_dir:
                     all_images_dirs.append(result.images_dir)
-                logger.info(f"[PaddleOCR] 分段转换 chunk {i} 成功 (第{start_page}-{end_page}页)")
-            else:
-                logger.error(f"[PaddleOCR] 分段转换 chunk {i} 失败: {result.error}")
-
-            # 清理临时目录
-            shutil.rmtree(chunk_output, ignore_errors=True)
 
         if not chunk_results:
             return ConvertResult(
@@ -532,34 +560,33 @@ class AsyncPaddleOCRConverter:
         logger.info(f"[PaddleOCR] convert_batch 入口: {len(pdf_paths)} 个文件, output_dir={output_dir}, max_concurrent={max_concurrent}")
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # 创建信号量控制并发
-        semaphore = asyncio.Semaphore(max_concurrent)
+        # 重建任务级共享信号量：文件全部启动，由该信号量收口（文件与分块共用）
+        self._job_semaphore = asyncio.Semaphore(max_concurrent)
 
         # 进度跟踪 + 锁保护（避免并发更新导致计数不一致）
         progress = BatchProgress(total=len(pdf_paths))
         progress_lock = asyncio.Lock()
 
-        async def _convert_with_semaphore(pdf_path: Path) -> ConvertResult:
-            async with semaphore:
-                result = await self.convert_single(
-                    pdf_path, output_dir, timeout,
-                    progress_cb=lambda stage, detail: None
-                )
+        async def _convert_one(pdf_path: Path) -> ConvertResult:
+            result = await self.convert_single(
+                pdf_path, output_dir, timeout,
+                progress_cb=lambda stage, detail: None
+            )
 
-                # 更新进度（加锁保护）
-                async with progress_lock:
-                    progress.completed += 1
-                    if not result.success:
-                        progress.failed += 1
-                    progress.current_files.append(pdf_path.name)
+            # 更新进度（加锁保护）
+            async with progress_lock:
+                progress.completed += 1
+                if not result.success:
+                    progress.failed += 1
+                progress.current_files.append(pdf_path.name)
 
-                    if progress_cb:
-                        progress_cb(progress)
+                if progress_cb:
+                    progress_cb(progress)
 
-                return result
+            return result
 
         # 并发执行所有转换
-        tasks = [_convert_with_semaphore(pdf) for pdf in pdf_paths]
+        tasks = [_convert_one(pdf) for pdf in pdf_paths]
         logger.info(f"[PaddleOCR] 启动 {len(tasks)} 个并发任务, gather 开始...")
         results = await asyncio.gather(*tasks, return_exceptions=True)
         logger.info(f"[PaddleOCR] gather 完成, 原始结果数={len(results)}, 成功={sum(1 for r in results if not isinstance(r, Exception))}, 异常={sum(1 for r in results if isinstance(r, Exception))}")
@@ -808,7 +835,7 @@ async def convert_batch_async(
     progress_cb: Optional[Callable[[BatchProgress], None]] = None,
 ) -> List[ConvertResult]:
     """异步批量转换（便捷函数）"""
-    converter = AsyncPaddleOCRConverter()
+    converter = AsyncPaddleOCRConverter(max_concurrent=max_concurrent)
     return await converter.convert_batch(pdf_paths, output_dir, max_concurrent, progress_cb=progress_cb)
 
 

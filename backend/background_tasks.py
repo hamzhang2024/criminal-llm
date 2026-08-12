@@ -234,7 +234,8 @@ def start_convert_task(case_id: str, max_concurrent: int = 3):
                     except ValueError as e:
                         _update_task(case_id, status="failed", message=str(e))
                         return
-                    concurrency = max_concurrent  # PaddleOCR 保留原并发参数（本次不动）
+                    from paddleocr_async import resolve_max_concurrent
+                    concurrency = resolve_max_concurrent()
                 else:
                     from mineru_async import AsyncMinerUConverter, BatchProgress, ConvertResult
                     try:
