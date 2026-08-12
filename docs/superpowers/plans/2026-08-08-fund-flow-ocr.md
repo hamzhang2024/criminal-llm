@@ -545,7 +545,7 @@ sys.path.insert(0, 'backend')
 from pdf_to_md import _strip_hallucinated_tables
 from pathlib import Path
 # 用实测案卷的 MinerU 产物（含真实流水表）验证不再误删
-md = Path.home() / 'Documents/.criminal-llm-data/cases/case_6330558b/案件_顾某某诈骗罪_20260714/md/顾某某第7卷_去水印.md'
+md = Path.home() / 'Documents/.criminal-llm-data/cases/<case_id>/<案件目录>/md/<第7卷文件名>.md'
 text = md.read_text(encoding='utf-8')
 before = text.count('3G时尚莫尼卡')
 after = _strip_hallucinated_tables(text).count('3G时尚莫尼卡')
