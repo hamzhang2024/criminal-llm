@@ -1996,8 +1996,11 @@ class AnalysisPipeline:
                 f.unlink()
         step5_result = self.analysis_dir / "step_5_result.json"
         step5_result.unlink(missing_ok=True)
+        # 汇总报告也一并清除，避免重跑完成前用户看到旧报告
+        for f in self.analysis_dir.glob("辩护分析报告_*.md"):
+            f.unlink()
         # 步骤 5 状态重置，_get_next_unfinished_step 才能正确返回 5
-        state["steps"]["5"] = {"status": "idle", "substeps": {}}
+        state["steps"]["5"] = {"status": "idle", "sub_steps": {}}
 
         self._save_analysis_state(state)
         return {"success": True, "chosen_count": len(chosen), "additions_count": len(additions)}

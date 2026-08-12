@@ -23,8 +23,9 @@ def _make_pipeline(tmp_path: Path, with_step5_outputs: bool = True) -> AnalysisP
                    "04-三阶层辩护.md", "05-量刑情节.md", "06-结论建议.md"]:
             (defense_dir / fn).write_text(f"旧内容-{fn}", encoding="utf-8")
         (analysis_dir / "step_5_result.json").write_text(json.dumps({"ok": True}), encoding="utf-8")
+        (analysis_dir / "辩护分析报告_张三.md").write_text("旧报告", encoding="utf-8")
         state = {"steps": {"4.75": {"status": "awaiting_confirmation"},
-                           "5": {"status": "completed", "substeps": {"5a": "done"}}}}
+                           "5": {"status": "completed", "sub_steps": {"5a": "done"}}}}
         (analysis_dir / "analysis_state.json").write_text(json.dumps(state), encoding="utf-8")
     else:
         state = {"steps": {"4.75": {"status": "awaiting_confirmation"}}}
@@ -44,6 +45,7 @@ def test_confirm_invalidates_step5_outputs(tmp_path):
     remaining = list(defense_dir.glob("*.md")) if defense_dir.exists() else []
     assert remaining == [], f"旧章节应被清除，实际残留: {remaining}"
     assert not (analysis_dir / "step_5_result.json").exists(), "step_5_result.json 应被清除"
+    assert not (analysis_dir / "辩护分析报告_张三.md").exists(), "旧汇总报告应被清除"
     state = json.loads((analysis_dir / "analysis_state.json").read_text(encoding="utf-8"))
     assert state["steps"]["5"]["status"] != "completed", "步骤 5 状态应重置"
 
