@@ -383,7 +383,7 @@ export function CaseDetailPage() {
           await api.batchProcess(caseId!, 1, files.filter(f => f.status === 'pending').map(f => f.name), { delete_original: optDeleteOriginal })
           setCurrentStep(1)
         } catch (err) { setError(err instanceof Error ? err.message : '失败'); setProgress('') }
-        finally { setProcessing(false) }
+        finally { setProcessing(false); setProgress('') }
         return
       }
       setProcessing(true); setProgress('正在处理...')
@@ -392,7 +392,7 @@ export function CaseDetailPage() {
         if (r.results?.every((x: any) => x.success)) { setCurrentStep(1) }
         else { setError(r.results?.find((x: any) => !x.success)?.error || '处理失败'); setProgress('') }
       } catch (err) { setError(err instanceof Error ? err.message : '处理失败'); setProgress('') }
-      finally { setProcessing(false) }
+      finally { setProcessing(false); setProgress('') }
     } else if (currentStep === 1) await handleConvertAndExtract()
     else if (currentStep === 2) navigate(`/case/${caseId}/report`)
   }, [currentStep, files, password, optDecrypt, optWatermark, optDeleteOriginal, handleConvertAndExtract, caseId])
