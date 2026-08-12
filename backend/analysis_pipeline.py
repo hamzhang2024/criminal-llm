@@ -1589,10 +1589,18 @@ class AnalysisPipeline:
 4. 预判证人可能怎么回答？
 """},
                 ])
-                self._save_debate_file("01-控方指控.md", red_argument)
-                results_log["sub_steps"].append({"step": "45a", "name": "控方沙箱", "status": "done"})
-                self._mark_substep_done("4.5", "45a", "done")
-                print("[步骤 4.5a] 完成控方指控")
+                if not red_argument.strip():
+                    # LLM 返回空内容：不保存成功产物、不标记 done，保留重跑自愈机会
+                    print("[步骤 4.5a] 控方沙箱失败：LLM 返回空内容")
+                    results_log["sub_steps"].append({
+                        "step": "45a", "name": "控方沙箱",
+                        "status": "failed", "error": "LLM 返回空内容",
+                    })
+                else:
+                    self._save_debate_file("01-控方指控.md", red_argument)
+                    results_log["sub_steps"].append({"step": "45a", "name": "控方沙箱", "status": "done"})
+                    self._mark_substep_done("4.5", "45a", "done")
+                    print("[步骤 4.5a] 完成控方指控")
             except Exception as e:
                 self._save_debate_file("01-控方指控.md", f"分析失败：{e}")
                 results_log["sub_steps"].append({"step": "45a", "name": "控方沙箱", "status": "failed", "error": str(e)})
@@ -1649,10 +1657,18 @@ class AnalysisPipeline:
 用一段话总结三条路径的综合辩护策略。
 """},
                 ])
-                self._save_debate_file("02-辩方辩护.md", blue_defense)
-                results_log["sub_steps"].append({"step": "45b", "name": "辩方沙箱", "status": "done"})
-                self._mark_substep_done("4.5", "45b", "done")
-                print("[步骤 4.5b] 完成辩方辩护")
+                if not blue_defense.strip():
+                    # LLM 返回空内容：不保存成功产物、不标记 done，保留重跑自愈机会
+                    print("[步骤 4.5b] 辩方沙箱失败：LLM 返回空内容")
+                    results_log["sub_steps"].append({
+                        "step": "45b", "name": "辩方沙箱",
+                        "status": "failed", "error": "LLM 返回空内容",
+                    })
+                else:
+                    self._save_debate_file("02-辩方辩护.md", blue_defense)
+                    results_log["sub_steps"].append({"step": "45b", "name": "辩方沙箱", "status": "done"})
+                    self._mark_substep_done("4.5", "45b", "done")
+                    print("[步骤 4.5b] 完成辩方辩护")
             except Exception as e:
                 self._save_debate_file("02-辩方辩护.md", f"分析失败：{e}")
                 results_log["sub_steps"].append({"step": "45b", "name": "辩方沙箱", "status": "failed", "error": str(e)})
@@ -1717,10 +1733,18 @@ class AnalysisPipeline:
 3. 在法庭上被采纳的可能性（高/中/低）
 """},
                 ])
-                self._save_debate_file("03-交叉对决.md", clash_analysis)
-                results_log["sub_steps"].append({"step": "45c", "name": "交叉对决", "status": "done"})
-                self._mark_substep_done("4.5", "45c", "done")
-                print("[步骤 4.5c] 完成交叉对决")
+                if not clash_analysis.strip():
+                    # LLM 返回空内容：不保存成功产物、不标记 done，保留重跑自愈机会
+                    print("[步骤 4.5c] 交叉对决失败：LLM 返回空内容")
+                    results_log["sub_steps"].append({
+                        "step": "45c", "name": "交叉对决",
+                        "status": "failed", "error": "LLM 返回空内容",
+                    })
+                else:
+                    self._save_debate_file("03-交叉对决.md", clash_analysis)
+                    results_log["sub_steps"].append({"step": "45c", "name": "交叉对决", "status": "done"})
+                    self._mark_substep_done("4.5", "45c", "done")
+                    print("[步骤 4.5c] 完成交叉对决")
             except Exception as e:
                 self._save_debate_file("03-交叉对决.md", f"分析失败：{e}")
                 results_log["sub_steps"].append({"step": "45c", "name": "交叉对决", "status": "failed", "error": str(e)})

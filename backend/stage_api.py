@@ -452,7 +452,8 @@ async def get_status(case_id: str):
             result_file = analysis_dir / f"stage_{stage}" / "output.json"
         status[f"stage_{stage}"] = {
             "name": stage_names[stage],
-            "completed": result_file.exists(),
+            # 0 字节产物（LLM 空返回残留）不显示"已完成"
+            "completed": result_file.exists() and result_file.stat().st_size > 0,
         }
 
     # 合并任务运行状态

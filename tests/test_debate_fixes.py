@@ -100,3 +100,27 @@ def test_stage6_resolves_shared_layer(tmp_path):
     # 调用 _resolve_stage_path 时带 charge 也应命中共享层
     resolved = stage_api._resolve_stage_path(case_path, 6, charge="诈骗罪")
     assert resolved is not None and resolved.exists(), "带罪名时 stage_6 应解析到共享层"
+
+
+def test_45a_empty_llm_result_not_saved(tmp_path):
+    """45a LLM 返回空串：不保存 0 字节产物、不标 done，45b-d 正常继续"""
+    pipe = _make_pipeline(tmp_path)
+
+    call_count = {"n": 0}
+
+    async def fake_chat(messages, **kw):
+        call_count["n"] += 1
+        # 第一次调用（45a 控方沙箱）返回空，其余正常
+        if call_count["n"] == 1:
+            return ""
+        return "对抗内容"
+
+    pipe.llm.chat = fake_chat
+    result = asyncio.run(pipe.step45_debate_simulation("张三", "诈骗罪"))
+
+    debate_dir = tmp_path / "case_001" / "analysis" / "04.5-控辩对抗"
+    f = debate_dir / "01-控方指控.md"
+    if f.exists():
+        assert f.read_text(encoding="utf-8").strip() != "", "空结果不得保存"
+    status_45a = [s for s in result["sub_steps"] if s.get("step") == "45a"]
+    assert status_45a and status_45a[0]["status"] != "done", "空结果不得标 done"
