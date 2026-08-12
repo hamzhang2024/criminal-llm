@@ -917,6 +917,32 @@ class AnalysisEngine:
         if '```mermaid' in md_output:
             md_output = _legacy_fix_mermaid_timeline(md_output)
 
+        # 叙述完整性校验：剥离代码块后文字过少（LLM 只输出了时间线没写事件拆解）→ 补全一次
+        import re as _re
+        narrative_text = _re.sub(r"```[\s\S]*?```", "", md_output).strip()
+        if len(narrative_text) < 500:
+            print("[阶段3] 事件拆解叙述缺失，发起补全调用...")
+            supplement = await client.chat([
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"""## 辩护对象
+被告人：**{defendant}**
+
+## 全部案卷材料
+{all_text}
+
+---
+
+你的上一次输出只完成了事件时间线，缺少第二部分。请现在**只输出第二部分**：事件拆解与证据归组。
+
+每个事件列出：时间、地点、简述、相关证据（编号+名称+该证据说法1-2句）、初步观察（各证据是否一致、有无矛盾）。
+确保不遗漏重要事件，每个事件挂接全部相关证据。直接输出 Markdown 正文，不要重复时间线。"""},
+            ])
+            supplement_narrative = _re.sub(r"```[\s\S]*?```", "", supplement).strip()
+            if len(supplement_narrative) >= 200:
+                md_output = md_output.rstrip() + "\n\n" + supplement.strip()
+            else:
+                print("[阶段3] 补全后仍无有效叙述，保留时间线产物")
+
         data = {
             "stage": 3,
             "name": "事件拆解",

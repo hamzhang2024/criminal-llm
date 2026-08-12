@@ -1418,7 +1418,7 @@ export function ReportPage() {
           </div>
 
           {/* 报告内容 */}
-          {activeContent && (
+          {activeContent ? (
             <div style={{
               padding: '16px',
               background: colors.surface,
@@ -1438,6 +1438,18 @@ export function ReportPage() {
                   }
                 }}
               />
+            </div>
+          ) : (
+            <div style={{
+              padding: '24px',
+              textAlign: 'center',
+              color: colors.textTertiary,
+              fontSize: '13px',
+              background: colors.surface,
+              borderRadius: '8px',
+              border: `1px solid ${colors.border}`,
+            }}>
+              本阶段仅生成了时间线图，暂无事件拆解文字（可重新运行分析补全）
             </div>
           )}
         </div>
