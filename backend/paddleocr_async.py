@@ -158,10 +158,14 @@ def _get_paddleocr_token() -> str:
 
 
 def resolve_max_concurrent() -> int:
-    """解析 PaddleOCR 并发数：读 pdf_convert_concurrency 配置，clamp 1-10，默认 5"""
+    """解析 PaddleOCR 并发数：读 paddleocr_concurrency 配置，clamp 1-10，默认 5
+
+    独立于 pdf_convert_concurrency（MinerU 用，默认 10）：PaddleOCR 任务更重，
+    并发过高易触发 API 限流（429）。
+    """
     try:
         from config_manager import get_config_value
-        raw = get_config_value("pdf_convert_concurrency", 5)
+        raw = get_config_value("paddleocr_concurrency", 5)
         value = int(raw)
     except Exception:
         value = DEFAULT_MAX_CONCURRENT
@@ -453,10 +457,11 @@ class AsyncPaddleOCRConverter:
             progress_cb("processing", f"正在并行处理 {len(chunks)} 个分段...")
 
         async def _convert_one_chunk(i: int, chunk_path: Path, start_page: int, end_page: int):
-            """转换单个分块：acquire 共享信号量，临时文件在 finally 中清理"""
+            """转换单个分块：临时文件由外层统一清理（图片需在合并后才能删除）"""
             chunk_output = output_dir / f"{temp_prefix}_{i}"
-            chunk_output.mkdir(parents=True, exist_ok=True)
             try:
+                # mkdir 放进 try：失败时异常被 gather 捕获，由外层 finally 统一清理临时 chunk pdf
+                chunk_output.mkdir(parents=True, exist_ok=True)
                 async with self._job_semaphore:
                     result = await self._convert_single_file(
                         chunk_path, chunk_output, timeout, None
@@ -467,84 +472,95 @@ class AsyncPaddleOCRConverter:
                 else:
                     logger.error(f"[PaddleOCR] 分段转换 chunk {i} 失败: {result.error}")
                 return result
-            finally:
-                # 无论成败都清理临时分块 PDF 和临时输出目录
-                chunk_path.unlink(missing_ok=True)
-                shutil.rmtree(chunk_output, ignore_errors=True)
+            except Exception:
+                logger.exception(f"[PaddleOCR] 分段转换 chunk {i} 协程异常 (第{start_page}-{end_page}页)")
+                raise
 
-        # 分块并行执行，每个分块各自 acquire 任务级共享信号量
-        results = await asyncio.gather(*(
-            _convert_one_chunk(i, chunk_path, start_page, end_page)
-            for i, (chunk_path, start_page, end_page) in enumerate(chunks)
-        ))
+        try:
+            # 分块并行执行，每个分块各自 acquire 任务级共享信号量
+            # return_exceptions=True：单个分块协程异常不影响其他分块，按失败分块处理
+            results = await asyncio.gather(*(
+                _convert_one_chunk(i, chunk_path, start_page, end_page)
+                for i, (chunk_path, start_page, end_page) in enumerate(chunks)
+            ), return_exceptions=True)
 
-        # 汇总成功分块（记录失败分块，其他分块照常合并）
-        chunk_results = []
-        all_images_dirs = []
-        for i, result in enumerate(results):
-            _, start_page, end_page = chunks[i]
-            if result.success and result.text:
-                chunk_results.append((result.text, start_page, end_page))
-                if result.images_dir:
-                    all_images_dirs.append(result.images_dir)
+            # 汇总成功分块（异常/失败分块记录日志，其他分块照常合并）
+            chunk_results = []
+            all_images_dirs = []
+            for i, result in enumerate(results):
+                _, start_page, end_page = chunks[i]
+                if isinstance(result, Exception):
+                    logger.error(f"[PaddleOCR] 分段转换 chunk {i} 异常（按失败处理）: {result}")
+                    continue
+                if result.success and result.text:
+                    chunk_results.append((result.text, start_page, end_page))
+                    if result.images_dir:
+                        all_images_dirs.append(result.images_dir)
 
-        if not chunk_results:
-            return ConvertResult(
-                file_name=original_pdf.name,
-                success=False,
-                error="所有分段转换失败"
+            if not chunk_results:
+                return ConvertResult(
+                    file_name=original_pdf.name,
+                    success=False,
+                    error="所有分段转换失败"
+                )
+
+            # 按页码排序后合并结果（确保顺序正确）
+            chunk_results.sort(key=lambda x: x[1])
+
+            # 合并结果，添加页码分隔标记
+            merged_parts = []
+            for text, start_page, end_page in chunk_results:
+                # 添加页码分隔标记
+                page_header = f"---\n\n<!-- 原PDF第{start_page}-{end_page}页 -->\n\n"
+                merged_parts.append(page_header + text)
+
+            merged_text = "\n\n".join(merged_parts)
+
+            # 修复图片路径（使用正则表达式，与 MinerU 一致）
+            merged_text = re.sub(
+                r'\./(_chunk_[^/]+?)_([^/]+_images)/',
+                r'\2/',
+                merged_text
             )
 
-        # 按页码排序后合并结果（确保顺序正确）
-        chunk_results.sort(key=lambda x: x[1])
+            # 后处理
+            merged_text = _apply_postprocessing(merged_text)
 
-        # 合并结果，添加页码分隔标记
-        merged_parts = []
-        for text, start_page, end_page in chunk_results:
-            # 添加页码分隔标记
-            page_header = f"---\n\n<!-- 原PDF第{start_page}-{end_page}页 -->\n\n"
-            merged_parts.append(page_header + text)
+            # 合并图片目录（必须在清理 chunk_output 之前完成）
+            merged_images_dir = output_dir / f"{original_pdf.stem}_images"
+            if all_images_dirs:
+                merged_images_dir.mkdir(parents=True, exist_ok=True)
+                for src_dir in all_images_dirs:
+                    if src_dir.exists():
+                        for img in src_dir.iterdir():
+                            if img.is_file():
+                                shutil.copy2(str(img), str(merged_images_dir / img.name))
 
-        merged_text = "\n\n".join(merged_parts)
+            # 保存合并后的 MD
+            target_md = output_dir / f"{original_pdf.stem}.md"
+            target_md.write_text(merged_text, encoding="utf-8")
 
-        # 修复图片路径（使用正则表达式，与 MinerU 一致）
-        merged_text = re.sub(
-            r'\./(_chunk_[^/]+?)_([^/]+_images)/',
-            r'\2/',
-            merged_text
-        )
+            # 统计总页数
+            import fitz
+            doc = fitz.open(str(original_pdf))
+            total_pages = len(doc)
+            doc.close()
 
-        # 后处理
-        merged_text = _apply_postprocessing(merged_text)
+            logger.info(f"[PaddleOCR] 分段转换完成 {original_pdf.name}: {len(merged_text)} 字符, {total_pages} 页")
 
-        # 合并图片目录
-        merged_images_dir = output_dir / f"{original_pdf.stem}_images"
-        merged_images_dir.mkdir(parents=True, exist_ok=True)
-        for src_dir in all_images_dirs:
-            if src_dir.exists():
-                for img in src_dir.iterdir():
-                    if img.is_file():
-                        shutil.copy2(str(img), str(merged_images_dir / img.name))
-
-        # 保存合并后的 MD
-        target_md = output_dir / f"{original_pdf.stem}.md"
-        target_md.write_text(merged_text, encoding="utf-8")
-
-        # 统计总页数
-        import fitz
-        doc = fitz.open(str(original_pdf))
-        total_pages = len(doc)
-        doc.close()
-
-        logger.info(f"[PaddleOCR] 分段转换完成 {original_pdf.name}: {len(merged_text)} 字符, {total_pages} 页")
-
-        return ConvertResult(
-            file_name=original_pdf.name,
-            success=True,
-            text=merged_text,
-            images_dir=merged_images_dir,
-            pages=total_pages
-        )
+            return ConvertResult(
+                file_name=original_pdf.name,
+                success=True,
+                text=merged_text,
+                images_dir=merged_images_dir,
+                pages=total_pages
+            )
+        finally:
+            # 统一清理：文本+图片合并完成（或异常退出）后，删除所有临时分块 PDF 和临时输出目录
+            for chunk_path, _, _ in chunks:
+                chunk_path.unlink(missing_ok=True)
+            for i in range(len(chunks)):
+                shutil.rmtree(output_dir / f"{temp_prefix}_{i}", ignore_errors=True)
 
     async def convert_batch(
         self,
