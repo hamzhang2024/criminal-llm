@@ -213,6 +213,9 @@ def filter_rotation_watermark_blocks(content):
         stripped = line.strip()
 
         if ('0.70711' in line or '0.86603' in line) and ('cm' in line or 'Tm' in line) and not line.strip().startswith('1 0 0 1'):
+            # 水印瓦片的 q 在旋转行前一行（q\n0.70711...cm），一并弹出保持 q/Q 配平
+            if filtered_lines and filtered_lines[-1].strip() == 'q':
+                filtered_lines.pop()
             skip_block = True
             block_q_depth = 1
             removed_count += 1
@@ -261,16 +264,19 @@ def remove_rotation_watermark(doc):
 
                 has_rotation = "0.70711" in content or "0.86603" in content
                 has_hex = bool(re.search(r'<[0-9a-fA-F]{40,}>', content))
-                has_fm1_call = "/Fm1 Do" in content
                 has_tj = "Tj" in content
+                # 任何 XObject 绘制调用（/Fm1 Do、/Im1 Do 等）说明流内混有主内容：
+                # 绝不能整流清空（会把整页删掉），只能逐块过滤水印
+                # （实测教训：/Fm1 Do 与水印同流时整流跳过，水印静默残留）
+                has_do_call = bool(re.search(r'/\w+\s+Do\b', content))
 
-                if has_rotation and (has_hex or has_tj) and not has_fm1_call:
+                if has_rotation and (has_hex or has_tj):
                     # 纯水印流检测：同时含 rg(颜色) + /Gs(图形状态) + 旋转矩阵 + 十六进制文字
                     # → 外层 q...Q 包裹了灰色半透明状态，只删内层块会残留蒙纱，整个清空
                     has_rg = bool(re.search(r'[\d.]+\s+[\d.]+\s+[\d.]+\s+rg', content))
                     has_gs_state = bool(re.search(r'/Gs\d+\s+gs', content))
 
-                    if has_rg and has_gs_state:
+                    if has_rg and has_gs_state and not has_do_call:
                         # 纯水印流 → 整个清空（避免外层 rg+gs 残留导致发白蒙纱）
                         try:
                             doc.update_stream(cxref, b'')
@@ -478,7 +484,10 @@ def remove_watermark(
         if watermark_type == 'global_xobj':
             remove_global_watermark(doc, watermark_xref, method)
         elif watermark_type == 'rotation':
-            remove_rotation_watermark(doc)
+            removed, filtered = remove_rotation_watermark(doc)
+            if removed == 0 and filtered == 0:
+                # 静默失效是实测中出现过的症状，必须留痕
+                print(f"[去水印] 警告：检测到旋转水印但未移除任何内容（{os.path.basename(input_path)}）")
         elif watermark_type == 'direct_text':
             remove_direct_text_watermark(doc, watermark_text)
 
