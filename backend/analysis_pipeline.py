@@ -1987,6 +1987,18 @@ class AnalysisPipeline:
         state = self._load_analysis_state()
         state["steps"].setdefault("4.75", {})["status"] = "completed"
         state["steps"]["4.75"]["completed_at"] = datetime.now().isoformat()
+
+        # 确认/重新确认后，步骤 5 既有产物失效：删除已生成章节与步骤结果，
+        # 否则重跑步骤 5 时子阶段文件已存在会被全部跳过，思路变更不生效
+        defense_dir = self._defense_dir()
+        if defense_dir.exists():
+            for f in defense_dir.glob("*.md"):
+                f.unlink()
+        step5_result = self.analysis_dir / "step_5_result.json"
+        step5_result.unlink(missing_ok=True)
+        # 步骤 5 状态重置，_get_next_unfinished_step 才能正确返回 5
+        state["steps"]["5"] = {"status": "idle", "substeps": {}}
+
         self._save_analysis_state(state)
         return {"success": True, "chosen_count": len(chosen), "additions_count": len(additions)}
 
