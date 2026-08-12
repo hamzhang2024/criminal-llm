@@ -232,11 +232,23 @@ _OCR_FIXES = [
     ("末", "未"),
 ]
 
-_SIGNATURE_HTML = '<div style="text-align:center;color:#aaa;border-bottom:1px dashed #ccc;padding:2px 20px;margin:2px 0;font-size:11px;">[手写签名]</div>'
+_SIGNATURE_HTML = '<div style="text-align:center;color:#aaa;border-bottom:1px dashed #ccc;padding:2px 20px;margin:2px 0;font-size:11px;user-select:none;">[手写签名]</div>'
 _SIGNATURE_PATTERNS = [
-    (r"(询问人[：:]\\s*)[^\\n]*", rf"\\1{_SIGNATURE_HTML}"),
-    (r"(讯问人[：:]\\s*)[^\\n]*", rf"\\1{_SIGNATURE_HTML}"),
-    (r"(记录人[：:]\\s*)[^\\n]*", rf"\\1{_SIGNATURE_HTML}"),
+    (r"(询问人[：:]\s*)[^\n]*", rf"\1{_SIGNATURE_HTML}"),
+    (r"(讯问人[：:]\s*)[^\n]*", rf"\1{_SIGNATURE_HTML}"),
+    (r"(记录人[：:]\s*)[^\n]*", rf"\1{_SIGNATURE_HTML}"),
+    (r"(被询问人[：:]\s*)[^\n]*", rf"\1{_SIGNATURE_HTML}"),
+    (r"(被讯问人[：:]\s*)[^\n]*", rf"\1{_SIGNATURE_HTML}"),
+    (r"(捺印人[：:]\s*)[^\n]*", rf"\1{_SIGNATURE_HTML}"),
+    (r"(翻译人[：:]\s*)[^\n]*", rf"\1{_SIGNATURE_HTML}"),
+    (r"(法定代理人[：:]\s*)[^\n]*", rf"\1{_SIGNATURE_HTML}"),
+    (r"(办案单位[：:]\s*)[^\n]*", rf"\1{_SIGNATURE_HTML}"),
+    (r"(办案人[：:]\s*)[^\n]*", rf"\1{_SIGNATURE_HTML}"),
+    (r"(侦查人员[：:]\s*)[^\n]*", rf"\1{_SIGNATURE_HTML}"),
+    (r"(见证人[：:]\s*)[^\n]*", rf"\1{_SIGNATURE_HTML}"),
+    (r"(持有人[：:]\s*)[^\n]*", rf"\1{_SIGNATURE_HTML}"),
+    (r"(交出人[：:]\s*)[^\n]*", rf"\1{_SIGNATURE_HTML}"),
+    (r"(接收人[：:]\s*)[^\n]*", rf"\1{_SIGNATURE_HTML}"),
 ]
 
 
@@ -245,7 +257,9 @@ def _fix_ocr_errors(text: str) -> str:
     for wrong, correct in _OCR_FIXES:
         text = text.replace(wrong, correct)
     # 清理中文语境中的孤立日语假名の
-    text = re.sub(r'([一-鿿])の([一-鿿])', r'\\1的\\2', text)
+    # 规则：汉字+の+汉字 → 汉字的汉字（の 在中文案卷中几乎一定是 OCR 误识）
+    text = re.sub(r'([一-鿿])の([一-鿿])', r'\1的\2', text)
+    # 行内孤立 の（前后不是日文假名）
     text = re.sub(r'(?<![ぁ-んァ-ン])の(?![ぁ-んァ-ン])', '的', text)
     return text
 
@@ -1385,8 +1399,8 @@ if __name__ == "__main__":
     result = asyncio.run(convert_pdf_async(pdf_path, output_dir, progress))
 
     if result.success:
-        print(f"\\n转换成功！")
+        print(f"\n转换成功！")
         print(f"  文本长度: {len(result.text)} 字符")
         print(f"  图片目录: {result.images_dir}")
     else:
-        print(f"\\n转换失败: {result.error}")
+        print(f"\n转换失败: {result.error}")
