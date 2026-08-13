@@ -18,6 +18,7 @@ import tiktoken
 
 logger = logging.getLogger(__name__)
 from fastapi import APIRouter, UploadFile, File, HTTPException, Request, Body
+from doc_classifier import classify_evidence_item
 
 # 证据结构化字段列表（用于传递和写入 index.json）
 EVIDENCE_STRUCTURED_FIELDS = ["key_facts", "summary", "original_quotes", "contradiction_hints"]
@@ -1931,6 +1932,8 @@ async def _do_extract_evidence(
                         "name": ev_data["name"],
                         "type": ev_data["type"],
                         "source": ev_data["source"],
+                        # 条目级非证据标注（封面/目录等）：上游已标注则沿用，否则现算
+                        "doc_type": ev_data.get("doc_type") or classify_evidence_item(ev_data["name"]),
                         "persons": ev_data.get("persons", ""),
                         "related_entities": ev_data.get("related_entities", ""),
                         **{field: ev_data.get(field, "") for field in EVIDENCE_STRUCTURED_FIELDS},
