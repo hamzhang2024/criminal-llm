@@ -6,7 +6,7 @@ import { Upload, FileDown, Scale, Loader2, CheckCircle, FileText } from 'lucide-
 import { MacOSToolbar, MacOSButton, MacOSCard, PageLayout, StatusBar } from '../components/MacOSLayout'
 import { api, API_BASE } from '../api'
 import { showConfirm, showAlert } from '../components/MacOSDialog'
-import { FileList, Step0Upload, Step1Extract, Step2Analyze, SearchKeywordsEditor, Preview } from './CaseDetailPage/components'
+import { FileList, Step0Upload, Step1Extract, Step2Analyze, Preview } from './CaseDetailPage/components'
 import DefenseStrategyPanel from '../components/DefenseStrategyPanel'
 import type { CaseFile, PreviewFile } from './CaseDetailPage/hooks/useCaseFiles'
 import { useCaseFiles } from './CaseDetailPage/hooks/useCaseFiles'
@@ -512,7 +512,6 @@ export function CaseDetailPage() {
             {currentStep === 2 && (
               <>
                 {/* 类案检索关键词编辑区（spec 9.1） */}
-                <SearchKeywordsEditor caseId={caseId!} charges={charges} />
                 {/* 辩护思路确认面板（步骤 4.75，待确认/已确认可重新编辑时渲染） */}
                 <DefenseStrategyPanel
                   caseId={caseId!}

@@ -4,6 +4,7 @@ import React from 'react'
 import { Loader2 } from 'lucide-react'
 import { MacOSCard, MacOSButton } from '../../../components/MacOSLayout'
 import DocTypeBadge, { CompletenessDot } from '../../../components/DocTypeBadge'
+import { SearchKeywordsEditor } from './SearchKeywordsEditor'
 import { STAGES } from '../hooks/useStageAnalysis'
 import type { CaseFile } from '../hooks/useCaseFiles'
 import type { EvidenceIndexFile, CompletenessReport } from '../../../api'
@@ -181,6 +182,9 @@ export function Step2Analyze({
           </div>
         </div>
       </MacOSCard>
+
+      {/* 类案检索关键词（与罪名同属分析输入，紧邻放置） */}
+      <SearchKeywordsEditor caseId={caseId} charges={charges} />
 
       {/* 5 阶段独立按钮 */}
       <MacOSCard style={{ marginBottom: '12px' }}>
