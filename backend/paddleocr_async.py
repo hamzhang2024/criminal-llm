@@ -226,6 +226,20 @@ def _split_pdf_pages(pdf_path: Path, chunk_size: int = PADDLEOCR_MAX_PAGES) -> L
     return chunks
 
 
+def _extract_pages_for_retry(pdf_path: Path, page_indices: List[int]) -> Path:
+    """抽取指定页码（0 基）到临时 PDF，用于空页重试"""
+    import fitz
+    doc = fitz.open(str(pdf_path))
+    new_doc = fitz.open()
+    for i in page_indices:
+        new_doc.insert_pdf(doc, from_page=i, to_page=i)
+    tmp_path = pdf_path.parent / f"_retry_{pdf_path.name}"
+    new_doc.save(str(tmp_path))
+    new_doc.close()
+    doc.close()
+    return tmp_path
+
+
 # ═══════════════════════════════════════════════════════════
 # 后处理：统一复用 paddleocr_remote._apply_postprocessing
 # （本地副本曾因双重转义整体失效，批量路径 MD 残留大量 LaTeX 包裹——已删除本地副本）
@@ -295,6 +309,7 @@ class AsyncPaddleOCRConverter:
     ) -> ConvertResult:
         """转换单个文件（内部方法，不分段）"""
         stem = pdf_path.stem
+        output_dir.mkdir(parents=True, exist_ok=True)
 
         # 获取页数
         try:
@@ -328,19 +343,64 @@ class AsyncPaddleOCRConverter:
                 if not jsonl_url:
                     return ConvertResult(file_name=pdf_path.name, success=False, error="转换超时或失败")
 
-                # 3. 下载并解析
+                # 3. 下载并解析（按页返回，供空页检测）
                 if progress_cb:
                     progress_cb("downloading", "正在下载结果...")
 
-                text, images_dir = await self._download_and_parse(session, jsonl_url, output_dir, stem)
+                pages_text, images_dir = await self._download_and_parse(session, jsonl_url, output_dir, stem)
+                if not pages_text:
+                    return ConvertResult(file_name=pdf_path.name, success=False, error="结果内容过少")
+
+                # 4. 空页/缺页检测与重试（遗漏证据是严重事故，宁多跑一页不漏一页）
+                empty_pages = [i for i in range(total_pages) if not pages_text.get(i, "").strip()]
+                for attempt in (1, 2):
+                    if not empty_pages:
+                        break
+                    logger.warning(
+                        f"[PaddleOCR] {pdf_path.name} 第 {attempt} 次重试 {len(empty_pages)} 个空页"
+                        f"（页码 {[p + 1 for p in empty_pages]}）"
+                    )
+                    if progress_cb:
+                        progress_cb("processing", f"正在重试 {len(empty_pages)} 个空页（第 {attempt} 次）...")
+                    retry_pdf = _extract_pages_for_retry(pdf_path, empty_pages)
+                    try:
+                        retry_job = await self._submit_job(session, retry_pdf)
+                        if retry_job:
+                            retry_url = await self._poll_job(session, retry_job, timeout, None)
+                            if retry_url:
+                                retry_pages, _ = await self._download_and_parse(
+                                    session, retry_url, output_dir, f"{stem}_retry{attempt}")
+                                recovered = 0
+                                for idx, orig_i in enumerate(empty_pages):
+                                    t = (retry_pages or {}).get(idx, "")
+                                    if t.strip():
+                                        pages_text[orig_i] = t
+                                        recovered += 1
+                                logger.info(f"[PaddleOCR] 第 {attempt} 次重试恢复 {recovered}/{len(empty_pages)} 页")
+                    finally:
+                        retry_pdf.unlink(missing_ok=True)
+                    empty_pages = [i for i in range(total_pages) if not pages_text.get(i, "").strip()]
+
+                # 5. 按原页序组装；仍空的页写警告标记，绝不静默遗漏
+                md_parts = []
+                for i in range(total_pages):
+                    anchor = f"<!-- paddleocr-page:{i} -->"
+                    t = pages_text.get(i, "")
+                    if t.strip():
+                        md_parts.append(f"{anchor}\n\n{t}")
+                    else:
+                        logger.error(f"[PaddleOCR] {pdf_path.name} 第 {i + 1} 页重试后仍为空")
+                        md_parts.append(f"{anchor}\n\n> ⚠️ 本页识别为空（已自动重试 2 次），请人工核对原件")
+
+                text = "\n\n".join(md_parts)
 
                 if not text or len(text) < 50:
                     return ConvertResult(file_name=pdf_path.name, success=False, error="结果内容过少")
 
-                # 4. 后处理
+                # 6. 后处理
                 text = _apply_postprocessing(text)
 
-                # 5. 保存
+                # 7. 保存
                 target_md = output_dir / f"{stem}.md"
                 target_md.write_text(text, encoding="utf-8")
 
@@ -663,8 +723,8 @@ class AsyncPaddleOCRConverter:
         jsonl_url: str,
         output_dir: Path,
         stem: str,
-    ) -> Tuple[Optional[str], Optional[Path]]:
-        """下载 JSONL 结果，合并为 Markdown
+    ) -> Tuple[Optional[Dict[int, str]], Optional[Path]]:
+        """下载 JSONL 结果，按页返回 {页码(0基): 文本}（空文本页也保留页位）
 
         注意：jsonl_url 和 img_url 可能是 OSS 签名 URL，需要禁止自动添加请求头
         """
@@ -693,8 +753,8 @@ class AsyncPaddleOCRConverter:
         images_dir = output_dir / f"{stem}_images"
         images_dir.mkdir(parents=True, exist_ok=True)
 
-        md_parts = []
-        global_page = 0
+        pages = {}
+        page_idx = 0
 
         for line in lines:
             line = line.strip()
@@ -739,19 +799,17 @@ class AsyncPaddleOCRConverter:
                             text = text.replace(f"src='{img_path}'", f"src='./{stem}_images/{img_name}'")
                             text = text.replace(f']({img_path})', f'](./{stem}_images/{img_name})')
 
-                    if text:
-                        anchor = f"<!-- paddleocr-page:{global_page} -->"
-                        md_parts.append(f"{anchor}\n\n{text}")
-                        global_page += 1
+                    # 空文本也记录页位，供空页检测与重试
+                    pages[page_idx] = text
+                    page_idx += 1
 
             except Exception:
                 continue
 
-        if not md_parts:
+        if not pages:
             return None, None
 
-        full_text = "\n\n".join(md_parts)
-        return full_text, images_dir
+        return pages, images_dir
 
 
 # ═══════════════════════════════════════════════════════════
