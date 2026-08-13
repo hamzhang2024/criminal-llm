@@ -1031,6 +1031,32 @@ class AnalysisEngine:
 
     # ========== 阶段 4：法律法规梳理 ==========
 
+    def _read_case_meta(self) -> Dict[str, Any]:
+        """读取案件元数据（case.json），失败返回空 dict"""
+        meta_path = self.case_dir / "case.json"
+        if meta_path.exists():
+            try:
+                return json.loads(meta_path.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        return {}
+
+    def _case_charges_for_rules(self, crime_type: Optional[str]) -> List[str]:
+        """类案检索用罪名列表：case.json charges 优先，回退 crime_type"""
+        charges = self._read_case_meta().get("charges")
+        if isinstance(charges, list) and charges:
+            return [str(c) for c in charges if c]
+        return [crime_type] if crime_type else []
+
+    def _case_keywords_for_rules(self) -> Optional[List[str]]:
+        """类案检索关键词：用户确认的 search_keywords 优先，回退 LLM 推荐 suggested_keywords"""
+        meta = self._read_case_meta()
+        for key in ("search_keywords", "suggested_keywords"):
+            kw = meta.get(key)
+            if isinstance(kw, list) and kw:
+                return [str(k) for k in kw if k]
+        return None
+
     async def stage_4_legal_regulations(
         self,
         defendant: str,
@@ -1066,11 +1092,31 @@ class AnalysisEngine:
 3. 类案只描述裁判规则和要旨，**不要编造案号、法院名称或当事人姓名**
 4. 量刑部分要列明基准刑和调节因素""" + _NO_CHITCHAT
 
+        # 无手动勾选案例时，自动从案例库检索真实类案（带案号，供律师援引）
+        auto_rules_md = ""
+        if not reference_cases:
+            try:
+                rule_charges = self._case_charges_for_rules(crime_type)
+                if rule_charges:
+                    from case_framework import fetch_case_rules
+                    rules = fetch_case_rules(rule_charges, keywords=self._case_keywords_for_rules())
+                    auto_rules_md = "\n\n".join(rules.values())
+            except Exception as e:
+                print(f"[阶段4] 自动检索类案降级（不影响主流程）: {e}")
+
         if reference_cases:
             system_prompt += f"""
 
 参考案例（以下来自《刑事审判参考》的真实案例，案号与内容均真实可查）：
 {build_reference_block(reference_cases)}
+
+引用要求：引用类案时仅可引用以上提供的案例，格式为「【案号】案例名 + 裁判要旨」；
+除上述案例外，仍不得引用或编造任何其他案号、法院名称或当事人姓名。"""
+        elif auto_rules_md:
+            system_prompt += f"""
+
+参考案例（以下来自案例库自动检索的真实案例，案号与内容均真实可查）：
+{auto_rules_md}
 
 引用要求：引用类案时仅可引用以上提供的案例，格式为「【案号】案例名 + 裁判要旨」；
 除上述案例外，仍不得引用或编造任何其他案号、法院名称或当事人姓名。"""
@@ -1085,9 +1131,8 @@ class AnalysisEngine:
         if crime_specific:
             crime_specific_section = f"## 罪名特定知识\n{crime_specific}"
 
-        # 类案裁判规则小节：有真实参考案例时要求引用之（与 system_prompt 注入指令保持一致），
-        # 无参考案例时保持原文（严禁虚构、不引用具体案例）
-        if reference_cases:
+        # 类案裁判规则小节：有真实参考案例（手动勾选或自动检索）时要求引用之，否则严禁虚构
+        if reference_cases or auto_rules_md:
             case_rules_section = """### 三、类案裁判规则
 - 引用系统提示中提供的真实参考案例，格式为「【案号】案例名 + 裁判要旨」
 - 除提供的案例外，严禁虚构任何案号、法院名称、裁判日期或当事人姓名
