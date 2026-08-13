@@ -675,6 +675,26 @@ def _fold_consecutive_images(text: str, min_count: int = 1) -> Tuple[str, int]:
     return '\n'.join(result), block_count
 
 
+def _backfill_images_sync(md_text: str, images_dir, stem: str) -> str:
+    """同步包装的图片文字回填（PaddleOCR 单图识别通道，MinerU 引擎用）
+
+    MinerU 不转录照片类图片（横置手机拍照的凭证/流水），
+    用 PaddleOCR 单图识别补齐文字，回填到图片引用之后。
+    """
+    try:
+        from config_manager import get_config_value
+        if not get_config_value("image_ocr_enabled", True):
+            return md_text
+        if not images_dir or not Path(images_dir).exists():
+            return md_text
+        from image_ocr_backfill import backfill_image_ocr
+        import asyncio
+        return asyncio.run(backfill_image_ocr(md_text, Path(images_dir), stem))
+    except Exception as e:
+        print(f"[图片回填] {stem} 失败（不影响转换结果）: {e}")
+        return md_text
+
+
 # ═══════════════════════════════════════════════════════════
 # 2. MinerU API 转换（最高质量）
 def _mineru_convert(
@@ -767,6 +787,11 @@ def _mineru_convert(
             # 压缩图片
             _compress_images(merged_images_dir)
 
+            # 照片类图片文字回填（PaddleOCR 单图识别通道）
+            merged_text = _backfill_images_sync(merged_text, merged_images_dir, pdf_path.stem)
+            if merged_text != target_md.read_text(encoding="utf-8"):
+                target_md.write_text(merged_text, encoding="utf-8")
+
             # 仅清理属于当前文件的临时目录（不会误删其他正在转换的文件）
             for f in output_dir.iterdir():
                 if f.is_dir() and f.name.startswith(f"{temp_prefix}_"):
@@ -797,6 +822,12 @@ def _mineru_convert_single(
     for attempt in range(1, max_retries + 1):
         result = _do_mineru_convert(pdf_path, output_dir, timeout, progress_cb)
         if result and result[0]:
+            # 照片类图片文字回填（PaddleOCR 单图识别通道）
+            text, images_dir = result
+            new_text = _backfill_images_sync(text, images_dir, pdf_path.stem)
+            if new_text != text:
+                (output_dir / f"{pdf_path.stem}.md").write_text(new_text, encoding="utf-8")
+                result = (new_text, images_dir)
             return result
         if attempt < max_retries:
             delay = 15 * attempt  # 15s, 30s
