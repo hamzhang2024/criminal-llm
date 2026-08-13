@@ -82,7 +82,7 @@ export function CaseDetailPage() {
     handleClearStage, handleViewStage,
     pipelineStatus, pipelineRunning, currentPipelineStep, stepResults,
     analysisState, setAnalysisState, nextStep, setNextStep, liveProgress, setLiveProgress,
-    strategyAwaiting, strategyRefreshKey,
+    strategyAwaiting, strategyRefreshKey, strategyFlow, continueStageFlowAfterConfirm,
     executePipelineStep, executeAllSteps, executeSingleStep,
     handleResumeAnalysis, loadPipelineState,
     wikiPages, selectedWikiPage, wikiContent, wikiLoading,
@@ -518,7 +518,8 @@ export function CaseDetailPage() {
                   caseId={caseId!}
                   defendant={defendant}
                   charges={charges}
-                  onConfirmed={loadPipelineState}
+                  onConfirmed={strategyFlow === 'stage' ? continueStageFlowAfterConfirm : loadPipelineState}
+                  skipRunStep5={strategyFlow === 'stage'}
                   refreshKey={strategyRefreshKey}
                 />
                 <Step2Analyze caseId={caseId!} defendant={defendant} charges={charges} setCharges={setCharges}

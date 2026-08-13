@@ -5,7 +5,7 @@ import { FileText, Loader2, Send, Download, Check,
   PanelLeftClose, Trash2, CheckSquare, RefreshCw,
   FileBarChart, GitCompareArrows, Clock, Users, BookOpen, Eye,
   Gavel, Phone, Mail, Building2, StickyNote, Edit3, Swords, Network, Search, ExternalLink, Printer,
-  BarChart3, Grid3x3, Maximize2, Minimize2, X, Target
+  BarChart3, Grid3x3, Maximize2, Minimize2, X, Target, TrendingUp
 } from 'lucide-react'
 import { api, reviewEvidence, getEvidenceReview, EvidenceReviewItem, EvidenceReviewResult, generateReviewNotes, getReviewNotes, generateCrossExamination, getCrossExamination, getPersonRelation, RelationGraphData, getEventTimeline, TimelineData, getDefenseStrategy, DefenseStrategy, getWikiIndex, getWikiPage } from '../api'
 import { getEvidenceChain, EvidenceChainData } from '../api/stages'
@@ -41,6 +41,7 @@ const TABS = [
   { key: 'stage_1', label: '指控要素', icon: FileBarChart, color: '#007AFF', bgColor: 'rgba(0,122,255,0.08)' },
   { key: 'stage_2', label: '人物关系', icon: Users, color: '#2d6a4f', bgColor: 'rgba(45,106,79,0.08)' },
   { key: 'stage_3', label: '事件拆解', icon: Clock, color: '#9c661b', bgColor: 'rgba(156,102,27,0.08)' },
+  { key: 'stage_35', label: '资金流', icon: TrendingUp, color: '#0f766e', bgColor: 'rgba(15,118,110,0.08)' },
   { key: 'stage_4', label: '法律法规', icon: BookOpen, color: '#6b2765', bgColor: 'rgba(107,39,101,0.08)' }, // 含类案参考
   { key: 'evidence_center', label: '证据中心', icon: Eye, color: '#1a6b6a', bgColor: 'rgba(26,107,106,0.08)' }, // 证据列表+三性审查+证据链+阅卷笔录
   { key: 'stage_52', label: '矛盾分析', icon: GitCompareArrows, color: '#991b1b', bgColor: 'rgba(153,27,27,0.08)' },
@@ -413,6 +414,12 @@ export function ReportPage() {
           } catch { /* ignore */ }
         }
       }
+
+      // 加载资金流梳理（阶段 35，stage_3 之后）
+      try {
+        const md = await api.getStageMarkdown(caseId, 35, selectedCharge || undefined)
+        content['stage_35'] = md.content || ''
+      } catch { /* ignore */ }
 
       // 加载控辩对抗（阶段 6）
       try {

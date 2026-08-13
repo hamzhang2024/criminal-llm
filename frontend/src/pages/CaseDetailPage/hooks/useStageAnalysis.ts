@@ -9,6 +9,7 @@ export const STAGES = [
   { num: 1, name: '指控要素', desc: '读取起诉书，提取指控要素' },
   { num: 2, name: '人物关系', desc: '构建人物关系图谱' },
   { num: 3, name: '事件拆解', desc: '梳理事件时间线，拆解事件' },
+  { num: 35, name: '资金流', desc: '重建资金链条，对照指控金额' },
   { num: 4, name: '法律法规', desc: '梳理涉案法律法规' },
   { num: 5, name: '综合辩护', desc: '证据分析 + 矛盾分析 + 三阶层辩护' },
   { num: 6, name: '控辩对抗', desc: '红蓝对抗，生成攻防对照表' },
@@ -44,6 +45,8 @@ export function useStageAnalysis(caseId: string | undefined, defendant: string, 
   // 辩护思路（步骤 4.75）：待确认标记 + 面板刷新计数器
   const [strategyAwaiting, setStrategyAwaiting] = useState(false)
   const [strategyRefreshKey, setStrategyRefreshKey] = useState(0)
+  // 触发 4.75 卡点的流程来源：stage（全部分析链）/ pipeline（流水线步骤链）
+  const [strategyFlow, setStrategyFlow] = useState<'pipeline' | 'stage'>('pipeline')
 
   // Wiki 浏览状态
   const [wikiPages, setWikiPages] = useState<Array<{path: string; filename: string}>>([])
@@ -111,17 +114,18 @@ export function useStageAnalysis(caseId: string | undefined, defendant: string, 
     }
   }, [caseId, defendant, charges, navigate])
 
-  // 全部分析
+  // 全部分析（1→2→3→35资金流→4→4.75辩护思路确认卡点→5→6）
   const handleRunAllAnalysis = useCallback(async () => {
     if (!defendant.trim() || !caseId) return
 
     const stageStatusData = await api.getStageStatus(caseId)
     const stagesMap = stageStatusData?.status || {}
-    const stages = [1, 2, 3, 4, 5, 6]
-    const completedStages = stages.filter(i => stagesMap[`stage_${i}`]?.completed)
-    const startFrom = completedStages.length === 6 ? 99 : Math.min(...stages.filter(i => !stagesMap[`stage_${i}`]?.completed))
+    const preStrategy = [1, 2, 3, 35, 4]
+    const postStrategy = [5, 6]
+    const allStages = [...preStrategy, ...postStrategy]
+    const completedStages = allStages.filter(i => stagesMap[`stage_${i}`]?.completed)
 
-    if (startFrom > 6) {
+    if (completedStages.length === allStages.length && pipelineStatus[4.75]) {
       showAlert({ title: '提示', message: '全部分析已完成！', variant: 'info' })
       navigate(`/case/${caseId}/report`)
       return
@@ -131,12 +135,69 @@ export function useStageAnalysis(caseId: string | undefined, defendant: string, 
       setStageStatus(prev => ({ ...prev, [i]: 'completed' }))
     }
 
-    for (let i = startFrom; i <= 6; i++) {
+    // 单阶段执行（带状态跟踪），失败即中断；已完成的跳过
+    const runStage = async (i: number): Promise<boolean> => {
+      if (stagesMap[`stage_${i}`]?.completed) return true
       const stage = STAGES.find(s => s.num === i)
       setStageStatus(prev => ({ ...prev, [i]: 'running' }))
       setStageMessages(prev => ({ ...prev, [i]: `正在执行：${stage?.name}...` }))
       setRunningStage(i)
+      try {
+        const result = await api.runSingleStage(caseId, i, defendant, charges.length > 0 ? charges : [])
+        if (!result.success) throw new Error(result.detail || result.error || '阶段执行失败')
+        setStageStatus(prev => ({ ...prev, [i]: 'completed' }))
+        setRunningStage(null)
+        return true
+      } catch (err) {
+        setStageStatus(prev => ({ ...prev, [i]: 'error' }))
+        setStageErrors(prev => ({ ...prev, [i]: err instanceof Error ? err.message : '阶段执行失败' }))
+        setRunningStage(null)
+        return false
+      }
+    }
 
+    for (const i of preStrategy) {
+      if (!(await runStage(i))) return
+    }
+
+    // 辩护思路确认卡点（4.75）：未确认过则生成建议并暂停，律师确认后继续 5、6
+    if (!pipelineStatus[4.75]) {
+      try {
+        const result = await api.runPipelineStep(caseId, 4.75, defendant, charges.length > 0 ? charges : [])
+        if (!result.success) throw new Error(result.detail || result.error || '辩护思路生成失败')
+        if (result.data?.awaiting_confirmation === true) {
+          setStrategyFlow('stage')
+          setStrategyAwaiting(true)
+          setStrategyRefreshKey(k => k + 1)  // 触发确认面板拉取建议
+          return
+        }
+        // 已有确认稿 → 直接继续
+        setPipelineStatus(prev => ({ ...prev, [4.75]: true }))
+      } catch (err) {
+        showAlert({ title: '辩护思路生成失败', message: err instanceof Error ? err.message : '未知错误', variant: 'danger' })
+        return
+      }
+    }
+
+    for (const i of postStrategy) {
+      if (!(await runStage(i))) return
+    }
+
+    setTimeout(() => navigate(`/case/${caseId}/report`), 2000)
+  }, [caseId, defendant, charges, navigate, pipelineStatus])
+
+  // 辩护思路确认后继续 stage 流的 5、6 阶段（由确认面板 onConfirmed 触发）
+  const continueStageFlowAfterConfirm = useCallback(async () => {
+    if (!defendant.trim() || !caseId) return
+    setPipelineStatus(prev => ({ ...prev, [4.75]: true }))
+    const stageStatusData = await api.getStageStatus(caseId)
+    const stagesMap = stageStatusData?.status || {}
+    for (const i of [5, 6]) {
+      if (stagesMap[`stage_${i}`]?.completed) continue
+      const stage = STAGES.find(s => s.num === i)
+      setStageStatus(prev => ({ ...prev, [i]: 'running' }))
+      setStageMessages(prev => ({ ...prev, [i]: `正在执行：${stage?.name}...` }))
+      setRunningStage(i)
       try {
         const result = await api.runSingleStage(caseId, i, defendant, charges.length > 0 ? charges : [])
         if (!result.success) throw new Error(result.detail || result.error || '阶段执行失败')
@@ -149,7 +210,6 @@ export function useStageAnalysis(caseId: string | undefined, defendant: string, 
       }
       setRunningStage(null)
     }
-
     setTimeout(() => navigate(`/case/${caseId}/report`), 2000)
   }, [caseId, defendant, charges, navigate])
 
@@ -222,6 +282,7 @@ export function useStageAnalysis(caseId: string | undefined, defendant: string, 
         const data = await executePipelineStep(step)
         if (!data) return
         if (step === 4.75 && data?.awaiting_confirmation === true) {
+          setStrategyFlow('pipeline')
           setStrategyAwaiting(true)
           setStrategyRefreshKey(k => k + 1)  // 触发确认面板重新拉取建议
           return
@@ -251,6 +312,7 @@ export function useStageAnalysis(caseId: string | undefined, defendant: string, 
       if (result.success) {
         // 4.75 卡点：待确认时刷新确认面板并停留，由律师确认后驱动步骤 5
         if (result.data?.awaiting_confirmation === true) {
+          setStrategyFlow('pipeline')
           setStrategyAwaiting(true)
           setStrategyRefreshKey(k => k + 1)
         } else if (result.all_done) {
@@ -421,6 +483,7 @@ export function useStageAnalysis(caseId: string | undefined, defendant: string, 
     nextStep, setNextStep,
     strategyAwaiting, setStrategyAwaiting,
     strategyRefreshKey,
+    strategyFlow, continueStageFlowAfterConfirm,
     liveProgress, setLiveProgress,
     executePipelineStep, executeAllSteps,
     executeSingleStep, handleResumeAnalysis,

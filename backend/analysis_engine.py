@@ -953,6 +953,82 @@ class AnalysisEngine:
         self._save_stage(3, data, md_output)
         return data
 
+    # ========== 阶段 3.5：资金流梳理 ==========
+
+    def _load_fund_source_texts(self) -> List[Dict[str, str]]:
+        """资金流抽取的双源文本：证据摘要（evidence/）+ 原始 MD 全文（md/）
+
+        证据摘要可能漏掉流水细节，截图经 OCR 识别后的文字只在原始 MD 里，
+        两源合并、按文件名去重。
+        """
+        texts = []
+        seen = set()
+        for t in self._load_evidence_texts():
+            texts.append(t)
+            seen.add(t.get("filename", ""))
+        md_dir = self.case_dir / "md"
+        if md_dir.exists():
+            for md_file in sorted(md_dir.glob("*.md")):
+                if md_file.name in seen:
+                    continue
+                try:
+                    text = md_file.read_text(encoding="utf-8")
+                except Exception:
+                    continue
+                if text.strip():
+                    texts.append({"filename": md_file.name, "text": text})
+        return texts
+
+    async def stage_35_fund_flow(
+        self,
+        defendant: str,
+        crime_type: Optional[str] = None,
+        progress_cb: Optional[Callable] = None,
+    ) -> Dict[str, Any]:
+        """阶段 3.5：资金流梳理与指控金额对照验证
+
+        从证据中重建资金链条（标注客观/言词来源），与起诉书指控金额逐笔对照。
+        无资金类证据时输出说明页；无起诉书时只做重建不对照。
+        """
+        if progress_cb:
+            progress_cb("正在梳理资金流并验证指控金额...")
+
+        from llm_client import get_llm_client
+        client = get_llm_client()
+
+        from fund_flow import collect_fund_paragraphs, build_fund_prompt, FUND_SYSTEM_PROMPT
+
+        texts = self._load_fund_source_texts()
+        fund_evidence = collect_fund_paragraphs(
+            texts, max_chars=int(_get_content_budget_chars() * 0.6)
+        )
+
+        if not fund_evidence.strip():
+            md_output = "本案证据中未检测到资金类内容，无需进行资金流梳理。"
+            print("[阶段3.5] 无资金类证据，输出说明页")
+        else:
+            # 指控要素来自阶段 1 产物
+            indictment_md = _read_stage_md(self.analysis_dir, 1)
+            fund_prompt = build_fund_prompt(indictment_md, fund_evidence)
+            print(f"[预算] 阶段3.5 资金流 prompt: {len(fund_prompt)} 字符")
+            md_output = await client.chat([
+                {"role": "system", "content": FUND_SYSTEM_PROMPT},
+                {"role": "user", "content": fund_prompt},
+            ])
+            # 空结果不落盘为成功产物（与控辩对抗空校验同一原则）
+            if not md_output.strip():
+                md_output = "资金流梳理分析失败：LLM 返回空内容，请重跑本阶段。"
+                print("[阶段3.5] LLM 返回空内容")
+
+        data = {
+            "stage": 35,
+            "name": "资金流梳理",
+            "defendant": defendant,
+            "generated_at": datetime.now().isoformat(),
+        }
+        self._save_stage(35, data, md_output)
+        return data
+
     # ========== 阶段 4：法律法规梳理 ==========
 
     async def stage_4_legal_regulations(
@@ -1224,6 +1300,17 @@ class AnalysisEngine:
         stage2_md = _read_stage_md(self.analysis_dir, 2)
         stage3_md = _read_stage_md(self.analysis_dir, 3)
         stage4_md = _read_stage_md(self.analysis_dir, 4)
+        stage35_md = _read_stage_md(self.analysis_dir, 35)
+
+        # 辩护思路（4.75 律师确认稿，存在则注入 prompt 最前面，最高优先级）
+        strategy_file = self.analysis_dir / "04.75-辩护思路" / "思路确认.md"
+        strategy_prefix = ""
+        if strategy_file.exists():
+            strategy_prefix = (
+                "辩护思路（律师已确认，必须遵循；律师补充的思路优先级最高，与系统建议冲突时以律师为准）：\n"
+                + strategy_file.read_text(encoding="utf-8")[:_get_content_budget_chars()]
+                + "\n\n"
+            )
 
         legal_kb = get_legal_knowledge()
         crime_specific = ""
@@ -1281,6 +1368,10 @@ class AnalysisEngine:
 ## 阶段 3：事件拆解
 
 {stage3_md}
+
+## 阶段 3.5：资金流梳理
+
+{stage35_md if stage35_md.strip() else "（未生成或无资金类证据）"}
 
 ## 阶段 4：法律法规
 
@@ -1369,7 +1460,7 @@ class AnalysisEngine:
    - 起诉书/起诉意见书是指控文书不是证据，引用时写"据起诉书"/"据起诉意见书"，绝不能用"见证据XXX（起诉意见书）"格式
    - 不要只说"案卷显示"或"据供述"这种模糊表述
 7. 对指控的每一项事实，都要指出是否有独立证据支撑、证据是否充分（起诉书的指控不等于有证据支撑）""" + _NO_CHITCHAT},
-            {"role": "user", "content": defense_prompt},
+            {"role": "user", "content": strategy_prefix + defense_prompt},
         ])
 
         self._save_stage(53, {"name": "三阶层辩护"}, defense_md, charge=crime_type)

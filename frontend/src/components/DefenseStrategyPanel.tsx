@@ -18,6 +18,7 @@ interface DefenseStrategyPanelProps {
   charges: string[]
   onConfirmed?: () => void
   refreshKey?: number  // 变化时重新拉取辩护思路状态
+  skipRunStep5?: boolean  // true 时确认后不跑流水线步骤5（stage 流由 onConfirmed 接管后续阶段）
 }
 
 // 类型徽标配色：主攻=金，备选=灰蓝
@@ -45,7 +46,7 @@ function parseConfirmation(md: string | null): { directions: string[]; additions
   return { directions, additions }
 }
 
-export default function DefenseStrategyPanel({ caseId, defendant, charges, onConfirmed, refreshKey }: DefenseStrategyPanelProps) {
+export default function DefenseStrategyPanel({ caseId, defendant, charges, onConfirmed, refreshKey, skipRunStep5 }: DefenseStrategyPanelProps) {
   const [strategy, setStrategy] = useState<DefenseStrategy | null>(null)
   const [loaded, setLoaded] = useState(false)
   const [selected, setSelected] = useState<Set<number>>(new Set())
@@ -134,7 +135,10 @@ export default function DefenseStrategyPanel({ caseId, defendant, charges, onCon
           user_additions: additions,
         })
       }
-      await runStep5()
+      // stage 流：确认后由 onConfirmed 接管后续阶段（5/6），不跑流水线步骤 5
+      if (!skipRunStep5) {
+        await runStep5()
+      }
       setProgressMsg('')
       // 本地置为已确认并隐藏面板，防止步骤 5 完成后重复确认
       setStrategy(prev => prev ? { ...prev, status: 'completed' } : prev)

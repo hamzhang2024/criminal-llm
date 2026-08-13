@@ -148,7 +148,7 @@ def _resolve_stage_path(case_path: Path, stage_num: int, charge: Optional[str] =
         subdir = f"stage_{stage_num}"
 
     # 共享层走旧路径，罪名层走 analysis/{charge}/
-    if charge and stage_num not in (1, 2, 3, 51, 52):
+    if charge and stage_num not in (1, 2, 3, 35, 51, 52):
         return case_path / "analysis" / charge / subdir / filename
     return case_path / "analysis" / subdir / filename
 
@@ -251,6 +251,10 @@ async def _execute_all_stages(case_id: str, defendant: str, charges: list = None
         _set_progress(case_id, 3, "正在分析事件时间线和证据归组...")
         r3 = await engine.stage_3_event_timeline(defendant, charges[0] if charges else None)
 
+        ANALYSIS_TASKS[case_id] = {"status": "running", "current_stage": 35}
+        _set_progress(case_id, 35, "正在梳理资金流并验证指控金额...")
+        r35 = await engine.stage_35_fund_flow(defendant, charges[0] if charges else None)
+
         # ── 罪名层(stage_4/5): 每个罪名独立 ──
         charge_count = len(charges) if charges else 1
         for idx, charge in enumerate(charges or [None]):
@@ -341,8 +345,8 @@ async def run_single_stage(
     """
     单独执行某个阶段（支持 51/52/53 子阶段）
     """
-    if not (1 <= stage_num <= 6 or stage_num in (51, 52, 53)):
-        raise HTTPException(status_code=400, detail="无效阶段编号，请输入 1-6 或 51-53")
+    if not (1 <= stage_num <= 6 or stage_num in (35, 51, 52, 53)):
+        raise HTTPException(status_code=400, detail="无效阶段编号，请输入 1-6、35 或 51-53")
 
     case_path = find_case_path(case_id)
     if not case_path:
@@ -376,6 +380,7 @@ async def run_single_stage(
         3: lambda: engine.stage_3_event_timeline(defendant, crime_type),
         4: lambda: _run_stage_4(engine, defendant, crime_type, reference_case_nos),
         5: lambda: engine.stage_5_full_defense(defendant, crime_type),
+        35: lambda: engine.stage_35_fund_flow(defendant, crime_type),
         6: lambda: AnalysisPipeline(case_id, case_path, indictment_file=indictment_file).step45_debate_simulation(defendant, crime_type),
         51: lambda: _run_sub_stage(engine, "evidence_analysis", defendant, crime_type),
         52: lambda: _run_sub_stage(engine, "contradiction_analysis", defendant, crime_type),
@@ -386,6 +391,7 @@ async def run_single_stage(
         1: "指控要素",
         2: "人物关系",
         3: "事件拆解",
+        35: "资金流梳理",
         4: "法律法规",
         5: "综合辩护分析",
         6: "控辩对抗",
@@ -434,6 +440,7 @@ async def get_status(case_id: str):
         1: "指控要素",
         2: "人物关系",
         3: "事件拆解",
+        35: "资金流梳理",
         4: "法律法规",
         5: "综合辩护分析",
         6: "控辩对抗",
@@ -442,7 +449,7 @@ async def get_status(case_id: str):
         53: "三阶层辩护",
     }
 
-    for stage in [1, 2, 3, 4, 5, 6, 51, 52, 53]:
+    for stage in [1, 2, 3, 35, 4, 5, 6, 51, 52, 53]:
         # 阶段 6 路径特殊处理
         if stage == 6:
             result_file = analysis_dir / "04.5-控辩对抗" / "对抗分析.md"
@@ -464,7 +471,7 @@ async def get_status(case_id: str):
 @router.get("/{case_id}/stage/{stage_num}/result")
 async def get_stage_result(case_id: str, stage_num: int):
     """获取指定阶段的分析结果（支持 51/52/53 子阶段）"""
-    if not (1 <= stage_num <= 6 or stage_num in (51, 52, 53)):
+    if not (1 <= stage_num <= 6 or stage_num in (35, 51, 52, 53)):
         raise HTTPException(status_code=400, detail="无效阶段编号")
 
     case_path = find_case_path(case_id)
@@ -488,7 +495,7 @@ async def get_stage_markdown(case_id: str, stage_num: int, charge: Optional[str]
     - charge 指定 → 读 analysis/{charge}/stage_N/output.md（罪名层）
     - 共享层(stage_1/2/3/51/52)不受 charge 影响，读 _shared 路径
     """
-    valid_stages = set(range(1, 7)) | {51, 52, 53}
+    valid_stages = set(range(1, 7)) | {35, 51, 52, 53}
     if stage_num not in valid_stages:
         raise HTTPException(status_code=400, detail="无效阶段编号")
 
@@ -530,7 +537,7 @@ async def save_stage_markdown(
     charge: Optional[str] = None,
 ):
     """保存指定阶段的 Markdown 内容到磁盘（多罪名：charge 参数指定罪名目录）"""
-    valid_stages = set(range(1, 7)) | {51, 52, 53}
+    valid_stages = set(range(1, 7)) | {35, 51, 52, 53}
     if stage_num not in valid_stages:
         raise HTTPException(status_code=400, detail="无效阶段编号")
 
