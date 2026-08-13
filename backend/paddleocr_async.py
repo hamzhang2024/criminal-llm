@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 import aiohttp
 import logging
 
-from paddleocr_remote import build_optional_payload
+from paddleocr_remote import build_optional_payload, _apply_postprocessing
 
 logger = logging.getLogger(__name__)
 
@@ -227,86 +227,9 @@ def _split_pdf_pages(pdf_path: Path, chunk_size: int = PADDLEOCR_MAX_PAGES) -> L
 
 
 # ═══════════════════════════════════════════════════════════
-# 后处理函数（复用自 paddleocr_remote.py）
+# 后处理：统一复用 paddleocr_remote._apply_postprocessing
+# （本地副本曾因双重转义整体失效，批量路径 MD 残留大量 LaTeX 包裹——已删除本地副本）
 # ═══════════════════════════════════════════════════════════
-def _clean_latex_markup(text: str) -> str:
-    """清理 LaTeX 格式标记"""
-    text = re.sub(r'\\$\\s*\\\\underline\\{\\\\text\\{([^}]*)\\}\\}\\s*\\$', r'\\1', text)
-    text = re.sub(r'\\$\\s*\\\\text\\{([^}]*)\\}\\s*\\$', r'\\1', text)
-    text = re.sub(r'\\$\\s*\\\\textbf\\{([^}]*)\\}\\s*\\$', r'\\1', text)
-    text = re.sub(r'\\$\\s*\\\\emph\\{([^}]*)\\}\\s*\\$', r'\\1', text)
-    text = re.sub(r'\\$\\s*\\\\underline\\{[\\s\\\\]*\\}\\s*\\$', '___', text)
-    text = re.sub(r'\\$\\s*\\\\underline\\{\\\\text\\{[\\s\\\\]*\\}\\}\\s*\\$', '___', text)
-
-    patterns = [
-        (r'\\\\underline\\{([^}]*)\\}', r'\\1'),
-        (r'\\\\text\\{([^}]*)\\}', r'\\1'),
-        (r'\\\\uwave\\{([^}]*)\\}', r'\\1'),
-        (r'\\\\textbf\\{([^}]*)\\}', r'\\1'),
-        (r'\\\\emph\\{([^}]*)\\}', r'\\1'),
-        (r'\\\\textit\\{([^}]*)\\}', r'\\1'),
-    ]
-    for pattern, replacement in patterns:
-        text = re.sub(pattern, replacement, text)
-
-    text = re.sub(r'\\\\[a-zA-Z]+\\{([^}]*)\\}', r'\\1', text)
-    text = re.sub(r'\\\\[a-zA-Z]+\\{', '', text)
-    text = re.sub(r'\\\\\\{', '', text)
-    text = re.sub(r'\\$\\s*([0-9A-Za-z一-鿿\\s]+?)\\s*\\$', r'\\1', text)
-    text = re.sub(r'</?[bp]?matrix[^>]*>?', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'<sup>([^<]*)</sup>', r'\\1', text, flags=re.IGNORECASE)
-    text = re.sub(r'<sub>([^<]*)</sub>', r'\\1', text, flags=re.IGNORECASE)
-    text = re.sub(r'</?sup[^>]*>?', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'</?sub[^>]*>?', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'<br[^>]*>?', ' ', text, flags=re.IGNORECASE)
-    text = re.sub(r'(?<![\\\\\\w])\\$(?!\\d)', '', text)
-
-    return text
-
-
-_CASE_OCR_FIXES = [
-    ("日本語の語", "日平均额"),
-    ("国語の語", "增值税"),
-    ("最天", "最大"), ("天大", "最大"), ("点数最天", "点数最大"),
-    ("牌面天小", "牌面大小"), ("牌面天", "牌面大"), ("天小", "大小"),
-    ("天盲", "大盲"),
-    ("天号", "大号"), ("天楼", "大楼"), ("天厅", "大厅"),
-    ("赔客", "赌客"), ("赔场", "赌场"), ("赔局", "赌局"),
-    ("赔博", "赌博"), ("赔钱", "赌钱"), ("赔资", "赌资"),
-    ("嫌疑入", "嫌疑人"), ("犯罪嫌疑入", "犯罪嫌疑人"),
-    ("作证入", "作证人"), ("证入", "证人"),
-    ("当事入", "当事人"), ("代理入", "代理人"),
-    ("辩护入", "辩护人"), ("诉讼代理入", "诉讼代理人"),
-    ("取保侯审", "取保候审"),
-    ("监视居", "监视居住"),
-]
-
-
-def _fix_case_ocr_errors(text: str) -> str:
-    """修复刑事案卷特有的 OCR 错误"""
-    for wrong, correct in _CASE_OCR_FIXES:
-        text = text.replace(wrong, correct)
-    return text
-
-
-def _apply_postprocessing(text: str) -> str:
-    """应用后处理"""
-    text = _clean_latex_markup(text)
-    try:
-        from pdf_to_md import (
-            _protect_signatures_as_images,
-            _fix_ocr_errors,
-            _fold_consecutive_images,
-            _strip_hallucinated_tables,
-        )
-        text = _fix_ocr_errors(text)
-        text = _strip_hallucinated_tables(text)
-        text = _protect_signatures_as_images(text)
-        text, _ = _fold_consecutive_images(text)
-    except ImportError:
-        pass
-    text = _fix_case_ocr_errors(text)
-    return text
 
 
 # ═══════════════════════════════════════════════════════════
