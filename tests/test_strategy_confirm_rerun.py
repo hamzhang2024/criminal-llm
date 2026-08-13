@@ -24,6 +24,16 @@ def _make_pipeline(tmp_path: Path, with_step5_outputs: bool = True) -> AnalysisP
             (defense_dir / fn).write_text(f"旧内容-{fn}", encoding="utf-8")
         (analysis_dir / "step_5_result.json").write_text(json.dumps({"ok": True}), encoding="utf-8")
         (analysis_dir / "辩护分析报告_张三.md").write_text("旧报告", encoding="utf-8")
+        # 模拟 stage 引擎产物：stage_5/53 + 完整报告（含罪名层）
+        for d in ["stage_5", "stage_53"]:
+            sd = analysis_dir / d
+            sd.mkdir(parents=True, exist_ok=True)
+            (sd / "output.md").write_text(f"旧{d}", encoding="utf-8")
+            (sd / "output.json").write_text("{}", encoding="utf-8")
+        charge_dir = analysis_dir / "诈骗罪" / "stage_5"
+        charge_dir.mkdir(parents=True)
+        (charge_dir / "output.md").write_text("罪名层旧报告", encoding="utf-8")
+        (analysis_dir / "full_defense_report.md").write_text("旧完整报告", encoding="utf-8")
         state = {"steps": {"4.75": {"status": "awaiting_confirmation"},
                            "5": {"status": "completed", "sub_steps": {"5a": "done"}}}}
         (analysis_dir / "analysis_state.json").write_text(json.dumps(state), encoding="utf-8")
@@ -46,6 +56,11 @@ def test_confirm_invalidates_step5_outputs(tmp_path):
     assert remaining == [], f"旧章节应被清除，实际残留: {remaining}"
     assert not (analysis_dir / "step_5_result.json").exists(), "step_5_result.json 应被清除"
     assert not (analysis_dir / "辩护分析报告_张三.md").exists(), "旧汇总报告应被清除"
+    # stage 引擎产物也应失效（含罪名层）
+    assert not (analysis_dir / "stage_5").exists(), "stage_5 产物应被清除"
+    assert not (analysis_dir / "stage_53").exists(), "stage_53 产物应被清除"
+    assert not (analysis_dir / "诈骗罪" / "stage_5").exists(), "罪名层 stage_5 应被清除"
+    assert not (analysis_dir / "full_defense_report.md").exists(), "stage 完整报告应被清除"
     state = json.loads((analysis_dir / "analysis_state.json").read_text(encoding="utf-8"))
     assert state["steps"]["5"]["status"] != "completed", "步骤 5 状态应重置"
 

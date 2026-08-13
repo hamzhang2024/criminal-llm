@@ -2005,6 +2005,15 @@ class AnalysisPipeline:
         # 汇总报告也一并清除，避免重跑完成前用户看到旧报告
         for f in self.analysis_dir.glob("辩护分析报告_*.md"):
             f.unlink()
+        # stage 引擎产物同步失效（全部分析链的辩护意见在 stage_5/53 + full_defense_report.md，
+        # 含罪名层 analysis/{charge}/ 下；stage_51/52 与思路无关，重跑时会被覆盖，无需删除）
+        import shutil
+        for pattern in ("**/stage_5", "**/stage_53"):
+            for stage_dir in self.analysis_dir.glob(pattern):
+                if stage_dir.is_dir():
+                    shutil.rmtree(stage_dir, ignore_errors=True)
+        for report in self.analysis_dir.glob("**/full_defense_report.md"):
+            report.unlink(missing_ok=True)
         # 步骤 5 状态重置，_get_next_unfinished_step 才能正确返回 5
         state["steps"]["5"] = {"status": "idle", "sub_steps": {}}
 

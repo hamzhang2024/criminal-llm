@@ -1273,9 +1273,20 @@ export function ReportPage() {
             caseId={caseId!}
             defendant={defendant}
             charges={charges}
-            onConfirmed={() => {
+            skipRunStep5
+            onConfirmed={async () => {
               setEditingStrategy(false)
+              // 思路变更后重新生成辩护意见：stage 流重跑阶段 5，pipeline 流重跑步骤 5
+              try {
+                const st = await api.getStageStatus(caseId!)
+                if (st?.status?.stage_5 || st?.status?.stage_53) {
+                  await api.runSingleStage(caseId!, 5, defendant, charges)
+                } else {
+                  await api.runPipelineStep(caseId!, 5, defendant, charges)
+                }
+              } catch { /* 重跑失败不阻塞界面刷新 */ }
               loadDefenseStrategy()
+              loadData()
             }}
           />
         )

@@ -135,7 +135,7 @@ export function CaseDetailPage() {
     api.getStageStatus(caseId).then(status => {
       const stages = status?.status || {}
       const newStatus: Record<number, 'idle' | 'completed'> = {}
-      for (const [key, num] of Object.entries({ stage_1: 1, stage_2: 2, stage_3: 3, stage_4: 4, stage_5: 5, stage_6: 6 })) {
+      for (const [key, num] of Object.entries({ stage_1: 1, stage_2: 2, stage_3: 3, stage_35: 35, stage_4: 4, stage_5: 5, stage_6: 6 })) {
         if (stages[key]?.completed) newStatus[num] = 'completed'
       }
       if (Object.keys(newStatus).length > 0) setStageStatus(prev => ({ ...prev, ...newStatus }))
