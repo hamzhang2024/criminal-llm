@@ -55,12 +55,17 @@ def test_build_reference_block_malformed_card():
 
 
 async def _capture_stage4_prompt(tmp_path, reference_cases):
-    """运行 stage_4 并返回 LLM 收到的 (system_prompt, user_prompt)"""
+    """运行 stage_4 并返回 LLM 收到的 (system_prompt, user_prompt)
+
+    打桩自动类案检索为无结果，隔离网络依赖——
+    无参考案例场景测的是"检索也为空时的严禁虚构分支"
+    """
     engine = AnalysisEngine("case_x", tmp_path)
     client = MagicMock()
     client.chat = AsyncMock(return_value="# 输出")
 
-    with patch("llm_client.get_llm_client", return_value=client):
+    with patch("llm_client.get_llm_client", return_value=client), \
+            patch("case_framework.fetch_case_rules", return_value={}):
         await engine.stage_4_legal_regulations(
             "被告人", "盗窃罪", reference_cases=reference_cases
         )
