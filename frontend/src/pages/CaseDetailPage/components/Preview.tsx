@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react'
 import { API_BASE } from '../../../api'
 import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 
 marked.setOptions({ async: false, gfm: true, breaks: true })
 
@@ -15,9 +16,13 @@ interface PreviewFile {
 interface PreviewProps {
   file: PreviewFile
   onClose: () => void
+  digest?: string
+  digestWarning?: boolean
 }
 
-export function Preview({ file, onClose }: PreviewProps) {
+export function Preview({ file, onClose, digest, digestWarning }: PreviewProps) {
+  const [viewMode, setViewMode] = useState<'digest' | 'full'>(digest ? 'digest' : 'full')
+
   return (
     <div style={{
       position: 'fixed',
@@ -59,8 +64,37 @@ export function Preview({ file, onClose }: PreviewProps) {
       </div>
 
       {file.name.endsWith('.md') ? (
-        <div style={{ flex: 1, overflow: 'auto', background: '#fff', padding: '24px' }}>
-          <MDPreview url={file.path} />
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#fff' }}>
+          {digest && (
+            <div style={{ display: 'flex', gap: '4px', padding: '8px 16px', background: 'var(--macos-bg-secondary)', borderBottom: '1px solid var(--macos-border)' }}>
+              {(['digest', 'full'] as const).map(mode => (
+                <button key={mode}
+                  onClick={() => setViewMode(mode)}
+                  aria-pressed={viewMode === mode}
+                  style={{
+                    padding: '4px 12px', fontSize: '12px', border: 'none', borderRadius: '4px', cursor: 'pointer',
+                    background: viewMode === mode ? 'var(--macos-accent)' : 'transparent',
+                    color: viewMode === mode ? '#fff' : 'var(--macos-text-secondary)',
+                  }}>
+                  {mode === 'digest' ? '摘要' : '全文'}
+                </button>
+              ))}
+              {digestWarning && (
+                <span role="img" aria-label="摘要保真校验未完全通过，建议核对全文" title="保真校验未完全通过，建议核对全文" style={{ fontSize: '12px', color: '#b7791f', alignSelf: 'center' }}>⚠️</span>
+              )}
+            </div>
+          )}
+          {viewMode === 'digest' && digest ? (
+            <div
+              className="md-preview"
+              style={{ flex: 1, overflow: 'auto', padding: '24px', fontSize: '13px', lineHeight: '1.6', color: '#1d1d1f' }}
+              dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(marked.parse(digest) as string) }}
+            />
+          ) : (
+            <div style={{ flex: 1, overflow: 'auto' }}>
+              <MDPreview url={file.path} />
+            </div>
+          )}
         </div>
       ) : (
         <div style={{ flex: 1, overflow: 'hidden', background: '#1a1a1e' }}>

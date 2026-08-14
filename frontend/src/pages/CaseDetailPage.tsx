@@ -57,6 +57,10 @@ export function CaseDetailPage() {
     handleOpenFile, closePreview,
   } = useCaseFiles(caseId, currentStep)
 
+  // 证据预览摘要/全文切换状态
+  const [previewDigest, setPreviewDigest] = useState('')
+  const [previewDigestWarning, setPreviewDigestWarning] = useState(false)
+
   const {
     evidenceList, evidenceExtracted, extracting, setEvidenceExtracted, setEvidenceList,
     evidenceFiles, completeness, loadCompleteness,
@@ -530,6 +534,10 @@ export function CaseDetailPage() {
                 onPreviewEvidence={(mdFile, evId) => {
                   const mdPath = `${API_BASE}/cases/${caseId}/serve-file?file_path=${encodeURIComponent(mdFile)}&dir=evidence`
                   handleOpenFile({ id: String(evId), name: mdFile, size: 0, status: 'done', path: mdPath } as unknown as CaseFile)
+                  // 按 md_file 匹配证据（id 类型不稳定：部分条目无 id 字段），取摘要与保真告警标记
+                  const ev = evidenceList.find((e: any) => e.md_file === mdFile)
+                  setPreviewDigest(ev?.digest || '')
+                  setPreviewDigestWarning(!!ev?.digest_warning)
                 }}
                 onRefreshEvidence={handleRefreshEvidence} onRefreshFiles={refreshFiles}
                 pipelineStatus={pipelineStatus} strategyAwaiting={strategyAwaiting} />
@@ -539,7 +547,7 @@ export function CaseDetailPage() {
         </div>
       </div>
 
-      {previewFile && <Preview file={previewFile as unknown as PreviewFile} onClose={closePreview} />}
+      {previewFile && <Preview file={previewFile as unknown as PreviewFile} onClose={closePreview} digest={previewDigest} digestWarning={previewDigestWarning} />}
       <input id="case-upload" type="file" accept=".pdf" multiple style={{ display: 'none' }} onChange={handleFileSelect} />
     </PageLayout>
   )
