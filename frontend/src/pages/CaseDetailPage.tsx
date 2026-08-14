@@ -61,6 +61,24 @@ export function CaseDetailPage() {
   const [previewDigest, setPreviewDigest] = useState('')
   const [previewDigestWarning, setPreviewDigestWarning] = useState(false)
 
+  // 重置证据摘要状态，避免摘要串到普通文件预览
+  const resetPreviewDigest = useCallback(() => {
+    setPreviewDigest('')
+    setPreviewDigestWarning(false)
+  }, [])
+
+  // 普通文件预览入口：先清空摘要再打开（证据预览走 onPreviewEvidence，会随后写入正确摘要）
+  const handleOpenFilePlain = useCallback((file: CaseFile) => {
+    resetPreviewDigest()
+    handleOpenFile(file)
+  }, [handleOpenFile, resetPreviewDigest])
+
+  // 关闭预览：清空摘要，防止下次打开普通文件时残留证据摘要
+  const handleClosePreview = useCallback(() => {
+    resetPreviewDigest()
+    closePreview()
+  }, [closePreview, resetPreviewDigest])
+
   const {
     evidenceList, evidenceExtracted, extracting, setEvidenceExtracted, setEvidenceList,
     evidenceFiles, completeness, loadCompleteness,
@@ -503,7 +521,7 @@ export function CaseDetailPage() {
                 toggleSelect={toggleSelect} toggleSelectAll={toggleSelectAll} getSelectedFiles={getSelectedFiles}
                 refreshFiles={refreshFiles} onRemoveFile={handleRemoveFile}
                 onDeleteMd={handleDeleteMd} onDeletePdf={handleDeletePdf} onReconvertMd={handleReconvertMd}
-                onOpenFile={handleOpenFile} onUploadClick={() => document.getElementById('case-upload')?.click()} />
+                onOpenFile={handleOpenFilePlain} onUploadClick={() => document.getElementById('case-upload')?.click()} />
             )}
 
             {currentStep === 1 && (
@@ -547,7 +565,7 @@ export function CaseDetailPage() {
         </div>
       </div>
 
-      {previewFile && <Preview file={previewFile as unknown as PreviewFile} onClose={closePreview} digest={previewDigest} digestWarning={previewDigestWarning} />}
+      {previewFile && <Preview file={previewFile as unknown as PreviewFile} onClose={handleClosePreview} digest={previewDigest} digestWarning={previewDigestWarning} />}
       <input id="case-upload" type="file" accept=".pdf" multiple style={{ display: 'none' }} onChange={handleFileSelect} />
     </PageLayout>
   )

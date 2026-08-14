@@ -32,6 +32,15 @@ export function Preview({ file, onClose, digest, digestWarning }: PreviewProps) 
       flexDirection: 'column',
       zIndex: 9999
     }}>
+      <style>{`
+        .md-preview table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 12px; }
+        .md-preview th { background: #f5f5f7; font-weight: 600; padding: 8px 10px; border: 1px solid #e5e5e7; text-align: left; }
+        .md-preview td { padding: 6px 10px; border: 1px solid #e5e5e7; }
+        .md-preview tr:nth-child(even) { background: #fafafa; }
+        .md-preview h1, .md-preview h2, .md-preview h3 { margin: 16px 0 8px; color: #1d1d1f; }
+        .md-preview img { max-width: 100%; border-radius: 4px; margin: 8px 0; }
+        .md-preview p { margin: 8px 0; }
+      `}</style>
       <div style={{
         display: 'flex',
         alignItems: 'center',
@@ -135,7 +144,7 @@ function MDPreview({ url }: { url: string }) {
               }
             )
           : text
-        setHtml(marked.parse(rewritten) as string)
+        setHtml(DOMPurify.sanitize(marked.parse(rewritten) as string))
         setLoading(false)
       })
       .catch(err => {
@@ -161,15 +170,6 @@ function MDPreview({ url }: { url: string }) {
       color: '#1d1d1f',
       margin: 0
     }}>
-      <style>{`
-        .md-preview table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 12px; }
-        .md-preview th { background: #f5f5f7; font-weight: 600; padding: 8px 10px; border: 1px solid #e5e5e7; text-align: left; }
-        .md-preview td { padding: 6px 10px; border: 1px solid #e5e5e7; }
-        .md-preview tr:nth-child(even) { background: #fafafa; }
-        .md-preview h1, .md-preview h2, .md-preview h3 { margin: 16px 0 8px; color: #1d1d1f; }
-        .md-preview img { max-width: 100%; border-radius: 4px; margin: 8px 0; }
-        .md-preview p { margin: 8px 0; }
-      `}</style>
       <div className="md-preview" dangerouslySetInnerHTML={{ __html: html }} />
     </div>
   )
