@@ -170,6 +170,7 @@ async def summarize_evidence(client, case_dir: Path, concurrency: int = 3) -> di
     summaries_dir = evidence_dir / "summaries"
     summaries_dir.mkdir(exist_ok=True)
 
+    concurrency = max(1, concurrency)
     sem = asyncio.Semaphore(concurrency)
 
     async def _one(ev: dict):
@@ -178,42 +179,46 @@ async def summarize_evidence(client, case_dir: Path, concurrency: int = 3) -> di
         if not md_name or not md_path.exists():
             stats["failed"] += 1
             return
-        full_text = md_path.read_text(encoding="utf-8")
+        try:
+            full_text = md_path.read_text(encoding="utf-8")
 
-        cache_md = summaries_dir / md_name
-        cache_meta = summaries_dir / (Path(md_name).stem + ".meta.json")
+            cache_md = summaries_dir / md_name
+            cache_meta = summaries_dir / (Path(md_name).stem + ".meta.json")
 
-        # 断点续传：缓存有效则复用
-        if cache_md.exists() and cache_meta.exists():
-            try:
-                meta = json.loads(cache_meta.read_text(encoding="utf-8"))
-                if meta.get("src_len") == len(full_text):
-                    ev["digest"] = cache_md.read_text(encoding="utf-8")
-                    ev["digest_warning"] = bool(meta.get("warning", False))
-                    stats["cached"] += 1
-                    return
-            except Exception:
-                pass
+            # 断点续传：缓存有效则复用
+            if cache_md.exists() and cache_meta.exists():
+                try:
+                    meta = json.loads(cache_meta.read_text(encoding="utf-8"))
+                    if meta.get("src_len") == len(full_text):
+                        ev["digest"] = cache_md.read_text(encoding="utf-8")
+                        ev["digest_warning"] = bool(meta.get("warning", False))
+                        stats["cached"] += 1
+                        return
+                except Exception:
+                    pass
 
-        async with sem:
-            digest, warning = await summarize_one(client, ev, full_text, ev.get("source", ""))
+            async with sem:
+                digest, warning = await summarize_one(client, ev, full_text, ev.get("source", ""))
 
-        ev["digest"] = digest
-        ev["digest_warning"] = warning
-        if warning:
-            # 校验未过或异常回退：不落盘缓存（避免瞬时失败被永久锁定），只计 failed，下次可重试
+            ev["digest"] = digest
+            ev["digest_warning"] = warning
+            if warning:
+                # 校验未过或异常回退：不落盘缓存（避免瞬时失败被永久锁定），只计 failed，下次可重试
+                stats["failed"] += 1
+            elif len(full_text) < SHORT_EVIDENCE_CHARS:
+                stats["skipped"] += 1  # 短证据复制原文，不落缓存
+            else:
+                stats["done"] += 1
+                try:
+                    cache_md.write_text(digest, encoding="utf-8")
+                    cache_meta.write_text(json.dumps(
+                        {"src_len": len(full_text), "warning": False},
+                        ensure_ascii=False), encoding="utf-8")
+                except Exception as e:
+                    logger.warning(f"[证据摘要] 缓存写入失败 {md_name}: {e}")
+        except Exception as e:
             stats["failed"] += 1
-        elif len(full_text) < SHORT_EVIDENCE_CHARS:
-            stats["skipped"] += 1  # 短证据复制原文，不落缓存
-        else:
-            stats["done"] += 1
-            try:
-                cache_md.write_text(digest, encoding="utf-8")
-                cache_meta.write_text(json.dumps(
-                    {"src_len": len(full_text), "warning": False},
-                    ensure_ascii=False), encoding="utf-8")
-            except Exception as e:
-                logger.warning(f"[证据摘要] 缓存写入失败 {md_name}: {e}")
+            logger.warning(f"[证据摘要] {md_name} 处理异常: {e}")
 
     await asyncio.gather(*(_one(ev) for ev in evidences))
 
