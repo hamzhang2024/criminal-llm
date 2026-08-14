@@ -495,7 +495,7 @@ class AsyncMinerUConverter:
             if result.success and result.images_dir:
                 try:
                     from config_manager import get_config_value
-                    if get_config_value("image_ocr_enabled", True):
+                    if get_config_value("image_ocr_enabled", False):
                         from image_ocr_backfill import backfill_image_ocr
                         md_path = output_dir / f"{pdf_path.stem}.md"
                         if md_path.exists():

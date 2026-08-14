@@ -683,7 +683,7 @@ def _backfill_images_sync(md_text: str, images_dir, stem: str) -> str:
     """
     try:
         from config_manager import get_config_value
-        if not get_config_value("image_ocr_enabled", True):
+        if not get_config_value("image_ocr_enabled", False):
             return md_text
         if not images_dir or not Path(images_dir).exists():
             return md_text

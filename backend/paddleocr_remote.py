@@ -73,7 +73,7 @@ def build_optional_payload() -> dict:
     payload = dict(PADDLEOCR_OPTIONAL_PAYLOAD)
     try:
         from config_manager import get_config_value
-        enabled = get_config_value("image_ocr_enabled", True)
+        enabled = get_config_value("image_ocr_enabled", False)
     except ImportError:
         enabled = True
     if enabled:

@@ -19,7 +19,7 @@ DEFAULTS = {
     "evidence_concurrency": 3,
     # PDF 转 MD 引擎配置
     "pdf_engine": "mineru",          # "paddleocr" | "mineru"
-    "image_ocr_enabled": True,      # PaddleOCR 图片块文字识别开关（转账凭证/流水截图）
+    "image_ocr_enabled": False,      # PaddleOCR 图片块文字识别开关（转账凭证/流水截图，默认关：单图回填太慢）
     "paddleocr_token": "",            # PaddleOCR Token
     # MinerU 真批量配置
     "pdf_convert_concurrency": 10,    # PDF 转换上传并发数（1-50，真批量下提交/轮询已聚合）
@@ -78,7 +78,7 @@ def get_config_status() -> Dict[str, Any]:
         "pdf_engine": config.get("pdf_engine", "paddleocr"),
         "paddleocr_token": bool(config.get("paddleocr_token")),
         "paddleocr_token_value": config.get("paddleocr_token", ""),
-        "image_ocr_enabled": config.get("image_ocr_enabled", True),
+        "image_ocr_enabled": config.get("image_ocr_enabled", False),
         # MinerU 真批量配置
         "pdf_convert_concurrency": config.get("pdf_convert_concurrency", 10),
         "mineru_model_version": config.get("mineru_model_version", "vlm"),
