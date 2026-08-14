@@ -3115,30 +3115,36 @@ async def _run_ocr_task(case_id: str, case_dir: Path, selected: Dict[str, list])
     """后台执行选择性 OCR：对选中的图片做单图识别并回填对应卷 md
 
     逐卷独立 try/except：单卷失败记入 failed、不中断其他卷。
+    done 只累计成功处理的图片数；外层 try/except 保证任何异常都落到终止态。
     """
     md_dir = case_dir / "md"
     total = sum(len(v) for v in selected.values())
     OCR_TASKS[case_id] = {"status": "running", "done": 0, "total": total, "current": "", "failed": []}
     done = 0
-    from image_ocr_backfill import backfill_image_ocr
-    for vol_name, names in selected.items():
-        md_file = md_dir / f"{vol_name}.md"
-        images_dir = md_dir / f"{vol_name}_images"
-        if not md_file.exists() or not images_dir.exists():
-            OCR_TASKS[case_id]["failed"].append(vol_name)
-            continue
-        OCR_TASKS[case_id]["current"] = vol_name
-        try:
-            md_text = md_file.read_text(encoding="utf-8")
-            new_text = await backfill_image_ocr(md_text, images_dir, vol_name, only_names=set(names))
-            if new_text != md_text:
-                md_file.write_text(new_text, encoding="utf-8")
-        except Exception as e:
-            logger.warning(f"[选择性OCR] {vol_name} 失败: {e}")
-            OCR_TASKS[case_id]["failed"].append(vol_name)
-        done += len(names)
-        OCR_TASKS[case_id]["done"] = done
-    OCR_TASKS[case_id]["status"] = "completed"
+    try:
+        from image_ocr_backfill import backfill_image_ocr
+        for vol_name, names in selected.items():
+            md_file = md_dir / f"{vol_name}.md"
+            images_dir = md_dir / f"{vol_name}_images"
+            if not md_file.exists() or not images_dir.exists():
+                OCR_TASKS[case_id]["failed"].append(vol_name)
+                continue
+            OCR_TASKS[case_id]["current"] = vol_name
+            try:
+                md_text = md_file.read_text(encoding="utf-8")
+                new_text = await backfill_image_ocr(md_text, images_dir, vol_name, only_names=set(names))
+                if new_text != md_text:
+                    md_file.write_text(new_text, encoding="utf-8")
+                done += len(names)
+            except Exception as e:
+                logger.warning(f"[选择性OCR] {vol_name} 失败: {e}")
+                OCR_TASKS[case_id]["failed"].append(vol_name)
+            OCR_TASKS[case_id]["done"] = done
+        OCR_TASKS[case_id]["status"] = "completed"
+    except Exception as e:
+        logger.warning(f"[选择性OCR] {case_id} 失败: {e}")
+        OCR_TASKS[case_id]["status"] = "failed"
+        OCR_TASKS[case_id]["error"] = str(e)[:200]
 
 
 @router.get("/{case_id}/ocr-images")
@@ -3171,4 +3177,8 @@ async def start_ocr_images(case_id: str, body: dict = Body(...)):
 @router.get("/{case_id}/ocr-status")
 async def get_ocr_status(case_id: str):
     """OCR 任务进度"""
-    return OCR_TASKS.get(case_id, {"status": "idle", "done": 0, "total": 0})
+    case_path = find_case_path(case_id)
+    if not case_path:
+        raise HTTPException(status_code=404, detail="案件不存在")
+    task = OCR_TASKS.get(case_id, {"status": "idle", "done": 0, "total": 0})
+    return {"success": True, "task": task}

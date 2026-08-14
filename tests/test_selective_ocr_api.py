@@ -78,3 +78,27 @@ def test_run_ocr_task_isolates_volume_failure(tmp_path):
     assert task["done"] == 2  # 卷1 + 卷3 成功，卷2 未计入
     # 卷3 仍被处理（未被卷2 失败中断）
     assert "识别文字" in (md_dir / "第3卷_去水印.md").read_text(encoding="utf-8")
+
+
+def test_run_ocr_task_failed_volume_not_counted(tmp_path):
+    """OCR 异常卷：进 failed、done 不累加"""
+    import asyncio
+    case_dir = tmp_path / "案件_z"
+    md_dir = case_dir / "md"
+    md_dir.mkdir(parents=True)
+    (md_dir / "第1卷_去水印.md").write_text("![](./第1卷_去水印_images/a.jpg)", encoding="utf-8")
+    (md_dir / "第1卷_去水印_images").mkdir()
+    (md_dir / "第1卷_去水印_images" / "a.jpg").write_bytes(b"x")
+
+    async def raising_recognize(session, img_path, token, ssl_context):
+        raise RuntimeError("识别崩溃")
+
+    backfill_mod._recognize_single_image = raising_recognize
+    backfill_mod._get_token = lambda: "t"
+
+    cm.OCR_TASKS.clear()
+    asyncio.run(cm._run_ocr_task("case_z", case_dir, {"第1卷_去水印": ["a.jpg"]}))
+    task = cm.OCR_TASKS["case_z"]
+    assert task["status"] == "completed"
+    assert task["done"] == 0  # 失败卷不计入 done
+    assert "第1卷_去水印" in task["failed"]
