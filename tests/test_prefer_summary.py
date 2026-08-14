@@ -1,6 +1,5 @@
 """分析端双层消费：prefer_summary=True 用 digest，False 用全文"""
 import json
-from pathlib import Path
 
 from analysis_engine import AnalysisEngine, _apply_digest
 
