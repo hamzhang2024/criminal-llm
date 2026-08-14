@@ -1,7 +1,9 @@
 """证据详细摘要：保真校验与栏目齐全性测试"""
 import asyncio
+import json
+from pathlib import Path
 
-from evidence_summarizer import verify_summary_fidelity, SECTION_TITLES
+from evidence_summarizer import SECTION_TITLES, verify_summary_fidelity
 
 FULL_TEXT = """
 讯问时间：2026年3月12日14时。问：你和高蓉的借贷怎么回事？
@@ -143,4 +145,114 @@ def test_summary_retry_then_warning():
     client = _fake_client([bad, bad])  # 两次都坏
     digest, warning = asyncio.run(summarize_one(client, ev, LONG_TEXT, "案件.md"))
     assert digest == bad
+    assert warning is True
+
+
+# ---------- 证据摘要主流程（summarize_evidence） ----------
+
+def _make_case(tmp_path: Path, evidences: list) -> Path:
+    """构造测试案件目录：evidence/index.json + evid md 文件"""
+    case_dir = tmp_path / "case_x"
+    ev_dir = case_dir / "evidence"
+    ev_dir.mkdir(parents=True)
+    for ev in evidences:
+        (ev_dir / ev["md_file"]).write_text(ev.pop("_full_text"), encoding="utf-8")
+    (ev_dir / "index.json").write_text(json.dumps(
+        {"evidence": evidences}, ensure_ascii=False), encoding="utf-8")
+    return case_dir
+
+
+def test_summarize_evidence_writes_digest(tmp_path):
+    """主流程：摘要写入 index.json digest 字段 + summaries/ 落盘"""
+    from evidence_summarizer import summarize_evidence
+    long_text = "2026年3月12日讯问。" + "内容。" * 300
+    case_dir = _make_case(tmp_path, [
+        {"name": "张某讯问笔录", "type": "犯罪嫌疑人供述和辩解", "persons": "",
+         "md_file": "001_张某.md", "_full_text": long_text},
+        {"name": "通知书", "type": "程序性文书", "persons": "",
+         "md_file": "002_通知.md", "_full_text": "短内容"},
+    ])
+    good_summary = """## 概述
+x
+## 共谋与分工
+无
+## 主观明知
+无
+## 获利与分账
+无
+## 辩解与否认
+无
+## 关键事实
+无
+## 态度变化
+无
+## 矛盾提示
+无
+"""
+    client = _fake_client([good_summary])
+    stats = asyncio.run(summarize_evidence(client, case_dir, concurrency=2))
+
+    assert stats["total"] == 2 and stats["done"] == 1 and stats["skipped"] == 1
+    index = json.loads((case_dir / "evidence" / "index.json").read_text(encoding="utf-8"))
+    assert index["evidence"][0]["digest"] == good_summary
+    assert index["evidence"][0]["digest_warning"] is False
+    assert index["evidence"][1]["digest"] == "短内容"
+    assert (case_dir / "evidence" / "summaries" / "001_张某.md").exists()
+    assert not (case_dir / "evidence" / "summaries" / "002_通知.md").exists()
+
+
+def test_summarize_evidence_resume_skips_cached(tmp_path):
+    """断点续传：已有缓存且源文件未变 → 不重复调用 LLM"""
+    from evidence_summarizer import summarize_evidence
+    long_text = "内容。" * 300
+    case_dir = _make_case(tmp_path, [
+        {"name": "张某讯问笔录", "type": "x", "persons": "", "md_file": "001_张某.md",
+         "_full_text": long_text},
+    ])
+    # 预置缓存
+    summaries = case_dir / "evidence" / "summaries"
+    summaries.mkdir()
+    (summaries / "001_张某.md").write_text("已缓存摘要", encoding="utf-8")
+    (summaries / "001_张某.meta.json").write_text(
+        json.dumps({"src_len": len(long_text)}), encoding="utf-8")
+
+    client = _fake_client(["不应被调用"])
+    stats = asyncio.run(summarize_evidence(client, case_dir))
+    assert stats["cached"] == 1 and stats["done"] == 0
+    index = json.loads((case_dir / "evidence" / "index.json").read_text(encoding="utf-8"))
+    assert index["evidence"][0]["digest"] == "已缓存摘要"
+
+
+def test_summarize_evidence_regenerates_on_source_change(tmp_path):
+    """源 MD 变化 → 缓存失效重新生成"""
+    from evidence_summarizer import summarize_evidence
+    long_text = "内容。" * 300
+    case_dir = _make_case(tmp_path, [
+        {"name": "张某讯问笔录", "type": "x", "persons": "", "md_file": "001_张某.md",
+         "_full_text": long_text},
+    ])
+    summaries = case_dir / "evidence" / "summaries"
+    summaries.mkdir()
+    (summaries / "001_张某.md").write_text("旧摘要", encoding="utf-8")
+    (summaries / "001_张某.meta.json").write_text(
+        json.dumps({"src_len": 999}), encoding="utf-8")  # 长度不匹配 → 失效
+
+    good = ("## 概述\nx\n" + "".join(f"## {t}\n无\n" for t in SECTION_TITLES[1:])).strip()
+    client = _fake_client([good])
+    stats = asyncio.run(summarize_evidence(client, case_dir))
+    assert stats["done"] == 1
+    assert (summaries / "001_张某.md").read_text(encoding="utf-8") == good
+
+
+def test_summarize_one_both_attempts_raise_falls_back():
+    """两轮调用都抛异常：回退全文 + warning=True（补的用例）"""
+    from evidence_summarizer import summarize_one
+
+    async def raising_chat(messages, **kw):
+        raise RuntimeError("网络错误")
+
+    client = type("C", (), {"chat": staticmethod(raising_chat)})()
+    ev = {"name": "张某讯问笔录", "persons": "", "md_file": "002_x.md"}
+    digest, warning = asyncio.run(summarize_one(client, ev, LONG_TEXT, "案件.md"))
+    assert digest == LONG_TEXT
     assert warning is True
