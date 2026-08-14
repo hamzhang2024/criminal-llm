@@ -51,7 +51,7 @@ NARRATIVE = """### 二、事件拆解与证据归组
 
 def _patch_evidence(monkeypatch, engine):
     """打桩证据加载，避免依赖真实案件文件"""
-    monkeypatch.setattr(engine, "_load_evidence_texts", lambda: [
+    monkeypatch.setattr(engine, "_load_evidence_texts", lambda prefer_summary=False: [
         {"filename": "001_流水.md", "text": "2025年12月22日收到转账50000元", "type": "书证"}
     ])
 

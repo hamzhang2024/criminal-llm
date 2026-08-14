@@ -362,7 +362,7 @@ class AnalysisEngine:
         # 用户手动指定的起诉书文件名（优先级高于自动检测）
         self.selected_indictment_file = indictment_file
 
-    def _load_evidence_texts(self) -> List[Dict[str, str]]:
+    def _load_evidence_texts(self, prefer_summary: bool = False) -> List[Dict[str, str]]:
         """加载案件目录下所有证据文本
 
         优先从 evidence/ 目录加载 LLM 生成的证据总结
@@ -418,6 +418,9 @@ class AnalysisEngine:
                             else:
                                 # 向后兼容：回退到读取 .md 文件
                                 text = md_file.read_text(encoding="utf-8")
+
+                            # 单发阶段用浓缩摘要（digest）；无摘要回退已组装的全文
+                            text = _apply_digest(ev, text, prefer_summary)
 
                             if text.strip():
                                 ev_id = ev.get("id", 0)
@@ -855,7 +858,7 @@ class AnalysisEngine:
         阶段 3：构建事件时间线 + 按事件归组证据
         每个事件下挂接全部相关证据
         """
-        texts = self._load_evidence_texts()
+        texts = self._load_evidence_texts(prefer_summary=True)
         if progress_cb:
             progress_cb("正在分析事件时间线和证据归组...")
 
@@ -1221,7 +1224,7 @@ class AnalysisEngine:
         拆成 3 次单任务聚焦调用——单次调用让模型一口气输出多板块时，
         长输入下模型容易只交第一块就收尾（2026-08-06 生产环境实测翻车）
         """
-        texts = self._load_evidence_texts()
+        texts = self._load_evidence_texts(prefer_summary=True)
         indictment_catalog, _, evidence_catalog_text, _ = _split_indictment_and_evidence(texts)
 
         from llm_client import get_llm_client
@@ -2948,6 +2951,13 @@ def _infer_evidence_type(filename: str) -> str:
         return "程序性文书"
     else:
         return "其他证据"
+
+
+def _apply_digest(ev: dict, text: str, prefer_summary: bool) -> str:
+    """单发分析阶段（时间线/矛盾分析）用浓缩摘要替代全文；无摘要回退全文"""
+    if prefer_summary and str(ev.get("digest", "")).strip():
+        return f"# {ev.get('name', '')}\n\n{ev['digest']}"
+    return text
 
 
 def _split_indictment_and_evidence(texts: List[Dict[str, str]]):
