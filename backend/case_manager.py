@@ -1144,6 +1144,16 @@ _EVIDENCE_EXTRACTION_RULES = """
 - **关联信息是重点**：手机号、微信号、银行账号、车牌号等是证据互相关联印证的关键线索，务必逐一提取"""
 
 
+def _format_key_facts(key_facts) -> str:
+    """关键事实渲染：list → 编号多行文本；字符串原样；空 → 无
+    （模板直接插值 list 会显示 Python repr ['...', '...']）"""
+    if not key_facts:
+        return "无"
+    if isinstance(key_facts, list):
+        return "\n".join(f"{i}. {f}" for i, f in enumerate(key_facts, 1))
+    return str(key_facts)
+
+
 async def _extract_single_file(
     md_file: Path,
     md_text: str,
@@ -1306,7 +1316,7 @@ async def _extract_single_file(
 
 ## 关键事实
 
-{ev_block.get('key_facts', '无')}
+{_format_key_facts(ev_block.get('key_facts'))}
 
 ## 详细摘要
 
