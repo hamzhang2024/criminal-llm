@@ -242,19 +242,11 @@ def test_preselect_route_registered():
     _route("GET", "/{case_id}/ocr-status")
 
 
-def test_ocr_status_returns_default(tmp_path):
-    """未启动任务时 ocr-status 返回 idle"""
-    import importlib
+def test_ocr_status_returns_default():
+    """未启动任务时 ocr-status 返回 idle（OCR_TASKS 无该 case 时默认值）"""
     import case_manager as cm
-    importlib.reload(cm)
-    OCR_TASKS.clear()
-    # 直接调用 ocr-status 端点函数
-    route = _route("GET", "/{case_id}/ocr-status")
-    # 通过 monkeypatch find_case_path 返回临时目录
-    import case_manager
-    monkeypatch_ctx = __import__("pytest").monkeypatch
-    # 简化：直接测 OCR_TASKS 默认值
-    assert OCR_TASKS.get("nonexistent", {"status": "idle"})["status"] == "idle"
+    cm.OCR_TASKS.clear()
+    assert cm.OCR_TASKS.get("nonexistent", {"status": "idle"})["status"] == "idle"
 
 
 def test_backfill_write_via_api_shape(tmp_path):
