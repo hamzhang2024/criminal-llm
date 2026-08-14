@@ -56,6 +56,8 @@ interface EvidenceItem {
   displayName: string
   mdFile: string
   type: string
+  digest?: string
+  digestWarning?: boolean
 }
 
 interface ChatMessage {
@@ -111,6 +113,8 @@ export function ReportPage() {
   const [evidenceItems, setEvidenceItems] = useState<EvidenceItem[]>([])
   const [selectedEvidenceId, setSelectedEvidenceId] = useState<string>('')
   const [selectedEvidenceContent, setSelectedEvidenceContent] = useState('')
+  // 证据面板视图模式：摘要 / 全文
+  const [evidenceViewMode, setEvidenceViewMode] = useState<'digest' | 'full'>('digest')
   // 文书分类映射（index.json files）：文件名 → doc_type（evidence / non_evidence:封面 等）
   const [docTypeMap, setDocTypeMap] = useState<Record<string, string>>({})
 
@@ -375,6 +379,8 @@ export function ReportPage() {
     if (selectedEvidenceId && caseId) {
       const item = evidenceItems.find(i => i.id === selectedEvidenceId)
       if (item) loadEvidenceContent(item)
+      // 切换证据时重置视图模式为摘要
+      setEvidenceViewMode('digest')
     }
   }, [selectedEvidenceId, caseId, evidenceItems, loadEvidenceContent])
 
@@ -484,6 +490,8 @@ export function ReportPage() {
               displayName,
               mdFile: fileName,
               type: ev.type || '',
+              digest: ev.digest || '',
+              digestWarning: !!ev.digest_warning,
             }
           })
           setEvidenceItems(items)
@@ -3330,17 +3338,45 @@ export function ReportPage() {
                             ))}
                           </select>
                         </div>
+                        {/* 摘要/全文切换（仅当前证据有 digest 时显示） */}
+                        {(() => {
+                          const cur = evidenceItems.find(i => i.id === selectedEvidenceId)
+                          if (!cur || !cur.digest) return null
+                          return (
+                            <div style={{ display: 'flex', gap: '4px', padding: '6px 10px', borderBottom: `1px solid ${colors.border}` }}>
+                              {(['digest', 'full'] as const).map(mode => (
+                                <button key={mode}
+                                  onClick={() => setEvidenceViewMode(mode)}
+                                  style={{
+                                    flex: 1, padding: '4px 0', fontSize: '11px', border: 'none', borderRadius: '4px', cursor: 'pointer',
+                                    background: evidenceViewMode === mode ? colors.accent : 'transparent',
+                                    color: evidenceViewMode === mode ? '#fff' : colors.textSecondary,
+                                  }}>
+                                  {mode === 'digest' ? '摘要' : '全文'}
+                                </button>
+                              ))}
+                              {cur.digestWarning && (
+                                <span title="保真校验未完全通过，建议核对全文" style={{ fontSize: '11px', color: '#b7791f', alignSelf: 'center' }}>⚠️</span>
+                              )}
+                            </div>
+                          )
+                        })()}
                         {/* MD 内容 */}
                         <div style={{ flex: 1, overflow: 'auto', padding: '12px 14px' }}>
-                          {selectedEvidenceContent ? (
-                            <div
-                              className="report-content"
-                              style={{ fontSize: '12px', lineHeight: '1.75' }}
-                              dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(marked.parse(selectedEvidenceContent, { async: false }) as string) }}
-                            />
-                          ) : (
-                            <div style={{ padding: '20px 0', fontSize: '12px', color: colors.textTertiary, textAlign: 'center' }}>选择证据查看详情</div>
-                          )}
+                          {(() => {
+                            const cur = evidenceItems.find(i => i.id === selectedEvidenceId)
+                            const digest = cur?.digest || ''
+                            const content = (evidenceViewMode === 'digest' && digest) ? digest : selectedEvidenceContent
+                            return content ? (
+                              <div
+                                className="report-content"
+                                style={{ fontSize: '12px', lineHeight: '1.75' }}
+                                dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(marked.parse(content, { async: false }) as string) }}
+                              />
+                            ) : (
+                              <div style={{ padding: '20px 0', fontSize: '12px', color: colors.textTertiary, textAlign: 'center' }}>选择证据查看详情</div>
+                            )
+                          })()}
                         </div>
                       </>
                     )}
