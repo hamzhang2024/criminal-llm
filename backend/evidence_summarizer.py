@@ -20,18 +20,18 @@ SHORT_EVIDENCE_CHARS = 800
 # 实体抽取正则
 _AMOUNT_RE = re.compile(r"\d+(?:\.\d+)?\s*(?:万余元|万元|万|元)")
 _RATE_RE = re.compile(r"(?:月息|月利率|日息|利率)\s*\d+(?:\.\d+)?\s*(?:分|毛|厘|%|％)|(?:月息|月利率)\s*[一二三四五六七八九十]\s*(?:分|毛|厘)")
+# 已知边界：只匹配完整"X年X月X日"；"2022年9月底"这类无日日期不进入实体集
 _DATE_RE = re.compile(r"20\d{2}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日")
-# persons 字段中的人名："张某（嫌疑人）" → 张某
-_PERSON_RE = re.compile(r"([一-龥]{2,4})\s*[（(]")
 # persons 字段完整条目："姓名（角色）" → (姓名, 角色)
 _PERSON_ENTRY_RE = re.compile(r"([一-龥]{2,4})\s*[（(]([^）)]*)[）)]")
-# 供述人本人角色：摘要是其本人笔录的浓缩，正文以"供述人"指代而不重复姓名，故人名检查豁免
-_SPEAKER_ROLES = ("嫌疑人", "被告人", "供述人")
+# 供述主体角色：摘要是其本人陈述的浓缩，正文以"供述人/被害人"等指代而不重复本人姓名，
+# 故人名检查豁免。涵盖讯问笔录（嫌疑人/被告人）、询问笔录（被害人/证人）等供述主体。
+_SPEAKER_ROLES = ("嫌疑人", "被告人", "供述人", "被害人", "证人", "陈述人")
 
 COVERAGE_THRESHOLD = 0.9
 
 
-def extract_entities(text: str) -> set:
+def extract_entities(text: str) -> set[str]:
     """从全文抽取关键实体（金额/利率/日期的去重集合）"""
     entities = set()
     for rx in (_AMOUNT_RE, _RATE_RE, _DATE_RE):
@@ -40,18 +40,19 @@ def extract_entities(text: str) -> set:
     return entities
 
 
-def extract_person_names(persons: str) -> list:
+def extract_person_names(persons: str) -> list[str]:
     """从 persons 字段提取人名清单"""
-    return _PERSON_RE.findall(persons or "")
+    return [name for name, role in _PERSON_ENTRY_RE.findall(persons or "")]
 
 
-def verify_summary_fidelity(full_text: str, summary: str, persons: str = "") -> list:
+def verify_summary_fidelity(full_text: str, summary: str, persons: str = "") -> list[str]:
     """确定性保真校验。返回问题列表（空 = 通过）
 
     - 8 栏目齐全
     - 金额/利率/日期实体覆盖率 ≥ 90%（全文实体过少时跳过）
-    - persons 字段中的人名全部出现（供述人本人角色豁免，见 _SPEAKER_ROLES）
+    - persons 字段中的人名全部出现（供述主体角色豁免，见 _SPEAKER_ROLES）
     """
+    summary = summary or ""
     issues = []
 
     # 栏目齐全性

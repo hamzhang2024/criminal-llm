@@ -63,9 +63,16 @@ def test_low_entity_coverage_detected():
 
 
 def test_missing_person_detected():
-    issues = verify_summary_fidelity(FULL_TEXT, GOOD_SUMMARY, persons="李某（证人）、王五（同案犯）")
+    # 非供述主体角色（同案犯/民警）必须在摘要中出现
+    issues = verify_summary_fidelity(FULL_TEXT, GOOD_SUMMARY, persons="李某（同案犯）、王五（民警）")
     assert any("李某" in i for i in issues)
     assert any("王五" in i for i in issues)
+
+
+def test_victim_and_witness_roles_exempt():
+    """被害人/证人作为供述主体时也豁免人名检查（其本人陈述的摘要不重复本人姓名）"""
+    issues = verify_summary_fidelity(FULL_TEXT, GOOD_SUMMARY, persons="王某（被害人）")
+    assert issues == []
 
 
 def test_section_titles_are_eight():
