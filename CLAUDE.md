@@ -51,6 +51,7 @@ criminal-llm/
 │   ├── paddleocr_remote.py     # PaddleOCR 远程服务客户端（配额查询 + 转换）
 │   ├── analyzer_api.py         # 案卷分析 API（拆分、证据识别）
 │   ├── evidence_perdoc.py      # 多笔录案卷按份提取（目录清点→按份提取→确定性校验）
+│   ├── evidence_summarizer.py  # 证据详细摘要（8栏目浓缩，供单发分析阶段消费）
 │   ├── llm_client.py           # LLM 客户端（百炼 API，超时 600s，3 次重试，并发限流，缓存命中率统计）
 │   ├── legal_knowledge.py      # 法律知识库（内置刑法/刑诉法 + 三阶层理论）
 │   ├── legal_db/               # 内置法律文件目录
@@ -393,6 +394,7 @@ python3 -m uvicorn main:app --host 0.0.0.0 --port 8000
 - **重试分层**：`llm_client` 负责网络层重试（3 次，5s→10s→15s），`_extract_single_file_with_tracking` 负责业务层重试（2 次，10s→20s），两者不重叠。网络层重试耗尽后抛出 `LLMRetryExhaustedError`，上层识别后不再重复重试
 - **信号量释放**：重试等待在信号量之外执行，其他文件不阻塞
 - **卡死检测**：3 分钟无进展自动取消，10 秒轮询，LLM 调用成功后立即更新心跳
+- **详细摘要层**：提取完成后自动生成 8 栏目浓缩摘要（`evidence_summarizer.py`），写入 index.json 的 `digest` 字段 + `evidence/summaries/` 缓存；阶段3时间线/阶段52矛盾分析通过 `_load_evidence_texts(prefer_summary=True)` 消费摘要，分批阶段保持全文。起诉书跳过摘要保留原文全文。前端证据预览（报告页 + 案件详情页）支持「摘要 | 全文」切换
 
 ### 后台任务
 - PDF 转 MD 使用 `background_tasks.py` 的 `ThreadPoolExecutor(max_workers=10)` 异步并发执行
