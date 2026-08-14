@@ -125,11 +125,62 @@ def _too_small(img_path: Path) -> bool:
         return False
 
 
+def preselect_ocr_images(case_dir: Path) -> dict:
+    """读各卷 layout.json，预筛出「疑似有文字的图片」（排除印章+小图）
+
+    Returns:
+        {卷名: {图片名: {"w": int, "h": int}}}，卷名即 layout.json 的 stem 去掉 _layout
+    """
+    md_dir = Path(case_dir) / "md"
+    result = {}
+    if not md_dir.exists():
+        return result
+    for layout_file in sorted(md_dir.glob("*_layout.json")):
+        vol_name = layout_file.stem[:-len("_layout")] if layout_file.stem.endswith("_layout") else layout_file.stem
+        try:
+            data = json.loads(layout_file.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        images = {}
+        for page in data.get("pdf_info", []):
+            for blk in page.get("para_blocks", []):
+                if blk.get("type") != "image":
+                    continue
+                if blk.get("sub_type") == "seal":
+                    continue
+                bbox = blk.get("bbox", [])
+                if len(bbox) >= 4:
+                    w = bbox[2] - bbox[0]
+                    h = bbox[3] - bbox[1]
+                    if min(w, h) < MIN_DIMENSION:
+                        continue
+                else:
+                    w = h = 0
+                # 取图片文件名（blocks[0].lines[0].spans[0].image_path）
+                name = ""
+                for b in blk.get("blocks", []):
+                    for line in b.get("lines", []):
+                        for span in line.get("spans", []):
+                            name = span.get("image_path", "")
+                            if name:
+                                break
+                        if name:
+                            break
+                    if name:
+                        break
+                if name and name not in images:
+                    images[name] = {"w": w, "h": h}
+        if images:
+            result[vol_name] = images
+    return result
+
+
 async def backfill_image_ocr(
     md_text: str,
     images_dir: Path,
     stem: str,
     max_concurrent: int = 3,
+    only_names: Optional[set] = None,
 ) -> str:
     """把 images_dir 中未转录图片的识别文字回填到 md_text 的图片引用之后
 
@@ -138,6 +189,7 @@ async def backfill_image_ocr(
         images_dir: {stem}_images 目录
         stem: 文件名 stem（用于匹配 MD 中的 ./{stem}_images/ 引用）
         max_concurrent: 单图识别并发数
+        only_names: 仅回填这些图片名（None 表示全部），用于选择性 OCR
     """
     token = _get_token()
     if not token:
@@ -154,6 +206,11 @@ async def backfill_image_ocr(
     refs = list(dict.fromkeys(md_refs + img_refs))  # 保序去重
     if not refs:
         return md_text
+
+    if only_names is not None:
+        refs = [r for r in refs if r in only_names]
+        if not refs:
+            return md_text
 
     # 读缓存
     cache_path = images_dir / "_ocr.json"
