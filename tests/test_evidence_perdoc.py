@@ -80,6 +80,16 @@ def test_verify_good_output_passes():
     assert verify_perdoc_output(doc, good) == []
 
 
+def test_verify_phone_record_format_passes():
+    """校验：电话询问记录的「（问）」格式也应被识别为问答
+    （真实案件踩到的误报：原文为 周某（问）：…秦某（答）：…，无「问：」字面量）"""
+    doc = {"name": "电话询问记录（秦某）", "type": "证人证言", "date": "2026-04-18"}
+    output = ("2026年4月18日9时18分电话询问。周立峰（问）：你是秦某吗？秦某（答）：是的。"
+              "周立峰（问）：你投资过吗？秦某（答）：有的。"
+              "周立峰（问）：钱拿回来了吗？秦某（答）：都拿回来了。")
+    assert verify_perdoc_output(doc, output) == []
+
+
 def test_extract_by_document_full_flow(tmp_path):
     """完整流程：目录 → 按份提取 → 按目录顺序合并，per-doc prompt 含双锚点"""
     md_file = tmp_path / "第2卷.md"

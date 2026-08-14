@@ -170,9 +170,11 @@ def verify_perdoc_output(doc: dict, output: str) -> list:
     # 占位符敷衍
     if "关键问答摘录" in output:
         issues.append("含占位符（关键问答摘录）")
-    # 笔录类问答数
-    if _is_transcript(doc) and output.count("问：") < 3:
-        issues.append("问答对少于 3 个")
+    # 笔录类问答数（兼容两种格式：标准「问：」和电话询问记录常用的「（问）」）
+    if _is_transcript(doc):
+        qa_count = output.count("问：") + len(re.findall(r"[（(]问[）)]", output))
+        if qa_count < 3:
+            issues.append("问答对少于 3 个")
     return issues
 
 
