@@ -3347,6 +3347,7 @@ export function ReportPage() {
                               {(['digest', 'full'] as const).map(mode => (
                                 <button key={mode}
                                   onClick={() => setEvidenceViewMode(mode)}
+                                  aria-pressed={evidenceViewMode === mode}
                                   style={{
                                     flex: 1, padding: '4px 0', fontSize: '11px', border: 'none', borderRadius: '4px', cursor: 'pointer',
                                     background: evidenceViewMode === mode ? colors.accent : 'transparent',
@@ -3356,7 +3357,7 @@ export function ReportPage() {
                                 </button>
                               ))}
                               {cur.digestWarning && (
-                                <span title="保真校验未完全通过，建议核对全文" style={{ fontSize: '11px', color: '#b7791f', alignSelf: 'center' }}>⚠️</span>
+                                <span role="img" aria-label="摘要保真校验未完全通过，建议核对全文" title="保真校验未完全通过，建议核对全文" style={{ fontSize: '11px', color: '#b7791f', alignSelf: 'center' }}>⚠️</span>
                               )}
                             </div>
                           )
