@@ -195,7 +195,7 @@ export function SettingsPage() {
     evidence_concurrency: 3,
     pdf_engine: 'mineru',
     paddleocr_token: '',
-    image_ocr_enabled: true,
+    image_ocr_enabled: false,
     pdf_convert_concurrency: 10,
     mineru_model_version: 'vlm',
     model_context_limit: 250,
@@ -854,20 +854,24 @@ export function SettingsPage() {
               </div>
             )}
 
+            {/* 图片文字识别（两引擎共用：MinerU 单图回填 / PaddleOCR 图片块识别） */}
+            <div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', cursor: 'pointer', marginBottom: '16px' }}>
+                <input
+                  type="checkbox"
+                  checked={config.image_ocr_enabled}
+                  onChange={e => setConfig(prev => ({ ...prev, image_ocr_enabled: e.target.checked }))}
+                  style={{ accentColor: 'var(--macos-accent)' }}
+                />
+                <span>
+                  识别图片中的文字（转账凭证、银行流水截图等；关闭可回退旧行为）
+                </span>
+              </label>
+            </div>
+
             {/* PaddleOCR 配置（仅在选择 PaddleOCR 时显示） */}
             {config.pdf_engine === 'paddleocr' && (
               <div>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', cursor: 'pointer', marginBottom: '16px' }}>
-                  <input
-                    type="checkbox"
-                    checked={config.image_ocr_enabled}
-                    onChange={e => setConfig(prev => ({ ...prev, image_ocr_enabled: e.target.checked }))}
-                    style={{ accentColor: 'var(--macos-accent)' }}
-                  />
-                  <span>
-                    识别图片中的文字（转账凭证、银行流水截图等；关闭可回退旧行为）
-                  </span>
-                </label>
                 <div style={{ marginBottom: '16px' }}>
                   <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px', fontWeight: '500', marginBottom: '8px' }}>
                     Token
