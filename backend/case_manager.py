@@ -1211,7 +1211,20 @@ async def _extract_single_file(
             f"**❗ 输出完毕后必须确认：[完成确认] 本文件共提取 N 份证据，全部输出完毕**\n"
         )
 
-    if len(chunks) == 1:
+    # 多笔录文件走两级按份提取：整卷一次调用时"全部笔录全文保留"物理不可达，
+    # LLM 会保数量砍内容（占位符敷衍）。按份提取 + 目录日期校验可根治
+    evidence_blocks = None
+    if total_count >= 2:
+        try:
+            from evidence_perdoc import extract_by_document
+            evidence_blocks = await extract_by_document(client, md_file, md_text, charges_str, temp_dir)
+            if evidence_blocks:
+                logger.info(f"[证据提取] {md_file.name}: 按份提取产出 {len(evidence_blocks)} 份证据")
+        except Exception as e:
+            logger.warning(f"[证据提取] {md_file.name}: 按份提取异常，回退整卷路径: {e}")
+            evidence_blocks = None
+
+    if evidence_blocks is None and len(chunks) == 1:
         # 单块，直接发送
         result = await asyncio.wait_for(
             client.chat([
@@ -1221,7 +1234,7 @@ async def _extract_single_file(
             timeout=timeout_seconds,
         )
         evidence_blocks = _parse_evidence_blocks(result, md_file.name)
-    else:
+    elif evidence_blocks is None:
         # 多块并发提取（块级断点续传：已完成块跳过），合并保持块顺序
         chunk_sem = asyncio.Semaphore(2)
 

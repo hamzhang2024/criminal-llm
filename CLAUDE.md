@@ -50,6 +50,7 @@ criminal-llm/
 │   ├── paddleocr_async.py      # PaddleOCR 异步批量转换（asyncio + Semaphore 并发）
 │   ├── paddleocr_remote.py     # PaddleOCR 远程服务客户端（配额查询 + 转换）
 │   ├── analyzer_api.py         # 案卷分析 API（拆分、证据识别）
+│   ├── evidence_perdoc.py      # 多笔录案卷按份提取（目录清点→按份提取→确定性校验）
 │   ├── llm_client.py           # LLM 客户端（百炼 API，超时 600s，3 次重试，并发限流，缓存命中率统计）
 │   ├── legal_knowledge.py      # 法律知识库（内置刑法/刑诉法 + 三阶层理论）
 │   ├── legal_db/               # 内置法律文件目录
