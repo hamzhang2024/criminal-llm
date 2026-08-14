@@ -276,7 +276,7 @@ def test_warning_evidence_not_cached_and_counted_failed(tmp_path):
 
 
 def test_chain_call_shape(monkeypatch, tmp_path):
-    """串联调用：summarize_evidence 接收 (client, case_dir, concurrency)，异常被吞掉不阻塞"""
+    """签名约定：summarize_evidence 接收 (client, case_dir, concurrency)（真实串联行为由 Task 8 真实验证兜底）"""
     import evidence_summarizer
 
     called = {}
