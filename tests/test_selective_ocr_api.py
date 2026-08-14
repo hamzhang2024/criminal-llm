@@ -46,3 +46,35 @@ def test_run_ocr_task_backfills_md(tmp_path):
     assert cm.OCR_TASKS["case_x"]["done"] == 1
     md = (case_dir / "md" / "第1卷_去水印.md").read_text(encoding="utf-8")
     assert "转账 15 万元" in md
+
+
+def test_run_ocr_task_isolates_volume_failure(tmp_path):
+    """单卷失败：记录 failed，不中断后续卷"""
+    import asyncio
+    case_dir = tmp_path / "案件_y"
+    md_dir = case_dir / "md"
+    md_dir.mkdir(parents=True)
+    # 卷1：md 存在；卷2：md 不存在（会被跳过进 failed）；卷3：正常
+    for vol, names in [("第1卷_去水印", ["a.jpg"]), ("第3卷_去水印", ["c.jpg"])]:
+        (md_dir / f"{vol}.md").write_text(f"![](./{vol}_images/{names[0]})", encoding="utf-8")
+        (md_dir / f"{vol}_images").mkdir()
+        (md_dir / f"{vol}_images" / names[0]).write_bytes(b"x")
+
+    async def fake_recognize(session, img_path, token, ssl_context):
+        return "识别文字"
+
+    backfill_mod._recognize_single_image = fake_recognize
+    backfill_mod._get_token = lambda: "t"
+
+    cm.OCR_TASKS.clear()
+    asyncio.run(cm._run_ocr_task("case_y", case_dir, {
+        "第1卷_去水印": ["a.jpg"],
+        "第2卷_去水印": ["b.jpg"],  # md 不存在 → failed
+        "第3卷_去水印": ["c.jpg"],
+    }))
+    task = cm.OCR_TASKS["case_y"]
+    assert task["status"] == "completed"
+    assert "第2卷_去水印" in task["failed"]  # 跳过卷进 failed
+    assert task["done"] == 2  # 卷1 + 卷3 成功，卷2 未计入
+    # 卷3 仍被处理（未被卷2 失败中断）
+    assert "识别文字" in (md_dir / "第3卷_去水印.md").read_text(encoding="utf-8")
