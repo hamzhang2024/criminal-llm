@@ -980,8 +980,14 @@ export function ReportPage() {
       for (const file of selectedFiles.slice(0, 20)) {
         try {
           if (file.dir === 'evidence') {
-            const data = await api.getEvidenceSummary(caseId, file.name)
-            evidenceParts.push(`## ${file.name}\n${data.content || ''}`)
+            // 优先用浓缩摘要（8栏目，信息密度高、与分析阶段消费一致），无摘要回退全文
+            const ev = evidenceItems.find(i => i.mdFile === file.name)
+            if (ev?.digest) {
+              evidenceParts.push(`## ${ev.displayName}\n${ev.digest}`)
+            } else {
+              const data = await api.getEvidenceSummary(caseId, file.name)
+              evidenceParts.push(`## ${file.name}\n${data.content || ''}`)
+            }
           } else if (file.dir === 'md') {
             const data = await api.getMdFile(caseId, file.name)
             evidenceParts.push(`## ${file.name}\n${data.content || ''}`)
@@ -998,8 +1004,12 @@ export function ReportPage() {
       const selectedDropdown = evidenceItems.find(i => i.id === selectedEvidenceId)
       if (selectedDropdown?.mdFile) {
         try {
-          const data = await api.getEvidenceSummary(caseId, selectedDropdown.mdFile)
-          evidenceParts.push(`## ${selectedDropdown.displayName}\n${data.content || ''}`)
+          if (selectedDropdown.digest) {
+            evidenceParts.push(`## ${selectedDropdown.displayName}\n${selectedDropdown.digest}`)
+          } else {
+            const data = await api.getEvidenceSummary(caseId, selectedDropdown.mdFile)
+            evidenceParts.push(`## ${selectedDropdown.displayName}\n${data.content || ''}`)
+          }
         } catch { /* ignore */ }
       }
       const evidenceContext = evidenceParts.join('\n\n').substring(0, 30000)
