@@ -419,18 +419,19 @@ class AnalysisEngine:
                                 # 向后兼容：回退到读取 .md 文件
                                 text = md_file.read_text(encoding="utf-8")
 
-                            # 单发阶段用浓缩摘要（digest）；无摘要回退已组装的全文
-                            text = _apply_digest(ev, text, prefer_summary)
+                            # 判断是否为起诉书/起诉意见书（类型或名称包含关键词）
+                            ev_type = ev.get("type", "其他证据")
+                            ev_name = ev.get("name", "")
+                            is_indictment = (
+                                "起诉书" in ev_type or "起诉意见书" in ev_type or
+                                "起诉书" in ev_name or "起诉意见书" in ev_name
+                            )
+
+                            # 单发阶段用浓缩摘要（digest）；起诉书保留原文全文，无摘要回退全文
+                            text = _apply_digest(ev, text, prefer_summary and not is_indictment)
 
                             if text.strip():
                                 ev_id = ev.get("id", 0)
-                                ev_type = ev.get("type", "其他证据")
-                                ev_name = ev.get("name", "")
-                                # 判断是否为起诉书/起诉意见书（类型或名称包含关键词）
-                                is_indictment = (
-                                    "起诉书" in ev_type or "起诉意见书" in ev_type or
-                                    "起诉书" in ev_name or "起诉意见书" in ev_name
-                                )
                                 texts.append({
                                     "filename": ev["name"],
                                     "type": ev_type,
@@ -2955,7 +2956,7 @@ def _infer_evidence_type(filename: str) -> str:
 
 def _apply_digest(ev: dict, text: str, prefer_summary: bool) -> str:
     """单发分析阶段（时间线/矛盾分析）用浓缩摘要替代全文；无摘要回退全文"""
-    if prefer_summary and str(ev.get("digest", "")).strip():
+    if prefer_summary and ev.get("digest"):
         return f"# {ev.get('name', '')}\n\n{ev['digest']}"
     return text
 
