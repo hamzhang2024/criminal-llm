@@ -5,6 +5,7 @@
 - 事实透彻性由 8 个固定栏目承担（共谋分工/主观明知/获利分账/辩解否认必列）
 - 保真度由确定性校验保障（金额/日期/人名实体覆盖率 ≥90%，不达标重试）
 """
+import asyncio
 import logging
 import re
 
@@ -76,3 +77,68 @@ def verify_summary_fidelity(full_text: str, summary: str, persons: str = "") -> 
             issues.append(f"人名未出现：{name}")
 
     return issues
+
+
+_SUMMARY_SYSTEM = """你是刑事案卷阅卷助手。给定一份证据全文，输出结构化详细摘要。
+
+输出 Markdown，必须包含且仅包含以下 8 个栏目（## 标题，顺序固定，无内容填"无"，不得省略栏目）：
+
+## 概述
+事件脉络叙述（长度随事实量自然伸缩）
+## 共谋与分工
+谁提议/谁出资/谁执行/如何约定，逐环节保留
+## 主观明知
+明知内容（如利率违法性、资金来源等）
+## 获利与分账
+总获利、每人分得数额、分配方式、分配时间
+## 辩解与否认
+无罪/罪轻辩解，逐条保留，绝不省略
+## 关键事实
+逐笔一行：时间｜主体｜行为｜金额｜（利率/资金来源/分成）
+## 态度变化
+供述稳定性、翻供、认罪认罚
+## 矛盾提示
+与其他证据或前后供述的矛盾点
+
+硬性要求：全部金额、日期、人名必须出现在摘要中，不得用"等""若干"概括。"""
+
+
+async def summarize_one(client, ev: dict, full_text: str, source_name: str,
+                        timeout: int = 600) -> tuple[str, bool]:
+    """生成单份证据的详细摘要。
+
+    Returns:
+        (digest, warning)：digest 为摘要文本；warning=True 表示两轮校验未过（仍保留结果）
+    """
+    # 短证据无需摘要，直接复制原文
+    if len(full_text) < SHORT_EVIDENCE_CHARS:
+        return full_text, False
+
+    persons = ev.get("persons", "")
+    base_msg = f"证据名称：《{ev.get('name', '')}》（来源：{source_name}）\n\n证据全文：\n{full_text}"
+
+    result = ""
+    issues = ["调用失败"]
+    for attempt in (1, 2):
+        try:
+            # 第二轮把上次校验问题带给 LLM，要求修正后重出
+            user_msg = base_msg if attempt == 1 else (
+                base_msg + f"\n\n⚠️ 上次输出未通过校验：{'；'.join(issues)}。请务必修正后重新输出完整 8 栏目。")
+            result = await asyncio.wait_for(client.chat([
+                {"role": "system", "content": _SUMMARY_SYSTEM},
+                {"role": "user", "content": user_msg},
+            ]), timeout=timeout)
+        except Exception as e:
+            logger.warning(f"[证据摘要] 《{ev.get('name')}》第 {attempt} 次调用失败: {e}")
+            issues = ["调用失败"]
+            continue
+
+        issues = verify_summary_fidelity(full_text, result, persons)
+        if not issues:
+            break
+        logger.warning(f"[证据摘要] 《{ev.get('name')}》第 {attempt} 次校验未过: {issues}")
+
+    if not result:
+        # 两轮调用都失败：回退全文，保证分析端有内容可消费
+        return full_text, True
+    return result, bool(issues)
