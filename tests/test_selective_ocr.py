@@ -71,3 +71,26 @@ def test_backfill_only_names(tmp_path, monkeypatch):
         md_text, images_dir, "第1卷_去水印", only_names={"a.jpg"}))
     assert "识别文字" in result
     assert recognized == ["a.jpg"]  # 只识别 a.jpg，b.jpg 跳过
+
+
+def test_backfill_only_names_does_not_leak_old_cache(tmp_path, monkeypatch):
+    """选择性回填不泄漏未选中图片的旧缓存文字"""
+    md_text = "![](./第1卷_去水印_images/a.jpg)\n\n![](./第1卷_去水印_images/b.jpg)"
+    images_dir = tmp_path / "第1卷_去水印_images"
+    images_dir.mkdir()
+    (images_dir / "a.jpg").write_bytes(b"a")
+    (images_dir / "b.jpg").write_bytes(b"b")
+    # 预置 _ocr.json：b.jpg 有旧文字，a.jpg 无
+    (images_dir / "_ocr.json").write_text(
+        json.dumps({"b.jpg": {"size": 1, "text": "旧文字不应出现"}}, ensure_ascii=False),
+        encoding="utf-8")
+
+    async def fake_recognize(session, img_path, token, ssl_context):
+        return "a的新文字"
+
+    monkeypatch.setattr(mod, "_recognize_single_image", fake_recognize)
+    monkeypatch.setattr(mod, "_get_token", lambda: "t")
+    result = asyncio.run(backfill_image_ocr(
+        md_text, images_dir, "第1卷_去水印", only_names={"a.jpg"}))
+    assert "a的新文字" in result
+    assert "旧文字不应出现" not in result  # b.jpg 旧缓存不泄漏

@@ -125,7 +125,7 @@ def _too_small(img_path: Path) -> bool:
         return False
 
 
-def preselect_ocr_images(case_dir: Path) -> dict:
+def preselect_ocr_images(case_dir: Path) -> dict[str, dict[str, dict[str, int]]]:
     """读各卷 layout.json，预筛出「疑似有文字的图片」（排除印章+小图）
 
     Returns:
@@ -136,7 +136,7 @@ def preselect_ocr_images(case_dir: Path) -> dict:
     if not md_dir.exists():
         return result
     for layout_file in sorted(md_dir.glob("*_layout.json")):
-        vol_name = layout_file.stem[:-len("_layout")] if layout_file.stem.endswith("_layout") else layout_file.stem
+        vol_name = layout_file.stem[:-len("_layout")]
         try:
             data = json.loads(layout_file.read_text(encoding="utf-8"))
         except Exception:
@@ -150,8 +150,8 @@ def preselect_ocr_images(case_dir: Path) -> dict:
                     continue
                 bbox = blk.get("bbox", [])
                 if len(bbox) >= 4:
-                    w = bbox[2] - bbox[0]
-                    h = bbox[3] - bbox[1]
+                    w = int(bbox[2] - bbox[0])
+                    h = int(bbox[3] - bbox[1])
                     if min(w, h) < MIN_DIMENSION:
                         continue
                 else:
@@ -180,7 +180,7 @@ async def backfill_image_ocr(
     images_dir: Path,
     stem: str,
     max_concurrent: int = 3,
-    only_names: Optional[set] = None,
+    only_names: Optional[set[str]] = None,
 ) -> str:
     """把 images_dir 中未转录图片的识别文字回填到 md_text 的图片引用之后
 
@@ -274,6 +274,8 @@ async def backfill_image_ocr(
 
     def _repl_md(m: re.Match) -> str:
         name = m.group(1)
+        if name not in refs:
+            return m.group(0)
         text = (cache.get(name) or {}).get("text", "").strip()
         if not text:
             return m.group(0)
@@ -281,6 +283,8 @@ async def backfill_image_ocr(
 
     def _repl_img(m: re.Match) -> str:
         name = m.group(1)
+        if name not in refs:
+            return m.group(0)
         text = (cache.get(name) or {}).get("text", "").strip()
         if not text:
             return m.group(0)
