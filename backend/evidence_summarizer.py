@@ -200,19 +200,20 @@ async def summarize_evidence(client, case_dir: Path, concurrency: int = 3) -> di
 
         ev["digest"] = digest
         ev["digest_warning"] = warning
-        if len(full_text) < SHORT_EVIDENCE_CHARS:
+        if warning:
+            # 校验未过或异常回退：不落盘缓存（避免瞬时失败被永久锁定），只计 failed，下次可重试
+            stats["failed"] += 1
+        elif len(full_text) < SHORT_EVIDENCE_CHARS:
             stats["skipped"] += 1  # 短证据复制原文，不落缓存
         else:
             stats["done"] += 1
             try:
                 cache_md.write_text(digest, encoding="utf-8")
                 cache_meta.write_text(json.dumps(
-                    {"src_len": len(full_text), "warning": warning},
+                    {"src_len": len(full_text), "warning": False},
                     ensure_ascii=False), encoding="utf-8")
             except Exception as e:
                 logger.warning(f"[证据摘要] 缓存写入失败 {md_name}: {e}")
-        if warning:
-            stats["failed"] += 1
 
     await asyncio.gather(*(_one(ev) for ev in evidences))
 

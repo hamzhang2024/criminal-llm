@@ -256,3 +256,20 @@ def test_summarize_one_both_attempts_raise_falls_back():
     digest, warning = asyncio.run(summarize_one(client, ev, LONG_TEXT, "案件.md"))
     assert digest == LONG_TEXT
     assert warning is True
+
+
+def test_warning_evidence_not_cached_and_counted_failed(tmp_path):
+    """warning 证据：只计 failed、不写缓存，下次可重试（不永久锁死）"""
+    from evidence_summarizer import summarize_evidence
+    long_text = "内容。" * 300
+    case_dir = _make_case(tmp_path, [
+        {"name": "张某讯问笔录", "type": "x", "persons": "", "md_file": "001_张某.md",
+         "_full_text": long_text},
+    ])
+    bad = "## 概述\n缺栏目，两轮都坏。"
+    client = _fake_client([bad, bad])
+    stats = asyncio.run(summarize_evidence(client, case_dir))
+    assert stats["done"] == 0 and stats["failed"] == 1
+    # 不写缓存 → summaries 目录要么不存在要么为空
+    summaries = case_dir / "evidence" / "summaries" / "001_张某.md"
+    assert not summaries.exists()
