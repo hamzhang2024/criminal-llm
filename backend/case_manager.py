@@ -37,6 +37,10 @@ router = APIRouter(prefix="/api/cases", tags=["案件管理"])
 # 当提取失败时，额外记录 "error_detail" 字段，方便前端展示具体原因
 EXTRACT_TASKS: dict = {}
 
+# 选择性 OCR 后台任务状态
+# 结构: { case_id: { "status": "running"/"completed"/"failed", "done": N, "total": N, "current": "卷名", "failed": [] } }
+OCR_TASKS: Dict[str, dict] = {}
+
 from config import MAX_FILE_SIZE, DATA_DIR, UPLOAD_DIR as CONFIG_UPLOAD_DIR
 
 # 案件存储根目录
@@ -3101,3 +3105,67 @@ async def claim_cases(owner: str):
                             pass
 
     return {"claimed": claimed}
+
+
+# ═══════════════════════════════════════════════════════════
+# 选择性 OCR（列表 / 启动 / 进度）
+# ═══════════════════════════════════════════════════════════
+
+async def _run_ocr_task(case_id: str, case_dir: Path, selected: Dict[str, list]):
+    """后台执行选择性 OCR：对选中的图片做单图识别并回填对应卷 md"""
+    md_dir = case_dir / "md"
+    total = sum(len(v) for v in selected.values())
+    OCR_TASKS[case_id] = {"status": "running", "done": 0, "total": total, "current": "", "failed": []}
+    done = 0
+    try:
+        from image_ocr_backfill import backfill_image_ocr
+        for vol_name, names in selected.items():
+            md_file = md_dir / f"{vol_name}.md"
+            images_dir = md_dir / f"{vol_name}_images"
+            if not md_file.exists() or not images_dir.exists():
+                continue
+            md_text = md_file.read_text(encoding="utf-8")
+            new_text = await backfill_image_ocr(md_text, images_dir, vol_name, only_names=set(names))
+            if new_text != md_text:
+                md_file.write_text(new_text, encoding="utf-8")
+            done += len(names)
+            OCR_TASKS[case_id].update({"done": done, "current": vol_name})
+        OCR_TASKS[case_id]["status"] = "completed"
+    except Exception as e:
+        logger.warning(f"[选择性OCR] {case_id} 失败: {e}")
+        OCR_TASKS[case_id]["status"] = "failed"
+        OCR_TASKS[case_id]["error"] = str(e)[:200]
+
+
+@router.get("/{case_id}/ocr-images")
+async def list_ocr_images(case_id: str):
+    """预筛全部卷的图片（排除印章+小图），返回按卷分组列表"""
+    case_path = find_case_path(case_id)
+    if not case_path:
+        raise HTTPException(status_code=404, detail="案件不存在")
+    from image_ocr_backfill import preselect_ocr_images
+    grouped = preselect_ocr_images(case_path)
+    return {"success": True, "groups": grouped}
+
+
+@router.post("/{case_id}/ocr-images")
+async def start_ocr_images(case_id: str, body: dict = Body(...)):
+    """启动选择性 OCR 后台任务。body: {groups: {卷名: [图片名...]}}"""
+    case_path = find_case_path(case_id)
+    if not case_path:
+        raise HTTPException(status_code=404, detail="案件不存在")
+    selected = body.get("groups", body) if isinstance(body, dict) else {}
+    selected = {k: v for k, v in selected.items() if v}
+    if not selected:
+        return {"success": False, "error": "未选择任何图片"}
+    if OCR_TASKS.get(case_id, {}).get("status") == "running":
+        return {"success": False, "error": "OCR 任务进行中"}
+    import asyncio
+    asyncio.create_task(_run_ocr_task(case_id, case_path, selected))
+    return {"success": True, "task_started": True}
+
+
+@router.get("/{case_id}/ocr-status")
+async def get_ocr_status(case_id: str):
+    """OCR 任务进度"""
+    return OCR_TASKS.get(case_id, {"status": "idle", "done": 0, "total": 0})
