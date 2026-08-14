@@ -273,3 +273,19 @@ def test_warning_evidence_not_cached_and_counted_failed(tmp_path):
     # 不写缓存 → summaries 目录要么不存在要么为空
     summaries = case_dir / "evidence" / "summaries" / "001_张某.md"
     assert not summaries.exists()
+
+
+def test_chain_call_shape(monkeypatch, tmp_path):
+    """串联调用：summarize_evidence 接收 (client, case_dir, concurrency)，异常被吞掉不阻塞"""
+    import evidence_summarizer
+
+    called = {}
+
+    async def fake_summarize(client, case_dir, concurrency=3):
+        called["case_dir"] = case_dir
+        called["concurrency"] = concurrency
+        return {"total": 0, "done": 0, "cached": 0, "skipped": 0, "failed": 0}
+
+    monkeypatch.setattr(evidence_summarizer, "summarize_evidence", fake_summarize)
+    stats = asyncio.run(evidence_summarizer.summarize_evidence(None, tmp_path, concurrency=5))
+    assert called["concurrency"] == 5 and stats["total"] == 0
