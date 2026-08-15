@@ -118,6 +118,17 @@ class FileSpec:
     source_pdf: Optional[Path] = None  # 原始 PDF（多 chunk 合并用；单文件时等于 path）
 
 
+def _estimate_completed(done_count: int, total_count: int, total_pdf: int) -> int:
+    """按 batch 内已 done 文件数折算整体完成 PDF 数（spec→PDF 加权）
+
+    真批量轮询时 progress.completed 无法精确（batch 内是 spec 而非 PDF），
+    用「batch 内已 done spec / batch 总 spec × 总 PDF」估算，让进度条平滑上涨。
+    """
+    if total_count <= 0:
+        return 0
+    return min(int(done_count * total_pdf / total_count), total_pdf)
+
+
 def _get_mineru_token() -> str:
     """获取 MinerU token"""
     # 环境变量优先
@@ -457,9 +468,12 @@ class AsyncMinerUConverter:
         logger.info(f"[MinerU] 共 {len(all_specs)} 个文件单元（含 chunk）")
 
         # 页级进度回调（_poll_batch → 更新 progress → emit）
-        def on_page(pages_done: int, pages_total: int):
+        def on_page(pages_done: int, pages_total: int, done_count: int, total_count: int):
             progress.pages_done = pages_done
             progress.pages_total = pages_total
+            # 真批量轮询中 completed 一直为 0，按 batch 内已 done 文件数折算整体完成度，
+            # 让进度条实时上涨（否则 6 分钟卡 0% 突然跳 100%）
+            progress.completed = _estimate_completed(done_count, total_count, progress.total)
             emit_progress()
 
         # 2~4. 逐批处理 + 失败重试（最多 3 轮）
@@ -491,11 +505,10 @@ class AsyncMinerUConverter:
             specs = pdf_to_specs.get(pdf_path, [])
             result = self._assemble_pdf_result(pdf_path, specs, spec_results, output_dir)
             results.append(result)
+            # 精确覆盖完成数（轮询阶段 completed 是 spec 折算的估算值，这里用真实 PDF 完成数）
             async with progress_lock:
-                if result.success:
-                    progress.completed += 1
-                else:
-                    progress.failed += 1
+                progress.completed = len([r for r in results if r.success])
+                progress.failed = len([r for r in results if not r.success])
                 progress.current_files = [pdf_path.name]
                 emit_progress()
 
@@ -1067,7 +1080,7 @@ class AsyncMinerUConverter:
                         progress_cb("processing", f"已完成 {done}/{file_count} 文件")
 
                     if page_progress_cb:
-                        page_progress_cb(pages_done, pages_total)
+                        page_progress_cb(pages_done, pages_total, done, file_count)
 
                     # 全部结束（含失败）则返回
                     if done + failed >= file_count:
