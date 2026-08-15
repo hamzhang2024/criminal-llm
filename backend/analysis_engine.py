@@ -63,6 +63,10 @@ def _get_knowledge_budget_chars() -> int:
     return int(_get_content_budget_chars() * 0.1)
 
 
+# 5C 辩护报告 prompt 注入各阶段产物的最大字符数，超限截断并追加提示标记
+_STAGE_INJECT_MAX_CHARS = 15000
+
+
 async def _batch_analyze_evidence(
     texts: List[Dict[str, str]],
     system_prompt: str,
@@ -1499,23 +1503,23 @@ class AnalysisEngine:
 
 ## 阶段 1：指控要素
 
-{stage1_md[:15000]}
+{stage1_md[:_STAGE_INJECT_MAX_CHARS] + ("\n\n（产物过长，已截断）" if len(stage1_md) > _STAGE_INJECT_MAX_CHARS else "")}
 
 ## 阶段 2：人物关系
 
-{stage2_md[:15000]}
+{stage2_md[:_STAGE_INJECT_MAX_CHARS] + ("\n\n（产物过长，已截断）" if len(stage2_md) > _STAGE_INJECT_MAX_CHARS else "")}
 
 ## 阶段 3：事件拆解
 
-{stage3_md[:15000]}
+{stage3_md[:_STAGE_INJECT_MAX_CHARS] + ("\n\n（产物过长，已截断）" if len(stage3_md) > _STAGE_INJECT_MAX_CHARS else "")}
 
 ## 阶段 3.5：资金流梳理
 
-{stage35_md[:15000] if stage35_md.strip() else "（未生成或无资金类证据）"}
+{(stage35_md[:_STAGE_INJECT_MAX_CHARS] + ("\n\n（产物过长，已截断）" if len(stage35_md) > _STAGE_INJECT_MAX_CHARS else "")) if stage35_md.strip() else "（未生成或无资金类证据）"}
 
 ## 阶段 4：法律法规
 
-{stage4_md[:15000]}
+{stage4_md[:_STAGE_INJECT_MAX_CHARS] + ("\n\n（产物过长，已截断）" if len(stage4_md) > _STAGE_INJECT_MAX_CHARS else "")}
 
 ## 阶段 5A：证据目录
 

@@ -8,7 +8,6 @@ import httpx
 import sys
 import logging
 import time
-from pathlib import Path
 from typing import Optional, Dict, Any, List
 
 # 导入上下文预算计算函数
@@ -16,7 +15,6 @@ from analysis_engine import (
     _get_content_budget_chars,
     _get_indictment_budget_chars,
     _get_evidence_budget_chars,
-    _get_knowledge_budget_chars,
     _get_report_budget_chars
 )
 
@@ -42,17 +40,6 @@ except ImportError:
         return ""
     THEORY_THREE_TIERS = ""
     CONSTITUTIVE_ELEMENT_ANALYSIS = ""
-
-# 导入刑事辩护提示词库
-try:
-    ZHANG_CRIMINAL_DEFENSE_PATH = Path(__file__).parent.parent / "zhang-criminal-defense" / "criminal-defense.md"
-    if ZHANG_CRIMINAL_DEFENSE_PATH.exists():
-        with open(ZHANG_CRIMINAL_DEFENSE_PATH, "r", encoding="utf-8") as f:
-            ZHANG_CRIMINAL_DEFENSE = f.read()
-    else:
-        ZHANG_CRIMINAL_DEFENSE = ""
-except Exception:
-    ZHANG_CRIMINAL_DEFENSE = ""
 
 
 def _get_bailian_config() -> tuple[str, Optional[str], str]:
@@ -283,7 +270,7 @@ class LLMClient:
             if crime_specific_knowledge:
                 print(f"[LLM 客户端] 已加载 {crime_type} 相关知识")
         
-        # 使用三阶层理论 + 法条拆解分析法 + zhang-criminal-defense 提示词库
+        # 使用三阶层理论 + 法条拆解分析法
         system_prompt = f"""你是一位资深的刑事辩护律师，精通刑法学界通行的三阶层犯罪论体系。
 
 {THEORY_THREE_TIERS}
@@ -293,12 +280,6 @@ class LLMClient:
 **【法条构成要件拆解分析法 - 辩护分析核心方法】**
 
 {CONSTITUTIVE_ELEMENT_ANALYSIS}
-
----
-
-**【刑事辩护专业提示词参考】**
-
-{ZHANG_CRIMINAL_DEFENSE[:_get_knowledge_budget_chars()]}
 
 ---
 

@@ -122,8 +122,5 @@ def test_5c_prompt_no_duplicate_catalog():
     import inspect
     import analysis_engine
     src = inspect.getsource(analysis_engine.AnalysisEngine.stage_5_full_defense)
-    # evidence_list_md 与 evidence_catalog_text 不得同时注入 prompt
-    assert src.count("evidence_list_md") >= 1  # 5A 产物仍保存
-    # prompt 组装段不重复引用两个目录变量
-    prompt_section = src[src.find("stage35_md"):src.find("stage35_md") + 3000] if "stage35_md" in src else src
-    assert not ("evidence_catalog_text" in prompt_section and "evidence_list_md" in prompt_section)
+    assert "evidence_catalog_text" not in src
+    assert "evidence_list_md" in src
