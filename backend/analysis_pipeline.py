@@ -2201,8 +2201,8 @@ class AnalysisPipeline:
         # 缓存友好结构：system 固定 + 材料在 user 前段，6 次调用共享前缀命中 prompt cache
         shared_system = (
             "你是刑事辩护律师，为被告人撰写辩护报告章节。"
-            "起诉书/起诉意见书是指控文书不是证据，引用时写\"据起诉书\"/\"据起诉意见书\"，"
-            "不要用\"见证据XXX\"格式。只输出 Markdown。"
+            "起诉书/起诉意见书是指控文书不是证据，引用指控文书时写\"据起诉书\"/\"据起诉意见书\"；"
+            "\"见证据XXX\"格式只用于引用正式证据。只输出 Markdown。"
         )
         for stage_key, filename, stage_name, instruction in sub_steps:
             if self._defense_section_exists(filename):
