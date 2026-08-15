@@ -108,3 +108,28 @@ export async function getProcessedPdfs(caseId: string): Promise<any> {
   const res = await fetch(`${API_BASE}/cases/${caseId}/processed-pdfs`)
   return res.json()
 }
+
+// ========== 选择性 OCR 图片（按卷分组） ==========
+
+export interface OcrImageGroup { [volName: string]: { [imgName: string]: { w: number; h: number } } }
+
+export async function getOcrImages(caseId: string): Promise<OcrImageGroup> {
+  const res = await safeFetch(`${API_BASE}/cases/${caseId}/ocr-images`)
+  const data = await res.json()
+  return data.groups || {}
+}
+
+export async function startOcrImages(caseId: string, groups: Record<string, string[]>): Promise<any> {
+  const res = await safeFetch(`${API_BASE}/cases/${caseId}/ocr-images`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ groups }),
+  })
+  return res.json()
+}
+
+export async function getOcrStatus(caseId: string): Promise<{ status: string; done: number; total: number; current?: string; failed?: string[] }> {
+  const res = await safeFetch(`${API_BASE}/cases/${caseId}/ocr-status`)
+  const data = await res.json()
+  return data.task || { status: 'idle', done: 0, total: 0 }
+}

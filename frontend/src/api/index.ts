@@ -20,8 +20,8 @@ export { listCases, getPendingCases, getTrash, getCaseInfo, getCaseFiles, getSte
 export { createAnalysis, analyzeCase, getAnalysisProgress, chatAboutCase, getReport, selectEvidence } from './cases'
 
 // 证据提取
-export { extractEvidence, stopExtractEvidence, getEvidenceIndex, getExtractStatus, getEvidenceSummary, getMdFiles, getProcessedPdfs, getEvidenceCompleteness } from './evidence'
-export type { EvidenceIndexFile, EvidenceIndexResponse, CompletenessEntry, CompletenessReport } from './evidence'
+export { extractEvidence, stopExtractEvidence, getEvidenceIndex, getExtractStatus, getEvidenceSummary, getMdFiles, getProcessedPdfs, getEvidenceCompleteness, getOcrImages, startOcrImages, getOcrStatus } from './evidence'
+export type { EvidenceIndexFile, EvidenceIndexResponse, CompletenessEntry, CompletenessReport, OcrImageGroup } from './evidence'
 
 // 分析流水线
 export { runPipelineStep, getPipelineStatus, getPipelineProgress, getStepResult, getAnalysisState, resumePipeline, getDefenseStages, getDefenseStageContent, getDefenseStrategy, confirmDefenseStrategy, getWikiIndex, getWikiPage, getMdFile, getPdfText, uploadWikiReference, clearWiki, getEvidenceSummaries, getEvidenceOther, getSummaryContent, getEvidenceFiles, getContradictionFiles, getContradictionContent } from './pipeline'
@@ -44,7 +44,7 @@ import { thumbnailUrl, serveFileUrl, thumbCacheUrl } from './cases'
 import { login, verifyToken, register, resetPassword, sendResetCode, resetWithCode, getToken, setToken, clearToken, getAuthEmail, setAuthEmail, clearAuthEmail } from './auth'
 import { getAppVersion, checkUpdate } from './config'
 import { listCases, getPendingCases, getTrash, getCaseInfo, getCaseFiles, getStepFiles, createCase, importCase, updateCaseCharges, updateCaseSearchKeywords, deleteCase, restoreCase, permanentDeleteCase, claimCases, uploadFiles, deleteFile, deleteOriginalFileOnly, batchProcess, convertToMd, deleteMdFile, deletePdfFile, openFile, getLlmSegmentNames, getThumbnails, cleanupProcessed, createAnalysis, analyzeCase, getAnalysisProgress, chatAboutCase, getReport, selectEvidence } from './cases'
-import { extractEvidence, stopExtractEvidence, getEvidenceIndex, getExtractStatus, getEvidenceSummary, getMdFiles, getProcessedPdfs, getEvidenceCompleteness } from './evidence'
+import { extractEvidence, stopExtractEvidence, getEvidenceIndex, getExtractStatus, getEvidenceSummary, getMdFiles, getProcessedPdfs, getEvidenceCompleteness, getOcrImages, startOcrImages, getOcrStatus } from './evidence'
 import { runPipelineStep, getPipelineStatus, getPipelineProgress, getStepResult, getAnalysisState, resumePipeline, getDefenseStages, getDefenseStageContent, getDefenseStrategy, confirmDefenseStrategy, getWikiIndex, getWikiPage, getMdFile, getPdfText, uploadWikiReference, clearWiki, getEvidenceSummaries, getEvidenceOther, getSummaryContent, getEvidenceFiles, getContradictionFiles, getContradictionContent } from './pipeline'
 import { getIndictmentCandidates, runAllStages, getStageStatus, getStageProgress, runSingleStage, getStageResult, getStageMarkdown, getFullReport, saveStageMarkdown, saveFullReport, reviewEvidence, getEvidenceReview, generateReviewNotes, getReviewNotes, generateCrossExamination, getCrossExamination, getEvidenceChain, getPersonRelation, getEventTimeline } from './stages'
 import { listLegalKB, getLegalKBItem, createLegalKBItem, updateLegalKBItem, deleteLegalKBItem, searchLaws } from './legal'
@@ -155,6 +155,10 @@ export const api = {
   getEvidenceIndex,
   getExtractStatus,
   getEvidenceCompleteness,
+  // 选择性 OCR
+  getOcrImages,
+  startOcrImages,
+  getOcrStatus,
   // 法律知识库
   listLegalKB,
   getLegalKBItem,

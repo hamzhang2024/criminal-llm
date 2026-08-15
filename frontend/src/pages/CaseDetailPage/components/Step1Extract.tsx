@@ -4,6 +4,7 @@ import React from 'react'
 import { MacOSCard, MacOSButton } from '../../../components/MacOSLayout'
 import DocTypeBadge, { CompletenessDot } from '../../../components/DocTypeBadge'
 import type { EvidenceIndexFile, CompletenessReport } from '../../../api'
+import { SelectiveOCR } from './SelectiveOCR'
 
 interface EvidenceItem {
   id: number | string
@@ -14,6 +15,7 @@ interface EvidenceItem {
 }
 
 interface Step1ExtractProps {
+  caseId: string
   files: Array<{ status: string }>
   evidenceList: EvidenceItem[]
   evidenceExtracted: boolean
@@ -27,7 +29,7 @@ interface Step1ExtractProps {
 }
 
 export function Step1Extract({
-  files, evidenceList, evidenceExtracted, evidenceFiles = [], completeness,
+  caseId, files, evidenceList, evidenceExtracted, evidenceFiles = [], completeness,
   processing, onExtract, onStop, onClear,
 }: Step1ExtractProps) {
   const mdConversionComplete = files.length > 0 && files.every(f => f.status === 'done')
@@ -69,6 +71,7 @@ export function Step1Extract({
           )}
         </div>
       </div>
+      <SelectiveOCR caseId={caseId} />
       {summaryParts.length > 0 && (
         <div style={{
           fontSize: '11px', color: suspectCount > 0 ? '#ff9500' : 'var(--macos-text-secondary)',
