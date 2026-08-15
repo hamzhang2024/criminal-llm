@@ -193,3 +193,34 @@ def test_debate_prompts_share_context_prefix(tmp_path):
     # context 不得再内嵌回指令 f-string（旧结构特征）
     src = inspect.getsource(analysis_pipeline.AnalysisPipeline.step45_debate_simulation)
     assert src.count("build_cached_messages") >= 3
+
+
+def test_batch_analyze_indictment_only_first_batch(monkeypatch):
+    """分批分析：起诉书全文只在第一批注入，后续批次不带（省重复输入）"""
+    import analysis_engine
+
+    calls = []
+
+    async def fake_chat(messages, **kw):
+        calls.append(messages)
+        return "批结果 ```json\n{\"nodes\": [], \"edges\": []}\n```"
+
+    # 构造 3 份证据 + 1 份起诉书，预算设小迫使分 2 批
+    texts = [
+        {"filename": "起诉书", "type": "起诉书", "text": "起诉书全文" * 500, "is_indictment": True},
+        {"filename": "证据A", "type": "书证", "text": "内容A" * 20000},
+        {"filename": "证据B", "type": "书证", "text": "内容B" * 20000},
+    ]
+    monkeypatch_client = type("C", (), {"chat": staticmethod(fake_chat)})()
+    monkeypatch.setattr("llm_client.get_llm_client", lambda: monkeypatch_client)
+    # 用小 context_limit 迫使分批
+    monkeypatch.setattr("config_manager.get_config_value", lambda k, d="": "20000" if k == "model_context_limit" else d)
+
+    results = asyncio.run(analysis_engine._batch_analyze_evidence(
+        texts, "系统", "头部", "尾部", label="测试"))
+    assert len(results) >= 2  # 确实分了多批
+    # 起诉书全文只在第一批的 user prompt 中
+    first_user = calls[0][-1]["content"]
+    later_users = [c[-1]["content"] for c in calls[1:]]
+    assert "起诉书全文" in first_user
+    assert all("起诉书全文" not in u for u in later_users)

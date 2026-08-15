@@ -77,7 +77,7 @@ async def _batch_analyze_evidence(
 ) -> List[str]:
     """分批处理证据，每批独立调用 LLM，返回所有批次的原始响应列表。
 
-    不截断任何证据内容，按 token 预算分批，起诉书每批都带。
+    不截断任何证据内容，按 token 预算分批，起诉书全文只在第一批注入。
     """
     enc = _get_enc()
 
@@ -149,10 +149,15 @@ async def _batch_analyze_evidence(
         if progress_cb:
             progress_cb(f"{label}第 {ci+1}/{total_chunks} 批...")
 
-        chunk_text = indictment_text
-        if chunk:
+        # 起诉书全文只在第一批注入（后续批次不再重复发送，省 token）
+        if ci == 0:
+            chunk_text = indictment_text
+            if chunk:
+                chunk_parts = [f"### {t['filename']}（{t['type']}）\n{t['text']}" for t in chunk]
+                chunk_text = (indictment_text + "\n\n" if indictment_text else "") + "\n\n".join(chunk_parts)
+        else:
             chunk_parts = [f"### {t['filename']}（{t['type']}）\n{t['text']}" for t in chunk]
-            chunk_text = (indictment_text + "\n\n" if indictment_text else "") + "\n\n".join(chunk_parts)
+            chunk_text = "\n\n".join(chunk_parts)
 
         user_prompt = f"{user_prompt_header}\n\n{chunk_text}\n\n{user_prompt_footer}"
 
