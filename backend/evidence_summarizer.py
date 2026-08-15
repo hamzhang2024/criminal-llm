@@ -146,19 +146,23 @@ async def summarize_one(client, ev: dict, full_text: str, source_name: str,
     return result, bool(issues)
 
 
-async def summarize_evidence(client, case_dir: Path, concurrency: int = 3) -> dict:
+async def summarize_evidence(client, case_dir: Path, concurrency: int = 3,
+                             should_abort=None) -> dict:
     """证据详细摘要主流程：提取完成后自动串联调用。
 
     双写：index.json 每条证据的 digest/digest_warning 字段 + evidence/summaries/ 落盘缓存。
     断点续传：缓存 meta 的 src_len 与证据 MD 当前长度一致则复用。
     失败不抛异常（摘要步骤不阻塞分析，分析端对无 digest 的证据回退全文）。
+    起诉书/起诉意见书跳过（消费端对指控文书不用摘要，避免白调 LLM）。
+    should_abort：可选取消回调（提取被停止/证据被清除时），返回 True 则不写回 index.json
+    ——防止摘要中途目录被 clear-evidence 清空后，写回导致 index.json 复活。
 
     Returns:
-        {"total", "done", "cached", "skipped", "failed"}
+        {"total", "done", "cached", "skipped", "failed", "aborted"}
     """
     evidence_dir = Path(case_dir) / "evidence"
     index_file = evidence_dir / "index.json"
-    stats = {"total": 0, "done": 0, "cached": 0, "skipped": 0, "failed": 0}
+    stats = {"total": 0, "done": 0, "cached": 0, "skipped": 0, "failed": 0, "aborted": False}
     if not index_file.exists():
         logger.warning("[证据摘要] index.json 不存在，跳过")
         return stats
@@ -173,11 +177,24 @@ async def summarize_evidence(client, case_dir: Path, concurrency: int = 3) -> di
     concurrency = max(1, concurrency)
     sem = asyncio.Semaphore(concurrency)
 
+    def _is_indictment(ev: dict) -> bool:
+        """指控文书判定（起诉书/起诉意见书，与 analysis_engine 口径一致）"""
+        ev_type = ev.get("type", "")
+        ev_name = ev.get("name", "")
+        return ("起诉书" in ev_type or "起诉意见书" in ev_type or
+                "起诉书" in ev_name or "起诉意见书" in ev_name)
+
     async def _one(ev: dict):
+        if should_abort and should_abort():
+            return
         md_name = ev.get("md_file", "")
         md_path = evidence_dir / md_name
         if not md_name or not md_path.exists():
             stats["failed"] += 1
+            return
+        # 起诉书/起诉意见书跳过：消费端对指控文书保留原文全文，摘要从不被消费
+        if _is_indictment(ev):
+            stats["skipped"] += 1
             return
         try:
             full_text = md_path.read_text(encoding="utf-8")
@@ -221,6 +238,13 @@ async def summarize_evidence(client, case_dir: Path, concurrency: int = 3) -> di
             logger.warning(f"[证据摘要] {md_name} 处理异常: {e}")
 
     await asyncio.gather(*(_one(ev) for ev in evidences))
+
+    # 取消检查：摘要中途若用户清除证据/停止提取，不写回 index.json
+    # （否则目录已被 clear-evidence 清空重建，写回会让证据清单复活）
+    if should_abort and should_abort():
+        stats["aborted"] = True
+        logger.info(f"[证据摘要] 已取消，不写回 index.json: {stats}")
+        return stats
 
     index_file.write_text(json.dumps(index, ensure_ascii=False, indent=2), encoding="utf-8")
     logger.info(f"[证据摘要] 完成: {stats}")

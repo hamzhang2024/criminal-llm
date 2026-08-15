@@ -2106,11 +2106,14 @@ async def _do_extract_evidence(
             logger.info(f"[证据提取] 临时目录已清理")
 
         # 详细摘要层：提取完成后自动生成（失败不阻塞分析，分析端对无 digest 的证据回退全文）
+        # should_abort：提取被停止/证据被清除时不写回 index.json（防目录清空后复活）
         try:
             from evidence_summarizer import summarize_evidence
             from llm_client import get_llm_client
             conc = int(cfg.get("evidence_concurrency", 3) or 3)
-            sum_stats = await summarize_evidence(get_llm_client(), case_path, concurrency=conc)
+            sum_stats = await summarize_evidence(
+                get_llm_client(), case_path, concurrency=conc,
+                should_abort=lambda: EXTRACT_TASKS.get(case_id) == "cancelled")
             logger.info(f"[证据摘要] 完成: {sum_stats}")
         except Exception as e:
             logger.warning(f"[证据摘要] 生成失败（不影响提取与分析，将回退全文）: {e}")

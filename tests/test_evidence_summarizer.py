@@ -289,3 +289,51 @@ def test_chain_call_shape(monkeypatch, tmp_path):
     monkeypatch.setattr(evidence_summarizer, "summarize_evidence", fake_summarize)
     stats = asyncio.run(evidence_summarizer.summarize_evidence(None, tmp_path, concurrency=5))
     assert called["concurrency"] == 5 and stats["total"] == 0
+
+
+def test_indictment_skipped_no_llm_call(tmp_path):
+    """起诉书/起诉意见书跳过摘要生成：不调 LLM、不写 digest（消费端本来就不用）"""
+    from evidence_summarizer import summarize_evidence
+    long_text = "起诉书正文。" * 300  # 长文书，以前会白调 LLM
+    case_dir = _make_case(tmp_path, [
+        {"name": "起诉书", "type": "起诉书", "persons": "", "md_file": "001_起诉书.md",
+         "_full_text": long_text},
+        {"name": "起诉意见书", "type": "起诉意见书", "persons": "", "md_file": "002_意见书.md",
+         "_full_text": long_text},
+    ])
+    client = _fake_client(["不应被调用"])
+    stats = asyncio.run(summarize_evidence(client, case_dir))
+    assert stats["skipped"] == 2 and stats["done"] == 0
+    index = json.loads((case_dir / "evidence" / "index.json").read_text(encoding="utf-8"))
+    assert "digest" not in index["evidence"][0] or not index["evidence"][0].get("digest")
+    assert "digest" not in index["evidence"][1] or not index["evidence"][1].get("digest")
+
+
+def test_should_abort_prevents_index_write(tmp_path):
+    """摘要中途被取消（clear-evidence/停止提取）：不写回 index.json，防目录清空后复活"""
+    from evidence_summarizer import summarize_evidence
+    long_text = "内容。" * 300
+    case_dir = _make_case(tmp_path, [
+        {"name": "张某讯问笔录", "type": "x", "persons": "", "md_file": "001_张某.md",
+         "_full_text": long_text},
+    ])
+    index_file = case_dir / "evidence" / "index.json"
+    original_content = index_file.read_text(encoding="utf-8")
+
+    good = ("## 概述\nx\n" + "".join(f"## {t}\n无\n" for t in SECTION_TITLES[1:])).strip()
+    client = _fake_client([good])
+    stats = asyncio.run(summarize_evidence(client, case_dir, should_abort=lambda: True))
+    # 已取消：index.json 保持原样，不写回 digest
+    assert index_file.read_text(encoding="utf-8") == original_content
+    assert stats["aborted"] is True
+
+
+def test_should_abort_none_by_default(tmp_path):
+    """should_abort 默认 None：行为不变（向后兼容）"""
+    from evidence_summarizer import summarize_evidence
+    case_dir = _make_case(tmp_path, [
+        {"name": "通知书", "type": "程序性文书", "persons": "", "md_file": "001_通知.md",
+         "_full_text": "短内容"},
+    ])
+    stats = asyncio.run(summarize_evidence(None, case_dir))
+    assert stats["skipped"] == 1 and stats.get("aborted") is not True
