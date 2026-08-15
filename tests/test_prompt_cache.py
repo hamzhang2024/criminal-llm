@@ -99,3 +99,40 @@ def test_cross_examination_prompt_cached_structure():
     assert "build_cached_messages" in src
     # 死截断清理：先截6000再截4000的双重截断应只剩 4000
     assert "[:6000]" not in src
+
+
+def test_review_messages_cache_invariants(tmp_path):
+    """质证消息缓存行为断言（逐份 N 次调用命中前缀缓存的不变量）
+
+    (a) 两个不同类型/名称的证据：system 逐字节相同
+    (b) 同 template 两次调用：user content 共享前缀（审查模板 + 法律依据部分）
+    (c) 指令包含证据编号（evidence_ref），供正文引用
+    """
+    from analysis_engine import AnalysisEngine
+
+    engine = AnalysisEngine("case_test", tmp_path / "case_test")
+    ev_a = {"filename": "张某讯问笔录", "type": "犯罪嫌疑人供述", "evidence_ref": "证据001", "text": "讯问内容甲"}
+    ev_b = {"filename": "银行流水", "type": "书证", "evidence_ref": "证据002", "text": "流水内容乙"}
+
+    msgs_a = engine._build_review_messages(ev_a, "模板A")
+    msgs_b = engine._build_review_messages(ev_b, "模板B")
+
+    # (a) system 逐字节相同（不随证据类型/名称/模板变化）
+    assert msgs_a[0]["content"] == msgs_b[0]["content"]
+    # 身份字段由系统回填的说明为静态文本，不得携带动态内容
+    assert "由系统回填真实值" in msgs_a[0]["content"]
+
+    # (b) 同 template 两次调用：user 共享前缀（模板 + 法律依据，止于证据内容标题前）
+    msgs_a2 = engine._build_review_messages(
+        {"filename": "李某讯问笔录", "type": "犯罪嫌疑人供述", "evidence_ref": "证据003", "text": "讯问内容丙"},
+        "模板A",
+    )
+    user_a, user_a2 = msgs_a[1]["content"], msgs_a2[1]["content"]
+    marker = "# 证据内容"
+    assert marker in user_a and marker in user_a2
+    assert user_a[:user_a.index(marker)] == user_a2[:user_a2.index(marker)]
+
+    # (c) 指令在 user 末尾且包含证据编号
+    instruction = user_a.rsplit("\n\n---\n\n", 1)[1]
+    assert "编号证据001" in instruction
+    assert "张某讯问笔录" in instruction

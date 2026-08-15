@@ -1677,12 +1677,14 @@ class AnalysisEngine:
         """
         ev_name = evidence.get("filename", "未知证据")
         ev_type = evidence.get("type", "其他证据")
+        ev_ref = evidence.get("evidence_ref", "")
         ev_text = evidence.get("text", "")[:4000]  # 截断长文本
 
         system = """你是一名资深刑事辩护律师，精通证据法和庭审质证技巧。你的任务是严格审查证据的三性（合法性、真实性、关联性），并生成可直接用于庭审的质证意见。审查要具体、有针对性，法律依据要准确。
 
 # 输出要求
 请严格按照以下 JSON 格式输出审查结果，每个维度都要有具体的审查发现和法律依据：
+注：evidence_name/evidence_ref/evidence_type 三字段按示例原文输出，由系统回填真实值
 
 {
   "evidence_name": "证据名称",
@@ -1755,7 +1757,7 @@ class AnalysisEngine:
 # 证据内容
 {ev_text}"""
 
-        instruction = f"请对上述证据（{ev_name}，{ev_type}）进行三性审查并输出质证意见（JSON）"
+        instruction = f"请对上述证据（{ev_name}，编号{ev_ref}，{ev_type}）进行三性审查并输出质证意见（JSON）"
         return build_cached_messages(system, material, instruction)
 
     def _parse_review_result(self, response: str, evidence: Dict[str, Any]) -> Dict[str, Any]:
@@ -1770,6 +1772,7 @@ class AnalysisEngine:
                 result = json.loads(json_match.group())
                 result["evidence_name"] = ev_name
                 result["evidence_ref"] = ev_ref
+                result["evidence_type"] = evidence.get("type", "其他证据")
                 return result
         except Exception as e:
             logger.error(f"[证据审查] JSON 解析失败: {e}")
