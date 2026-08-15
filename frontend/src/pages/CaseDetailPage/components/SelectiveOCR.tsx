@@ -48,10 +48,19 @@ export function SelectiveOCR({ caseId, onUnocrCountChange, conversionDone }: Pro
     try {
       const g = await getOcrImages(caseId)
       setGroups(g)
-      // 默认全选
-      const sel: Record<string, Set<string>> = {}
-      for (const [vol, imgs] of Object.entries(g)) sel[vol] = new Set(Object.keys(imgs))
-      setSelected(sel)
+      setSelected(prev => {
+        // 首次加载默认全选；OCR 完成后刷新时保留用户勾选（仅剔除已消失的图片）
+        if (Object.keys(prev).length === 0) {
+          const sel: Record<string, Set<string>> = {}
+          for (const [vol, imgs] of Object.entries(g)) sel[vol] = new Set(Object.keys(imgs))
+          return sel
+        }
+        const next: Record<string, Set<string>> = {}
+        for (const [vol, imgs] of Object.entries(g)) {
+          next[vol] = new Set([...(prev[vol] || [])].filter(n => n in imgs))
+        }
+        return next
+      })
     } catch { setError('加载图片失败') } finally { setLoading(false) }
   }, [caseId])
 
@@ -115,7 +124,11 @@ export function SelectiveOCR({ caseId, onUnocrCountChange, conversionDone }: Pro
           const st = await getOcrStatus(caseId)
           setOcrStatus(st)
           failCount = 0
-          if (st.status !== 'running') { clearInterval(timerRef.current!); timerRef.current = null }
+          if (st.status !== 'running') {
+            clearInterval(timerRef.current!); timerRef.current = null
+            // OCR 结束后刷新图片列表：更新 ocr 标记，未 OCR 计数归零，提取不再误提醒
+            loadImages()
+          }
         } catch { failCount++; if (failCount >= 3) { clearInterval(timerRef.current!); timerRef.current = null } }
       }, 2000)
     } catch { setError('启动 OCR 失败') }
