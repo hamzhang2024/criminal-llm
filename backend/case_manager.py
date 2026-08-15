@@ -560,8 +560,8 @@ async def list_case_files(case_id: str):
         return []
     
     files = []
-    
-    # 扫描 original/ 目录
+
+    # 扫描 original/ 目录（未处理原始文件，pending）
     original_dir = case_path / "original"
     if original_dir.exists():
         for pdf in sorted(original_dir.glob("*.pdf"), key=natural_sort_key):
@@ -574,7 +574,22 @@ async def list_case_files(case_id: str):
                 "path": str(pdf),
                 "created_at": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M")
             })
-    
+
+    # 扫描 processed/ 目录（去水印后待转换，done——original 可能已被清理，
+    # 前端 files 全 done 才能激活「提取证据」按钮）
+    processed_dir = case_path / "processed"
+    if processed_dir.exists():
+        for pdf in sorted(processed_dir.glob("*.pdf"), key=natural_sort_key):
+            stat = pdf.stat()
+            files.append({
+                "id": f"file_{pdf.stem}",
+                "name": pdf.name,
+                "size": stat.st_size,
+                "status": "done",
+                "path": str(pdf),
+                "created_at": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M")
+            })
+
     return files
 
 
