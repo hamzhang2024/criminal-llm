@@ -123,3 +123,57 @@ def test_stage5_injects_fund_flow_and_strategy(tmp_path, monkeypatch):
     assert "资金流梳理：仅言词证据支撑" in defense_prompt
     assert defense_prompt.startswith("辩护思路（律师已确认"), "思路应置于 prompt 最前"
     assert "主打证据不足" in defense_prompt
+
+
+def test_stage35_structured_fund_flows_path(tmp_path, monkeypatch):
+    """三层分离：有 fund_flows 时走确定性主表路径，LLM 只做分析，输出经机器对账"""
+    case_path = tmp_path / "case_001"
+    analysis_dir = case_path / "analysis"
+    analysis_dir.mkdir(parents=True)
+    evidence_dir = case_path / "evidence"
+    evidence_dir.mkdir(parents=True)
+
+    # 证据含结构化 fund_flows（新提取产物）
+    (evidence_dir / "001_流水.md").write_text("流水全文", encoding="utf-8")
+    (evidence_dir / "index.json").write_text(json.dumps({"evidence": [
+        {"name": "银行流水", "md_file": "001_流水.md", "type": "书证",
+         "fund_flows": ["唐雨父母→程敏洁｜15万元｜2025-04-13｜银行｜结清欠款"]},
+        {"name": "赵志强笔录", "md_file": "002_笔录.md", "type": "犯罪嫌疑人供述和辩解",
+         "fund_flows": ["唐雨父母→程敏洁｜150000元｜2025年4月13日｜银行转账｜结清"]},
+    ]}, ensure_ascii=False), encoding="utf-8")
+    (evidence_dir / "002_笔录.md").write_text("笔录全文", encoding="utf-8")
+
+    # 阶段 1 指控要素
+    stage1 = analysis_dir / "stage_1"
+    stage1.mkdir(parents=True)
+    (stage1 / "output.md").write_text("指控要素：诈骗金额 7.93万元", encoding="utf-8")
+
+    engine = AnalysisEngine("case_001", case_path)
+    calls = []
+    # LLM 输出引用了一个主表/起诉书都不存在的金额 → 校验层应标记
+    monkeypatch.setattr("llm_client.get_llm_client",
+                        lambda: _fake_client(calls, "流水显示 150000 元，另发现 99999 元异常。"))
+    asyncio.run(engine.stage_35_fund_flow("赵志强", "诈骗罪"))
+
+    assert len(calls) == 1
+    prompt = calls[0][-1]["content"]
+    # 主表注入（确定性聚合：两条 fund_flows 同笔合并，金额规范化一致）
+    assert "资金往来主表" in prompt
+    assert "150000" in prompt  # 规范化后金额
+    assert "7.93万" in prompt or "79300" in prompt  # 指控要素
+    # 输出落盘 + 机器对账标记了无来源金额
+    out = (analysis_dir / "stage_35" / "output.md").read_text(encoding="utf-8")
+    assert "99999" in out and "待人工核对" in out
+    assert "150000" in out
+
+
+def test_stage35_fallback_without_fund_flows(tmp_path, monkeypatch):
+    """无 fund_flows（旧案件）→ 回退关键词抽段旧路径"""
+    engine = _make_engine(tmp_path)  # 该构造的 index.json 无 fund_flows
+    calls = []
+    monkeypatch.setattr("llm_client.get_llm_client", lambda: _fake_client(calls))
+    asyncio.run(engine.stage_35_fund_flow("张三", "非法经营罪"))
+    assert len(calls) == 1
+    prompt = calls[0][-1]["content"]
+    # 旧路径：从 md 全文抽资金段落
+    assert "50000元" in prompt and "证据中的资金相关内容" in prompt

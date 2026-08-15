@@ -49,3 +49,34 @@ def test_load_evidence_texts_digest_for_evidence_not_indictment(tmp_path):
     # 起诉书保留全文，不用 digest
     assert "起诉书原文全文" in by_name["起诉书"]["text"]
     assert "不该被用的起诉书摘要" not in by_name["起诉书"]["text"]
+
+
+def test_stage2_uses_digest(tmp_path, monkeypatch):
+    """阶段2人物关系：传 prefer_summary=True（digest 已含人名/角色/关系，全文没必要）"""
+    import asyncio
+    from analysis_engine import AnalysisEngine
+
+    case_dir = tmp_path / "case"
+    (case_dir / "evidence").mkdir(parents=True)
+    (case_dir / "evidence" / "index.json").write_text(json.dumps({"evidence": [
+        {"name": "张某笔录", "type": "犯罪嫌疑人供述和辩解", "md_file": "001.md",
+         "digest": "浓缩摘要", "summary": ""},
+    ]}, ensure_ascii=False), encoding="utf-8")
+    (case_dir / "evidence" / "001.md").write_text("全文", encoding="utf-8")
+
+    captured = {}
+
+    class FakeEngine(AnalysisEngine):
+        def _load_evidence_texts(self, prefer_summary: bool = False):
+            captured["prefer_summary"] = prefer_summary
+            return [{"filename": "张某笔录", "type": "犯罪嫌疑人供述和辩解", "text": "x"}]
+
+    engine = FakeEngine("c", case_dir)
+
+    async def fake_chat(messages, **kw):
+        return '```json\n{"nodes": [], "edges": []}\n```'
+
+    monkeypatch.setattr("llm_client.get_llm_client",
+                        lambda: type("C", (), {"chat": staticmethod(fake_chat)})())
+    asyncio.run(engine.stage_2_character_relations("张某"))
+    assert captured.get("prefer_summary") is True

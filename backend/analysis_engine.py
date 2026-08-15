@@ -709,8 +709,9 @@ class AnalysisEngine:
         """
         阶段 2：从全部证据中提取人物关系
         输出：人物关系图（表格形式）
+        人名/角色/关系在 8 栏目摘要中已结构化保留，用 digest 即可（全文分批的 token 消耗大）
         """
-        texts = self._load_evidence_texts()
+        texts = self._load_evidence_texts(prefer_summary=True)
         if progress_cb:
             progress_cb("正在分析人物关系...")
 
@@ -1013,7 +1014,46 @@ class AnalysisEngine:
         from llm_client import get_llm_client
         client = get_llm_client()
 
-        from fund_flow import collect_fund_paragraphs, build_fund_prompt, FUND_SYSTEM_PROMPT
+        from fund_flow import (
+            collect_fund_paragraphs, build_fund_prompt, FUND_SYSTEM_PROMPT,
+            aggregate_fund_flows, build_master_table, build_fund_prompt_v2,
+            verify_fund_output, extract_amounts,
+        )
+
+        # 三层分离：有结构化 fund_flows 时走「确定性主表 + LLM 只分析 + 机器对账」，
+        # 无 fund_flows（旧案件）回退「关键词抽段 + LLM 转录」旧路径
+        fund_rows = aggregate_fund_flows(self.case_dir)
+
+        if fund_rows:
+            master_table = build_master_table(fund_rows)
+            indictment_md = _read_stage_md(self.analysis_dir, 1)
+            fund_prompt = build_fund_prompt_v2(indictment_md, master_table)
+            print(f"[预算] 阶段3.5 资金流 prompt: {len(fund_prompt)} 字符（结构化主表路径）")
+            md_output = await client.chat([
+                {"role": "system", "content": FUND_SYSTEM_PROMPT},
+                {"role": "user", "content": fund_prompt},
+            ])
+            if not md_output.strip():
+                md_output = "资金流梳理分析失败：LLM 返回空内容，请重跑本阶段。"
+                print("[阶段3.5] LLM 返回空内容")
+            else:
+                # 校验层：LLM 引用金额必须可溯源（主表 ∪ 起诉书），否则标记待人工核对
+                master_amounts = {r["amount"] for r in fund_rows}
+                indictment_amounts = extract_amounts(indictment_md or "")
+                issues = verify_fund_output(md_output, master_amounts, indictment_amounts)
+                if issues:
+                    md_output += "\n\n---\n\n> ⚠️ **金额溯源校验提示**（机器校验）：\n" + "\n".join(
+                        f"> - {i}" for i in issues[:20])
+                    print(f"[阶段3.5] 金额溯源校验: {len(issues)} 处待核对")
+
+            data = {
+                "stage": 35,
+                "name": "资金流梳理",
+                "defendant": defendant,
+                "generated_at": datetime.now().isoformat(),
+            }
+            self._save_stage(35, data, md_output)
+            return data
 
         texts = self._load_fund_source_texts()
         fund_evidence = collect_fund_paragraphs(
