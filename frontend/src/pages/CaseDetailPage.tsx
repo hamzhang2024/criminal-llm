@@ -199,13 +199,13 @@ export function CaseDetailPage() {
                 }
                 else if (sd.status === 'completed') { clearInterval(convertPollRef.current!); convertPollRef.current = null; setProcessing(false); setProgress('') }
                 else if (sd.status === 'failed' || sd.status === 'cancelled') { clearInterval(convertPollRef.current!); convertPollRef.current = null; setProcessing(false); setError(sd.message || '转换失败') }
-                else if (sd.status === 'interrupted') { clearInterval(convertPollRef.current!); convertPollRef.current = null; setProcessing(false); setError('上次任务被中断，请点击「转换并提取」重新开始') }
+                else if (sd.status === 'interrupted') { clearInterval(convertPollRef.current!); convertPollRef.current = null; setProcessing(false); setError('上次任务被中断，请点击「转换」重新开始') }
                 // pending 或 idle 状态继续等待
               } catch { clearInterval(convertPollRef.current!); convertPollRef.current = null; setProcessing(false) }
             }, 2000)
           } else if (d.status === 'interrupted') {
             // 显示提示让用户知道需要重新转换
-            setError('上次转换任务被中断，请点击「转换并提取」重新开始')
+            setError('上次转换任务被中断，请点击「转换」重新开始')
           }
         }).catch(() => {})
       }
@@ -295,7 +295,7 @@ export function CaseDetailPage() {
             throw new Error(sd.message || '转换任务失败')
           } else if (sd.status === 'interrupted') {
             clearInterval(convertPollRef.current!); convertPollRef.current = null
-            setProcessing(false); setError('上次任务被中断，请点击「转换并提取」重新开始')
+            setProcessing(false); setError('上次任务被中断，请点击「转换」重新开始')
             return // 直接返回，不再 throw
           }
           // pending 或 idle 状态继续等待
@@ -331,60 +331,6 @@ export function CaseDetailPage() {
     }
   }, [caseId, handleConvertAllToMd, extractEvidenceFn])
 
-  const handleConvertAndExtract = useCallback(async () => {
-    setProcessing(true); setError(null); setProgress('正在转换并提取证据...')
-    try {
-      const cr = await fetch(`${API_BASE}/tasks/${caseId}/convert-all-to-md`, { method: 'POST' })
-      const cd = await cr.json()
-      if (!cr.ok) throw new Error(cd.detail || '转换失败')
-      await new Promise<void>((resolve, reject) => {
-        const pi = setInterval(async () => {
-          try {
-            const sr = await fetch(`${API_BASE}/tasks/${caseId}/convert-status`); const sd = await sr.json()
-            if (sd.status === 'running') {
-              const c = sd.current || 0, t = sd.total || 0, pd = sd.pages_done || 0, pt = sd.pages_total || 0
-              const pct = t > 0 ? Math.round(c / t * 100) : 0
-              setProgress(`正在转换并提取证据（第 1/2 步）：${c}/${t} 文件${pt > 0 ? ` · ${pd}/${pt} 页` : ''} (${pct}%)`)
-            }
-            else if (sd.status === 'completed') { clearInterval(pi); resolve() }
-            else if (sd.status === 'failed' || sd.status === 'cancelled') { clearInterval(pi); reject(new Error(sd.message || '转换失败')) }
-            else if (sd.status === 'interrupted') { clearInterval(pi); reject(new Error('上次任务被中断，请点击「转换并提取」重新开始')) }
-            // pending 或 idle 状态继续等待
-          } catch (e) { clearInterval(pi); reject(e) }
-        }, 2000)
-        setTimeout(() => { clearInterval(pi); reject(new Error('转换超时')) }, 900000)
-      })
-      setProgress('正在提取证据...')
-      await api.extractEvidence(caseId!)
-      await new Promise<void>((resolve, reject) => {
-        const pi = setInterval(async () => {
-          try {
-            const st = await api.getExtractStatus(caseId!)
-            if (st.status !== 'running') {
-              clearInterval(pi); const d = await api.getEvidenceIndex(caseId!)
-              if (d.total_evidence > 0) { setEvidenceList(d.evidence || []); setEvidenceExtracted(true) }
-              // 根据状态给准确提示
-              if (st.status === 'cancelled') { setProgress('提取已取消') }
-              else if (d.total_evidence > 0) { setProgress(`已提取 ${d.total_evidence} 份证据`) }
-              else { setProgress('提取失败，请重试') }
-              resolve()
-            } else {
-              // 实时显示提取进度
-              const pf = st.processed_files || 0, tf = st.total_files || 0
-              const cur = st.current_file ? ` · ${st.current_file}` : ''
-              const pct = tf > 0 ? Math.round(pf / tf * 100) : 0
-              setProgress(`正在提取证据... ${pf}/${tf} 文件 (${pct}%)${cur}`)
-            }
-          } catch { }
-        }, 3000)
-        setTimeout(() => { clearInterval(pi); reject(new Error('提取超时')) }, 900000)
-      })
-      setCurrentStep(2); setProcessing(false)
-      // 转换+提取完成后刷新文书分类与完整性报告
-      loadEvidence(); loadCompleteness()
-    } catch (err) { setError(err instanceof Error ? err.message : '操作失败'); setProgress(''); setProcessing(false) }
-  }, [caseId, loadEvidence, loadCompleteness])
-
   const handleRunAnalysis = useCallback(async () => {
     if (!defendant.trim()) { showAlert({ title: '提示', message: '缺少被告人信息', variant: 'warning' }); return }
     setError(null); setProgress('正在触发分析...'); setProcessing(true)
@@ -415,9 +361,9 @@ export function CaseDetailPage() {
         else { setError(r.results?.find((x: any) => !x.success)?.error || '处理失败'); setProgress('') }
       } catch (err) { setError(err instanceof Error ? err.message : '处理失败'); setProgress('') }
       finally { setProcessing(false); setProgress('') }
-    } else if (currentStep === 1) await handleConvertAndExtract()
+    } else if (currentStep === 1) await handleConvertAllToMd()
     else if (currentStep === 2) navigate(`/case/${caseId}/report`)
-  }, [currentStep, files, password, optDecrypt, optWatermark, optDeleteOriginal, handleConvertAndExtract, caseId])
+  }, [currentStep, files, password, optDecrypt, optWatermark, optDeleteOriginal, handleConvertAllToMd, caseId])
 
   const StepIcon = steps[currentStep]?.icon || FileText
 
@@ -497,7 +443,7 @@ export function CaseDetailPage() {
                 disabled={processing || (currentStep === 0 && files.length === 0) || (currentStep === 2 && !pipelineStatus[4] && stageStatus[4] !== 'completed' && stageStatus[5] !== 'completed')}
                 onClick={handleStart}
               >
-                {processing ? '处理中...' : currentStep === 0 ? (files.length === 0 ? '开始处理' : (optDecrypt || optWatermark) ? '处理并继续' : '跳过并继续') : currentStep === 1 ? '转换并提取' : currentStep === 2 ? '查看报告' : '开始'}
+                {processing ? '处理中...' : currentStep === 0 ? (files.length === 0 ? '开始处理' : (optDecrypt || optWatermark) ? '处理并继续' : '跳过并继续') : currentStep === 1 ? '转换' : currentStep === 2 ? '查看报告' : '开始'}
               </MacOSButton>
             </div>
           </MacOSToolbar>
