@@ -1414,6 +1414,22 @@ class AnalysisEngine:
 
     # ========== 阶段 5：证据分析 + 矛盾分析 + 口供对比 + 三阶层辩护 ==========
 
+    async def _run_5b_if_needed(self, defendant: str, progress_cb=None) -> str:
+        """5B 矛盾分析：共享层产物已存在且非空则复用（多罪名不重复跑）"""
+        existing = _read_stage_md(self.analysis_dir, 52)
+        if existing.strip():
+            logger.info("[阶段5B] 矛盾分析产物已存在，跳过重跑（多罪名共享层复用）")
+            return existing
+        return await self.stage_5b_contradiction_analysis(defendant, progress_cb=progress_cb)
+
+    def _read_stage4_for_charge(self, charge: str | None) -> str:
+        """读取阶段4法规产物：多罪名读罪名层 analysis/{charge}/stage_4/，单罪名读共享层"""
+        if charge:
+            charge_file = self.analysis_dir / charge / "stage_4" / "output.md"
+            if charge_file.exists():
+                return charge_file.read_text(encoding="utf-8")
+        return _read_stage_md(self.analysis_dir, 4)
+
     async def stage_5_full_defense(
         self,
         defendant: str,
@@ -1435,7 +1451,7 @@ class AnalysisEngine:
         stage1_md = _read_stage_md(self.analysis_dir, 1)
         stage2_md = _read_stage_md(self.analysis_dir, 2)
         stage3_md = _read_stage_md(self.analysis_dir, 3)
-        stage4_md = _read_stage_md(self.analysis_dir, 4)
+        stage4_md = self._read_stage4_for_charge(crime_type)
         stage35_md = _read_stage_md(self.analysis_dir, 35)
 
         # 辩护思路（4.75 律师确认稿，存在则注入 prompt 最前面，最高优先级）
@@ -1473,8 +1489,8 @@ class AnalysisEngine:
 
         self._save_stage(51, {"name": "证据目录", "evidence_count": len(evidence_only)}, evidence_list_md)
 
-        # ----- 5B：矛盾分析 + 口供对比（共用方法，三次聚焦调用）-----
-        contradiction_md = await self.stage_5b_contradiction_analysis(defendant, progress_cb)
+        # ----- 5B：矛盾分析 + 口供对比（共享层，多罪名已存在则复用不重跑）-----
+        contradiction_md = await self._run_5b_if_needed(defendant, progress_cb=progress_cb)
 
         # ----- 5C：三阶层辩护报告 -----
         if progress_cb:
