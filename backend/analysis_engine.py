@@ -182,16 +182,6 @@ try:
 except ImportError:
     def get_evidence_text(path, prefer_md=True): return "", None
 
-try:
-    ZHANG_CRIMINAL_DEFENSE_PATH = Path(__file__).parent.parent / "zhang-criminal-defense" / "criminal-defense.md"
-    if ZHANG_CRIMINAL_DEFENSE_PATH.exists():
-        with open(ZHANG_CRIMINAL_DEFENSE_PATH, "r", encoding="utf-8") as f:
-            ZHANG_CRIMINAL_DEFENSE = f.read()
-    else:
-        ZHANG_CRIMINAL_DEFENSE = ""
-except Exception:
-    ZHANG_CRIMINAL_DEFENSE = ""
-
 
 # ========== JSON → Mermaid 转换 ==========
 
@@ -1476,7 +1466,7 @@ class AnalysisEngine:
         if progress_cb:
             progress_cb("正在构建证据目录...")
 
-        indictment_catalog, indictment_text, evidence_catalog_text, evidence_only = _split_indictment_and_evidence(texts)
+        indictment_catalog, indictment_text, _, evidence_only = _split_indictment_and_evidence(texts)
 
         # 5A 输出为证据目录清单（排除指控文书）
         evidence_list_md = "# 证据目录\n\n| 编号 | 证据名称 | 类型 |\n|------|---------|------|\n"
@@ -1507,29 +1497,25 @@ class AnalysisEngine:
 
 {indictment_catalog}
 
-## 证据目录（按编号引用）
-
-{evidence_catalog_text}
-
 ## 阶段 1：指控要素
 
-{stage1_md}
+{stage1_md[:15000]}
 
 ## 阶段 2：人物关系
 
-{stage2_md}
+{stage2_md[:15000]}
 
 ## 阶段 3：事件拆解
 
-{stage3_md}
+{stage3_md[:15000]}
 
 ## 阶段 3.5：资金流梳理
 
-{stage35_md if stage35_md.strip() else "（未生成或无资金类证据）"}
+{stage35_md[:15000] if stage35_md.strip() else "（未生成或无资金类证据）"}
 
 ## 阶段 4：法律法规
 
-{stage4_md}
+{stage4_md[:15000]}
 
 ## 阶段 5A：证据目录
 
@@ -1550,10 +1536,6 @@ class AnalysisEngine:
 ## 法条构成要件拆解分析法
 
 {CONSTITUTIVE_ELEMENT_ANALYSIS}
-
-## 刑事辩护提示词
-
-{ZHANG_CRIMINAL_DEFENSE}
 
 ---
 

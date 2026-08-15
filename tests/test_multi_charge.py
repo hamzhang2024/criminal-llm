@@ -107,3 +107,23 @@ def test_5b_reruns_when_output_is_blank(tmp_path, monkeypatch):
     result = asyncio.run(engine._run_5b_if_needed("张三"))
     assert called == [True]
     assert result == "新矛盾分析"
+
+
+def test_no_dead_zhang_defense_reference():
+    """ZHANG_CRIMINAL_DEFENSE 死引用已清除（引用的文件不存在，恒为空串）"""
+    import inspect
+    import analysis_engine
+    src = inspect.getsource(analysis_engine)
+    assert "ZHANG_CRIMINAL_DEFENSE" not in src
+
+
+def test_5c_prompt_no_duplicate_catalog():
+    """5C prompt：证据目录不重复出现（evidence_catalog_text 与 5A 目录只保留一个）"""
+    import inspect
+    import analysis_engine
+    src = inspect.getsource(analysis_engine.AnalysisEngine.stage_5_full_defense)
+    # evidence_list_md 与 evidence_catalog_text 不得同时注入 prompt
+    assert src.count("evidence_list_md") >= 1  # 5A 产物仍保存
+    # prompt 组装段不重复引用两个目录变量
+    prompt_section = src[src.find("stage35_md"):src.find("stage35_md") + 3000] if "stage35_md" in src else src
+    assert not ("evidence_catalog_text" in prompt_section and "evidence_list_md" in prompt_section)
