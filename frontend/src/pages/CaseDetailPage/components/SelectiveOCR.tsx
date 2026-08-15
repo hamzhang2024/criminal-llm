@@ -117,43 +117,36 @@ export function SelectiveOCR({ caseId }: Props) {
             </summary>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(90px, 1fr))', gap: '6px', marginTop: '6px' }}>
               {names.map(name => (
-                <button key={name} type="button" onClick={() => setPreview({ vol, name, url: imgUrl(caseId, name) })}
-                  title="点击放大查看"
-                  style={{ border: s.has(name) ? '2px solid var(--macos-accent)' : '1px solid var(--macos-border)', borderRadius: '6px', padding: '3px', cursor: 'pointer', textAlign: 'center', background: '#fff', position: 'relative' }}>
-                  <img src={imgUrl(caseId, name)}
-                    alt={`${vol} 图片 ${name}`} style={{ width: '100%', height: '60px', objectFit: 'cover', borderRadius: '4px', display: 'block' }} loading="lazy" />
-                  {s.has(name) && <span style={{ position: 'absolute', top: '2px', right: '4px', color: 'var(--macos-accent)', fontWeight: 'bold', fontSize: '14px' }}>✓</span>}
-                  <div style={{ fontSize: '10px', color: '#86868b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name.slice(0, 8)}</div>
-                </button>
+                <div key={name} style={{ position: 'relative' }}>
+                  {/* 点击图片 → 放大看原图（纯查看，勾选走角上 checkbox） */}
+                  <button type="button" onClick={() => setPreview({ vol, name, url: imgUrl(caseId, name) })}
+                    title="点击放大查看原图"
+                    style={{ width: '100%', border: s.has(name) ? '2px solid var(--macos-accent)' : '1px solid var(--macos-border)', borderRadius: '6px', padding: '3px', cursor: 'zoom-in', textAlign: 'center', background: '#fff', display: 'block' }}>
+                    <img src={imgUrl(caseId, name)}
+                      alt={`${vol} 图片 ${name}`} style={{ width: '100%', height: '60px', objectFit: 'cover', borderRadius: '4px', display: 'block' }} loading="lazy" />
+                    <div style={{ fontSize: '10px', color: '#86868b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name.slice(0, 8)}</div>
+                  </button>
+                  {/* 独立勾选复选框（不与放大冲突） */}
+                  <label title={s.has(name) ? '取消勾选' : '勾选此图'}
+                    style={{ position: 'absolute', top: '5px', left: '5px', background: 'rgba(255,255,255,0.9)', borderRadius: '3px', display: 'flex', alignItems: 'center', cursor: 'pointer', padding: '1px 3px', boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }}>
+                    <input type="checkbox" checked={s.has(name)} onChange={() => toggle(vol, name)} style={{ cursor: 'pointer' }} />
+                  </label>
+                </div>
               ))}
             </div>
           </details>
         )
       })}
 
-      {/* 放大预览 lightbox：大图 + 勾选/取消 + 关闭 */}
+      {/* 放大预览：纯查看原图，点击任意处关闭 */}
       {preview && (
         <div onClick={() => setPreview(null)}
           style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', zIndex: 10000, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', cursor: 'zoom-out' }}>
-          <div style={{ position: 'absolute', top: '12px', right: '16px', display: 'flex', gap: '8px' }}>
-            <button type="button"
-              onClick={e => { e.stopPropagation(); toggle(preview.vol, preview.name) }}
-              aria-pressed={selected[preview.vol]?.has(preview.name)}
-              style={{ padding: '6px 14px', borderRadius: '6px', border: 'none', cursor: 'pointer', fontSize: '13px',
-                background: selected[preview.vol]?.has(preview.name) ? '#fff' : 'var(--macos-accent)',
-                color: selected[preview.vol]?.has(preview.name) ? '#1d1d1f' : '#fff' }}>
-              {selected[preview.vol]?.has(preview.name) ? '✓ 已勾选（点击取消）' : '勾选此图'}
-            </button>
-            <button type="button" onClick={() => setPreview(null)}
-              style={{ padding: '6px 14px', borderRadius: '6px', border: 'none', cursor: 'pointer', fontSize: '13px', background: 'rgba(255,255,255,0.2)', color: '#fff' }}>
-              关闭 ✕
-            </button>
-          </div>
           <img src={preview.url} alt={preview.name}
             onClick={e => e.stopPropagation()}
-            style={{ maxWidth: '92vw', maxHeight: '85vh', objectFit: 'contain', borderRadius: '4px', background: '#fff' }} />
+            style={{ maxWidth: '92vw', maxHeight: '88vh', objectFit: 'contain', borderRadius: '4px', background: '#fff' }} />
           <div onClick={e => e.stopPropagation()} style={{ marginTop: '10px', fontSize: '12px', color: '#ccc' }}>
-            {preview.vol} · {preview.name}
+            {preview.vol} · {preview.name}（点击任意处关闭）
           </div>
         </div>
       )}
