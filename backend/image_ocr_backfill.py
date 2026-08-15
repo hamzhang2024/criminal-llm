@@ -125,11 +125,14 @@ def _too_small(img_path: Path) -> bool:
         return False
 
 
-def preselect_ocr_images(case_dir: Path) -> dict[str, dict[str, dict[str, int]]]:
+def preselect_ocr_images(case_dir: Path) -> dict[str, dict[str, dict[str, object]]]:
     """读各卷 layout.json，预筛出「疑似有文字的图片」（排除印章+小图）
 
+    带 ocr 标记（是否已识别过）：读 {卷}_images/_ocr.json 缓存判断。
+    前端用 ocr=false 的图片数提醒用户「先 OCR 再提取」。
+
     Returns:
-        {卷名: {图片名: {"w": int, "h": int}}}，卷名即 layout.json 的 stem 去掉 _layout
+        {卷名: {图片名: {"w": int, "h": int, "ocr": bool}}}，卷名即 layout.json 的 stem 去掉 _layout
     """
     md_dir = Path(case_dir) / "md"
     result = {}
@@ -141,6 +144,14 @@ def preselect_ocr_images(case_dir: Path) -> dict[str, dict[str, dict[str, int]]]
             data = json.loads(layout_file.read_text(encoding="utf-8"))
         except Exception:
             continue
+        # 已 OCR 标记：读该卷 _ocr.json 缓存
+        ocr_cache: dict = {}
+        ocr_cache_path = md_dir / f"{vol_name}_images" / "_ocr.json"
+        if ocr_cache_path.exists():
+            try:
+                ocr_cache = json.loads(ocr_cache_path.read_text(encoding="utf-8"))
+            except Exception:
+                pass
         images = {}
         for page in data.get("pdf_info", []):
             for blk in page.get("para_blocks", []):
@@ -169,7 +180,8 @@ def preselect_ocr_images(case_dir: Path) -> dict[str, dict[str, dict[str, int]]]
                     if name:
                         break
                 if name and name not in images:
-                    images[name] = {"w": w, "h": h}
+                    cached = ocr_cache.get(name) or {}
+                    images[name] = {"w": w, "h": h, "ocr": bool(cached.get("text"))}
         if images:
             result[vol_name] = images
     return result

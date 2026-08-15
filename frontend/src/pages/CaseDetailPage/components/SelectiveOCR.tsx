@@ -1,9 +1,12 @@
 // 选择性 OCR 图片：按卷分组缩略图网格 + 点击放大预览 + 勾选 + 批量识别
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { API_BASE, getOcrImages, startOcrImages, getOcrStatus } from '../../../api'
+import type { OcrImageGroup } from '../../../api/evidence'
 
 interface Props {
   caseId: string
+  // 未 OCR 图片数变化回调（父组件提取前提醒用）
+  onUnocrCountChange?: (count: number) => void
 }
 
 // 图片 URL（serve-file 按 basename 递归匹配，dir=md 命中 _images 子目录）
@@ -11,8 +14,8 @@ function imgUrl(caseId: string, name: string): string {
   return `${API_BASE}/cases/${caseId}/serve-file?file_path=${encodeURIComponent(name)}&dir=md`
 }
 
-export function SelectiveOCR({ caseId }: Props) {
-  const [groups, setGroups] = useState<Record<string, Record<string, { w: number; h: number }>>>({})
+export function SelectiveOCR({ caseId, onUnocrCountChange }: Props) {
+  const [groups, setGroups] = useState<OcrImageGroup>({})
   const [selected, setSelected] = useState<Record<string, Set<string>>>({})
   const [loading, setLoading] = useState(false)
   const [ocrStatus, setOcrStatus] = useState<{ status: string; done: number; total: number; current?: string; failed?: string[] } | null>(null)
@@ -37,6 +40,18 @@ export function SelectiveOCR({ caseId }: Props) {
   }, [caseId])
 
   useEffect(() => { loadImages() }, [loadImages])
+
+  // 未 OCR 图片数（ocr=false 的候选图），上报父组件用于「提取前提醒」
+  useEffect(() => {
+    if (!onUnocrCountChange) return
+    let n = 0
+    for (const imgs of Object.values(groups)) {
+      for (const meta of Object.values(imgs)) {
+        if (!meta.ocr) n++
+      }
+    }
+    onUnocrCountChange(n)
+  }, [groups, onUnocrCountChange])
 
   const toggle = (vol: string, name: string) => {
     setSelected(prev => {

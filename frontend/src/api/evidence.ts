@@ -111,7 +111,8 @@ export async function getProcessedPdfs(caseId: string): Promise<any> {
 
 // ========== 选择性 OCR 图片（按卷分组） ==========
 
-export interface OcrImageGroup { [volName: string]: { [imgName: string]: { w: number; h: number } } }
+export interface OcrImageMeta { w: number; h: number; ocr?: boolean }
+export interface OcrImageGroup { [volName: string]: { [imgName: string]: OcrImageMeta } }
 
 export async function getOcrImages(caseId: string): Promise<OcrImageGroup> {
   const res = await safeFetch(`${API_BASE}/cases/${caseId}/ocr-images`)

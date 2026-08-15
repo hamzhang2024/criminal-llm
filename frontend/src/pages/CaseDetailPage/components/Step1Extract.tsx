@@ -1,7 +1,8 @@
 // 步骤 1：证据提取卡片
 
-import React from 'react'
+import React, { useState } from 'react'
 import { MacOSCard, MacOSButton } from '../../../components/MacOSLayout'
+import { showConfirm } from '../../../components/MacOSDialog'
 import DocTypeBadge, { CompletenessDot } from '../../../components/DocTypeBadge'
 import type { EvidenceIndexFile, CompletenessReport } from '../../../api'
 import { SelectiveOCR } from './SelectiveOCR'
@@ -33,6 +34,23 @@ export function Step1Extract({
   processing, onExtract, onStop, onClear,
 }: Step1ExtractProps) {
   const mdConversionComplete = files.length > 0 && files.every(f => f.status === 'done')
+  // 未 OCR 图片数（SelectiveOCR 上报，用于提取前提醒）
+  const [unocrCount, setUnocrCount] = useState(0)
+
+  // 提取前提醒：还有未 OCR 图片时先让用户选择是否 OCR（转账凭证/流水截图文字对资金流分析重要）
+  const handleExtractClick = async () => {
+    if (unocrCount > 0) {
+      const goOcr = await showConfirm({
+        title: '还有图片未识别文字',
+        message: `还有 ${unocrCount} 张图片（转账凭证/流水截图等）未 OCR。建议先在上方「选择性 OCR 图片」中选图识别，再提取证据，资金流数据会更完整。`,
+        confirmText: '去选图 OCR',
+        cancelText: '跳过继续提取',
+        variant: 'warning',
+      })
+      if (goOcr) return // 留在页面让用户展开 OCR 卡片选图
+    }
+    onExtract()
+  }
 
   // 文书分类映射：来源文件名 → doc_type
   const docTypeMap: Record<string, string> = {}
@@ -65,13 +83,13 @@ export function Step1Extract({
               <MacOSButton variant="secondary" onClick={onClear} style={{ color: 'var(--macos-danger)', borderColor: 'var(--macos-danger)' }}>清除</MacOSButton>
             </>
           ) : mdConversionComplete ? (
-            <MacOSButton variant="primary" onClick={onExtract}>提取证据</MacOSButton>
+            <MacOSButton variant="primary" onClick={handleExtractClick}>提取证据</MacOSButton>
           ) : (
             <MacOSButton variant="secondary" disabled>请先转换 PDF</MacOSButton>
           )}
         </div>
       </div>
-      <SelectiveOCR caseId={caseId} />
+      <SelectiveOCR caseId={caseId} onUnocrCountChange={setUnocrCount} />
       {summaryParts.length > 0 && (
         <div style={{
           fontSize: '11px', color: suspectCount > 0 ? '#ff9500' : 'var(--macos-text-secondary)',
