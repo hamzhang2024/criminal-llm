@@ -1,5 +1,10 @@
 """缓存友好消息组装工具测试"""
+import asyncio
+import inspect
+
+import analysis_pipeline
 from prompt_cache import build_cached_messages
+from test_defense_strategy import _make_pipeline
 
 
 def test_material_before_instruction():
@@ -27,12 +32,61 @@ def test_empty_material():
     assert msgs[1]["content"] == "指令"
 
 
-def test_5x_substeps_share_prefix(monkeypatch):
-    """5a-5f 六个子步骤：system 一致 + context 在 user 前段（跨调用共享缓存前缀）"""
-    import inspect
-    import analysis_pipeline
+def test_5x_substeps_share_prefix(tmp_path):
+    """5a-5f 六个子步骤：捕获真实 step5 的六次 chat 调用，断言运行时缓存结构
+
+    (a) 六次调用的 system 逐字节相同
+    (b) 5a-5c/5e/5f 五次调用的 user 共享同一 material 前缀（context[:20000]）
+    (c) 5d 的 user 也以同一前缀开头（context[:25000] 的前 20000 字符与他人一致）
+    (d) 各节指令在 user 末尾
+    """
+    pipe = _make_pipeline(tmp_path)
+    # 充填 Wiki 产物使 context 超过 20000 字符，确保截断逻辑被真实执行
+    wiki = tmp_path / "case_001" / "analysis" / "indictment_wiki"
+    (wiki / "01-指控要素.md").write_text("指控要素\n" + "指" * 9000, encoding="utf-8")
+    (wiki / "06-综合结论.md").write_text("综合结论\n" + "结" * 9000, encoding="utf-8")
+    (wiki / "05-矛盾记录.md").write_text("矛盾记录\n" + "矛" * 9000, encoding="utf-8")
+
+    captured = []
+
+    async def fake_chat(messages, **kw):
+        captured.append(messages)
+        return "小节内容"
+
+    pipe.llm.chat = fake_chat
+    asyncio.run(pipe.step5_defense_opinion("张三", "盗窃罪"))
+
+    assert len(captured) == 6, "5a-5f 应各调用一次 LLM"
+
+    # (a) system 逐字节相同
+    systems = [msgs[0]["content"] for msgs in captured]
+    assert len(set(systems)) == 1
+
+    users = [msgs[1]["content"] for msgs in captured]
+    # 材料与指令的分界：material + "\n\n---\n\n" + instruction（指令内无分隔符，rsplit 安全）
+    materials = [u.rsplit("\n\n---\n\n", 1)[0] for u in users]
+    instructions = [u.rsplit("\n\n---\n\n", 1)[1] for u in users]
+
+    # (b) 5a-5c/5e/5f 五次调用的 material 逐字节相同，且恰好是 context[:20000] 的长度
+    shared_idx = [0, 1, 2, 4, 5]
+    shared_material = materials[0]
+    for i in shared_idx:
+        assert materials[i] == shared_material, f"第 {i} 次调用 material 与其他调用不一致"
+    assert len(shared_material) == 20000, "context 应被截断到 20000 字符构成共享前缀"
+
+    # (c) 5d 的 user 也以同一前缀开头（context[:25000] 前 20000 字符一致），
+    # 理论/构成要件文本追加在 context 之后而非插在 strategy_prefix 与 context 之间
+    assert materials[3].startswith(shared_material)
+    assert len(materials[3]) > len(shared_material)
+
+    # (d) 各节指令在 user 末尾，且顺序对应 5a-5f
+    expected_focus = ["案件概述", "证据评估", "矛盾", "三阶层辩护", "量刑情节", "结论建议"]
+    for instr, focus in zip(instructions, expected_focus):
+        assert instr.startswith("为被告人 **张三** 生成")
+        assert f"请输出 Markdown 格式，聚焦{focus}" in instr
+
+    # 源码结构兜底断言：prompt 组装必须走 build_cached_messages，
+    # 且 context 不得再内嵌回指令 f-string（旧结构特征）
     src = inspect.getsource(analysis_pipeline.AnalysisPipeline.step5_defense_opinion)
-    # 重排后：sub_steps 的 prompt 组装必须用 build_cached_messages
     assert "build_cached_messages" in src
-    # context 不得再出现在指令文本之后拼接的旧结构（旧结构特征：指令 f-string 内嵌 {context[:20000]}）
     assert "{context[:20000]}" not in src and "{context[:25000]}" not in src

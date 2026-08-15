@@ -2181,7 +2181,7 @@ class AnalysisPipeline:
 请输出 Markdown 格式，聚焦矛盾分析。"""),
             ("5d", "04-三阶层辩护.md", "三阶层辩护",
              f"""为被告人 **{defendant}** 生成三阶层辩护章节。
-要求：逐项分析构成要件符合性、违法性、有责性，提出辩护意见。
+要求：运用三阶层犯罪论体系，逐项分析构成要件符合性、违法性、有责性，提出辩护意见。
 对指控的每一项事实，要指出是否有独立证据支撑——起诉书的指控不等于有证据支撑。
 请输出 Markdown 格式，聚焦三阶层辩护。"""),
             ("5e", "05-量刑情节.md", "量刑情节",
@@ -2217,9 +2217,10 @@ class AnalysisPipeline:
                 progress_cb(sub_done, sub_total, f"步骤 5：正在生成 {stage_name}")
 
             try:
-                # 材料段：辩护思路（如有）+ 案件材料；5d 额外注入三阶层理论/构成要件文本
+                # 材料段：辩护思路（如有）+ 案件材料；5d 在 context 之后追加三阶层理论/构成要件文本，
+                # 保持 strategy_prefix + context[:20000] 公共前缀完整，与其余五次调用共享缓存前缀
                 if stage_key == "5d":
-                    material = strategy_prefix + theory_text + "\n\n" + element_text + "\n\n" + context[:25000]
+                    material = strategy_prefix + context[:25000] + "\n\n" + theory_text + "\n\n" + element_text
                 else:
                     material = strategy_prefix + context[:20000]
                 messages = build_cached_messages(shared_system, material, instruction)

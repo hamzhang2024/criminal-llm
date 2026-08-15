@@ -166,13 +166,13 @@ sub_steps = [
         for stage_key, filename, stage_name, instruction in sub_steps:
             ...
             messages = build_cached_messages(shared_system, context[:20000], instruction)
-            # 5d 三阶层用 context[:25000] + theory_text + element_text 拼进 material 前段：
-            # material_5d = f"{theory_text}\n\n{element_text}\n\n{context[:25000]}"
+            # 5d 三阶层用 context[:25000]，理论/构成要件文本追加在 context 之后（保持公共前缀完整）：
+            # material_5d = f"{context[:25000]}\n\n{theory_text}\n\n{element_text}"
             resp = await self.llm.chat(messages)
 ```
 
 注意：
-- 5d 的 material 是 `theory_text + element_text + context[:25000]`（理论文本也属共享前缀，放在 context 前）
+- 5d 的 material 是 `context[:25000] + theory_text + element_text`（理论文本必须放在 context **之后**：它与 5a-5c/5e/5f 不构成公共前缀，若插在 strategy_prefix 与 context 之间会击穿已缓存的 context[:20000] 前缀；放在末尾则 5d 仍能命中 system + strategy_prefix + context[:20000] 的共享缓存，语义上理论文本仍在材料段、仍在指令之前）
 - 各节「重要区分」提示已并入 shared_system，各指令里删除重复表述（保留各节特有要求）
 - 不要改输出文件名、保存逻辑、进度回调
 
