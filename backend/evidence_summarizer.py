@@ -36,16 +36,40 @@ _PERSON_DICT_BLOCK_RE = re.compile(r"\{[^{}]*\}")
 # 占位符人名：提取阶段对无法辨认的人写的占位，不是真名，不参与人名出现校验
 # （真实案例：未具名（某派出所）被判成 name=未具名、role=派出所名，
 # 要求"未具名"出现在摘要中 → 两轮重试必败的确定性死循环）
-_PLACEHOLDER_NAMES = ("未具名", "不详", "匿名", "不明")
+_PLACEHOLDER_NAMES = ("未具名", "不详", "匿名", "不明", "无名氏", "无此人", "暂无", "无")
+
+
+def _is_placeholder_name(name: str) -> bool:
+    """占位符人名判定：前缀/包含匹配覆盖"未具名1""姓名不详"等变体；
+    单字"无"仅精确匹配，避免子串误伤真实姓名"""
+    for p in _PLACEHOLDER_NAMES:
+        if len(p) == 1:
+            if name == p:
+                return True
+        elif name.startswith(p) or p in name:
+            return True
+    return False
 # 供述主体角色：摘要是其本人陈述的浓缩，正文以"供述人/被害人"等指代而不重复本人姓名，
 # 故人名检查豁免。涵盖讯问笔录（嫌疑人/被告人/被讯问人）、询问笔录（被害人/证人/被询问人）等供述主体。
 _SPEAKER_ROLES = ("嫌疑人", "被告人", "供述人", "被害人", "证人", "陈述人",
                   "被讯问人", "被询问人")
 # 程序性人员角色：讯问人/询问人/记录人与实体事实无关，摘要通常不会提及，
-# 不强制出现于摘要（注意"被讯问人"含"讯问人"子串，但其已被 _SPEAKER_ROLES 先豁免）
+# 不强制出现于摘要。
+# 注意排序依赖：被讯问人/被询问人（供述主体，在 _SPEAKER_ROLES）含"讯问人"/"询问人"
+# 子串，若豁免判定未来改回子串匹配，必须先判定 _SPEAKER_ROLES 再判定本清单，
+# 否则被讯问人会被误豁免为程序性人员（当前为剥离括号限定后的精确等值匹配，无此问题）
 _PROCEDURAL_ROLES = ("讯问人", "询问人", "记录人")
 
 COVERAGE_THRESHOLD = 0.9
+
+_ROLE_QUALIFIER_RE = re.compile(r"[（(][^）)]*[）)]")
+
+
+def _role_tokens(role: str) -> list[str]:
+    """角色规范化：剥离括号限定（证人（已死亡）→ 证人），再按 /、拆分组合角色，
+    供豁免清单做精确等值匹配（子串匹配会误豁免"证人家属""伪证人员"等涉案角色）"""
+    base = _ROLE_QUALIFIER_RE.sub("", role or "")
+    return [t.strip() for t in re.split(r"[/、]", base) if t.strip()]
 
 
 def extract_entities(text: str) -> set[str]:
@@ -57,13 +81,18 @@ def extract_entities(text: str) -> set[str]:
     return entities
 
 
-def extract_person_names(persons: str) -> list[str]:
-    """从 persons 字段提取人名清单"""
-    return [name for name, role in _PERSON_ENTRY_RE.findall(persons or "")]
+def _erase_spans(text: str, spans: list[tuple[int, int]]) -> str:
+    """剔除已消费的文本段，避免后续正则重复捕获"""
+    parts, last = [], 0
+    for s, e in spans:
+        parts.append(text[last:s])
+        last = e
+    parts.append(text[last:])
+    return "".join(parts)
 
 
 def _iter_person_entries(persons: str) -> list[tuple[str, str]]:
-    """解析 persons 字段为 (姓名, 角色) 列表，兼容三种实际形态：
+    """解析 persons 字段为 (姓名, 角色) 列表，兼容三种实际形态（可混合出现）：
     - 括号式：姓名（角色）
     - 冒号式：角色：姓名（；;，,。或换行分隔，值内多个姓名以、分隔，姓名可带（限定）括号）
     - dict 列表形态：{'name': 'X', 'role': 'Y'} 逐行拼接
@@ -82,26 +111,27 @@ def _iter_person_entries(persons: str) -> list[tuple[str, str]]:
             entries.append((str(d["name"]).strip(), str(d.get("role", "")).strip()))
             dict_spans.append(m.span())
     if dict_spans:
-        parts, last = [], 0
-        for s, e in dict_spans:
-            parts.append(text[last:s])
-            last = e
-        parts.append(text[last:])
-        text = "".join(parts)
+        text = _erase_spans(text, dict_spans)
 
-    colon_matches = _PERSON_COLON_RE.findall(text)
-    if colon_matches:
-        # 冒号式：角色与姓名位置固定，值内先去括号限定再按、拆分多个姓名
-        for role_raw, names_raw in colon_matches:
-            role = re.sub(r"[（(][^）)]*[）)]", "", role_raw).strip()
-            names_clean = re.sub(r"[（(][^）)]*[）)]", "", names_raw)
-            for name in re.split(r"[、/]", names_clean):
-                name = name.strip().strip("[]").rstrip("等").strip()
-                if name:
-                    entries.append((name, role))
-    else:
-        # 括号式：姓名（角色）
-        entries.extend((n.strip(), r.strip()) for n, r in _PERSON_ENTRY_RE.findall(text))
+    # 冒号式：角色与姓名位置固定，值内先去括号限定再按、拆分多个姓名。
+    # 匹配段从文本剔除，避免角色括号限定（如"被询问人（证人）"）被下方括号式重复捕获
+    colon_spans = []
+    for m in _PERSON_COLON_RE.finditer(text):
+        role_raw, names_raw = m.group(1), m.group(2)
+        role = re.sub(r"[（(][^）)]*[）)]", "", role_raw).strip()
+        names_clean = re.sub(r"[（(][^）)]*[）)]", "", names_raw)
+        for name in re.split(r"[、/]", names_clean):
+            name = name.strip().strip("[]").rstrip("等").strip()
+            # 空值词（"同案犯：无"）不产生伪条目
+            if name and not _is_placeholder_name(name):
+                entries.append((name, role))
+        colon_spans.append(m.span())
+    if colon_spans:
+        text = _erase_spans(text, colon_spans)
+
+    # 括号式：姓名（角色）。与冒号式可混合出现（如"讯问人：夏海峰；张三（同案犯）"），
+    # 对剔除冒号式后的剩余文本始终再跑一遍
+    entries.extend((n.strip(), r.strip()) for n, r in _PERSON_ENTRY_RE.findall(text))
 
     return entries
 
@@ -131,11 +161,12 @@ def verify_summary_fidelity(full_text: str, summary: str, persons: str = "") -> 
 
     # 人名
     for name, role in _iter_person_entries(persons):
-        if name in _PLACEHOLDER_NAMES:
+        if _is_placeholder_name(name):
             continue  # 占位符不是真名，摘要不可能也不应写出
-        if any(r in role for r in _SPEAKER_ROLES):
+        tokens = _role_tokens(role)
+        if any(t in _SPEAKER_ROLES for t in tokens):
             continue
-        if any(r in role for r in _PROCEDURAL_ROLES):
+        if any(t in _PROCEDURAL_ROLES for t in tokens):
             continue
         if name not in summary:
             issues.append(f"人名未出现：{name}")

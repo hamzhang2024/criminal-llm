@@ -136,6 +136,51 @@ def test_section_titles_are_eight():
                               "辩解与否认", "关键事实", "态度变化", "矛盾提示"]
 
 
+# ---------- 混合格式/角色豁免精确匹配/空值过滤/占位符前缀匹配（8ea4e8c 质量审查修复） ----------
+
+def test_mixed_colon_and_paren_formats_both_parsed():
+    """冒号式+括号式混合时括号式条目不得被丢弃：
+    "讯问人：夏海峰；张三（同案犯）" 中张三必须被解析为待校验人名
+    （此前 if colon_matches ... else 括号式 互斥分支导致张三被静默丢弃）"""
+    persons = "讯问人：夏海峰；张三（同案犯）"
+    issues = verify_summary_fidelity(FULL_TEXT, GOOD_SUMMARY, persons=persons)
+    assert any("张三" in i for i in issues)
+    # 冒号式部分不受括号式重复捕获影响：程序性人员仍豁免
+    assert not any("夏海峰" in i for i in issues)
+
+
+def test_role_exemption_strips_paren_qualifier():
+    """角色括号限定剥离后精确匹配："证人（已死亡）"仍按证人豁免"""
+    persons = "证人（已死亡）：王某"
+    assert verify_summary_fidelity(FULL_TEXT, GOOD_SUMMARY, persons=persons) == []
+
+
+def test_role_exemption_exact_match_no_over_exemption():
+    """精确等值匹配：证人家属/嫌疑人家属/伪证人员等涉案角色不被"证人""嫌疑人"子串误豁免"""
+    for role in ("证人家属", "嫌疑人家属", "伪证人员"):
+        persons = f"李某（{role}）"
+        issues = verify_summary_fidelity(FULL_TEXT, GOOD_SUMMARY, persons=persons)
+        assert any("李某" in i for i in issues), f"{role} 不应被豁免"
+
+
+def test_colon_empty_value_produces_no_entry():
+    """冒号式值"无/暂无/无此人"不产生伪条目（否则要求"无"出现在摘要中，重试必败）"""
+    for value in ("无", "暂无", "无此人"):
+        persons = f"同案犯：{value}"
+        assert verify_summary_fidelity(FULL_TEXT, GOOD_SUMMARY, persons=persons) == []
+
+
+def test_placeholder_prefix_match():
+    """占位符改前缀/包含匹配：未具名1、姓名不详等变体同样豁免"""
+    for name in ("未具名1", "姓名不详"):
+        persons = f"{name}（同案犯）"
+        issues = verify_summary_fidelity(FULL_TEXT, GOOD_SUMMARY, persons=persons)
+        assert not any(name in i for i in issues), f"{name} 应按占位符豁免"
+    # 真实姓名不被误伤
+    issues = verify_summary_fidelity(FULL_TEXT, GOOD_SUMMARY, persons="张三（同案犯）")
+    assert any("张三" in i for i in issues)
+
+
 # ---------- 单份证据摘要生成（summarize_one） ----------
 
 def _fake_client(responses):
