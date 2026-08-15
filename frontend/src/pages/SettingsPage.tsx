@@ -188,12 +188,12 @@ const DEFAULT_LLM_MODEL = 'qwen3.5-plus'
 // coding 套餐端点与按量端点不通用（Key 前缀不同），选错会 401
 const LLM_PRESETS = [
   { key: 'custom', label: '自定义', baseUrl: '', model: '', contextK: 0, keyHint: '' },
-  { key: 'deepseek', label: 'DeepSeek 官方', baseUrl: 'https://api.deepseek.com', model: 'deepseek-v4-flash', contextK: 1000, keyHint: '' },
+  { key: 'deepseek', label: 'DeepSeek 官方', baseUrl: 'https://api.deepseek.com', model: 'deepseek-v4-pro', contextK: 1000, keyHint: '' },
   { key: 'bailian', label: '阿里云百炼（按量）', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen3.5-plus', contextK: 128, keyHint: 'Key 为 sk- 开头，百炼控制台创建' },
-  { key: 'kimi', label: 'Kimi 开放平台（按量）', baseUrl: 'https://api.moonshot.cn/v1', model: 'kimi-k2-0905-preview', contextK: 256, keyHint: 'Key 为 sk- 开头，platform.moonshot.cn 创建' },
+  { key: 'kimi', label: 'Kimi 开放平台（按量）', baseUrl: 'https://api.moonshot.cn/v1', model: 'kimi-k2.6', contextK: 256, keyHint: 'Key 为 sk- 开头，platform.moonshot.cn 创建；kimi-k3（1M 上下文）可手动改模型名' },
   { key: 'kimi-coding', label: 'Kimi Coding 套餐', baseUrl: 'https://api.kimi.com/coding/v1', model: 'kimi-for-coding', contextK: 256, keyHint: 'Key 为 sk-kimi- 开头，kimi.com/code/console 创建，与按量 Key 不通用' },
   { key: 'ali-coding', label: '阿里 Coding 套餐', baseUrl: 'https://coding.dashscope.aliyuncs.com/v1', model: 'qwen3.7-plus', contextK: 128, keyHint: 'Key 为 sk-sp- 开头，与百炼按量 Key 不通用' },
-  { key: 'ollama', label: 'Ollama 本地', baseUrl: 'http://localhost:11434/v1', model: 'qwen3.6:35b-a3b', contextK: 32, keyHint: '本地运行无需 API Key' },
+  { key: 'ollama', label: 'Ollama 本地', baseUrl: 'http://localhost:11434/v1', model: 'qwen3.6:35b', contextK: 256, keyHint: '本地运行无需 API Key' },
 ]
 
 export function SettingsPage() {
@@ -984,7 +984,7 @@ export function SettingsPage() {
           <MacOSCard style={{ marginTop: '16px' }}>
             <h2 style={{ fontSize: '15px', fontWeight: '600', color: '#1d1d1f', display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
               大模型配置
-              <span style={{ fontSize: '11px', color: '#8b6914', fontWeight: 500, background: 'rgba(139,105,20,0.1)', padding: '2px 8px', borderRadius: '4px' }}>推荐 ollama qwen3.6 35b-a3b</span>
+              <span style={{ fontSize: '11px', color: '#8b6914', fontWeight: 500, background: 'rgba(139,105,20,0.1)', padding: '2px 8px', borderRadius: '4px' }}>推荐 DeepSeek V4 Pro（1M 上下文）</span>
             </h2>
 
             {/* 供应商预设：选中自动填 base_url + 模型 + 上下文，避免端点/上下文不匹配 */}
