@@ -189,7 +189,7 @@ def test_debate_prompts_share_context_prefix(tmp_path):
     assert "## 交叉对决结果" in material_d
     assert "你是本案主审法官" in instruction_d
 
-    # (d) 源码结构兜底断言：prompt 组装必须走 build_cached_messages，
+    # (d) 源码结构兜底断言：45a/45b/45d 三处 prompt 组装必须走 build_cached_messages，
     # context 不得再内嵌回指令 f-string（旧结构特征）
     src = inspect.getsource(analysis_pipeline.AnalysisPipeline.step45_debate_simulation)
-    assert "build_cached_messages" in src
+    assert src.count("build_cached_messages") >= 3
