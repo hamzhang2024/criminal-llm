@@ -101,7 +101,7 @@ async def _batch_analyze_evidence(
     if evidence_budget < 20000:
         evidence_budget = 20000
 
-    # 分离起诉书（每批必带）和普通证据
+    # 分离起诉书（仅首批注入）和普通证据
     indictment_types = {"起诉书", "起诉意见书"}
     indictments = [t for t in texts if t.get("type", "") in indictment_types]
     evidence = [t for t in texts if t.get("type", "") not in indictment_types]
