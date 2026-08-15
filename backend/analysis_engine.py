@@ -1757,7 +1757,8 @@ class AnalysisEngine:
 # 证据内容
 {ev_text}"""
 
-        instruction = f"请对上述证据（{ev_name}，编号{ev_ref}，{ev_type}）进行三性审查并输出质证意见（JSON）"
+        ref_seg = f"，编号{ev_ref}" if ev_ref else ""
+        instruction = f"请对上述证据（{ev_name}{ref_seg}，{ev_type}）进行三性审查并输出质证意见（JSON）"
         return build_cached_messages(system, material, instruction)
 
     def _parse_review_result(self, response: str, evidence: Dict[str, Any]) -> Dict[str, Any]:
