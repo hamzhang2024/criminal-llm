@@ -110,3 +110,106 @@ def test_pdf_to_md_has_no_auto_backfill():
     import inspect
     src = inspect.getsource(pdf_to_md)
     assert "backfill_image_ocr" not in src
+
+
+def test_preselect_remaps_chunk_volumes_to_merged(tmp_path):
+    """分块卷（__c1/__c181）重映射到合并卷：第12卷_去水印__c1 → 第12卷_去水印
+
+    MinerU 分块转换遗留 {卷}__c{N}_layout.json，其图片已合并进 {卷}_images/。
+    预筛应把它们归并到合并卷名下，否则按分块卷 OCR 时找不到 md/图片目录。
+    """
+    # 分块布局（合并后的卷没有自己的 layout.json）
+    _make_layout(tmp_path, "第12卷_去水印__c1", [
+        {"sub_type": "?", "image_path": "c1_img.jpg", "bbox": [0, 0, 300, 300]},
+    ])
+    _make_layout(tmp_path, "第12卷_去水印__c181", [
+        {"sub_type": "?", "image_path": "c181_img.jpg", "bbox": [0, 0, 300, 300]},
+    ])
+    # 合并卷 md 已生成（转换完成）
+    (tmp_path / "md" / "第12卷_去水印.md").write_text("内容", encoding="utf-8")
+    (tmp_path / "md" / "第12卷_去水印_images").mkdir()
+
+    result = preselect_ocr_images(tmp_path)
+    # 不应出现分块卷名
+    assert "第12卷_去水印__c1" not in result
+    assert "第12卷_去水印__c181" not in result
+    # 应归并到合并卷，含两分块的图片
+    assert "第12卷_去水印" in result
+    names = result["第12卷_去水印"]
+    assert "c1_img.jpg" in names and "c181_img.jpg" in names
+
+
+def test_preselect_skips_chunk_when_merged_md_missing(tmp_path):
+    """分块卷但合并 md 不存在（转换中断）：跳过，不列出无法回填的卷"""
+    _make_layout(tmp_path, "第3卷_去水印__c1", [
+        {"sub_type": "?", "image_path": "x.jpg", "bbox": [0, 0, 300, 300]},
+    ])
+    result = preselect_ocr_images(tmp_path)
+    assert "第3卷_去水印__c1" not in result
+    assert "第3卷_去水印" not in result
+
+
+def test_recognize_retries_on_429(tmp_path, monkeypatch):
+    """单图识别遇 HTTP 429 限流：退避重试后成功"""
+    calls = {"post": 0}
+
+    class FakeResp:
+        def __init__(self, status, payload=None, text=""):
+            self.status = status
+            self._payload = payload or {}
+            self._text = text
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def json(self):
+            return self._payload
+
+        async def text(self):
+            return self._text
+
+    class FakeSession:
+        def post(self, *a, **kw):
+            calls["post"] += 1
+            if calls["post"] <= 2:
+                return FakeResp(429)  # 前两次限流
+            return FakeResp(200, {"data": {"jobId": "j1"}})
+
+        def get(self, url, **kw):
+            if url.endswith("/j1"):
+                return FakeResp(200, {"data": {"state": "done", "resultUrl": {"jsonUrl": "http://x/result"}}})
+            # 结果下载
+            return FakeResp(200, text='{"result": {"layoutParsingResults": [{"markdown": {"text": "转账 15 万元"}}]}}')
+
+    # 退避时间设为 0，避免测试等待
+    monkeypatch.setattr(mod, "RATE_LIMIT_BACKOFF", [0, 0, 0])
+    img = tmp_path / "x.jpg"
+    img.write_bytes(b"x")
+    text = asyncio.run(mod._recognize_single_image(FakeSession(), img, "token", None))
+    assert calls["post"] == 3  # 429,429,200
+    assert "转账 15 万元" in text
+
+
+def test_backfill_does_not_cache_failed_images(tmp_path, monkeypatch):
+    """识别失败（空文字）的图片不写缓存，下次重跑可重试（防 429 失败永久锁死）"""
+    md_text = "![](./第1卷_去水印_images/a.jpg)"
+    images_dir = tmp_path / "第1卷_去水印_images"
+    images_dir.mkdir()
+    (images_dir / "a.jpg").write_bytes(b"a")
+
+    async def fake_recognize_fail(session, img_path, token, ssl_context):
+        return ""  # 429 失败返回空
+
+    monkeypatch.setattr(mod, "_recognize_single_image", fake_recognize_fail)
+    monkeypatch.setattr(mod, "_get_token", lambda: "t")
+    asyncio.run(backfill_image_ocr(md_text, images_dir, "第1卷_去水印"))
+
+    cache_path = images_dir / "_ocr.json"
+    if cache_path.exists():
+        cache = json.loads(cache_path.read_text(encoding="utf-8"))
+        # 失败图片（空文字）不得写入缓存，否则下次重跑被跳过、永远无法重试
+        assert "a.jpg" not in cache
+    # 不存在缓存文件也符合预期

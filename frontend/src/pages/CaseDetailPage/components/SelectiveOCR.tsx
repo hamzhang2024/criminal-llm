@@ -7,6 +7,8 @@ interface Props {
   caseId: string
   // 未 OCR 图片数变化回调（父组件提取前提醒用）
   onUnocrCountChange?: (count: number) => void
+  // 转换完成信号：false→true 时重新加载图片列表（转换后才生成 layout.json）
+  conversionDone?: boolean
 }
 
 // 图片 URL（serve-file 按 basename 递归匹配，dir=md 命中 _images 子目录）
@@ -14,7 +16,7 @@ function imgUrl(caseId: string, name: string): string {
   return `${API_BASE}/cases/${caseId}/serve-file?file_path=${encodeURIComponent(name)}&dir=md`
 }
 
-export function SelectiveOCR({ caseId, onUnocrCountChange }: Props) {
+export function SelectiveOCR({ caseId, onUnocrCountChange, conversionDone }: Props) {
   const [groups, setGroups] = useState<OcrImageGroup>({})
   const [selected, setSelected] = useState<Record<string, Set<string>>>({})
   const [loading, setLoading] = useState(false)
@@ -40,6 +42,13 @@ export function SelectiveOCR({ caseId, onUnocrCountChange }: Props) {
   }, [caseId])
 
   useEffect(() => { loadImages() }, [loadImages])
+
+  // 转换完成后重新加载（卡片挂载时 layout.json 可能还没生成，转换完成才有图片可筛）
+  const prevConversionDone = useRef(conversionDone)
+  useEffect(() => {
+    if (conversionDone && !prevConversionDone.current) loadImages()
+    prevConversionDone.current = conversionDone
+  }, [conversionDone, loadImages])
 
   // 未 OCR 图片数（ocr=false 的候选图），上报父组件用于「提取前提醒」
   useEffect(() => {

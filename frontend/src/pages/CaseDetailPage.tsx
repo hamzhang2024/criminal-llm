@@ -303,7 +303,7 @@ export function CaseDetailPage() {
       }, 2000)
       setTimeout(() => { if (convertPollRef.current) { clearInterval(convertPollRef.current); convertPollRef.current = null; setProcessing(false); setProgress('⚠️ 转换超时，请稍后刷新') } }, 900000)
     } catch (err) { setError(err instanceof Error ? err.message : '转换失败'); setProgress(''); setProcessing(false) }
-  }, [caseId])
+  }, [caseId, refreshFiles])
 
   const handleExtractEvidence = useCallback(async () => {
     try {

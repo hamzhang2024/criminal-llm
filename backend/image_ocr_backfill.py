@@ -25,6 +25,8 @@ MIN_DIMENSION = 120
 # 单图任务轮询上限（秒）
 RECOGNIZE_TIMEOUT = 600
 POLL_INTERVAL = 3
+# 429 限流退避序列（秒）：初次 + 3 次重试
+RATE_LIMIT_BACKOFF = [15, 30, 60]
 
 
 def _get_token() -> str:
@@ -53,19 +55,31 @@ async def _recognize_single_image(
     }
     headers = {"Authorization": f"bearer {token}"}
     try:
-        data = aiohttp.FormData()
-        data.add_field("file", img_path.read_bytes(), filename=img_path.name,
-                       content_type="image/jpeg")
-        data.add_field("model", PADDLEOCR_MODEL)
-        data.add_field("optionalPayload", json.dumps(payload))
-        async with session.post(
-            PADDLEOCR_API_URL, headers=headers, data=data,
-            timeout=aiohttp.ClientTimeout(total=120), ssl=ssl_context,
-        ) as resp:
-            if resp.status != 200:
-                logger.warning(f"[图片回填] 提交失败 HTTP {resp.status}: {img_path.name}")
-                return ""
-            job_id = (await resp.json())["data"]["jobId"]
+        # 提交（429 限流时按 RATE_LIMIT_BACKOFF 退避重试）
+        job_id = ""
+        for attempt, backoff in enumerate([0] + list(RATE_LIMIT_BACKOFF)):
+            if backoff:
+                logger.info(f"[图片回填] 429 限流，{backoff}s 后第 {attempt} 次重试: {img_path.name}")
+                await asyncio.sleep(backoff)
+            data = aiohttp.FormData()
+            data.add_field("file", img_path.read_bytes(), filename=img_path.name,
+                           content_type="image/jpeg")
+            data.add_field("model", PADDLEOCR_MODEL)
+            data.add_field("optionalPayload", json.dumps(payload))
+            async with session.post(
+                PADDLEOCR_API_URL, headers=headers, data=data,
+                timeout=aiohttp.ClientTimeout(total=120), ssl=ssl_context,
+            ) as resp:
+                if resp.status == 429:
+                    continue  # 限流，退避后重试
+                if resp.status != 200:
+                    logger.warning(f"[图片回填] 提交失败 HTTP {resp.status}: {img_path.name}")
+                    return ""
+                job_id = (await resp.json())["data"]["jobId"]
+                break
+        if not job_id:
+            logger.warning(f"[图片回填] 429 限流重试耗尽: {img_path.name}")
+            return ""
 
         waited = 0
         while waited < RECOGNIZE_TIMEOUT:
@@ -130,6 +144,8 @@ def preselect_ocr_images(case_dir: Path) -> dict[str, dict[str, dict[str, object
 
     带 ocr 标记（是否已识别过）：读 {卷}_images/_ocr.json 缓存判断。
     前端用 ocr=false 的图片数提醒用户「先 OCR 再提取」。
+    分块卷（{卷}__c{N}_layout.json，MinerU 分块转换遗留）重映射到合并卷名
+    ——其图片已并入 {卷}_images/，合并 md 存在才列出（否则无法回填，跳过）。
 
     Returns:
         {卷名: {图片名: {"w": int, "h": int, "ocr": bool}}}，卷名即 layout.json 的 stem 去掉 _layout
@@ -139,7 +155,16 @@ def preselect_ocr_images(case_dir: Path) -> dict[str, dict[str, dict[str, object
     if not md_dir.exists():
         return result
     for layout_file in sorted(md_dir.glob("*_layout.json")):
-        vol_name = layout_file.stem[:-len("_layout")]
+        stem = layout_file.stem[:-len("_layout")]
+        # 分块卷重映射：第12卷_去水印__c1 → 第12卷_去水印（合并 md 存在才有效）
+        m = re.match(r"^(.+?)__c\d+$", stem)
+        if m:
+            base = m.group(1)
+            if not (md_dir / f"{base}.md").exists():
+                continue  # 合并卷未生成（转换中断），跳过
+            vol_name = base
+        else:
+            vol_name = stem
         try:
             data = json.loads(layout_file.read_text(encoding="utf-8"))
         except Exception:
@@ -183,7 +208,11 @@ def preselect_ocr_images(case_dir: Path) -> dict[str, dict[str, dict[str, object
                     cached = ocr_cache.get(name) or {}
                     images[name] = {"w": w, "h": h, "ocr": bool(cached.get("text"))}
         if images:
-            result[vol_name] = images
+            # 分块卷重映射后可能多份 layout 并入同一卷，按图片名去重合并
+            merged = result.setdefault(vol_name, {})
+            for n, meta in images.items():
+                if n not in merged:
+                    merged[n] = meta
     return result
 
 
@@ -265,7 +294,9 @@ async def backfill_image_ocr(
             async def _one(name: str, path: Path):
                 async with sem:
                     text = await _recognize_single_image(session, path, token, _SSL_CONTEXT)
-                    cache[name] = {"size": path.stat().st_size, "text": text}
+                    # 识别失败（空文字，如 429 限流）不写缓存——下次重跑可重试，防永久锁死
+                    if text:
+                        cache[name] = {"size": path.stat().st_size, "text": text}
                     logger.info(f"[图片回填] {name}: {len(text)} 字符")
 
             await asyncio.gather(*(_one(n, p) for n, p in tasks.items()))

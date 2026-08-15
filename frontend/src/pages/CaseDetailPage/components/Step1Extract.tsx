@@ -89,7 +89,7 @@ export function Step1Extract({
           )}
         </div>
       </div>
-      <SelectiveOCR caseId={caseId} onUnocrCountChange={setUnocrCount} />
+      <SelectiveOCR caseId={caseId} onUnocrCountChange={setUnocrCount} conversionDone={mdConversionComplete} />
       {summaryParts.length > 0 && (
         <div style={{
           fontSize: '11px', color: suspectCount > 0 ? '#ff9500' : 'var(--macos-text-secondary)',
