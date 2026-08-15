@@ -90,3 +90,12 @@ def test_5x_substeps_share_prefix(tmp_path):
     src = inspect.getsource(analysis_pipeline.AnalysisPipeline.step5_defense_opinion)
     assert "build_cached_messages" in src
     assert "{context[:20000]}" not in src and "{context[:25000]}" not in src
+
+
+def test_cross_examination_prompt_cached_structure():
+    """质证 prompt：固定模板/法律依据在 system（跨证据共享前缀），证据内容在 user 前段"""
+    import analysis_engine
+    src = inspect.getsource(analysis_engine.AnalysisEngine._build_review_messages)
+    assert "build_cached_messages" in src
+    # 死截断清理：先截6000再截4000的双重截断应只剩 4000
+    assert "[:6000]" not in src

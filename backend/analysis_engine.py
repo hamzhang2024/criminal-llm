@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import Optional, Callable, Dict, Any, List
 from datetime import datetime
 
+from prompt_cache import build_cached_messages
+
 logger = logging.getLogger(__name__)
 
 # 统一禁止对话式输出的指令，追加到每个分析阶段的 system_prompt 末尾
@@ -1666,78 +1668,68 @@ class AnalysisEngine:
         normalized_type = type_mapping.get(evidence_type, "其他证据")
         return EVIDENCE_REVIEW_TEMPLATES.get(normalized_type, EVIDENCE_REVIEW_TEMPLATES.get("其他证据", ""))
 
-    def _build_review_prompt(self, evidence: Dict[str, Any], template: str) -> str:
-        """构建差异化的证据审查提示词"""
+    def _build_review_messages(self, evidence: Dict[str, Any], template: str) -> list:
+        """构建差异化的证据审查消息（缓存友好结构）
+
+        system 放固定审查规则（角色 + JSON schema + 评分标准，所有证据共享前缀），
+        user 前段放审查模板/法律依据/证据内容（同类型证据间可共享模板前缀），
+        user 末尾放本次任务指令。逐份证据调用（N 次）命中 DeepSeek prompt cache。
+        """
         ev_name = evidence.get("filename", "未知证据")
-        ev_ref = evidence.get("evidence_ref", "")
         ev_type = evidence.get("type", "其他证据")
-        ev_text = evidence.get("text", "")[:6000]  # 截断长文本
+        ev_text = evidence.get("text", "")[:4000]  # 截断长文本
 
-        prompt = f"""你是一名经验丰富的刑事辩护律师，正在对证据进行严格的三性审查并生成质证意见。
-
-# 证据信息
-- 证据名称：{ev_name}
-- 证据编号：{ev_ref}
-- 证据类型：{ev_type}
-
-# 证据内容摘要
-{ev_text[:4000]}
-
-# 审查模板（请按此模板逐项审查）
-{template}
-
-# 法律依据参考
-{LEGAL_BASIS_FOR_REVIEW[:3000]}
+        system = """你是一名资深刑事辩护律师，精通证据法和庭审质证技巧。你的任务是严格审查证据的三性（合法性、真实性、关联性），并生成可直接用于庭审的质证意见。审查要具体、有针对性，法律依据要准确。
 
 # 输出要求
 请严格按照以下 JSON 格式输出审查结果，每个维度都要有具体的审查发现和法律依据：
 
-{{
-  "evidence_name": "{ev_name}",
-  "evidence_ref": "{ev_ref}",
-  "evidence_type": "{ev_type}",
-  "legality": {{
+{
+  "evidence_name": "证据名称",
+  "evidence_ref": "证据编号",
+  "evidence_type": "证据类型",
+  "legality": {
     "conclusion": "采信/不采信/存疑",
     "score": 0-100,
     "findings": [
-      {{
+      {
         "issue": "发现的具体问题",
         "legal_basis": "对应法条（如：刑诉法第117条）",
         "details": "问题详细说明"
-      }}
+      }
     ],
     "cross_opinion": "可当庭陈述的质证意见（一句话）",
     "strategy": ["质证策略1", "质证策略2"]
-  }},
-  "authenticity": {{
+  },
+  "authenticity": {
     "conclusion": "采信/不采信/存疑",
     "score": 0-100,
     "findings": [
-      {{
+      {
         "issue": "发现的具体问题",
         "legal_basis": "对应法条",
         "details": "问题详细说明"
-      }}
+      }
     ],
     "cross_opinion": "可当庭陈述的质证意见",
     "strategy": ["质证策略1"]
-  }},
-  "relevance": {{
+  },
+  "relevance": {
     "conclusion": "采信/不采信/存疑",
     "score": 0-100,
     "findings": [
-      {{
+      {
         "issue": "发现的具体问题",
         "legal_basis": "对应法条",
         "details": "问题详细说明"
-      }}
+      }
     ],
     "cross_opinion": "可当庭陈述的质证意见",
     "strategy": ["质证策略1"]
-  }},
+  },
   "final_conclusion": "综合结论：采信/不采信/存疑",
   "cross_examination_summary": "综合质证意见（可当庭陈述，200字以内）"
-}}
+}
 
 # 评分标准
 - 90-100分：无明显问题，建议采信
@@ -1752,8 +1744,19 @@ class AnalysisEngine:
 4. 每个问题都要有具体的法律依据引用
 5. 质证意见要具体、可操作，能直接用于庭审
 
-只输出 JSON，不要其他内容。"""
-        return prompt
+只输出 JSON，不要其他内容。""" + _NO_CHITCHAT
+
+        material = f"""# 审查模板（请按此模板逐项审查）
+{template}
+
+# 法律依据参考
+{LEGAL_BASIS_FOR_REVIEW[:3000]}
+
+# 证据内容
+{ev_text}"""
+
+        instruction = f"请对上述证据（{ev_name}，{ev_type}）进行三性审查并输出质证意见（JSON）"
+        return build_cached_messages(system, material, instruction)
 
     def _parse_review_result(self, response: str, evidence: Dict[str, Any]) -> Dict[str, Any]:
         """解析 LLM 返回的审查结果"""
@@ -1842,14 +1845,9 @@ class AnalysisEngine:
             # 获取对应证据类型的审查模板
             template = self._get_review_template(ev_type)
 
-            # 构建差异化审查提示词
-            prompt = self._build_review_prompt(ev, template)
-
             try:
-                response = await llm.chat([
-                    {"role": "system", "content": "你是一名资深刑事辩护律师，精通证据法和庭审质证技巧。你的任务是严格审查证据的三性（合法性、真实性、关联性），并生成可直接用于庭审的质证意见。审查要具体、有针对性，法律依据要准确。" + _NO_CHITCHAT},
-                    {"role": "user", "content": prompt}
-                ])
+                # 缓存友好消息：固定规则入 system，证据内容在 user 前段
+                response = await llm.chat(self._build_review_messages(ev, template))
 
                 # 解析审查结果
                 review = self._parse_review_result(response, ev)
