@@ -77,11 +77,17 @@ _BATCH_SYSTEM = """你是刑事案卷证据提取专家。给定一份案卷 MD 
 
 # 笔录类判定
 _TRANS_RECORD_RE = re.compile(r"笔录|供述|证言|陈述")
+# 非问答体的"笔录"：辨认笔录是辨认过程记录文书，不是问答复录，
+# 不适用问答对数量校验（真实案例：辨认笔录被误判为讯问笔录，问答对<3 必败）
+_NON_QA_RECORD_RE = re.compile(r"辨认笔录")
 
 
 def _is_transcript(doc: dict) -> bool:
     """是否笔录类文书（需要按份全文保真提取）"""
-    return bool(_TRANS_RECORD_RE.search((doc.get("name", "") + doc.get("type", ""))))
+    text = doc.get("name", "") + doc.get("type", "")
+    if _NON_QA_RECORD_RE.search(text):
+        return False
+    return bool(_TRANS_RECORD_RE.search(text))
 
 
 def _norm_str(v) -> str:

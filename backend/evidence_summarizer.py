@@ -6,6 +6,7 @@
 - 保真度由确定性校验保障（金额/日期/人名实体覆盖率 ≥90%，不达标重试）
 """
 import asyncio
+import ast
 import json
 import logging
 import re
@@ -27,9 +28,22 @@ _RATE_RE = re.compile(r"(?:月息|月利率|日息|利率)\s*\d+(?:\.\d+)?\s*(?:
 _DATE_RE = re.compile(r"20\d{2}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日")
 # persons 字段完整条目："姓名（角色）" → (姓名, 角色)
 _PERSON_ENTRY_RE = re.compile(r"([一-龥]{2,4})\s*[（(]([^）)]*)[）)]")
+# 冒号式条目："角色：姓名"（按 ；;，,。或换行分隔，角色可带（证人）等括号限定）
+_PERSON_COLON_RE = re.compile(r"([一-龥（）()/]{2,12})[：:]\s*([^：:；;，,。\n]+)")
+# dict 列表形态：{'name': 'X', 'role': 'Y'}（LLM 返回 list[dict] 时
+# _norm_str 逐行 str() 拼接后落到 persons 字段的实际形态）
+_PERSON_DICT_BLOCK_RE = re.compile(r"\{[^{}]*\}")
+# 占位符人名：提取阶段对无法辨认的人写的占位，不是真名，不参与人名出现校验
+# （真实案例：未具名（某派出所）被判成 name=未具名、role=派出所名，
+# 要求"未具名"出现在摘要中 → 两轮重试必败的确定性死循环）
+_PLACEHOLDER_NAMES = ("未具名", "不详", "匿名", "不明")
 # 供述主体角色：摘要是其本人陈述的浓缩，正文以"供述人/被害人"等指代而不重复本人姓名，
-# 故人名检查豁免。涵盖讯问笔录（嫌疑人/被告人）、询问笔录（被害人/证人）等供述主体。
-_SPEAKER_ROLES = ("嫌疑人", "被告人", "供述人", "被害人", "证人", "陈述人")
+# 故人名检查豁免。涵盖讯问笔录（嫌疑人/被告人/被讯问人）、询问笔录（被害人/证人/被询问人）等供述主体。
+_SPEAKER_ROLES = ("嫌疑人", "被告人", "供述人", "被害人", "证人", "陈述人",
+                  "被讯问人", "被询问人")
+# 程序性人员角色：讯问人/询问人/记录人与实体事实无关，摘要通常不会提及，
+# 不强制出现于摘要（注意"被讯问人"含"讯问人"子串，但其已被 _SPEAKER_ROLES 先豁免）
+_PROCEDURAL_ROLES = ("讯问人", "询问人", "记录人")
 
 COVERAGE_THRESHOLD = 0.9
 
@@ -46,6 +60,50 @@ def extract_entities(text: str) -> set[str]:
 def extract_person_names(persons: str) -> list[str]:
     """从 persons 字段提取人名清单"""
     return [name for name, role in _PERSON_ENTRY_RE.findall(persons or "")]
+
+
+def _iter_person_entries(persons: str) -> list[tuple[str, str]]:
+    """解析 persons 字段为 (姓名, 角色) 列表，兼容三种实际形态：
+    - 括号式：姓名（角色）
+    - 冒号式：角色：姓名（；;，,。或换行分隔，值内多个姓名以、分隔，姓名可带（限定）括号）
+    - dict 列表形态：{'name': 'X', 'role': 'Y'} 逐行拼接
+    """
+    text = str(persons or "")
+    entries = []
+
+    # dict 列表形态优先：抽取后从文本剔除，避免括号/冒号正则误匹配 dict 内容
+    dict_spans = []
+    for m in _PERSON_DICT_BLOCK_RE.finditer(text):
+        try:
+            d = ast.literal_eval(m.group(0))
+        except Exception:
+            continue
+        if isinstance(d, dict) and d.get("name"):
+            entries.append((str(d["name"]).strip(), str(d.get("role", "")).strip()))
+            dict_spans.append(m.span())
+    if dict_spans:
+        parts, last = [], 0
+        for s, e in dict_spans:
+            parts.append(text[last:s])
+            last = e
+        parts.append(text[last:])
+        text = "".join(parts)
+
+    colon_matches = _PERSON_COLON_RE.findall(text)
+    if colon_matches:
+        # 冒号式：角色与姓名位置固定，值内先去括号限定再按、拆分多个姓名
+        for role_raw, names_raw in colon_matches:
+            role = re.sub(r"[（(][^）)]*[）)]", "", role_raw).strip()
+            names_clean = re.sub(r"[（(][^）)]*[）)]", "", names_raw)
+            for name in re.split(r"[、/]", names_clean):
+                name = name.strip().strip("[]").rstrip("等").strip()
+                if name:
+                    entries.append((name, role))
+    else:
+        # 括号式：姓名（角色）
+        entries.extend((n.strip(), r.strip()) for n, r in _PERSON_ENTRY_RE.findall(text))
+
+    return entries
 
 
 def verify_summary_fidelity(full_text: str, summary: str, persons: str = "") -> list[str]:
@@ -72,8 +130,12 @@ def verify_summary_fidelity(full_text: str, summary: str, persons: str = "") -> 
             issues.append(f"覆盖率 {ratio:.0%} 低于 {COVERAGE_THRESHOLD:.0%}（{covered}/{len(entities)}）")
 
     # 人名
-    for name, role in _PERSON_ENTRY_RE.findall(persons or ""):
+    for name, role in _iter_person_entries(persons):
+        if name in _PLACEHOLDER_NAMES:
+            continue  # 占位符不是真名，摘要不可能也不应写出
         if any(r in role for r in _SPEAKER_ROLES):
+            continue
+        if any(r in role for r in _PROCEDURAL_ROLES):
             continue
         if name not in summary:
             issues.append(f"人名未出现：{name}")

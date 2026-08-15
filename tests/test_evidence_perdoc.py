@@ -90,6 +90,23 @@ def test_verify_phone_record_format_passes():
     assert verify_perdoc_output(doc, output) == []
 
 
+def test_is_transcript_identification_record_not_qa():
+    """辨认笔录不是问答体（是辨认过程记录文书），不判为笔录类。
+    真实案件踩到：辨认笔录被误判为讯问笔录，强制 ≥3 问答对必败。"""
+    from evidence_perdoc import _is_transcript
+    assert _is_transcript({"name": "沈海鹰辨认笔录", "type": "辨认笔录"}) is False
+    # 不误伤真正的讯问/询问笔录
+    assert _is_transcript({"name": "张某讯问笔录", "type": "犯罪嫌疑人供述和辩解"}) is True
+    assert _is_transcript({"name": "王某询问笔录", "type": "证人证言"}) is True
+
+
+def test_verify_identification_record_passes_without_qa():
+    """辨认笔录输出无问答对也能通过校验"""
+    doc = {"name": "沈海鹰辨认笔录", "type": "辨认笔录", "date": ""}
+    output = "辨认人在侦查人员主持下，从12张照片中辨认出7号照片为涉案人员。"
+    assert verify_perdoc_output(doc, output) == []
+
+
 def test_extract_by_document_full_flow(tmp_path):
     """完整流程：目录 → 按份提取 → 按目录顺序合并，per-doc prompt 含双锚点"""
     md_file = tmp_path / "第2卷.md"

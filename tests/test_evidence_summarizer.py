@@ -79,6 +79,58 @@ def test_victim_and_witness_roles_exempt():
     assert issues == []
 
 
+# ---------- persons 占位符与多格式解析（冯叶飞案 25 份证据校验未过的修复） ----------
+
+def test_placeholder_person_name_exempt():
+    """占位符人名（未具名/不详/匿名/不明）不是真名，不要求出现在摘要中。
+    真实案件踩到：未具名（江阴市公安局月城派出所）被误判为 name=未具名、
+    role=派出所名（不在豁免清单）→ 要求"未具名"出现在摘要 → 两轮重试必败。"""
+    issues = verify_summary_fidelity(FULL_TEXT, GOOD_SUMMARY,
+                                     persons="未具名（江阴市公安局月城派出所）")
+    assert not any("未具名" in i for i in issues)
+    for ph in ("未具名", "不详", "匿名", "不明"):
+        issues = verify_summary_fidelity(FULL_TEXT, GOOD_SUMMARY, persons=f"{ph}（同案犯）")
+        assert not any(ph in i for i in issues)
+
+
+def test_colon_format_interrogated_person_exempt():
+    """冒号式被讯问人/被询问人是供述主体：摘要以"供述人"指代，豁免人名检查"""
+    persons = "讯问人：夏海峰；记录人：张福如；被讯问人：冯叶飞"
+    assert verify_summary_fidelity(FULL_TEXT, GOOD_SUMMARY, persons=persons) == []
+
+
+def test_colon_format_procedural_roles_exempt():
+    """冒号式讯问人/询问人/记录人是程序性人员：与实体事实无关，不强制出现于摘要"""
+    persons = "询问人：陈红；记录人：张福如；被询问人（证人）：何芝莲"
+    assert verify_summary_fidelity(FULL_TEXT, GOOD_SUMMARY, persons=persons) == []
+
+
+def test_colon_format_real_names_verified():
+    """冒号式中非豁免角色的真名必须出现在摘要中
+    （此前校验器只解析括号式，冒号式的真名从未被校验，属覆盖漏洞）"""
+    persons = "讯问人：夏海峰；记录人：张福如；被讯问人：冯叶飞；涉案人员：赵志强、沈嘉豪"
+    issues = verify_summary_fidelity(FULL_TEXT, GOOD_SUMMARY, persons=persons)
+    assert any("赵志强" in i for i in issues)
+    assert any("沈嘉豪" in i for i in issues)
+    # 豁免角色不误报
+    assert not any("夏海峰" in i for i in issues)
+    assert not any("张福如" in i for i in issues)
+    assert not any("冯叶飞" in i for i in issues)
+
+
+def test_dict_list_persons_parsed():
+    """dict 列表形态正常解析（_norm_str 将 LLM 返回的 [{'name':..,'role':..}]
+    逐行 str() 后落到 persons 字段的实际形态）"""
+    persons = ("{'name': '封卫珍', 'role': '被讯问人'}\n"
+               "{'name': '程敏杰', 'role': '同案犯'}\n"
+               "{'name': '沈文钊', 'role': '记录人'}")
+    issues = verify_summary_fidelity(FULL_TEXT, GOOD_SUMMARY, persons=persons)
+    # 被讯问人（供述主体）与记录人（程序性）豁免；同案犯真名必须出现
+    assert any("程敏杰" in i for i in issues)
+    assert not any("封卫珍" in i for i in issues)
+    assert not any("沈文钊" in i for i in issues)
+
+
 def test_section_titles_are_eight():
     assert SECTION_TITLES == ["概述", "共谋与分工", "主观明知", "获利与分账",
                               "辩解与否认", "关键事实", "态度变化", "矛盾提示"]
