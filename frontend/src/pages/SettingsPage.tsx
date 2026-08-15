@@ -184,6 +184,18 @@ interface ConfigForm {
 const DEFAULT_LLM_BASE_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1'
 const DEFAULT_LLM_MODEL = 'qwen3.5-plus'
 
+// LLM 供应商预设：选中自动填 base_url + 模型 + 上下文大小（K tokens）
+// coding 套餐端点与按量端点不通用（Key 前缀不同），选错会 401
+const LLM_PRESETS = [
+  { key: 'custom', label: '自定义', baseUrl: '', model: '', contextK: 0, keyHint: '' },
+  { key: 'deepseek', label: 'DeepSeek 官方', baseUrl: 'https://api.deepseek.com', model: 'deepseek-v4-flash', contextK: 1000, keyHint: '' },
+  { key: 'bailian', label: '阿里云百炼（按量）', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen3.5-plus', contextK: 128, keyHint: 'Key 为 sk- 开头，百炼控制台创建' },
+  { key: 'kimi', label: 'Kimi 开放平台（按量）', baseUrl: 'https://api.moonshot.cn/v1', model: 'kimi-k2-0905-preview', contextK: 256, keyHint: 'Key 为 sk- 开头，platform.moonshot.cn 创建' },
+  { key: 'kimi-coding', label: 'Kimi Coding 套餐', baseUrl: 'https://api.kimi.com/coding/v1', model: 'kimi-for-coding', contextK: 256, keyHint: 'Key 为 sk-kimi- 开头，kimi.com/code/console 创建，与按量 Key 不通用' },
+  { key: 'ali-coding', label: '阿里 Coding 套餐', baseUrl: 'https://coding.dashscope.aliyuncs.com/v1', model: 'qwen3.7-plus', contextK: 128, keyHint: 'Key 为 sk-sp- 开头，与百炼按量 Key 不通用' },
+  { key: 'ollama', label: 'Ollama 本地', baseUrl: 'http://localhost:11434/v1', model: 'qwen3.6:35b-a3b', contextK: 32, keyHint: '本地运行无需 API Key' },
+]
+
 export function SettingsPage() {
   const navigate = useNavigate()
   const [initialConfig, setInitialConfig] = useState<ConfigForm | null>(null)
@@ -974,6 +986,35 @@ export function SettingsPage() {
               大模型配置
               <span style={{ fontSize: '11px', color: '#8b6914', fontWeight: 500, background: 'rgba(139,105,20,0.1)', padding: '2px 8px', borderRadius: '4px' }}>推荐 ollama qwen3.6 35b-a3b</span>
             </h2>
+
+            {/* 供应商预设：选中自动填 base_url + 模型 + 上下文，避免端点/上下文不匹配 */}
+            <div style={{ marginBottom: '16px' }}>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: '500', marginBottom: '8px' }}>
+                供应商
+              </label>
+              <select
+                value={LLM_PRESETS.find(p => p.key !== 'custom' && p.baseUrl === config.llm_base_url)?.key ?? 'custom'}
+                onChange={e => {
+                  const preset = LLM_PRESETS.find(p => p.key === e.target.value)
+                  if (!preset || preset.key === 'custom') return
+                  setConfig(prev => ({
+                    ...prev,
+                    llm_base_url: preset.baseUrl,
+                    llm_model: preset.model,
+                    model_context_limit: preset.contextK,
+                  }))
+                }}
+                style={{ width: '100%', padding: '10px 12px', border: '1px solid var(--macos-border)', borderRadius: '8px', fontSize: '14px', background: 'white', cursor: 'pointer' }}
+              >
+                {LLM_PRESETS.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
+              </select>
+              {(() => {
+                const preset = LLM_PRESETS.find(p => p.key !== 'custom' && p.baseUrl === config.llm_base_url)
+                return preset?.keyHint ? (
+                  <div style={{ marginTop: '6px', fontSize: '11px', color: '#8b6914' }}>{preset.keyHint}</div>
+                ) : null
+              })()}
+            </div>
 
             <div style={{ marginBottom: '16px' }}>
               <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px', fontWeight: '500', marginBottom: '8px' }}>
