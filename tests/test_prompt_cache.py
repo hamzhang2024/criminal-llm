@@ -4,6 +4,7 @@ import inspect
 
 import analysis_pipeline
 from prompt_cache import build_cached_messages
+from test_debate_fixes import _make_pipeline as _make_debate_pipeline
 from test_defense_strategy import _make_pipeline
 
 
@@ -136,3 +137,59 @@ def test_review_messages_cache_invariants(tmp_path):
     instruction = user_a.rsplit("\n\n---\n\n", 1)[1]
     assert "编号证据001" in instruction
     assert "张某讯问笔录" in instruction
+
+
+def test_debate_prompts_share_context_prefix(tmp_path):
+    """控辩对抗 45a/45b/45d：context 在 user 前段（公诉人/辩方两次调用共享材料前缀）
+
+    (a) 45a/45b 的 system 逐字节相同（角色扮演引擎 + 用户指定角色）
+    (b) 45a/45b 的 user 共享同一 material 前缀（同一 context），指令在末尾
+    (c) 45a 指令为公诉人角色、45b 指令为辩方角色
+    (d) 源码结构兜底：step45 的 prompt 组装必须走 build_cached_messages
+    """
+    pipe = _make_debate_pipeline(tmp_path)
+
+    captured = []
+
+    async def fake_chat(messages, **kw):
+        captured.append(messages)
+        return "对抗内容"
+
+    pipe.llm.chat = fake_chat
+    asyncio.run(pipe.step45_debate_simulation("张三", "诈骗罪"))
+
+    # 45a/45b/45c/45d 各调用一次
+    assert len(captured) == 4, f"应调用 4 次 LLM，实际 {len(captured)}"
+
+    msgs_45a, msgs_45b = captured[0], captured[1]
+
+    # (a) 45a/45b system 逐字节相同（共享前缀的第一段）
+    assert msgs_45a[0]["content"] == msgs_45b[0]["content"]
+
+    user_a, user_b = msgs_45a[1]["content"], msgs_45b[1]["content"]
+    # 材料与指令分界：material + "\n\n---\n\n" + instruction
+    material_a, instruction_a = user_a.rsplit("\n\n---\n\n", 1)
+    material_b, instruction_b = user_b.rsplit("\n\n---\n\n", 1)
+
+    # (b) 45a/45b material 逐字节相同，且以指控要素段开头（context 在 user 最前）
+    assert material_a == material_b, "45a/45b 应共享同一 context 前缀"
+    assert material_a.startswith("## 指控要素"), "context 应位于 user 最前"
+
+    # (c) 角色指令在 user 末尾
+    assert "你是本案公诉人" in instruction_a
+    assert "辩护律师" in instruction_b
+    # 指令不得携带材料（材料已全部前置）
+    assert "## 指控要素" not in instruction_a
+    assert "## 指控要素" not in instruction_b
+
+    # 45d：红蓝产物组装为 material，法官指令在末尾
+    user_d = captured[3][1]["content"]
+    material_d, instruction_d = user_d.rsplit("\n\n---\n\n", 1)
+    assert material_d.startswith("## 控方指控（独立构建）")
+    assert "## 交叉对决结果" in material_d
+    assert "你是本案主审法官" in instruction_d
+
+    # (d) 源码结构兜底断言：prompt 组装必须走 build_cached_messages，
+    # context 不得再内嵌回指令 f-string（旧结构特征）
+    src = inspect.getsource(analysis_pipeline.AnalysisPipeline.step45_debate_simulation)
+    assert "build_cached_messages" in src

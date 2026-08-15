@@ -1532,13 +1532,13 @@ class AnalysisPipeline:
             if progress_cb:
                 progress_cb(sub_done, sub_total, "步骤 4.5：控方构建指控")
             try:
-                red_argument = await self.llm.chat([
-                    {"role": "system", "content": "你是公诉人（控方律师）。你的职责是构建最强有力的指控逻辑。"},
-                    {"role": "user", "content": f"""你是本案公诉人。被告人：**{defendant}**。
+                # 45a/45b 共享 system + context 前缀，辩方调用命中 prompt 缓存
+                red_argument = await self.llm.chat(build_cached_messages(
+                    "你是刑事诉讼角色扮演引擎，严格按用户指定角色输出。",
+                    context,
+                    f"""你是本案公诉人。被告人：**{defendant}**。
 
-基于以下案卷材料，独立构建最强指控逻辑：
-
-{context}
+基于上述案卷材料，独立构建最强指控逻辑。
 
 请输出以下内容（Markdown 格式）：
 
@@ -1560,8 +1560,8 @@ class AnalysisPipeline:
 2. 具体问什么问题？（逐条列出）
 3. 期望通过这些问题证明什么？
 4. 预判证人可能怎么回答？
-"""},
-                ])
+"""),
+                )
                 if not red_argument.strip():
                     # LLM 返回空内容：不保存成功产物、不标记 done，保留重跑自愈机会
                     print("[步骤 4.5a] 控方沙箱失败：LLM 返回空内容")
@@ -1591,13 +1591,12 @@ class AnalysisPipeline:
             if progress_cb:
                 progress_cb(sub_done, sub_total, "步骤 4.5：辩方构建辩护")
             try:
-                blue_defense = await self.llm.chat([
-                    {"role": "system", "content": "你是刑事辩护律师。你的职责是为被告人构建最强辩护逻辑。"},
-                    {"role": "user", "content": f"""你是被告人 **{defendant}** 的辩护律师。
+                blue_defense = await self.llm.chat(build_cached_messages(
+                    "你是刑事诉讼角色扮演引擎，严格按用户指定角色输出。",
+                    context,
+                    f"""你是被告人 **{defendant}** 的辩护律师。
 
-你是独立工作的——**不要参考或回应任何控方论点**。仅基于以下案卷材料，独立构建三条辩护路径：
-
-{context}
+你是独立工作的——**不要参考或回应任何控方论点**。仅基于上述案卷材料，独立构建三条辩护路径。
 
 请分别展开以下三条辩护路径，每条路径独立、完整：
 
@@ -1628,8 +1627,8 @@ class AnalysisPipeline:
 ## 四、辩护核心立场
 
 用一段话总结三条路径的综合辩护策略。
-"""},
-                ])
+"""),
+                )
                 if not blue_defense.strip():
                     # LLM 返回空内容：不保存成功产物、不标记 done，保留重跑自愈机会
                     print("[步骤 4.5b] 辩方沙箱失败：LLM 返回空内容")
@@ -1734,18 +1733,18 @@ class AnalysisPipeline:
             if progress_cb:
                 progress_cb(sub_done, sub_total, "步骤 4.5：法官裁决")
             try:
-                judge_verdict = await self.llm.chat([
-                    {"role": "system", "content": "你是中立法官。你的职责是客观评估控辩双方的论点，给出公正裁决。"},
-                    {"role": "user", "content": f"""你是本案主审法官。以下是控辩双方的独立论点及交叉对决结果：
-
-## 控方指控（独立构建）
+                # 45d 材料为红蓝产物 + 交叉对决，与 45a/45b 无公共前缀，独立组装
+                judge_verdict = await self.llm.chat(build_cached_messages(
+                    "你是中立法官。你的职责是客观评估控辩双方的论点，给出公正裁决。",
+                    f"""## 控方指控（独立构建）
 {red_argument}
 
 ## 辩方辩护（独立构建）
 {blue_defense}
 
 ## 交叉对决结果
-{clash_analysis}
+{clash_analysis}""",
+                    f"""你是本案主审法官。上述为控辩双方的独立论点及交叉对决结果。
 
 请以法官视角，输出以下裁决报告（Markdown 格式）：
 
@@ -1803,8 +1802,8 @@ class AnalysisPipeline:
 ## 六、综合评估
 
 用一段话给出法官的综合评估：哪一方的论点更有说服力，本案的核心争议是什么，最可能影响判决的因素是什么。
-"""},
-                ])
+"""),
+                )
                 if not judge_verdict.strip():
                     # LLM 返回空内容：不保存成功产物、不标记 done，保留重跑自愈机会
                     print("[步骤 4.5d] 法官裁决失败：LLM 返回空内容")
