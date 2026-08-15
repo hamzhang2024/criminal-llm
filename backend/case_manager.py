@@ -21,7 +21,7 @@ from fastapi import APIRouter, UploadFile, File, HTTPException, Request, Body
 from doc_classifier import classify_evidence_item
 
 # 证据结构化字段列表（用于传递和写入 index.json）
-EVIDENCE_STRUCTURED_FIELDS = ["key_facts", "summary", "original_quotes", "contradiction_hints"]
+EVIDENCE_STRUCTURED_FIELDS = ["key_facts", "summary", "original_quotes", "contradiction_hints", "fund_flows"]
 from fastapi.responses import JSONResponse
 import json
 import uuid
@@ -1108,6 +1108,7 @@ _EVIDENCE_EXTRACTION_RULES = """
 - **原文摘录**：[关键原文的直接引用，不少于2段，标注页码或原文位置。对起诉意见书/起诉书，必须摘录每笔犯罪事实的完整原文段落（包括时间、地点、人员、行为、金额），不得概括简化]
 - **矛盾提示**：[供述前后是否一致？有无自相矛盾之处？]
 - **关联信息**：[列出所有关键关联信息，见上方"关键关联信息提取"要求。如无则填"无"]
+- **资金往来**：[仅当本证据涉及资金往来时列出，每笔一条"转出人→转入人｜金额｜时间｜账号/渠道｜用途"；如无则填"无"]
 
 **注意（起诉意见书/起诉书/多次供述专用）：**
 - 必须逐笔提取全部犯罪事实，每笔必须包含：**时间、地点（详细到门牌号/街道）、涉案人员及角色、行为方式、金额/结果、简要案情**
@@ -2567,6 +2568,7 @@ def _parse_evidence_blocks(llm_output: str, source_file: str) -> list:
                             "original_quotes": item.get("original_quotes", item.get("原文摘录", "")),
                             "contradiction_hints": item.get("contradiction_hints", item.get("矛盾提示", "无")),
                             "related_entities": item.get("related_entities", item.get("关联信息", "")),
+                            "fund_flows": item.get("fund_flows", item.get("资金往来", [])) or [],
                             "elements": item.get("elements", item.get("关联要件", [])) or [],
                             "proves_facts": item.get("proves_facts", []),
                             "proves_details": item.get("proves_details", {}),
@@ -2656,6 +2658,8 @@ def _parse_evidence_blocks(llm_output: str, source_file: str) -> list:
         original_quotes = _extract_field(content, "原文摘录") or ""
         contradiction = _extract_field(content, "矛盾提示") or "无"
         related_entities = _extract_field(content, "关联信息") or ""
+        fund_flows_str = _extract_field(content, "资金往来") or ""
+        fund_flows = [f.strip() for f in fund_flows_str.replace("；", "\n").split("\n") if f.strip() and f != "无"] if fund_flows_str else []
         ev_charges_str = _extract_field(content, "关联罪名") or ""
         ev_charges = [c.strip() for c in ev_charges_str.replace("、", ",").split(",") if c.strip()] if ev_charges_str else []
         ev_elements_str = _extract_field(content, "关联要件") or ""
@@ -2697,6 +2701,7 @@ def _parse_evidence_blocks(llm_output: str, source_file: str) -> list:
             "original_quotes": original_quotes.strip(),
             "contradiction_hints": contradiction.strip(),
             "related_entities": related_entities.strip(),
+            "fund_flows": fund_flows,
             "raw_text": content.strip(),
         })
 

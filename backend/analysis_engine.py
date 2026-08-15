@@ -960,16 +960,29 @@ class AnalysisEngine:
     # ========== 阶段 3.5：资金流梳理 ==========
 
     def _load_fund_source_texts(self) -> List[Dict[str, str]]:
-        """资金流抽取的双源文本：证据摘要（evidence/）+ 原始 MD 全文（md/）
+        """资金流抽取的数据源：结构化 fund_flows + 证据摘要 + 原始 MD 全文
 
-        证据摘要可能漏掉流水细节，截图经 OCR 识别后的文字只在原始 MD 里，
-        两源合并、按文件名去重。
+        证据提取时 LLM 已把 OCR 流水文字结构化为 fund_flows（谁→谁｜金额｜时间｜
+        账号｜用途），这里优先注入，避免资金流分析重复全文重扫 OCR 原始文字；
+        md/ 全文兜底（fund_flows 缺失时仍能扫到 OCR 回填的文字）。
         """
         texts = []
         seen = set()
         for t in self._load_evidence_texts():
             texts.append(t)
             seen.add(t.get("filename", ""))
+        # 注入结构化 fund_flows（读取 index.json 原文，不经 _load_evidence_texts）
+        try:
+            index_file = self.case_dir / "evidence" / "index.json"
+            if index_file.exists():
+                index = json.loads(index_file.read_text(encoding="utf-8"))
+                for ev in index.get("evidence", []):
+                    flows = ev.get("fund_flows") or []
+                    if flows:
+                        texts.append({"filename": ev.get("name", ev.get("md_file", "")),
+                                      "text": _fund_flows_to_text(ev.get("name", ""), flows)})
+        except Exception:
+            pass
         md_dir = self.case_dir / "md"
         if md_dir.exists():
             for md_file in sorted(md_dir.glob("*.md")):
@@ -2952,6 +2965,18 @@ def _infer_evidence_type(filename: str) -> str:
         return "程序性文书"
     else:
         return "其他证据"
+
+
+def _fund_flows_to_text(ev_name: str, flows: list) -> str:
+    """把结构化 fund_flows 组装成资金流分析可消费的文本
+
+    证据提取时 LLM 把 OCR 流水文字结构化为 fund_flows（转出人→转入人｜金额｜
+    时间｜账号｜用途），资金流分析直接消费，避免全文重扫 OCR 原始文字。
+    """
+    if not flows:
+        return ""
+    lines = "\n".join(f"- {f}" for f in flows)
+    return f"## 资金往来（{ev_name}）\n{lines}\n"
 
 
 def _apply_digest(ev: dict, text: str, prefer_summary: bool) -> str:

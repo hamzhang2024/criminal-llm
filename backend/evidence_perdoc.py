@@ -56,6 +56,7 @@ _PERDOC_SYSTEM = """你是刑事案卷证据提取专家。给定一份案卷 MD
   "original_quotes": "关键原文直接引用，不少于2段",
   "contradiction_hints": "供述前后是否一致、与其他证据的潜在矛盾；无则填 无",
   "related_entities": "关联信息（手机号/微信号/银行账号/身份证号/车牌号/地址等），格式：[类型] 内容 — 涉及人员",
+  "fund_flows": ["资金往来，每笔一条：转出人→转入人｜金额｜时间｜账号/渠道｜用途；仅当本证据涉及资金往来时输出，无则填空数组"],
   "charges": ["关联罪名"],
   "elements": ["关联构成要件"]
 }
@@ -70,7 +71,7 @@ _BATCH_SYSTEM = """你是刑事案卷证据提取专家。给定一份案卷 MD 
 输出严格 JSON 数组（不要输出其他内容）：
 [{"name": "...", "type": "...", "page_range": "", "persons": "...", "key_facts": ["..."],
   "summary": "...", "original_quotes": "...", "contradiction_hints": "无",
-  "related_entities": "...", "charges": [], "elements": []}, ...]
+  "related_entities": "...", "fund_flows": [], "charges": [], "elements": []}, ...]
 
 要求：程序性文书概括核心内容即可；金额、时间、人名必须精确。"""
 
@@ -229,6 +230,7 @@ async def _extract_one_document(
         "original_quotes": _norm_str(item.get("original_quotes")),
         "contradiction_hints": _norm_str(item.get("contradiction_hints")) or "无",
         "related_entities": _norm_str(item.get("related_entities")),
+        "fund_flows": _norm_list(item.get("fund_flows")),
         "charges": _norm_list(item.get("charges")),
         "elements": _norm_list(item.get("elements")),
         "proves_facts": _norm_list(item.get("proves_facts")),
@@ -338,6 +340,7 @@ async def extract_by_document(
                                     "original_quotes": _norm_str(item.get("original_quotes")),
                                     "contradiction_hints": _norm_str(item.get("contradiction_hints")) or "无",
                                     "related_entities": _norm_str(item.get("related_entities")),
+                                    "fund_flows": _norm_list(item.get("fund_flows")),
                                     "charges": _norm_list(item.get("charges")),
                                     "elements": _norm_list(item.get("elements")),
                                     "proves_facts": _norm_list(item.get("proves_facts")),
@@ -368,7 +371,7 @@ async def extract_by_document(
                 "summary": f"⚠️ 本文书提取失败或校验未通过，请重新提取。目录日期：{d.get('date', '未知')}",
                 "original_quotes": "",
                 "contradiction_hints": "⚠️ 按份提取失败，需重提",
-                "related_entities": "", "charges": [], "elements": [],
+                "related_entities": "", "fund_flows": [], "charges": [], "elements": [],
                 "proves_facts": [], "proves_details": {},
                 "raw_text": json.dumps(d, ensure_ascii=False),
             })
