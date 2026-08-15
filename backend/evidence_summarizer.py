@@ -147,7 +147,7 @@ async def summarize_one(client, ev: dict, full_text: str, source_name: str,
 
 
 async def summarize_evidence(client, case_dir: Path, concurrency: int = 3,
-                             should_abort=None) -> dict:
+                             should_abort=None, progress_cb=None) -> dict:
     """证据详细摘要主流程：提取完成后自动串联调用。
 
     双写：index.json 每条证据的 digest/digest_warning 字段 + evidence/summaries/ 落盘缓存。
@@ -156,6 +156,7 @@ async def summarize_evidence(client, case_dir: Path, concurrency: int = 3,
     起诉书/起诉意见书跳过（消费端对指控文书不用摘要，避免白调 LLM）。
     should_abort：可选取消回调（提取被停止/证据被清除时），返回 True 则不写回 index.json
     ——防止摘要中途目录被 clear-evidence 清空后，写回导致 index.json 复活。
+    progress_cb(done, total, name)：每份处理完成（含缓存/跳过/失败）后回调，供前端进度条。
 
     Returns:
         {"total", "done", "cached", "skipped", "failed", "aborted"}
@@ -184,6 +185,15 @@ async def summarize_evidence(client, case_dir: Path, concurrency: int = 3,
         return ("起诉书" in ev_type or "起诉意见书" in ev_type or
                 "起诉书" in ev_name or "起诉意见书" in ev_name)
 
+    def _report(name: str):
+        """逐份进度回调：done+cached+skipped+failed 即已处理数"""
+        if progress_cb:
+            try:
+                processed = stats["done"] + stats["cached"] + stats["skipped"] + stats["failed"]
+                progress_cb(processed, stats["total"], name)
+            except Exception:
+                pass
+
     async def _one(ev: dict):
         if should_abort and should_abort():
             return
@@ -191,10 +201,12 @@ async def summarize_evidence(client, case_dir: Path, concurrency: int = 3,
         md_path = evidence_dir / md_name
         if not md_name or not md_path.exists():
             stats["failed"] += 1
+            _report(md_name)
             return
         # 起诉书/起诉意见书跳过：消费端对指控文书保留原文全文，摘要从不被消费
         if _is_indictment(ev):
             stats["skipped"] += 1
+            _report(md_name)
             return
         try:
             full_text = md_path.read_text(encoding="utf-8")
@@ -210,6 +222,7 @@ async def summarize_evidence(client, case_dir: Path, concurrency: int = 3,
                         ev["digest"] = cache_md.read_text(encoding="utf-8")
                         ev["digest_warning"] = bool(meta.get("warning", False))
                         stats["cached"] += 1
+                        _report(md_name)
                         return
                 except Exception:
                     pass
@@ -236,6 +249,7 @@ async def summarize_evidence(client, case_dir: Path, concurrency: int = 3,
         except Exception as e:
             stats["failed"] += 1
             logger.warning(f"[证据摘要] {md_name} 处理异常: {e}")
+        _report(md_name)
 
     await asyncio.gather(*(_one(ev) for ev in evidences))
 

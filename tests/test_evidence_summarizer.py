@@ -337,3 +337,26 @@ def test_should_abort_none_by_default(tmp_path):
     ])
     stats = asyncio.run(summarize_evidence(None, case_dir))
     assert stats["skipped"] == 1 and stats.get("aborted") is not True
+
+
+def test_summarize_progress_callback(tmp_path):
+    """摘要主流程：每份完成后回调进度 (done, total, name)"""
+    from evidence_summarizer import summarize_evidence
+    long_text = "内容。" * 300
+    case_dir = _make_case(tmp_path, [
+        {"name": "张某讯问笔录", "type": "x", "persons": "", "md_file": "001_张某.md",
+         "_full_text": long_text},
+        {"name": "通知书", "type": "程序性文书", "persons": "", "md_file": "002_通知.md",
+         "_full_text": "短内容"},
+    ])
+    good = ("## 概述\nx\n" + "".join(f"## {t}\n无\n" for t in SECTION_TITLES[1:])).strip()
+    client = _fake_client([good])
+    progress = []
+    stats = asyncio.run(summarize_evidence(
+        client, case_dir, concurrency=2,
+        progress_cb=lambda done, total, name: progress.append((done, total, name))))
+    assert stats["total"] == 2
+    assert progress and progress[-1][1] == 2  # total=2
+    assert progress[-1][0] == 2  # 最终 done=2
+    names = [p[2] for p in progress]
+    assert "001_张某.md" in names and "002_通知.md" in names

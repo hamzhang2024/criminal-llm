@@ -195,3 +195,30 @@ def test_failed_doc_gets_placeholder_block(tmp_path):
 
     assert blocks is not None and len(blocks) == 3
     assert "提取失败" in blocks[1]["summary"] or "校验未通过" in blocks[1]["summary"]
+
+
+def test_extract_by_document_progress_callback(tmp_path):
+    """按份提取：每份完成后回调进度 (done, total)"""
+    md_file = tmp_path / "第2卷.md"
+    md_file.write_text("案卷内容", encoding="utf-8")
+    progress = []
+
+    async def routing_chat(messages, **kw):
+        last = messages[-1]["content"]
+        if "目标文书清单" in last:
+            return json.dumps([{"name": "卷宗封面", "type": "程序性文书", "summary": "封面"}], ensure_ascii=False)
+        if "《张某第一次" in last:
+            return GOOD_DOC_OUTPUT
+        if "《张某第二次" in last:
+            return GOOD_DOC_OUTPUT.replace("第一次", "第二次").replace("2026年3月12日", "2026年4月17日")
+        return CATALOG_JSON
+
+    client = type("C", (), {"chat": staticmethod(routing_chat)})()
+    blocks = asyncio.run(extract_by_document(
+        client, md_file, "案卷内容", "", tmp_path,
+        progress_cb=lambda done, total: progress.append((done, total))))
+
+    assert blocks is not None
+    assert progress  # 有进度回调
+    assert progress[-1] == (2, 3)  # 最后一次：2 份笔录完成（批量短文书不计），total=目录3份
+    assert all(t == 3 for _, t in progress)

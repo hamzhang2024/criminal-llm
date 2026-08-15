@@ -85,6 +85,7 @@ export function CaseDetailPage() {
     loadEvidence, handleExtractEvidence: extractEvidenceFn,
     handleStopExtract, handleClearEvidence, handleRefreshEvidence,
     checkExtractStatus, pollExtractProgress, stopPolling: stopExtractPolling,
+    extractProgress,
   } = useEvidenceExtraction(caseId, (result) => {
     // 提取完成后清除页面级 processing 状态，根据结果给准确提示
     setProcessing(false)
@@ -474,7 +475,8 @@ export function CaseDetailPage() {
               <Step1Extract caseId={caseId!} files={files} evidenceList={evidenceList} evidenceExtracted={evidenceExtracted}
                 evidenceFiles={evidenceFiles} completeness={completeness}
                 processing={extracting} onExtract={handleExtractEvidence} onStop={handleStopExtract}
-                onClear={handleClearEvidence} onRefreshEvidence={handleRefreshEvidence} />
+                onClear={handleClearEvidence} onRefreshEvidence={handleRefreshEvidence}
+                extractProgress={extractProgress} />
             )}
 
             {currentStep === 2 && (

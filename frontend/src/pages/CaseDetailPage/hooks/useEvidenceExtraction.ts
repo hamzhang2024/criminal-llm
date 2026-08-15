@@ -6,12 +6,26 @@ import type { EvidenceIndexFile, CompletenessReport } from '../../../api'
 import { showAlert, showConfirm } from '../../../components/MacOSDialog'
 
 export type ExtractResult = 'success' | 'cancelled' | 'failed'
+
+// 提取/摘要实时进度（后端 extract-status 返回）
+export interface ExtractProgress {
+  phase: 'extracting' | 'summarizing'
+  totalFiles: number
+  processedFiles: number
+  currentFile: string
+  currentFileDone: number   // 当前卷内已完成笔录份数
+  currentFileTotal: number  // 当前卷笔录总份数
+  summaryDone: number
+  summaryTotal: number
+}
+
 export function useEvidenceExtraction(caseId: string | undefined, onExtractComplete?: (result: ExtractResult) => void) {
   const [evidenceList, setEvidenceList] = useState<any[]>([])
   const [evidenceFiles, setEvidenceFiles] = useState<EvidenceIndexFile[]>([])  // index.json files（文书分类）
   const [completeness, setCompleteness] = useState<CompletenessReport | null>(null)  // 完整性报告
   const [evidenceExtracted, setEvidenceExtracted] = useState(false)
   const [extracting, setExtracting] = useState(false)
+  const [extractProgress, setExtractProgress] = useState<ExtractProgress | null>(null)
 
   const extractPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const extractUserStoppedRef = useRef(false)
@@ -69,17 +83,19 @@ export function useEvidenceExtraction(caseId: string | undefined, onExtractCompl
     extractUserStoppedRef.current = false
     extractPollFailuresRef.current = 0
 
-    // 超时兜底：15分钟后强制停止，避免后端任务卡死时 processing 永不清
-    const startedAt = Date.now()
-    const TIMEOUT_MS = 15 * 60 * 1000
+    // 进展停滞检测：30 分钟无任何进度变化才判定失败（提取+摘要可持续数小时，
+    // 不能用总时长硬超时——14 卷提取约 2-3 小时）
+    let lastSignature = ''
+    let lastChangeAt = Date.now()
+    const STALL_MS = 30 * 60 * 1000
 
     extractPollRef.current = setInterval(async () => {
       if (extractUserStoppedRef.current) {
         stopPolling()
         return
       }
-      // 超时检查
-      if (Date.now() - startedAt > TIMEOUT_MS) {
+      // 停滞检查：进度签名长时间不变才停
+      if (Date.now() - lastChangeAt > STALL_MS) {
         stopPolling()
         setExtracting(false)
         if (onExtractComplete) onExtractComplete('failed')
@@ -88,6 +104,23 @@ export function useEvidenceExtraction(caseId: string | undefined, onExtractCompl
       try {
         const st = await api.getExtractStatus(caseId!)
         extractPollFailuresRef.current = 0
+
+        // 更新实时进度（进度条数据源）
+        const signature = `${st.status}|${st.phase}|${st.processed_files}|${st.current_file_done}|${st.summary_done}`
+        if (signature !== lastSignature) {
+          lastSignature = signature
+          lastChangeAt = Date.now()
+        }
+        setExtractProgress({
+          phase: st.phase === 'summarizing' ? 'summarizing' : 'extracting',
+          totalFiles: st.total_files || 0,
+          processedFiles: st.processed_files || 0,
+          currentFile: st.current_file || '',
+          currentFileDone: st.current_file_done || 0,
+          currentFileTotal: st.current_file_total || 0,
+          summaryDone: st.summary_done || 0,
+          summaryTotal: st.summary_total || 0,
+        })
 
         if (st.status !== 'running') {
           stopPolling()
@@ -200,6 +233,7 @@ export function useEvidenceExtraction(caseId: string | undefined, onExtractCompl
     loadCompleteness,
     evidenceExtracted, setEvidenceExtracted,
     extracting, setExtracting,
+    extractProgress,
     checkExtractStatus, loadEvidence, pollExtractProgress,
     handleExtractEvidence,
     handleStopExtract,

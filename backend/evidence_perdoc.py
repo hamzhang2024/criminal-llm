@@ -244,9 +244,11 @@ async def _extract_one_document(
 
 async def extract_by_document(
     client, md_file: Path, md_text: str, charges_str: str, temp_dir: Path,
-    max_concurrent: int = 3, timeout: int = 600,
+    max_concurrent: int = 3, timeout: int = 600, progress_cb=None,
 ) -> Optional[list]:
     """两阶段按份提取主流程
+
+    progress_cb(done, total)：每份笔录完成（含缓存命中/失败）后回调，供前端进度条。
 
     Returns:
         ev_block 列表（与 _parse_evidence_blocks 输出同构）；失败返回 None（调用方回退整卷路径）
@@ -287,6 +289,15 @@ async def extract_by_document(
 
     # 笔录：按份提取（并发 + 校验 + 断点续传）
     sem = asyncio.Semaphore(max_concurrent)
+    progress_done = {"n": 0}
+
+    def _report_progress():
+        """逐份进度回调（前端进度条：当前卷已完成份数/总份数）"""
+        if progress_cb:
+            try:
+                progress_cb(progress_done["n"], len(docs))
+            except Exception:
+                pass
 
     async def _one(i: int, doc: dict):
         cache_file = temp_dir / f"_perdoc_{i:03d}.json"
@@ -295,6 +306,8 @@ async def extract_by_document(
                 cached = json.loads(cache_file.read_text(encoding="utf-8"))
                 if cached.get("text_len") == len(md_text):
                     results[i] = cached["block"]
+                    progress_done["n"] += 1
+                    _report_progress()
                     return
             except Exception:
                 pass
@@ -310,6 +323,8 @@ async def extract_by_document(
             logger.info(f"[按份提取] {md_name}《{doc['name']}》完成（{i + 1}/{len(docs)}）")
         else:
             logger.error(f"[按份提取] {md_name}《{doc['name']}》提取失败")
+        progress_done["n"] += 1
+        _report_progress()
 
     # 其他短文书：一次批量调用
     async def _batch_others():

@@ -5,6 +5,7 @@ import { MacOSCard, MacOSButton } from '../../../components/MacOSLayout'
 import { showConfirm } from '../../../components/MacOSDialog'
 import DocTypeBadge, { CompletenessDot } from '../../../components/DocTypeBadge'
 import type { EvidenceIndexFile, CompletenessReport } from '../../../api'
+import type { ExtractProgress } from '../hooks/useEvidenceExtraction'
 import { SelectiveOCR } from './SelectiveOCR'
 
 interface EvidenceItem {
@@ -27,11 +28,31 @@ interface Step1ExtractProps {
   onStop: () => void
   onClear: () => void
   onRefreshEvidence: () => void
+  extractProgress?: ExtractProgress | null  // 提取/摘要实时进度（进度条）
+}
+
+// 进度条（macOS 风格）
+function ProgressBar({ percent, label, subLabel }: { percent: number; label: string; subLabel?: string }) {
+  return (
+    <div style={{ margin: '10px 0' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginBottom: '5px' }}>
+        <span style={{ color: 'var(--macos-text-secondary)' }}>{label}</span>
+        <span style={{ color: 'var(--macos-accent)', fontWeight: 600 }}>{percent}%</span>
+      </div>
+      <div style={{ height: '6px', background: 'var(--macos-bg-secondary)', borderRadius: '3px', overflow: 'hidden' }}>
+        <div style={{
+          height: '100%', width: `${percent}%`, borderRadius: '3px',
+          background: 'var(--macos-accent)', transition: 'width 0.5s ease',
+        }} />
+      </div>
+      {subLabel && <div style={{ fontSize: '11px', color: '#86868b', marginTop: '4px' }}>{subLabel}</div>}
+    </div>
+  )
 }
 
 export function Step1Extract({
   caseId, files, evidenceList, evidenceExtracted, evidenceFiles = [], completeness,
-  processing, onExtract, onStop, onClear,
+  processing, onExtract, onStop, onClear, extractProgress,
 }: Step1ExtractProps) {
   const mdConversionComplete = files.length > 0 && files.every(f => f.status === 'done')
   // 未 OCR 图片数（SelectiveOCR 上报，用于提取前提醒）
@@ -89,6 +110,24 @@ export function Step1Extract({
           )}
         </div>
       </div>
+      {/* 提取/摘要进度条（processing 时显示） */}
+      {processing && extractProgress && (
+        extractProgress.phase === 'summarizing' ? (
+          <ProgressBar
+            percent={extractProgress.summaryTotal > 0 ? Math.round(extractProgress.summaryDone / extractProgress.summaryTotal * 100) : 0}
+            label={`正在生成证据摘要（${extractProgress.summaryDone}/${extractProgress.summaryTotal} 份）`}
+            subLabel={extractProgress.currentFile ? `当前：${extractProgress.currentFile}` : undefined}
+          />
+        ) : (
+          <ProgressBar
+            percent={extractProgress.totalFiles > 0 ? Math.round(extractProgress.processedFiles / extractProgress.totalFiles * 100) : 0}
+            label={`正在提取证据（${extractProgress.processedFiles}/${extractProgress.totalFiles} 卷）`}
+            subLabel={extractProgress.currentFile
+              ? `当前：${extractProgress.currentFile}${extractProgress.currentFileTotal > 0 ? ` · ${extractProgress.currentFileDone}/${extractProgress.currentFileTotal} 份笔录` : ''}`
+              : undefined}
+          />
+        )
+      )}
       <SelectiveOCR caseId={caseId} onUnocrCountChange={setUnocrCount} conversionDone={mdConversionComplete} />
       {summaryParts.length > 0 && (
         <div style={{

@@ -1180,9 +1180,12 @@ async def _extract_single_file(
     temp_dir: Path,
     charges: list = None,
     framework_prefix: str = "",
+    progress_cb=None,
 ) -> tuple:
     """
     提取单个 MD 文件的证据（不含信号量和重试控制，由调用方管理）。
+
+    progress_cb(done, total)：按份提取时每份笔录完成后回调（前端卷内进度条）。
 
     返回：(md_filename, evidence_list)
     evidence_list 中每项包含证据数据，文件保存在 temp_dir 中。
@@ -1247,7 +1250,7 @@ async def _extract_single_file(
     if total_count >= 2:
         try:
             from evidence_perdoc import extract_by_document
-            evidence_blocks = await extract_by_document(client, md_file, md_text, charges_str, temp_dir)
+            evidence_blocks = await extract_by_document(client, md_file, md_text, charges_str, temp_dir, progress_cb=progress_cb)
             if evidence_blocks:
                 logger.info(f"[证据提取] {md_file.name}: 按份提取产出 {len(evidence_blocks)} 份证据")
         except Exception as e:
@@ -1380,6 +1383,7 @@ async def _extract_single_file_with_tracking(
     semaphore: asyncio.Semaphore,
     charges: list = None,
     framework_prefix: str = "",
+    progress_cb=None,
 ) -> tuple:
     """
     包装 _extract_single_file，管理信号量和重试。
@@ -1392,7 +1396,7 @@ async def _extract_single_file_with_tracking(
         # 获取信号量，执行提取
         async with semaphore:
             try:
-                result = await _extract_single_file(md_file, md_text, temp_dir, charges, framework_prefix)
+                result = await _extract_single_file(md_file, md_text, temp_dir, charges, framework_prefix, progress_cb=progress_cb)
                 return result
             except asyncio.TimeoutError:
                 last_error = f"LLM 调用超时（600s）"
@@ -1455,9 +1459,14 @@ async def extract_evidence(case_id: str):
 
     EXTRACT_TASKS[case_id] = {
         "status": "running",
+        "phase": "extracting",       # extracting（提取中）| summarizing（摘要中）
         "total_files": total_md_count,
         "processed_files": 0,
         "current_file": "",
+        "current_file_done": 0,      # 当前卷内已完成的笔录份数（按份提取）
+        "current_file_total": 0,     # 当前卷笔录总份数
+        "summary_done": 0,           # 摘要阶段已完成份数
+        "summary_total": 0,          # 摘要阶段总份数
         "started_at": time.time(),
         "error_details": [],       # 结构化错误列表
         "stopped_by_user": False,  # 是否用户主动停止
@@ -1718,7 +1727,16 @@ async def _do_extract_evidence(
                     task = EXTRACT_TASKS.get(case_id)
                     if task:
                         task["current_file"] = md_file.name
+                        task["current_file_done"] = 0
+                        task["current_file_total"] = 0
                         task["llm_waiting"] = True
+
+                    def _doc_progress(done: int, total: int):
+                        """按份提取的卷内进度（前端进度条：当前卷 done/total 份）"""
+                        t = EXTRACT_TASKS.get(case_id)
+                        if t:
+                            t["current_file_done"] = done
+                            t["current_file_total"] = total
 
                     # 心跳：LLM 等待期间每 30 秒更新进度，避免卡死检测误杀
                     heartbeat_cancelled = False
@@ -1739,7 +1757,8 @@ async def _do_extract_evidence(
 
                     logger.info(f"[证据提取] 处理: {md_file.name}")
                     source_name, evidence_list = await _extract_single_file_with_tracking(
-                        md_file, md_text, file_temp_dir, semaphore, case_charges, extraction_fw_prefix
+                        md_file, md_text, file_temp_dir, semaphore, case_charges, extraction_fw_prefix,
+                        progress_cb=_doc_progress,
                     )
 
                     # 停止心跳
@@ -2111,9 +2130,20 @@ async def _do_extract_evidence(
             from evidence_summarizer import summarize_evidence
             from llm_client import get_llm_client
             conc = int(cfg.get("evidence_concurrency", 3) or 3)
+
+            def _summary_progress(done: int, total: int, name: str):
+                """摘要阶段进度（前端进度条）"""
+                t = EXTRACT_TASKS.get(case_id)
+                if t:
+                    t["phase"] = "summarizing"
+                    t["summary_done"] = done
+                    t["summary_total"] = total
+                    t["current_file"] = name
+
             sum_stats = await summarize_evidence(
                 get_llm_client(), case_path, concurrency=conc,
-                should_abort=lambda: EXTRACT_TASKS.get(case_id) == "cancelled")
+                should_abort=lambda: EXTRACT_TASKS.get(case_id) == "cancelled",
+                progress_cb=_summary_progress)
             logger.info(f"[证据摘要] 完成: {sum_stats}")
         except Exception as e:
             logger.warning(f"[证据摘要] 生成失败（不影响提取与分析，将回退全文）: {e}")
@@ -2200,9 +2230,14 @@ async def get_extract_status(case_id: str):
         result = {
             "case_id": case_id,
             "status": task.get("status", "running"),
+            "phase": task.get("phase", "extracting"),
             "total_files": task.get("total_files", 0),
             "processed_files": task.get("processed_files", 0),
             "current_file": task.get("current_file", ""),
+            "current_file_done": task.get("current_file_done", 0),
+            "current_file_total": task.get("current_file_total", 0),
+            "summary_done": task.get("summary_done", 0),
+            "summary_total": task.get("summary_total", 0),
             "elapsed_seconds": round(elapsed),
             "llm_waiting": task.get("llm_waiting", False),
             "llm_latency_ms": task.get("llm_latency", 0),
