@@ -80,3 +80,69 @@ def test_stage2_uses_digest(tmp_path, monkeypatch):
                         lambda: type("C", (), {"chat": staticmethod(fake_chat)})())
     asyncio.run(engine.stage_2_character_relations("张某"))
     assert captured.get("prefer_summary") is True
+
+
+def test_doc_type_propagated_and_non_evidence_filter(tmp_path):
+    """_load_evidence_texts 传播 doc_type；_is_non_evidence 识别封面/目录"""
+    from analysis_engine import AnalysisEngine, _is_non_evidence
+
+    case_dir = tmp_path / "case"
+    ev_dir = case_dir / "evidence"
+    ev_dir.mkdir(parents=True)
+    (ev_dir / "001.md").write_text("x", encoding="utf-8")
+    (ev_dir / "index.json").write_text(json.dumps({"evidence": [
+        {"name": "卷宗封面", "type": "程序性文书", "md_file": "001.md",
+         "doc_type": "non_evidence:封面"},
+        {"name": "张某笔录", "type": "犯罪嫌疑人供述和辩解", "md_file": "001.md",
+         "doc_type": "evidence"},
+    ]}, ensure_ascii=False), encoding="utf-8")
+
+    engine = AnalysisEngine("c", case_dir)
+    texts = engine._load_evidence_texts()
+    by_name = {t["filename"]: t for t in texts}
+    assert by_name["卷宗封面"]["doc_type"] == "non_evidence:封面"
+    assert _is_non_evidence(by_name["卷宗封面"]) is True
+    assert _is_non_evidence(by_name["张某笔录"]) is False
+
+
+def test_ensure_digests_triggers_only_when_missing(tmp_path, monkeypatch):
+    """digest 缺失的旧证据自动补摘要；齐全时不触发"""
+    import asyncio
+    from analysis_engine import AnalysisEngine
+
+    case_dir = tmp_path / "case"
+    ev_dir = case_dir / "evidence"
+    ev_dir.mkdir(parents=True)
+
+    called = []
+
+    async def fake_summarize(client, case_dir, concurrency=3, should_abort=None):
+        called.append(True)
+        return {"total": 1, "done": 1, "cached": 0, "skipped": 0, "failed": 0, "aborted": False}
+
+    monkeypatch.setattr("evidence_summarizer.summarize_evidence", fake_summarize)
+    monkeypatch.setattr("llm_client.get_llm_client", lambda: None)
+    engine = AnalysisEngine("c", case_dir)
+
+    # 缺 digest → 触发
+    (ev_dir / "index.json").write_text(json.dumps({"evidence": [
+        {"name": "张某笔录", "type": "犯罪嫌疑人供述和辩解", "md_file": "001.md"},
+    ]}, ensure_ascii=False), encoding="utf-8")
+    asyncio.run(engine._ensure_digests())
+    assert len(called) == 1
+
+    # 有 digest → 不触发
+    called.clear()
+    (ev_dir / "index.json").write_text(json.dumps({"evidence": [
+        {"name": "张某笔录", "type": "犯罪嫌疑人供述和辩解", "md_file": "001.md", "digest": "有"},
+    ]}, ensure_ascii=False), encoding="utf-8")
+    asyncio.run(engine._ensure_digests())
+    assert len(called) == 0
+
+    # 起诉书无 digest → 不触发（本来就不用摘要）
+    called.clear()
+    (ev_dir / "index.json").write_text(json.dumps({"evidence": [
+        {"name": "起诉书", "type": "起诉书", "md_file": "002.md"},
+    ]}, ensure_ascii=False), encoding="utf-8")
+    asyncio.run(engine._ensure_digests())
+    assert len(called) == 0

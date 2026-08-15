@@ -440,6 +440,7 @@ class AnalysisEngine:
                                     "page_range": ev.get("page_range", ""),
                                     "evidence_ref": f"证据{ev_id:03d}" if not is_indictment else "",
                                     "md_file": ev["md_file"],
+                                    "doc_type": ev.get("doc_type", ""),
                                     "is_indictment": is_indictment,
                                 })
                 except Exception:
@@ -700,6 +701,34 @@ class AnalysisEngine:
 
     # ========== 阶段 2：人物关系图 ==========
 
+    async def _ensure_digests(self):
+        """digest 缺失的旧证据自动补摘要（防单发阶段回退全文消耗大量 token）
+
+        起诉书/起诉意见书不算缺失（消费端对指控文书不用摘要）。
+        summarize_evidence 有缓存断点续传，重复调用成本低；失败回退全文，不阻塞。
+        """
+        try:
+            index_file = self.case_dir / "evidence" / "index.json"
+            if not index_file.exists():
+                return
+            index = json.loads(index_file.read_text(encoding="utf-8"))
+            missing = [
+                ev for ev in index.get("evidence", [])
+                if not ev.get("digest")
+                and not ("起诉书" in ev.get("type", "") or "起诉意见书" in ev.get("type", "")
+                         or "起诉书" in ev.get("name", "") or "起诉意见书" in ev.get("name", ""))
+            ]
+            if not missing:
+                return
+            from evidence_summarizer import summarize_evidence
+            from llm_client import get_llm_client
+            from config_manager import load_config
+            conc = int(load_config().get("evidence_concurrency", 3) or 3)
+            logger.info(f"[摘要] {len(missing)} 份证据缺 digest，分析前自动补生成")
+            await summarize_evidence(get_llm_client(), self.case_dir, concurrency=conc)
+        except Exception as e:
+            logger.warning(f"[摘要] 自动补生成失败（分析回退全文）: {e}")
+
     async def stage_2_character_relations(
         self,
         defendant: str,
@@ -711,6 +740,7 @@ class AnalysisEngine:
         输出：人物关系图（表格形式）
         人名/角色/关系在 8 栏目摘要中已结构化保留，用 digest 即可（全文分批的 token 消耗大）
         """
+        await self._ensure_digests()
         texts = self._load_evidence_texts(prefer_summary=True)
         if progress_cb:
             progress_cb("正在分析人物关系...")
@@ -860,6 +890,7 @@ class AnalysisEngine:
         阶段 3：构建事件时间线 + 按事件归组证据
         每个事件下挂接全部相关证据
         """
+        await self._ensure_digests()
         texts = self._load_evidence_texts(prefer_summary=True)
         if progress_cb:
             progress_cb("正在分析事件时间线和证据归组...")
@@ -1278,6 +1309,7 @@ class AnalysisEngine:
         拆成 3 次单任务聚焦调用——单次调用让模型一口气输出多板块时，
         长输入下模型容易只交第一块就收尾（2026-08-06 生产环境实测翻车）
         """
+        await self._ensure_digests()
         texts = self._load_evidence_texts(prefer_summary=True)
         indictment_catalog, _, evidence_catalog_text, _ = _split_indictment_and_evidence(texts)
 
@@ -1785,8 +1817,8 @@ class AnalysisEngine:
 
         texts = self._load_evidence_texts()
 
-        # 过滤掉起诉书/起诉意见书，只审查证据
-        evidence_texts = [t for t in texts if not t.get("is_indictment")]
+        # 过滤掉起诉书/起诉意见书 + 非证据（封面/目录等），只审查正式证据
+        evidence_texts = [t for t in texts if not t.get("is_indictment") and not _is_non_evidence(t)]
 
         if not evidence_texts:
             return {
@@ -3024,6 +3056,11 @@ def _apply_digest(ev: dict, text: str, prefer_summary: bool) -> str:
     if prefer_summary and ev.get("digest"):
         return f"# {ev.get('name', '')}\n\n{ev['digest']}"
     return text
+
+
+def _is_non_evidence(t: dict) -> bool:
+    """非证据（封面/目录等程序性文件）判定：质证等逐份审查跳过"""
+    return str(t.get("doc_type", "")).startswith("non_evidence")
 
 
 def _split_indictment_and_evidence(texts: List[Dict[str, str]]):
