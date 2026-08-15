@@ -490,24 +490,6 @@ class AsyncMinerUConverter:
         for pdf_path in pdf_paths:
             specs = pdf_to_specs.get(pdf_path, [])
             result = self._assemble_pdf_result(pdf_path, specs, spec_results, output_dir)
-            # 照片类图片文字回填：MinerU 不转录横置照片/截图（转账凭证/流水），
-            # 用 PaddleOCR 单图识别补齐（受 image_ocr_enabled 开关控制，需配置 PaddleOCR Token）
-            if result.success and result.images_dir:
-                try:
-                    from config_manager import get_config_value
-                    if get_config_value("image_ocr_enabled", False):
-                        from image_ocr_backfill import backfill_image_ocr
-                        md_path = output_dir / f"{pdf_path.stem}.md"
-                        if md_path.exists():
-                            new_text = await backfill_image_ocr(
-                                md_path.read_text(encoding="utf-8"),
-                                result.images_dir, pdf_path.stem,
-                            )
-                            if new_text != result.text:
-                                md_path.write_text(new_text, encoding="utf-8")
-                                result.text = new_text
-                except Exception as e:
-                    logger.warning(f"[图片回填] {pdf_path.name} 失败（不影响转换结果）: {e}")
             results.append(result)
             async with progress_lock:
                 if result.success:

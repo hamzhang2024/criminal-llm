@@ -94,3 +94,19 @@ def test_backfill_only_names_does_not_leak_old_cache(tmp_path, monkeypatch):
         md_text, images_dir, "第1卷_去水印", only_names={"a.jpg"}))
     assert "a的新文字" in result
     assert "旧文字不应出现" not in result  # b.jpg 旧缓存不泄漏
+
+
+def test_mineru_convert_has_no_auto_backfill():
+    """MinerU 转换路径不再调用 backfill_image_ocr（由选择性 OCR 取代）"""
+    import mineru_async
+    import inspect
+    src = inspect.getsource(mineru_async)
+    assert "backfill_image_ocr" not in src
+
+
+def test_pdf_to_md_has_no_auto_backfill():
+    """同步转换路径不再调用 backfill_image_ocr"""
+    import pdf_to_md
+    import inspect
+    src = inspect.getsource(pdf_to_md)
+    assert "backfill_image_ocr" not in src
