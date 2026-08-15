@@ -1,5 +1,6 @@
 // 选择性 OCR 图片：按卷分组缩略图网格 + 点击放大预览 + 勾选 + 批量识别
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { API_BASE, getOcrImages, startOcrImages, getOcrStatus } from '../../../api'
 import type { OcrImageGroup } from '../../../api/evidence'
 
@@ -28,6 +29,19 @@ export function SelectiveOCR({ caseId, onUnocrCountChange, conversionDone }: Pro
   // 轮询 timer 用 ref 保存，组件卸载时清理（避免定时器泄漏 + 卸载后 setState）
   const timerRef = useRef<number | null>(null)
   useEffect(() => () => { if (timerRef.current) clearInterval(timerRef.current) }, [])
+
+  // 放大预览打开时：Esc 关闭 + 锁定背景滚动
+  useEffect(() => {
+    if (!preview) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setPreview(null) }
+    window.addEventListener('keydown', onKey)
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      document.body.style.overflow = prevOverflow
+    }
+  }, [preview])
 
   const loadImages = useCallback(async () => {
     setLoading(true); setError('')
@@ -162,17 +176,19 @@ export function SelectiveOCR({ caseId, onUnocrCountChange, conversionDone }: Pro
         )
       })}
 
-      {/* 放大预览：纯查看原图，点击任意处关闭 */}
-      {preview && (
+      {/* 放大预览：Portal 到 body（脱离卡片层叠上下文，fixed 必然覆盖全屏），
+          点击任意处（含图片本身）或 Esc 关闭 */}
+      {preview && createPortal(
         <div onClick={() => setPreview(null)}
+          role="dialog" aria-label={`图片预览 ${preview.name}`}
           style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', zIndex: 10000, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', cursor: 'zoom-out' }}>
           <img src={preview.url} alt={preview.name}
-            onClick={e => e.stopPropagation()}
-            style={{ maxWidth: '92vw', maxHeight: '88vh', objectFit: 'contain', borderRadius: '4px', background: '#fff' }} />
-          <div onClick={e => e.stopPropagation()} style={{ marginTop: '10px', fontSize: '12px', color: '#ccc' }}>
-            {preview.vol} · {preview.name}（点击任意处关闭）
+            style={{ maxWidth: '92vw', maxHeight: '88vh', objectFit: 'contain', borderRadius: '4px', background: '#fff', pointerEvents: 'none' }} />
+          <div style={{ marginTop: '10px', fontSize: '12px', color: '#ccc', pointerEvents: 'none' }}>
+            {preview.vol} · {preview.name}（点击任意处或按 Esc 关闭）
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   )
