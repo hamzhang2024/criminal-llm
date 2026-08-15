@@ -1418,7 +1418,7 @@ class AnalysisEngine:
         """5B 矛盾分析：共享层产物已存在且非空则复用（多罪名不重复跑）"""
         existing = _read_stage_md(self.analysis_dir, 52)
         if existing.strip():
-            logger.info("[阶段5B] 矛盾分析产物已存在，跳过重跑（多罪名共享层复用）")
+            logger.info("[阶段5B] 矛盾分析产物已存在，复用（如需重跑请单独执行矛盾分析或删除 stage_52 产物）")
             return existing
         return await self.stage_5b_contradiction_analysis(defendant, progress_cb=progress_cb)
 
@@ -1427,7 +1427,9 @@ class AnalysisEngine:
         if charge:
             charge_file = self.analysis_dir / charge / "stage_4" / "output.md"
             if charge_file.exists():
-                return charge_file.read_text(encoding="utf-8")
+                content = charge_file.read_text(encoding="utf-8")
+                if content.strip():
+                    return content
         return _read_stage_md(self.analysis_dir, 4)
 
     async def stage_5_full_defense(
