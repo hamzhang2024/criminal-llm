@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Optional
 
 from llm_client import get_llm_client
+from prompt_cache import build_cached_messages
 import context_budget
 
 # 默认分析状态结构
@@ -2162,64 +2163,34 @@ class AnalysisPipeline:
             ] if part
         ])
 
+        # 六节指令（材料在循环内统一拼到 user 前段，此处只存各节特有要求）
         sub_steps = [
             ("5a", "01-案件概述.md", "案件概述",
-             f"""你是刑事律师。基于以下材料，为被告人 **{defendant}** 生成案件概述章节。
+             f"""为被告人 **{defendant}** 生成案件概述章节。
 要求：概括指控罪名、指控事实、涉案金额、涉案人员。
-
-**重要区分**：起诉书/起诉意见书是指控文书不是证据，引用时写"据起诉书"/"据起诉意见书"，不要用"见证据XXX"格式。
-
-{context[:20000]}
-
 请输出 Markdown 格式，聚焦案件概述。"""),
             ("5b", "02-证据评估.md", "证据评估",
-             f"""你是刑事律师。基于以下材料，为被告人 **{defendant}** 生成证据支撑程度评估章节。
+             f"""为被告人 **{defendant}** 生成证据支撑程度评估章节。
 要求：对每个指控维度的证据强度评级（强/中/弱），分析证据链条完整性。
-
-**重要区分**：起诉书/起诉意见书是指控文书不是证据，不能将其视为支撑指控的"证据"。评估证据强度时只看正式证据（笔录、证言、鉴定意见、书证等），指控文书本身不算证据支撑。
-
-{context[:20000]}
-
+评估证据强度时只看正式证据（笔录、证言、鉴定意见、书证等），指控文书本身不算证据支撑。
 请输出 Markdown 格式，聚焦证据评估。"""),
             ("5c", "03-矛盾利用.md", "矛盾利用",
-             f"""你是刑事律师。基于以下材料，为被告人 **{defendant}** 生成核心矛盾点及其法律影响章节。
+             f"""为被告人 **{defendant}** 生成核心矛盾点及其法律影响章节。
 要求：找出核心矛盾点，分析对辩方有利和对控方不利的要点。
-
-**重要区分**：起诉书/起诉意见书是指控文书不是证据，引用时写"据起诉书"/"据起诉意见书"。矛盾分析应聚焦证据之间的矛盾，不是指控与证据的矛盾。
-
-{context[:20000]}
-
+矛盾分析应聚焦证据之间的矛盾，不是指控与证据的矛盾。
 请输出 Markdown 格式，聚焦矛盾分析。"""),
             ("5d", "04-三阶层辩护.md", "三阶层辩护",
-             f"""你是资深刑事辩护律师，精通三阶层犯罪论体系。
-
-{theory_text}
-
-{element_text}
-
-基于以下材料，为被告人 **{defendant}** 生成三阶层辩护章节。
+             f"""为被告人 **{defendant}** 生成三阶层辩护章节。
 要求：逐项分析构成要件符合性、违法性、有责性，提出辩护意见。
-
-**重要区分**：起诉书/起诉意见书是指控文书不是证据。引用时写"据起诉书"/"据起诉意见书"，绝不能用"见证据XXX（起诉意见书）"格式。对指控的每一项事实，要指出是否有独立证据支撑——起诉书的指控不等于有证据支撑。
-
-{context[:25000]}
-
+对指控的每一项事实，要指出是否有独立证据支撑——起诉书的指控不等于有证据支撑。
 请输出 Markdown 格式，聚焦三阶层辩护。"""),
             ("5e", "05-量刑情节.md", "量刑情节",
-             f"""你是刑事律师。基于以下材料，为被告人 **{defendant}** 生成量刑情节分析章节。
-要求：分析法定/酌定量刑情节（自首、立功、从犯、未遂、中止、认罪认罚等）。引用证据时用"见证据XXX"格式，起诉书/起诉意见书引用时写"据起诉书"/"据起诉意见书"。
-
-{context[:20000]}
-
+             f"""为被告人 **{defendant}** 生成量刑情节分析章节。
+要求：分析法定/酌定量刑情节（自首、立功、从犯、未遂、中止、认罪认罚等）。引用证据时用"见证据XXX"格式。
 请输出 Markdown 格式，聚焦量刑情节。"""),
             ("5f", "06-结论建议.md", "结论建议",
-             f"""你是刑事律师。基于以下材料，为被告人 **{defendant}** 生成结论与建议章节。
+             f"""为被告人 **{defendant}** 生成结论与建议章节。
 要求：给出辩护策略建议（无罪/罪轻/程序辩护方向）、预期结果评估、下一步工作建议。
-
-**重要区分**：起诉书/起诉意见书是指控文书不是证据，引用时写"据起诉书"/"据起诉意见书"，绝不能用"见证据XXX（起诉意见书）"格式。
-
-{context[:20000]}
-
 请输出 Markdown 格式，聚焦结论建议。"""),
         ]
 
@@ -2227,7 +2198,13 @@ class AnalysisPipeline:
         sub_done = 0
         sub_total = len(sub_steps)
 
-        for stage_key, filename, stage_name, prompt in sub_steps:
+        # 缓存友好结构：system 固定 + 材料在 user 前段，6 次调用共享前缀命中 prompt cache
+        shared_system = (
+            "你是刑事辩护律师，为被告人撰写辩护报告章节。"
+            "起诉书/起诉意见书是指控文书不是证据，引用时写\"据起诉书\"/\"据起诉意见书\"，"
+            "不要用\"见证据XXX\"格式。只输出 Markdown。"
+        )
+        for stage_key, filename, stage_name, instruction in sub_steps:
             if self._defense_section_exists(filename):
                 results_log["sub_steps"].append({"step": stage_key, "name": stage_name, "status": "skipped"})
                 sub_done += 1
@@ -2240,10 +2217,13 @@ class AnalysisPipeline:
                 progress_cb(sub_done, sub_total, f"步骤 5：正在生成 {stage_name}")
 
             try:
-                section_content = await self.llm.chat([
-                    {"role": "system", "content": "你是一位资深的刑事辩护律师，综合前 4 步分析结果，形成全面、深入的辩护意见。\n\n重要：起诉书/起诉意见书是指控文书不是证据。引用时写'据起诉书'/'据起诉意见书'，不要用'见证据XXX'格式。只有正式证据（笔录、证言、鉴定意见、书证等）才用'见证据XXX'格式。"},
-                    {"role": "user", "content": strategy_prefix + prompt},
-                ])
+                # 材料段：辩护思路（如有）+ 案件材料；5d 额外注入三阶层理论/构成要件文本
+                if stage_key == "5d":
+                    material = strategy_prefix + theory_text + "\n\n" + element_text + "\n\n" + context[:25000]
+                else:
+                    material = strategy_prefix + context[:20000]
+                messages = build_cached_messages(shared_system, material, instruction)
+                section_content = await self.llm.chat(messages)
                 self._save_defense_section(filename, section_content)
                 results_log["sub_steps"].append({"step": stage_key, "name": stage_name, "status": "done"})
                 print(f"[步骤 5-{stage_key}] 完成 {stage_name}")

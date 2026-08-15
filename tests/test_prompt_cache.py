@@ -25,3 +25,14 @@ def test_empty_material():
     """材料为空时退化为纯指令（不产出多余分隔符）"""
     msgs = build_cached_messages("规则", "", "指令")
     assert msgs[1]["content"] == "指令"
+
+
+def test_5x_substeps_share_prefix(monkeypatch):
+    """5a-5f 六个子步骤：system 一致 + context 在 user 前段（跨调用共享缓存前缀）"""
+    import inspect
+    import analysis_pipeline
+    src = inspect.getsource(analysis_pipeline.AnalysisPipeline.step5_defense_opinion)
+    # 重排后：sub_steps 的 prompt 组装必须用 build_cached_messages
+    assert "build_cached_messages" in src
+    # context 不得再出现在指令文本之后拼接的旧结构（旧结构特征：指令 f-string 内嵌 {context[:20000]}）
+    assert "{context[:20000]}" not in src and "{context[:25000]}" not in src
