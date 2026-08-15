@@ -115,6 +115,10 @@ export interface OcrImageGroup { [volName: string]: { [imgName: string]: { w: nu
 
 export async function getOcrImages(caseId: string): Promise<OcrImageGroup> {
   const res = await safeFetch(`${API_BASE}/cases/${caseId}/ocr-images`)
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`获取 OCR 图片失败: ${res.status} ${text.slice(0, 100)}`)
+  }
   const data = await res.json()
   return data.groups || {}
 }
@@ -125,11 +129,19 @@ export async function startOcrImages(caseId: string, groups: Record<string, stri
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ groups }),
   })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`启动 OCR 失败: ${res.status} ${text.slice(0, 100)}`)
+  }
   return res.json()
 }
 
 export async function getOcrStatus(caseId: string): Promise<{ status: string; done: number; total: number; current?: string; failed?: string[] }> {
   const res = await safeFetch(`${API_BASE}/cases/${caseId}/ocr-status`)
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`获取 OCR 状态失败: ${res.status} ${text.slice(0, 100)}`)
+  }
   const data = await res.json()
   return data.task || { status: 'idle', done: 0, total: 0 }
 }

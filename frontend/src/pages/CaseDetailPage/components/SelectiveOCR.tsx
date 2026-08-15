@@ -1,5 +1,5 @@
 // 选择性 OCR 图片：按卷分组缩略图网格 + 勾选 + 批量识别
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { API_BASE, getOcrImages, startOcrImages, getOcrStatus } from '../../../api'
 
 interface Props {
@@ -10,8 +10,12 @@ export function SelectiveOCR({ caseId }: Props) {
   const [groups, setGroups] = useState<Record<string, Record<string, { w: number; h: number }>>>({})
   const [selected, setSelected] = useState<Record<string, Set<string>>>({})
   const [loading, setLoading] = useState(false)
-  const [ocrStatus, setOcrStatus] = useState<{ status: string; done: number; total: number } | null>(null)
+  const [ocrStatus, setOcrStatus] = useState<{ status: string; done: number; total: number; current?: string; failed?: string[] } | null>(null)
   const [error, setError] = useState('')
+
+  // 轮询 timer 用 ref 保存，组件卸载时清理（避免定时器泄漏 + 卸载后 setState）
+  const timerRef = useRef<number | null>(null)
+  useEffect(() => () => { if (timerRef.current) clearInterval(timerRef.current) }, [])
 
   const loadImages = useCallback(async () => {
     setLoading(true); setError('')
@@ -30,7 +34,8 @@ export function SelectiveOCR({ caseId }: Props) {
   const toggle = (vol: string, name: string) => {
     setSelected(prev => {
       const s = new Set(prev[vol] || [])
-      s.has(name) ? s.delete(name) : s.add(name)
+      if (s.has(name)) s.delete(name)
+      else s.add(name)
       return { ...prev, [vol]: s }
     })
   }
@@ -39,7 +44,10 @@ export function SelectiveOCR({ caseId }: Props) {
       const s = new Set(prev[vol] || [])
       const allOn = names.every(n => s.has(n))
       const next = new Set(s)
-      names.forEach(n => allOn ? next.delete(n) : next.add(n))
+      names.forEach(n => {
+        if (allOn) next.delete(n)
+        else next.add(n)
+      })
       return { ...prev, [vol]: next }
     })
   }
@@ -54,12 +62,16 @@ export function SelectiveOCR({ caseId }: Props) {
     try {
       await startOcrImages(caseId, body)
       setOcrStatus({ status: 'running', done: 0, total: selectedCount })
-      const timer = setInterval(async () => {
+      // 启动前清掉旧 timer，避免重复轮询
+      if (timerRef.current) clearInterval(timerRef.current)
+      let failCount = 0
+      timerRef.current = window.setInterval(async () => {
         try {
           const st = await getOcrStatus(caseId)
           setOcrStatus(st)
-          if (st.status !== 'running') clearInterval(timer)
-        } catch { clearInterval(timer) }
+          failCount = 0
+          if (st.status !== 'running') { clearInterval(timerRef.current!); timerRef.current = null }
+        } catch { failCount++; if (failCount >= 3) { clearInterval(timerRef.current!); timerRef.current = null } }
       }, 2000)
     } catch { setError('启动 OCR 失败') }
   }
@@ -68,14 +80,17 @@ export function SelectiveOCR({ caseId }: Props) {
     <div style={{ border: '1px solid var(--macos-border)', borderRadius: '8px', padding: '12px', marginBottom: '12px' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <span style={{ fontSize: '13px', fontWeight: '500' }}>选择性 OCR 图片</span>
-        <button onClick={runOcr} disabled={selectedCount === 0 || ocrStatus?.status === 'running'}
+        <button type="button" onClick={runOcr} disabled={selectedCount === 0 || ocrStatus?.status === 'running'}
           style={{ padding: '5px 12px', background: 'var(--macos-accent)', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px' }}>
           OCR 选中图片（{selectedCount} 张）
         </button>
       </div>
       {ocrStatus && (
         <div style={{ fontSize: '12px', color: '#86868b', margin: '6px 0' }}>
-          {ocrStatus.status === 'running' ? `识别中 ${ocrStatus.done}/${ocrStatus.total}` : ocrStatus.status === 'completed' ? '完成' : ''}
+          {ocrStatus.status === 'running' ? `识别中 ${ocrStatus.done}/${ocrStatus.total}` : ''}
+          {ocrStatus.status === 'completed' ? '完成' : ''}
+          {ocrStatus.status === 'failed' ? '识别失败，请重试' : ''}
+          {ocrStatus.failed && ocrStatus.failed.length > 0 && <span style={{ color: '#c00' }}>（失败卷：{ocrStatus.failed.join('、')}）</span>}
         </div>
       )}
       {error && <div style={{ color: '#c00', fontSize: '12px' }}>{error}</div>}
@@ -88,19 +103,20 @@ export function SelectiveOCR({ caseId }: Props) {
           <details key={vol} style={{ marginTop: '8px' }}>
             <summary style={{ cursor: 'pointer', fontSize: '12px', fontWeight: '500' }}>
               {vol}（{s.size}/{names.length}）
-              <button onClick={e => { e.preventDefault(); toggleVol(vol, names) }}
+              <button type="button" onClick={e => { e.preventDefault(); toggleVol(vol, names) }}
                 style={{ marginLeft: '8px', fontSize: '11px', border: '1px solid var(--macos-border)', background: 'none', borderRadius: '4px', cursor: 'pointer' }}>
                 {names.every(n => s.has(n)) ? '清空' : '全选'}
               </button>
             </summary>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(90px, 1fr))', gap: '6px', marginTop: '6px' }}>
               {names.map(name => (
-                <div key={name} onClick={() => toggle(vol, name)}
-                  style={{ border: s.has(name) ? '2px solid var(--macos-accent)' : '1px solid var(--macos-border)', borderRadius: '6px', padding: '3px', cursor: 'pointer', textAlign: 'center' }}>
+                <button key={name} type="button" onClick={() => toggle(vol, name)} aria-pressed={s.has(name)}
+                  style={{ border: s.has(name) ? '2px solid var(--macos-accent)' : '1px solid var(--macos-border)', borderRadius: '6px', padding: '3px', cursor: 'pointer', textAlign: 'center', background: '#fff', position: 'relative' }}>
                   <img src={`${API_BASE}/cases/${caseId}/serve-file?file_path=${encodeURIComponent(name)}&dir=md`}
-                    alt={name} style={{ width: '100%', height: '60px', objectFit: 'cover', borderRadius: '4px' }} loading="lazy" />
+                    alt={`${vol} 图片 ${name}`} style={{ width: '100%', height: '60px', objectFit: 'cover', borderRadius: '4px', display: 'block' }} loading="lazy" />
+                  {s.has(name) && <span style={{ position: 'absolute', top: '2px', right: '4px', color: 'var(--macos-accent)', fontWeight: 'bold', fontSize: '14px' }}>✓</span>}
                   <div style={{ fontSize: '10px', color: '#86868b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name.slice(0, 8)}</div>
-                </div>
+                </button>
               ))}
             </div>
           </details>
