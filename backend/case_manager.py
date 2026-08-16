@@ -1596,6 +1596,11 @@ def prune_failed_evidence(case_path: Path) -> list:
         md_name = ev.get("md_file", "")
         if not md_name:
             continue
+        # 安全：index.json 可能被污染（md_file 含 ../），非纯文件名只移条目不删文件，
+        # 防误删 evidence 目录外文件
+        if Path(md_name).name != md_name:
+            logger.warning(f"[证据提取] 跳过非法 md_file（含路径分隔符）: {md_name}")
+            continue
         md_path = _locate_evidence_file(evidence_dir, md_name)
         if md_path is not None:
             md_path.unlink(missing_ok=True)
@@ -3042,7 +3047,7 @@ async def pdf_thumbnails(case_id: str, file_path: str, dir: str = "processed", w
     if not case_path:
         raise HTTPException(status_code=404, detail="案件不存在")
     pdf = (case_path / dir / file_path).resolve()
-    if not str(pdf).startswith(str(case_path.resolve())) or not pdf.exists():
+    if not pdf.is_relative_to(case_path.resolve()) or not pdf.exists():
         raise HTTPException(status_code=404, detail="文件不存在")
     width = max(100, min(width, 800))
     cache_dir = thumb_cache_dir_for(CACHE_DIR, case_id, pdf.name)
@@ -3069,8 +3074,11 @@ async def rotate_page(case_id: str, req: RotatePageRequest):
         raise HTTPException(status_code=404, detail="案件不存在")
     if req.dir != "processed":
         raise HTTPException(status_code=400, detail="仅支持旋转 processed/ 下的文件")
+    # 安全：file_path 仅限纯文件名，防目录穿越到 original/ 原地修改电子证据原件
+    if Path(req.file_path).name != req.file_path:
+        raise HTTPException(status_code=400, detail="文件名不能含路径分隔符")
     pdf = (case_path / req.dir / req.file_path).resolve()
-    if not str(pdf).startswith(str(case_path.resolve())) or not pdf.exists():
+    if not pdf.is_relative_to((case_path / "processed").resolve()) or not pdf.exists():
         raise HTTPException(status_code=404, detail="文件不存在")
     try:
         new_rot = rotate_pdf_page(pdf, req.page, req.degrees,
@@ -3117,11 +3125,14 @@ async def reconvert_block(case_id: str, req: ReconvertBlockRequest):
     case_path = find_case_path(case_id)
     if not case_path:
         raise HTTPException(status_code=404, detail="案件不存在")
+    # 安全：md_file/file_path 仅限纯文件名，防目录穿越写坏 case.json/index.json
+    if Path(req.md_file).name != req.md_file or Path(req.file_path).name != req.file_path:
+        raise HTTPException(status_code=400, detail="文件名不能含路径分隔符")
     pdf = (case_path / "processed" / req.file_path).resolve()
     md_path = (case_path / "md" / req.md_file).resolve()
-    if not str(pdf).startswith(str(case_path.resolve())) or not pdf.exists():
+    if not pdf.is_relative_to((case_path / "processed").resolve()) or not pdf.exists():
         raise HTTPException(status_code=404, detail="PDF 不存在")
-    if not str(md_path).startswith(str(case_path.resolve())) or not md_path.exists():
+    if not md_path.is_relative_to((case_path / "md").resolve()) or not md_path.exists():
         raise HTTPException(status_code=404, detail="MD 文件不存在")
 
     with tempfile.TemporaryDirectory() as tmp:

@@ -243,3 +243,139 @@ def test_reconvert_block_flow(tmp_path, monkeypatch):
     assert resp["invalidated"] == ["笔录A"]
     # 证据已失效（index.json 清空）
     assert json.loads((case_path / "evidence" / "index.json").read_text(encoding="utf-8"))["evidence"] == []
+
+
+# ═══════════════════════════════════════════════════════════
+# 端点路径安全：目录穿越防护
+# ═══════════════════════════════════════════════════════════
+
+def _make_case(tmp_path, with_original=False):
+    """构造最小案件目录结构"""
+    case_path = tmp_path / "case"
+    (case_path / "processed").mkdir(parents=True)
+    (case_path / "md").mkdir()
+    if with_original:
+        (case_path / "original").mkdir()
+    return case_path
+
+
+def test_reconvert_block_rejects_traversal_md_file(tmp_path, monkeypatch):
+    """安全：md_file 含 ../ （如 ../case.json）→ 400，不得写坏案件元数据"""
+    import asyncio
+    import case_manager
+    from fastapi import HTTPException
+
+    case_path = _make_case(tmp_path)
+    _make_pdf(case_path / "processed" / "第2卷_去水印.pdf", pages=1)
+    (case_path / "case.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(case_manager, "find_case_path", lambda cid: case_path)
+
+    req = case_manager.ReconvertBlockRequest(
+        file_path="第2卷_去水印.pdf", page=1, md_file="../case.json",
+        start_line=1, end_line=1)
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(case_manager.reconvert_block("c", req))
+    assert exc.value.status_code == 400
+    # case.json 未被改动
+    assert (case_path / "case.json").read_text(encoding="utf-8") == "{}"
+
+
+def test_reconvert_block_rejects_traversal_file_path(tmp_path, monkeypatch):
+    """安全：file_path 含 ../ → 400"""
+    import asyncio
+    import case_manager
+    from fastapi import HTTPException
+
+    case_path = _make_case(tmp_path)
+    _make_pdf(case_path / "secret.pdf", pages=1)  # 案件根下的 PDF（processed 之外）
+    monkeypatch.setattr(case_manager, "find_case_path", lambda cid: case_path)
+
+    req = case_manager.ReconvertBlockRequest(
+        file_path="../secret.pdf", page=1, md_file="第2卷_去水印.md",
+        start_line=1, end_line=1)
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(case_manager.reconvert_block("c", req))
+    assert exc.value.status_code == 400
+
+
+def test_rotate_page_rejects_traversal_file_path(tmp_path, monkeypatch):
+    """安全：file_path 指向 original/ 原件（../original/x.pdf）→ 400，不得修改电子证据原件"""
+    import asyncio
+    import case_manager
+    from fastapi import HTTPException
+
+    case_path = _make_case(tmp_path, with_original=True)
+    _make_pdf(case_path / "original" / "原件.pdf", pages=1)
+    monkeypatch.setattr(case_manager, "find_case_path", lambda cid: case_path)
+
+    req = case_manager.RotatePageRequest(file_path="../original/原件.pdf", page=1, degrees=90)
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(case_manager.rotate_page("c", req))
+    assert exc.value.status_code == 400
+    # 原件未被旋转
+    doc = fitz.open(case_path / "original" / "原件.pdf")
+    assert doc[0].rotation == 0
+    doc.close()
+
+
+def test_rotate_page_endpoint_normal_file_ok(tmp_path, monkeypatch):
+    """不回归：processed/ 下正常文件名旋转成功"""
+    import asyncio
+    import case_manager
+
+    case_path = _make_case(tmp_path)
+    _make_pdf(case_path / "processed" / "第2卷_去水印.pdf", pages=2)
+    monkeypatch.setattr(case_manager, "find_case_path", lambda cid: case_path)
+
+    req = case_manager.RotatePageRequest(file_path="第2卷_去水印.pdf", page=1, degrees=90)
+    resp = asyncio.run(case_manager.rotate_page("c", req))
+    assert resp["success"] is True
+    assert resp["rotation"] == 90
+    doc = fitz.open(case_path / "processed" / "第2卷_去水印.pdf")
+    assert doc[0].rotation == 90
+    assert doc[1].rotation == 0
+    doc.close()
+
+
+def test_invalidate_skips_traversal_md_file(tmp_path):
+    """安全：index.json 被污染（md_file 含 ../）时跳过删除，证据目录外文件不受影响"""
+    import json
+    from page_rotation import invalidate_evidence_for_source
+    case_path = tmp_path / "case"
+    ev = case_path / "evidence"
+    (ev / "summaries").mkdir(parents=True)
+    idx = {"evidence": [
+        {"name": "污染条目", "source": "第2卷_去水印.md", "md_file": "../escape.md"},
+        {"name": "笔录B", "source": "第3卷_去水印.md", "md_file": "030_笔录B.md"},
+    ]}
+    (ev / "index.json").write_text(json.dumps(idx, ensure_ascii=False), encoding="utf-8")
+    # evidence/../escape.md 即案件根下的文件，绝不能被删
+    (case_path / "escape.md").write_text("案件根文件", encoding="utf-8")
+    (ev / "030_笔录B.md").write_text("内容B", encoding="utf-8")
+
+    removed = invalidate_evidence_for_source(case_path, "第2卷_去水印.md")
+    assert removed == ["污染条目"]
+    assert (case_path / "escape.md").exists()  # 目录外文件保留
+    kept = json.loads((ev / "index.json").read_text(encoding="utf-8"))["evidence"]
+    assert len(kept) == 1 and kept[0]["name"] == "笔录B"
+
+
+def test_prune_failed_evidence_skips_traversal_md_file(tmp_path):
+    """安全：prune 遇到被污染的 md_file（含 ../）跳过删除，证据目录外文件不受影响"""
+    import json
+    from case_manager import prune_failed_evidence
+    case_path = tmp_path / "case"
+    ev = case_path / "evidence"
+    (ev / "summaries").mkdir(parents=True)
+    idx = {"evidence": [
+        {"name": "污染条目", "source": "第2卷_去水印.md", "md_file": "../escape.md"},
+    ], "total_evidence": 1}
+    (ev / "index.json").write_text(json.dumps(idx, ensure_ascii=False), encoding="utf-8")
+    # evidence/../escape.md 即案件根下的文件，内容为失败标记 → 会被判定为失败条目
+    (case_path / "escape.md").write_text("头部\n按份提取失败", encoding="utf-8")
+
+    removed = prune_failed_evidence(case_path)
+    assert removed == ["污染条目"]  # 条目仍从 index 移除
+    assert (case_path / "escape.md").exists()  # 但目录外文件保留
+    kept = json.loads((ev / "index.json").read_text(encoding="utf-8"))["evidence"]
+    assert kept == []

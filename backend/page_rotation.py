@@ -164,10 +164,16 @@ def invalidate_evidence_for_source(case_path: Path, md_filename: str) -> list[st
     items = idx.get("evidence", [])
     removed = [e for e in items if e.get("source") == md_filename]
     for e in removed:
-        md_file = evidence_dir / e.get("md_file", "")
+        md_name = e.get("md_file", "")
+        # 安全：index.json 可能被污染（md_file 含 ../），非纯文件名只移条目不删文件，
+        # 防误删 evidence 目录外文件
+        if not md_name or Path(md_name).name != md_name:
+            logger.warning(f"[证据失效] 跳过非法 md_file（含路径分隔符）: {md_name}")
+            continue
+        md_file = evidence_dir / md_name
         if md_file.exists():
             md_file.unlink()
-        stem = Path(e.get("md_file", "")).stem
+        stem = Path(md_name).stem
         for suffix in (".md", ".meta.json"):
             cache = evidence_dir / "summaries" / f"{stem}{suffix}"
             if cache.exists():
