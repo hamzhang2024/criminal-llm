@@ -7,7 +7,7 @@
 import json
 from pathlib import Path
 
-from case_manager import prune_failed_evidence
+from case_manager import prune_failed_evidence, _next_evidence_id
 
 # 真实失败空壳的内容形态（441 字节左右，头部 + 失败标记）
 FAILED_SHELL = """# 赵某某第十次讯问笔录
@@ -161,3 +161,33 @@ def test_prune_without_index_returns_empty(tmp_path):
     case_path.mkdir()
 
     assert prune_failed_evidence(case_path) == []
+
+
+# ── 证据编号唯一性：中部删除后重提不得撞号 ──
+# 背景：next_id 原为 len(all_evidence) + 1，prune/invalidate 删除清单中部条目后
+# 重提时 next_id ≤ 现存最大编号 → 新证据与现存条目编号重复（报告页"证据NNN"
+# 超链接歧义、{id:03d}_姓名.md 文件互相覆盖）
+
+def test_next_evidence_id_after_middle_deletion():
+    """中部条目被 prune/invalidate 删除（id 1,2,5,6）：next_id 必须是 7 而非 len+1=5"""
+    evidence = [
+        {"id": 1, "name": "证据一", "md_file": "001_证据一.md"},
+        {"id": 2, "name": "证据二", "md_file": "002_证据二.md"},
+        {"id": 5, "name": "证据五", "md_file": "005_证据五.md"},
+        {"id": 6, "name": "证据六", "md_file": "006_证据六.md"},
+    ]
+    assert _next_evidence_id(evidence) == 7
+
+
+def test_next_evidence_id_falls_back_to_md_file_prefix():
+    """旧版起诉书条目无 id 字段：回退 md_file 数字前缀取最大值"""
+    evidence = [
+        {"id": 3, "name": "证据三", "md_file": "003_证据三.md"},
+        {"name": "起诉意见书 — 第1卷", "md_file": "007_起诉意见书 — 第1卷.md"},
+    ]
+    assert _next_evidence_id(evidence) == 8
+
+
+def test_next_evidence_id_empty_list():
+    """空清单（首次提取）：从 1 开始"""
+    assert _next_evidence_id([]) == 1

@@ -6,6 +6,7 @@
 本模块全部为纯函数，FastAPI 端点在 case_manager.py 中做薄封装。
 """
 import logging
+import os
 import re
 from pathlib import Path
 
@@ -15,6 +16,17 @@ logger = logging.getLogger(__name__)
 
 # 缩略图默认宽度（供预览页网格浏览，能辨认页面朝向即可）
 THUMB_DEFAULT_WIDTH = 200
+
+
+def _atomic_write_text(path: Path, content: str, encoding: str = "utf-8") -> None:
+    """原子写文本：先写同目录 .tmp 再 os.replace，防写盘中断留下半截文件
+
+    index.json / 证据 md 等写盘点统一走此函数，避免提取/摘要/编辑并发时
+    读到写了一半的文件。
+    """
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(content, encoding=encoding)
+    os.replace(tmp, path)
 
 
 def generate_pdf_thumbnails(pdf_path: Path, cache_dir: Path, width: int = THUMB_DEFAULT_WIDTH) -> list[dict]:
@@ -145,7 +157,7 @@ def splice_md_block(md_path: Path, start_line: int, end_line: int, new_text: str
     if not (0 <= start_line <= end_line < len(lines)):
         raise ValueError(f"行区间 [{start_line}, {end_line}] 超出范围（共 {len(lines)} 行）")
     lines[start_line:end_line + 1] = [new_text]
-    md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    _atomic_write_text(md_path, "\n".join(lines) + "\n")
     logger.info(f"[md拼接] {md_path.name}: 行 {start_line}-{end_line} 已替换（{len(new_text)} 字符）")
 
 
@@ -179,6 +191,6 @@ def invalidate_evidence_for_source(case_path: Path, md_filename: str) -> list[st
             if cache.exists():
                 cache.unlink()
     idx["evidence"] = [e for e in items if e.get("source") != md_filename]
-    index_file.write_text(json.dumps(idx, ensure_ascii=False, indent=2), encoding="utf-8")
+    _atomic_write_text(index_file, json.dumps(idx, ensure_ascii=False, indent=2))
     logger.info(f"[证据失效] {md_filename}: 移除 {len(removed)} 份证据，待重新提取")
     return [e.get("name", "") for e in removed]

@@ -379,3 +379,35 @@ def test_prune_failed_evidence_skips_traversal_md_file(tmp_path):
     assert (case_path / "escape.md").exists()  # 但目录外文件保留
     kept = json.loads((ev / "index.json").read_text(encoding="utf-8"))["evidence"]
     assert kept == []
+
+
+# ── 写盘原子化：tmp + os.replace，防写盘中断留下半截文件 ──
+
+def test_atomic_write_text_content_complete_no_tmp_left(tmp_path):
+    """原子写：内容完整落盘，不残留 .tmp 文件"""
+    from page_rotation import _atomic_write_text
+    target = tmp_path / "index.json"
+    _atomic_write_text(target, '{"evidence": [1, 2, 3]}')
+    assert target.read_text(encoding="utf-8") == '{"evidence": [1, 2, 3]}'
+    assert not (tmp_path / "index.json.tmp").exists()
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_atomic_write_text_overwrites_existing(tmp_path):
+    """原子写：覆盖已存在文件，内容为新内容"""
+    from page_rotation import _atomic_write_text
+    target = tmp_path / "x.md"
+    target.write_text("旧内容", encoding="utf-8")
+    _atomic_write_text(target, "新内容")
+    assert target.read_text(encoding="utf-8") == "新内容"
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_splice_md_block_leaves_no_tmp(tmp_path):
+    """splice_md_block 走原子写：替换后不残留 .tmp"""
+    from page_rotation import splice_md_block
+    md = tmp_path / "卷一.md"
+    md.write_text("第一行\n第二行\n第三行\n", encoding="utf-8")
+    splice_md_block(md, 1, 1, "替换后的第二行")
+    assert md.read_text(encoding="utf-8") == "第一行\n替换后的第二行\n第三行\n"
+    assert list(tmp_path.glob("*.tmp")) == []

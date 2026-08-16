@@ -19,6 +19,7 @@ import tiktoken
 logger = logging.getLogger(__name__)
 from fastapi import APIRouter, UploadFile, File, HTTPException, Request, Body
 from doc_classifier import classify_evidence_item
+from page_rotation import _atomic_write_text
 
 # 证据结构化字段列表（用于传递和写入 index.json）
 EVIDENCE_STRUCTURED_FIELDS = ["key_facts", "summary", "original_quotes", "contradiction_hints", "fund_flows"]
@@ -1563,6 +1564,21 @@ def _is_failed_evidence_entry(evidence_dir: Path, ev: dict) -> bool:
         return False
 
 
+def _next_evidence_id(evidence: list) -> int:
+    """下一份证据编号：既有条目最大编号 + 1
+
+    prune/invalidate 会删除清单中部条目，若按 len()+1 编号会撞到现存编号，
+    导致报告页"证据NNN"超链接歧义、{id:03d}_姓名.md 文件互相覆盖。
+    旧版起诉书条目无 id 字段，回退按 md_file 数字前缀取编号。
+    """
+    def _num(ev: dict) -> int:
+        if isinstance(ev.get("id"), int):
+            return ev["id"]
+        m = re.match(r"^(\d+)_", ev.get("md_file", ""))
+        return int(m.group(1)) if m else 0
+    return max((_num(ev) for ev in evidence), default=0) + 1
+
+
 def prune_failed_evidence(case_path: Path) -> list:
     """清理按份提取失败的空壳证据条目，返回被移除的文书名列表
 
@@ -1588,7 +1604,7 @@ def prune_failed_evidence(case_path: Path) -> list:
 
     index_data["evidence"] = kept
     index_data["total_evidence"] = len(kept)
-    index_file.write_text(json.dumps(index_data, ensure_ascii=False, indent=2), encoding="utf-8")
+    _atomic_write_text(index_file, json.dumps(index_data, ensure_ascii=False, indent=2))
 
     # 删除空壳证据文件及其摘要缓存（若有）
     summaries_dir = evidence_dir / "summaries"
@@ -1791,7 +1807,9 @@ async def _do_extract_evidence(
         # ── 第1步：普通文件并发提取（先处理，让用户快速看到进度）──
         pending_files = [f for f in other_files if f.name not in processed_sources]
         all_evidence = list(existing_evidence)
-        next_id = len(all_evidence) + 1
+        # 编号从既有条目最大值续排：prune/invalidate 删除中部条目后
+        # len()+1 会撞号（报告超链接歧义 + {id:03d}_姓名.md 文件覆盖）
+        next_id = _next_evidence_id(all_evidence)
 
         # 分支外（起诉意见书结果合并、起诉书兜底分类）仍使用的名字，须在分支前初始化，
         # 否则断点续传全部跳过（不进入 if pending_files 分支）时触发 UnboundLocalError
@@ -2127,7 +2145,16 @@ async def _do_extract_evidence(
         # ── 第2步：起诉意见书并发提取结果处理（已在 gather 中完成）──
         for src_name, (ev_path, classification) in indictment_extracted.items():
             ev_text = ev_path.read_text(encoding="utf-8")
+            # gather 并发写入时各起诉意见书共用初始 next_id 作文件名前缀，
+            # 此处统一重编号（重命名文件 + 写入 id），保证编号全局唯一
+            stripped_name = re.sub(r"^\d+_", "", ev_path.name)
+            final_name = f"{next_id:03d}_{stripped_name}"
+            if final_name != ev_path.name:
+                final_path = evidence_dir / final_name
+                ev_path.rename(final_path)
+                ev_path = final_path
             all_evidence.append({
+                "id": next_id,
                 "name": ev_path.stem.split("_", 1)[1] if "_" in ev_path.stem else ev_path.stem,
                 "type": classification.get("doc_name", "起诉意见书"),
                 "source": src_name,
@@ -2138,6 +2165,7 @@ async def _do_extract_evidence(
                 "has_quotes": True,
                 "md_file": ev_path.name,
             })
+            next_id += 1
 
         # ── 第3步：起诉书处理（仅 standalone 直接复制，LLM 提取已在 gather 中完成）──
         indictment_files.sort(key=lambda f: (0 if "起诉意见书" not in f.name else 1))
@@ -2168,6 +2196,7 @@ async def _do_extract_evidence(
                     ev_path = await _process_indictment_single(md_file, md_text, evidence_dir, next_id)
                     ev_text = ev_path.read_text(encoding="utf-8")
                     all_evidence.append({
+                        "id": next_id,
                         "name": ev_path.stem.split("_", 1)[1] if "_" in ev_path.stem else ev_path.stem,
                         "type": classification.get("doc_name", "起诉意见书"),
                         "source": md_file.name,
@@ -2190,6 +2219,7 @@ async def _do_extract_evidence(
             logger.info(f"[证据提取] {md_file.name} → {dest_name}（{classification['doc_name']}，直接复制）")
 
             all_evidence.append({
+                "id": next_id,
                 "name": md_file.stem,
                 "type": classification["doc_name"],
                 "source": md_file.name,
@@ -2225,7 +2255,8 @@ async def _do_extract_evidence(
         # 如果提取结果为 0，记录可能的原因供前端展示
         if len(all_evidence) == 0:
             index_data["error_hint"] = "LLM 提取全部失败（详见后端日志），可能原因：API Key 无效、Base URL 不可达、模型名称错误、或所有 MD 文件解析失败"
-        index_file.write_text(json.dumps(index_data, ensure_ascii=False, indent=2), encoding="utf-8")
+        # 原子写：防写盘中断留下半截 index.json（提取/摘要/编辑并发时读到坏文件）
+        _atomic_write_text(index_file, json.dumps(index_data, ensure_ascii=False, indent=2))
 
         # 完整性校验（规则对账 + LLM 抽检关键文书）
         try:
@@ -2334,18 +2365,12 @@ async def get_evidence_index(case_id: str):
 
     index_data = json.loads(index_file.read_text(encoding="utf-8"))
 
-    # 兼容旧版 index.json：条目缺少 failed 字段时按文件内容补齐并一次性回写，
-    # 避免每次请求逐条读文件的 IO 开销（prune 判定仍按文件内容，不依赖该字段）
-    dirty = False
+    # 兼容旧版 index.json：条目缺少 failed 字段时在内存中补齐返回。
+    # 不回写磁盘：GET 与后台提取/摘要写回存在读-改-写竞态，回写可能把
+    # 刚完成的提取结果整体抹掉；新提取在最终保存时已全量写入 failed 字段
     for ev in index_data.get("evidence", []):
         if "failed" not in ev:
             ev["failed"] = _is_failed_evidence_entry(evidence_dir, ev)
-            dirty = True
-    if dirty:
-        try:
-            index_file.write_text(json.dumps(index_data, ensure_ascii=False, indent=2), encoding="utf-8")
-        except Exception as e:
-            logger.warning(f"[证据索引] failed 字段回写失败（不影响返回）: {e}")
 
     return index_data
 
