@@ -224,3 +224,65 @@ def test_batch_analyze_indictment_only_first_batch(monkeypatch):
     later_users = [c[-1]["content"] for c in calls[1:]]
     assert "起诉书全文" in first_user
     assert all("起诉书全文" not in u for u in later_users)
+
+
+def test_batch_packing_full_budget_after_first_batch(monkeypatch):
+    """分批打包：仅第一批为起诉书预留额度，后续批按全额预算打包（减少批数）"""
+    import analysis_engine
+
+    enc = analysis_engine._get_enc()
+
+    def mk_text(target_tokens, ch):
+        # 构造精确 token 数的文本（重复单字后按 token 截断再解码）
+        ids = enc.encode(ch * target_tokens * 2)[:target_tokens]
+        return enc.decode(ids)
+
+    # 固定开销极小，预算取 24000（高于 20000 下限，避免地板值干扰）
+    system, header, footer = "系统", "头部", "尾部"
+    fixed = (len(enc.encode(system)) + len(enc.encode(header))
+             + len(enc.encode(footer)) + 5000)
+    budget = 24000
+    context_limit = budget + fixed
+    monkeypatch.setattr(
+        "config_manager.get_config_value",
+        lambda k, d="": str(context_limit) if k == "model_context_limit" else d)
+
+    # 起诉书约 8000 tokens → 第一批证据可用额度约 16000；后续批全额 24000
+    indictment = mk_text(8000, "诉")
+    # 4 份证据各约 10000 tokens：
+    # 旧记账（每批都扣起诉书）→ 每批只能装 1 份，共 4 批
+    # 新记账（仅首批扣）→ 首批 1 份 + 第二批 2 份 + 第三批 1 份，共 3 批
+    texts = [
+        {"filename": "起诉书", "type": "起诉书", "text": indictment},
+        {"filename": "证据A", "type": "书证", "text": mk_text(10000, "甲")},
+        {"filename": "证据B", "type": "书证", "text": mk_text(10000, "乙")},
+        {"filename": "证据C", "type": "书证", "text": mk_text(10000, "丙")},
+        {"filename": "证据D", "type": "书证", "text": mk_text(10000, "丁")},
+    ]
+
+    calls = []
+
+    async def fake_chat(messages, **kw):
+        calls.append(messages)
+        return "批结果"
+
+    monkeypatch_client = type("C", (), {"chat": staticmethod(fake_chat)})()
+    monkeypatch.setattr("llm_client.get_llm_client", lambda: monkeypatch_client)
+
+    results = asyncio.run(analysis_engine._batch_analyze_evidence(
+        texts, system, header, footer, label="测试"))
+
+    # 后续批按全额打包 → 3 批而非 4 批
+    assert len(results) == 3, f"应为 3 批，实际 {len(results)} 批"
+
+    batch1 = calls[0][-1]["content"]
+    batch2 = calls[1][-1]["content"]
+    batch3 = calls[2][-1]["content"]
+
+    # 第一批：起诉书 + 证据A（扣起诉书额度后装不下第二份）
+    assert "起诉书" in batch1 and "证据A" in batch1 and "证据B" not in batch1
+    # 第二批：全额预算装下 证据B + 证据C（不带起诉书）
+    assert "起诉书" not in batch2
+    assert "证据B" in batch2 and "证据C" in batch2
+    # 第三批：剩余 证据D
+    assert "证据D" in batch3 and "起诉书" not in batch3

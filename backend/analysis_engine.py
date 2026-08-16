@@ -118,17 +118,20 @@ async def _batch_analyze_evidence(
         indictment_tokens = len(enc.encode(indictment_text))
 
     # 普通证据按 token 数分批
+    # 起诉书只在第一批注入，故仅第一批为其预留额度；后续批按全额预算打包（减少批数）
     evidence_chunks: List[List[Dict[str, str]]] = []
     current_chunk: List[Dict[str, str]] = []
-    current_tokens = indictment_tokens
+    current_tokens = 0
+    current_budget = evidence_budget - indictment_tokens
 
     for ev in evidence:
         ev_text = f"### {ev['filename']}（{ev['type']}）\n{ev['text']}"
         ev_tokens = len(enc.encode(ev_text))
-        if current_tokens + ev_tokens > evidence_budget and current_chunk:
+        if current_tokens + ev_tokens > current_budget and current_chunk:
             evidence_chunks.append(current_chunk)
             current_chunk = [ev]
-            current_tokens = indictment_tokens + ev_tokens
+            current_tokens = ev_tokens
+            current_budget = evidence_budget  # 换批后不再含起诉书，按全额打包
         else:
             current_chunk.append(ev)
             current_tokens += ev_tokens
