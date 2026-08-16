@@ -118,7 +118,7 @@ export function CaseDetailPage() {
     handleClearStage, handleViewStage,
     pipelineStatus, pipelineRunning, currentPipelineStep, stepResults,
     analysisState, setAnalysisState, nextStep, setNextStep, liveProgress, setLiveProgress,
-    strategyAwaiting, strategyRefreshKey, strategyFlow, continueStageFlowAfterConfirm,
+    strategyAwaiting, strategyRefreshKey, strategyFlow, setStrategyFlow, continueStageFlowAfterConfirm,
     executePipelineStep, executeAllSteps, executeSingleStep,
     handleResumeAnalysis, loadPipelineState,
     wikiPages, selectedWikiPage, wikiContent, wikiLoading,
@@ -181,6 +181,11 @@ export function CaseDetailPage() {
         const rs = status.task.current_stage
         if (rs) { setStageStatus(prev => ({ ...prev, [rs]: 'running' })); setRunningStage(rs) }
       }
+      // 辩护思路确认的流程来源推导：stage_1~stage_4 任一已完成/运行中，说明走的是全部分析链，
+      // 确认面板应走 stage 后续阶段（5/6）而非旧流水线步骤 5；否则保持默认 pipeline
+      const runningStageNum = status?.task?.status === 'running' ? status.task.current_stage : null
+      const stageChainActive = [1, 2, 3, 35, 4].some(n => newStatus[n] === 'completed' || runningStageNum === n)
+      if (stageChainActive) setStrategyFlow('stage')
     }).catch(() => {})
     // 恢复证据状态
     loadEvidence()

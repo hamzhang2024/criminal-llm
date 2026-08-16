@@ -2,7 +2,7 @@
 // awaiting_confirmation：律师可勾选/编辑系统建议、补充自己的思路，确认后自动触发步骤 5
 // completed：以编辑态渲染（预填确认稿），可修改后重新确认（将重跑步骤 5）
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Scale, Loader2, Plus, X } from 'lucide-react'
 import {
   getDefenseStrategy,
@@ -46,6 +46,40 @@ function parseConfirmation(md: string | null): { directions: string[]; additions
   return { directions, additions }
 }
 
+// 草稿：未确认的编辑/补充持久化到 localStorage（key 含 caseId），防止切界面丢失
+interface StrategyDraft {
+  editedDirections: Record<number, string>
+  additions: string[]
+  newAddition: string
+}
+
+// 读取草稿；空草稿视为无草稿（避免覆盖确认稿预填）
+function readDraft(key: string): StrategyDraft | null {
+  try {
+    const raw = localStorage.getItem(key)
+    if (!raw) return null
+    const d = JSON.parse(raw) as Partial<StrategyDraft>
+    const draft: StrategyDraft = {
+      editedDirections: d.editedDirections || {},
+      additions: d.additions || [],
+      newAddition: d.newAddition || '',
+    }
+    if (Object.keys(draft.editedDirections).length === 0 && draft.additions.length === 0 && !draft.newAddition.trim()) return null
+    return draft
+  } catch { return null }
+}
+
+// 写入草稿；内容为空时清除 key
+function writeDraft(key: string, draft: StrategyDraft) {
+  try {
+    if (Object.keys(draft.editedDirections).length === 0 && draft.additions.length === 0 && !draft.newAddition.trim()) {
+      localStorage.removeItem(key)
+    } else {
+      localStorage.setItem(key, JSON.stringify(draft))
+    }
+  } catch { /* ignore */ }
+}
+
 export default function DefenseStrategyPanel({ caseId, defendant, charges, onConfirmed, refreshKey, skipRunStep5 }: DefenseStrategyPanelProps) {
   const [strategy, setStrategy] = useState<DefenseStrategy | null>(null)
   const [loaded, setLoaded] = useState(false)
@@ -60,6 +94,10 @@ export default function DefenseStrategyPanel({ caseId, defendant, charges, onCon
   // 本次会话内刚确认过：隐藏面板，避免步骤 5 运行期间重复确认
   const [justConfirmed, setJustConfirmed] = useState(false)
 
+  const draftKey = `defense_strategy_draft_${caseId}`
+  // 标记后端数据已加载到哪个案件，防止 caseId 切换瞬间把旧草稿写入新案件
+  const loadedCaseRef = useRef('')
+
   useEffect(() => {
     let cancelled = false
     getDefenseStrategy(caseId)
@@ -67,28 +105,62 @@ export default function DefenseStrategyPanel({ caseId, defendant, charges, onCon
         if (cancelled) return
         setStrategy(data)
         const directions = data.suggestion?.directions || []
+        const draft = readDraft(draftKey)  // 本地草稿（未确认的编辑成果），优先于后端解析值
         if (data.status === 'awaiting_confirmation') {
           setJustConfirmed(false)
           // 默认全部勾选
           setSelected(new Set(directions.map((_, i) => i)))
-          setEditedDirections({})
-          setAdditions([])
-        } else if (data.status === 'completed') {
-          // 已确认 → 编辑态预填：勾选全部、方向文本取确认稿、补充思路取确认稿
-          setSelected(new Set(directions.map((_, i) => i)))
-          const parsed = parseConfirmation(data.confirmation)
-          if (parsed.directions.length > 0 && parsed.directions.length === directions.length) {
-            const edited: Record<number, string> = {}
-            parsed.directions.forEach((t, i) => { if (t !== directions[i].direction) edited[i] = t })
-            setEditedDirections(edited)
+          if (draft) {
+            setEditedDirections(draft.editedDirections)
+            setAdditions(draft.additions)
+            setNewAddition(draft.newAddition)
+          } else {
+            setEditedDirections({})
+            setAdditions([])
           }
-          if (parsed.additions.length > 0) setAdditions(parsed.additions)
+        } else if (data.status === 'completed') {
+          // 已确认 → 编辑态预填：勾选状态与编辑文本从确认稿恢复
+          const parsed = parseConfirmation(data.confirmation)
+          const origs = directions.map(d => d.direction)
+          const consumed = new Set<number>()                    // 已被确认稿命中的建议下标
+          const pairs: Array<{ idx: number; text: string }> = [] // 建议下标 ↔ 确认稿方向文本
+          const unmatched: string[] = []                         // 未按原文命中的确认稿文本（被律师改写过）
+          // 第一轮：文本精确匹配（建议原文即确认稿文本 → 未修改的采纳项）
+          for (const t of parsed.directions) {
+            const j = origs.findIndex((o, k) => !consumed.has(k) && o === t)
+            if (j >= 0) { consumed.add(j); pairs.push({ idx: j, text: t }) }
+            else unmatched.push(t)
+          }
+          if (parsed.directions.length > 0 && pairs.length === 0) {
+            // 一条都匹配不上（全被改写）→ 回退全选，按位置一一对应
+            directions.forEach((_, i) => consumed.add(i))
+            parsed.directions.forEach((t, n) => { if (n < directions.length) pairs.push({ idx: n, text: t }) })
+          } else {
+            // 未命中的确认稿文本按顺序配给未被消费的建议下标
+            // （后端按选中下标升序写入确认稿，方向顺序与勾选下标顺序一致）
+            const rest = origs.map((_, k) => k).filter(k => !consumed.has(k))
+            unmatched.forEach((t, n) => { if (n < rest.length) { consumed.add(rest[n]); pairs.push({ idx: rest[n], text: t }) } })
+          }
+          setSelected(new Set(consumed))
+          // 编辑文本恢复：确认稿文本与对应建议原文不同即为律师修改（不要求长度相等）
+          const edited: Record<number, string> = {}
+          for (const p of pairs) { if (p.text !== origs[p.idx]) edited[p.idx] = p.text }
+          // 草稿优先于确认稿解析值（草稿是用户最新未保存的劳动成果）
+          setEditedDirections(draft ? draft.editedDirections : edited)
+          setAdditions(draft ? draft.additions : parsed.additions)
+          if (draft) setNewAddition(draft.newAddition)
         }
       })
       .catch(() => {})
-      .finally(() => { if (!cancelled) setLoaded(true) })
+      .finally(() => { if (!cancelled) { loadedCaseRef.current = caseId; setLoaded(true) } })
     return () => { cancelled = true }
   }, [caseId, refreshKey])
+
+  // 草稿持久化：编辑方向/补充/新补充输入变化即写入 localStorage
+  useEffect(() => {
+    if (loadedCaseRef.current !== caseId) return  // 当前案件数据未加载完，不写
+    writeDraft(draftKey, { editedDirections, additions, newAddition })
+  }, [caseId, draftKey, editedDirections, additions, newAddition])
 
   const toggle = useCallback((idx: number) => {
     setSelected(prev => {
@@ -135,6 +207,8 @@ export default function DefenseStrategyPanel({ caseId, defendant, charges, onCon
           user_additions: additions,
         })
       }
+      // 确认成功：草稿已落库为确认稿，清除本地草稿
+      try { localStorage.removeItem(draftKey) } catch { /* ignore */ }
       // stage 流：确认后由 onConfirmed 接管后续阶段（5/6），不跑流水线步骤 5
       if (!skipRunStep5) {
         await runStep5()
@@ -150,7 +224,7 @@ export default function DefenseStrategyPanel({ caseId, defendant, charges, onCon
     } finally {
       setConfirming(false)
     }
-  }, [confirming, caseId, strategy, editedDirections, selected, additions, runStep5, onConfirmed])
+  }, [confirming, caseId, draftKey, strategy, editedDirections, selected, additions, runStep5, onConfirmed])
 
   // 待确认 / 已确认（可重新编辑）状态渲染；刚确认过的会话内隐藏
   if (!loaded || !strategy || justConfirmed) return null
