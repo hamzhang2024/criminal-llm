@@ -1,16 +1,30 @@
 """页面旋转干预：缩略图生成 + 页面旋转"""
+import os
+
 import fitz
 import pytest
 
 from page_rotation import generate_pdf_thumbnails, rotate_pdf_page
 
+# 候选 CJK 字体：fitz 内置 helv 不支持中文（插入后提取为乱码），
+# 文本断言类测试需嵌入真实 CJK 字体；找不到则回退默认字体（其余测试不依赖文本提取）
+_CJK_FONT_CANDIDATES = (
+    "/System/Library/Fonts/Hiragino Sans GB.ttc",                  # macOS
+    "C:/Windows/Fonts/msyh.ttc",                                   # Windows 微软雅黑
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",      # Linux Noto
+)
+
 
 def _make_pdf(path, pages=3):
     """生成带文字的多页 PDF（fitz）"""
+    fontfile = next((p for p in _CJK_FONT_CANDIDATES if os.path.exists(p)), None)
     doc = fitz.open()
     for i in range(pages):
         page = doc.new_page(width=595, height=842)
-        page.insert_text((72, 72), f"第{i+1}页内容 测试文字")
+        if fontfile:
+            page.insert_text((72, 72), f"第{i+1}页内容 测试文字", fontname="cjk", fontfile=fontfile)
+        else:
+            page.insert_text((72, 72), f"第{i+1}页内容 测试文字")
     doc.save(path)
     doc.close()
 
@@ -142,3 +156,52 @@ def test_detect_skips_unreadable_file(tmp_path):
     issues = detect_md_issues(md_dir)
     assert len(issues) == 1
     assert issues[0]["md_file"] == "good.md"
+
+
+def test_extract_single_page(tmp_path):
+    """抽取单页为新 PDF（供单页重转提交 MinerU）"""
+    from page_rotation import extract_single_page
+    pdf = tmp_path / "test.pdf"
+    _make_pdf(pdf, pages=5)
+    out = tmp_path / "page3.pdf"
+    extract_single_page(pdf, 3, out)
+    doc = fitz.open(out)
+    assert len(doc) == 1
+    assert "第3页内容" in doc[0].get_text()
+    doc.close()
+
+
+def test_splice_md_block(tmp_path):
+    """md 拼接：新文本替换 [start_line, end_line] 行区间"""
+    from page_rotation import splice_md_block
+    md = tmp_path / "a.md"
+    md.write_text("行0\n行1垃圾开始\n行2垃圾结束\n行3\n", encoding="utf-8")
+    splice_md_block(md, 1, 2, "修复后的内容")
+    assert md.read_text(encoding="utf-8") == "行0\n修复后的内容\n行3\n"
+
+
+def test_invalidate_evidence_for_source(tmp_path):
+    """证据失效：删除指定 source 的证据条目+证据md+摘要缓存，保留其他卷"""
+    import json
+    from page_rotation import invalidate_evidence_for_source
+    case_path = tmp_path / "case"
+    ev = case_path / "evidence"
+    (ev / "summaries").mkdir(parents=True)
+    idx = {"evidence": [
+        {"name": "笔录A", "source": "第2卷_去水印.md", "md_file": "005_笔录A.md"},
+        {"name": "笔录B", "source": "第3卷_去水印.md", "md_file": "030_笔录B.md"},
+    ]}
+    (ev / "index.json").write_text(json.dumps(idx, ensure_ascii=False), encoding="utf-8")
+    (ev / "005_笔录A.md").write_text("内容A", encoding="utf-8")
+    (ev / "030_笔录B.md").write_text("内容B", encoding="utf-8")
+    (ev / "summaries" / "005_笔录A.md").write_text("摘要A", encoding="utf-8")
+    (ev / "summaries" / "005_笔录A.meta.json").write_text("{}", encoding="utf-8")
+
+    removed = invalidate_evidence_for_source(case_path, "第2卷_去水印.md")
+    assert removed == ["笔录A"]
+    assert not (ev / "005_笔录A.md").exists()
+    assert not (ev / "summaries" / "005_笔录A.md").exists()
+    assert not (ev / "summaries" / "005_笔录A.meta.json").exists()
+    assert (ev / "030_笔录B.md").exists()
+    kept = json.loads((ev / "index.json").read_text(encoding="utf-8"))["evidence"]
+    assert len(kept) == 1 and kept[0]["name"] == "笔录B"

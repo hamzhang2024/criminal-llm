@@ -122,3 +122,57 @@ def detect_md_issues(md_dir: Path) -> list[dict]:
             else:
                 i += 1
     return issues
+
+
+def extract_single_page(pdf_path: Path, page_no: int, out_path: Path) -> Path:
+    """抽取 PDF 单页（1 基）为独立 PDF 文件（供单页重转提交 MinerU）"""
+    doc = fitz.open(pdf_path)
+    try:
+        if not 1 <= page_no <= len(doc):
+            raise ValueError(f"页码 {page_no} 超出范围（共 {len(doc)} 页）")
+        out = fitz.open()
+        out.insert_pdf(doc, from_page=page_no - 1, to_page=page_no - 1)
+        out.save(out_path)
+        out.close()
+        return out_path
+    finally:
+        doc.close()
+
+
+def splice_md_block(md_path: Path, start_line: int, end_line: int, new_text: str) -> None:
+    """用新文本替换 md 的 [start_line, end_line] 行区间（0 基含两端）"""
+    lines = md_path.read_text(encoding="utf-8").splitlines()
+    if not (0 <= start_line <= end_line < len(lines)):
+        raise ValueError(f"行区间 [{start_line}, {end_line}] 超出范围（共 {len(lines)} 行）")
+    lines[start_line:end_line + 1] = [new_text]
+    md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    logger.info(f"[md拼接] {md_path.name}: 行 {start_line}-{end_line} 已替换（{len(new_text)} 字符）")
+
+
+def invalidate_evidence_for_source(case_path: Path, md_filename: str) -> list[str]:
+    """删除源自指定 md 的全部证据条目（含证据 md 与摘要缓存）
+
+    断点续传机制（case_manager.py 提取入口按 index.json 的 source 跳过已完成文件）
+    会在下次提取时自动重跑该卷。Returns: 被移除的证据名列表。
+    """
+    import json
+    evidence_dir = case_path / "evidence"
+    index_file = evidence_dir / "index.json"
+    if not index_file.exists():
+        return []
+    idx = json.loads(index_file.read_text(encoding="utf-8"))
+    items = idx.get("evidence", [])
+    removed = [e for e in items if e.get("source") == md_filename]
+    for e in removed:
+        md_file = evidence_dir / e.get("md_file", "")
+        if md_file.exists():
+            md_file.unlink()
+        stem = Path(e.get("md_file", "")).stem
+        for suffix in (".md", ".meta.json"):
+            cache = evidence_dir / "summaries" / f"{stem}{suffix}"
+            if cache.exists():
+                cache.unlink()
+    idx["evidence"] = [e for e in items if e.get("source") != md_filename]
+    index_file.write_text(json.dumps(idx, ensure_ascii=False, indent=2), encoding="utf-8")
+    logger.info(f"[证据失效] {md_filename}: 移除 {len(removed)} 份证据，待重新提取")
+    return [e.get("name", "") for e in removed]
