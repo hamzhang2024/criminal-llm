@@ -1788,6 +1788,28 @@ async def _do_extract_evidence(
         all_evidence = list(existing_evidence)
         next_id = len(all_evidence) + 1
 
+        # 分支外（起诉意见书结果合并、起诉书兜底分类）仍使用的名字，须在分支前初始化，
+        # 否则断点续传全部跳过（不进入 if pending_files 分支）时触发 UnboundLocalError
+        indictment_extracted = {}  # {md_file.name: (ev_path, classification)}
+
+        # 内容判断辅助函数：读取文件内容，判断文书类型和处理方式
+        def _classify_indictment_doc(md_file: Path) -> dict:
+            text = md_file.read_text(encoding="utf-8")
+            head = text[:5000]
+            has_police_number = bool(re.search(r'.+公(刑|治|行|刑立|刑强|刑诉)\w*字', head[:2000]))
+            has_procuratorate_number = bool(re.search(r'.+检(刑诉|公诉|刑执)\w*字', head[:2000]))
+            has_police_title = bool(re.search(r'起诉意见书', head[:1000]))
+            has_procuratorate_title = bool(re.search(r'起\s*诉\s*书', head[:300]))
+            is_police_doc = has_police_number or has_police_title
+            is_procuratorate_doc = has_procuratorate_number or has_procuratorate_title
+            if is_procuratorate_doc and not is_police_doc:
+                return {"type": "procuratorate_standalone", "doc_name": "起诉书"}
+            if is_procuratorate_doc and is_police_doc:
+                return {"type": "procuratorate_mixed", "doc_name": "起诉书（混合文件）"}
+            if "起诉书" in md_file.name and "意见" not in md_file.name:
+                return {"type": "procuratorate_standalone", "doc_name": "起诉书"}
+            return {"type": "police", "doc_name": "起诉意见书"}
+
         if pending_files:
             # 信号量控制并发
             from config_manager import load_config
@@ -1951,25 +1973,6 @@ async def _do_extract_evidence(
 
                 # ── 起诉意见书专用规则并发提取（和普通文件一起 gather，不再串行等最后）──
                 # 预分类：找出需要 LLM 提取的起诉意见书（非 standalone 直接复制）
-
-                # 内容判断辅助函数：读取文件内容，判断文书类型和处理方式
-                def _classify_indictment_doc(md_file: Path) -> dict:
-                    text = md_file.read_text(encoding="utf-8")
-                    head = text[:5000]
-                    has_police_number = bool(re.search(r'.+公(刑|治|行|刑立|刑强|刑诉)\w*字', head[:2000]))
-                    has_procuratorate_number = bool(re.search(r'.+检(刑诉|公诉|刑执)\w*字', head[:2000]))
-                    has_police_title = bool(re.search(r'起诉意见书', head[:1000]))
-                    has_procuratorate_title = bool(re.search(r'起\s*诉\s*书', head[:300]))
-                    is_police_doc = has_police_number or has_police_title
-                    is_procuratorate_doc = has_procuratorate_number or has_procuratorate_title
-                    if is_procuratorate_doc and not is_police_doc:
-                        return {"type": "procuratorate_standalone", "doc_name": "起诉书"}
-                    if is_procuratorate_doc and is_police_doc:
-                        return {"type": "procuratorate_mixed", "doc_name": "起诉书（混合文件）"}
-                    if "起诉书" in md_file.name and "意见" not in md_file.name:
-                        return {"type": "procuratorate_standalone", "doc_name": "起诉书"}
-                    return {"type": "police", "doc_name": "起诉意见书"}
-
                 indictment_llm_coros = []
                 indictment_llm_results = {}  # {md_file.name: Path}
                 for md_file in indictment_files:
@@ -2016,7 +2019,6 @@ async def _do_extract_evidence(
             # 合并结果：已完成的文件 + 新提取的文件
             # 按 pending_files 原始顺序，保证证据编号跟随卷号顺序
             extracted = {}
-            indictment_extracted = {}  # {md_file.name: (ev_path, classification, error)}
             success_count = 0
             fail_count = 0
             zero_count = 0
