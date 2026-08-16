@@ -1,13 +1,18 @@
 """LLM 调用单任务聚焦拆分测试
 
-审计发现的多任务捆绑点之一的拆分契约：
+审计发现的两个多任务捆绑点的拆分契约：
 
-stage_5C 三阶层综合辩护报告：一次调用输出 6 大板块 → 6 个聚焦子调用
-（概述/证据评估/矛盾利用/三阶层/量刑情节/结论建议），
-共享 system + 材料前缀命中 prompt 缓存，子章节落盘 stage_5/sections/ 支持断点续跑，
-最终合并写回 stage_53/stage_5/full_defense_report.md（对外契约不变）。
+1. stage_5C 三阶层综合辩护报告：一次调用输出 6 大板块 → 6 个聚焦子调用
+   （概述/证据评估/矛盾利用/三阶层/量刑情节/结论建议），
+   共享 system + 材料前缀命中 prompt 缓存，子章节落盘 stage_5/sections/ 支持断点续跑，
+   最终合并写回 stage_53/stage_5/full_defense_report.md（对外契约不变）。
+
+2. stage_3 时间线 + 事件拆解：一次调用既要 JSON 又要叙述 → 2 个聚焦子调用
+   （第一次只输出时间线 JSON，第二次只输出事件拆解叙述，输入含时间线产物保持连贯），
+   旧的「叙述缺失随机补全」机制随之删除。
 """
 import asyncio
+import inspect
 import json
 
 import analysis_engine
@@ -145,3 +150,70 @@ def test_5c_split_resume_skips_existing_sections(tmp_path, monkeypatch):
     stage53 = (case_dir / "analysis" / "盗窃罪" / "stage_53" / "output.md").read_text(encoding="utf-8")
     assert "既有概述" in stage53 and "新第6节" in stage53
 
+
+# ========== 拆分点 2：stage_3 时间线 + 事件拆解 ==========
+
+TIMELINE_ONLY = """```json
+{"title":"案件时间线","events":[{"date":"2025-12-22","title":"转账","evidence":["见证据001"]}]}
+```"""
+
+NARRATIVE = """### 事件拆解与证据归组
+
+#### 事件 1：2025年12月22日 转账
+- 时间：2025年12月22日
+- 地点：江阴市
+- 简述：被告人通过银行转账收取资金
+- 相关证据：见证据001（银行流水）——证明当日有 5 万元入账
+- 初步观察：与被告人供述一致，无矛盾"""
+
+
+def _make_stage3_engine(tmp_path, monkeypatch):
+    case_path = tmp_path / "case_001"
+    (case_path / "analysis").mkdir(parents=True)
+    engine = AnalysisEngine("case_001", case_path)
+    monkeypatch.setattr(engine, "_load_evidence_texts", lambda prefer_summary=False: [
+        {"filename": "001_流水.md", "text": "2025年12月22日收到转账50000元", "type": "书证"}
+    ])
+    return engine
+
+
+def test_stage3_split_two_focused_calls(tmp_path, monkeypatch):
+    """stage_3 拆分：固定 2 次调用——第一次只要时间线 JSON，第二次只要事件拆解叙述"""
+    engine = _make_stage3_engine(tmp_path, monkeypatch)
+    client = CaptureClient([TIMELINE_ONLY, NARRATIVE])
+    _patch_llm(monkeypatch, client)
+
+    asyncio.run(engine.stage_3_event_timeline("张三", "诈骗罪"))
+
+    assert len(client.calls) == 2, f"stage_3 应固定 2 次调用，实际 {len(client.calls)}"
+
+    # (a) 两次调用共享同一 system（缓存前缀第一段）
+    assert client.calls[0][0]["content"] == client.calls[1][0]["content"]
+
+    user1 = client.calls[0][1]["content"]
+    user2 = client.calls[1][1]["content"]
+
+    # (b) 第一次调用：只要求时间线 JSON，不要求叙述
+    assert "只输出事件时间线" in user1 or "只输出时间线" in user1
+    assert "JSON" in user1
+    assert "事件拆解与证据归组" not in user1.rsplit("\n\n---\n\n", 1)[1]
+
+    # (c) 第二次调用：只要求事件拆解叙述，且输入携带第一次的时间线产物（连贯性）
+    material2, instruction2 = user2.rsplit("\n\n---\n\n", 1)
+    assert "只输出事件拆解" in instruction2 or "事件拆解与证据归组" in instruction2
+    assert "见证据001" in material2, "第二次调用的材料应包含第一次生成的时间线"
+    # 材料前缀与第一次一致（缓存命中）：user2 以 user1 的材料段开头
+    material1 = user1.rsplit("\n\n---\n\n", 1)[0]
+    assert material2.startswith(material1)
+
+    # (d) 合并产物：时间线（mermaid）+ 叙述都在 stage_3/output.md
+    output = (tmp_path / "case_001" / "analysis" / "stage_3" / "output.md").read_text(encoding="utf-8")
+    assert "```mermaid" in output
+    assert "事件拆解" in output
+
+
+def test_stage3_supplement_mechanism_removed():
+    """补全机制已删除：源码不再含「叙述缺失补全」逻辑（拆分后两次调用天然完备）"""
+    src = inspect.getsource(analysis_engine.AnalysisEngine.stage_3_event_timeline)
+    assert "补全" not in src, "随机补全补丁应随拆分删除"
+    assert "supplement" not in src

@@ -1,4 +1,8 @@
-"""stage_3 事件拆解叙述缺失自动补全测试"""
+"""stage_3 事件拆解测试（拆分后契约：固定两次聚焦调用）
+
+第一次调用只输出时间线 JSON，第二次只输出事件拆解叙述（输入含时间线产物）。
+合并产物 = 时间线（mermaid）+ 叙述；叙述为空时保留时间线，不崩溃。
+"""
 import asyncio
 from pathlib import Path
 
@@ -63,26 +67,8 @@ def _patch_llm(monkeypatch, fake_chat):
     monkeypatch.setattr(llm_client, "get_llm_client", lambda: fake_client)
 
 
-def test_narrative_present_no_retry(tmp_path, monkeypatch):
-    """首次输出已含叙述：不触发补全调用"""
-    engine = _make_engine(tmp_path)
-    _patch_evidence(monkeypatch, engine)
-    calls = []
-
-    async def fake_chat(messages, **kw):
-        calls.append(messages)
-        return TIMELINE_ONLY + "\n\n" + NARRATIVE
-
-    _patch_llm(monkeypatch, fake_chat)
-    asyncio.run(engine.stage_3_event_timeline("张三", "诈骗罪"))
-
-    assert len(calls) == 1, "叙述完整时不应补全"
-    output = (tmp_path / "case_001" / "analysis" / "stage_3" / "output.md").read_text(encoding="utf-8")
-    assert "事件拆解" in output
-
-
-def test_narrative_missing_triggers_supplement(tmp_path, monkeypatch):
-    """首次输出只有时间线：自动发起补全调用，最终产物含叙述"""
+def test_timeline_and_narrative_two_calls(tmp_path, monkeypatch):
+    """拆分后固定两次调用：时间线 JSON + 事件拆解叙述，合并产物两者皆含"""
     engine = _make_engine(tmp_path)
     _patch_evidence(monkeypatch, engine)
     calls = []
@@ -90,23 +76,39 @@ def test_narrative_missing_triggers_supplement(tmp_path, monkeypatch):
     async def fake_chat(messages, **kw):
         calls.append(messages)
         if len(calls) == 1:
-            return TIMELINE_ONLY  # 首次：只有时间线
-        return NARRATIVE  # 补全：叙述
+            return TIMELINE_ONLY  # 第一次：时间线 JSON
+        return NARRATIVE  # 第二次：事件拆解叙述
 
     _patch_llm(monkeypatch, fake_chat)
     asyncio.run(engine.stage_3_event_timeline("张三", "诈骗罪"))
 
-    assert len(calls) == 2, "叙述缺失应触发一次补全"
-    # 补全调用的 prompt 应聚焦第二部分
-    supplement_prompt = calls[1][-1]["content"]
-    assert "事件拆解" in supplement_prompt
+    assert len(calls) == 2, "拆分后应固定两次调用"
     output = (tmp_path / "case_001" / "analysis" / "stage_3" / "output.md").read_text(encoding="utf-8")
     assert "事件拆解" in output
     assert "mermaid" in output or "timeline" in output, "时间线部分应保留"
 
 
-def test_supplement_also_empty_keeps_timeline(tmp_path, monkeypatch):
-    """补全也无叙述：保留时间线，不崩溃"""
+def test_second_call_carries_timeline(tmp_path, monkeypatch):
+    """第二次调用的材料携带第一次生成的时间线（保持两部分连贯）"""
+    engine = _make_engine(tmp_path)
+    _patch_evidence(monkeypatch, engine)
+    calls = []
+
+    async def fake_chat(messages, **kw):
+        calls.append(messages)
+        if len(calls) == 1:
+            return TIMELINE_ONLY
+        return NARRATIVE
+
+    _patch_llm(monkeypatch, fake_chat)
+    asyncio.run(engine.stage_3_event_timeline("张三", "诈骗罪"))
+
+    second_user = calls[1][-1]["content"]
+    assert "见证据001" in second_user, "第二次调用应包含第一次的时间线产物"
+
+
+def test_empty_narrative_keeps_timeline(tmp_path, monkeypatch):
+    """第二次调用返回空：保留时间线产物，不崩溃"""
     engine = _make_engine(tmp_path)
     _patch_evidence(monkeypatch, engine)
 

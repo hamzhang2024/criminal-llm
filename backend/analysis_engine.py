@@ -904,15 +904,17 @@ class AnalysisEngine:
         # 时间线需要全局时序，不适合分批，用优先级截断（起诉书完整、口供优先）
         all_text = _truncate_all(texts, max_total=_get_content_budget_chars())
 
+        # 两次调用共享的 system（缓存前缀第一段）：只放静态规则，任务差异放指令
         system_prompt = """梳理案卷中的事件脉络。按时间顺序识别关键事件，将证据归组到对应事件下。
 
 **重要区分**：
 - 起诉书/起诉意见书是指控文书，引用时写"据起诉书"/"据起诉意见书"
 - 正式证据用"见证据XXX"格式
 
-原则：以事件为单位，同事件挂接多份证据，必须输出时间线JSON。""" + _NO_CHITCHAT
+原则：以事件为单位，同事件挂接多份证据。""" + _NO_CHITCHAT
 
-        user_prompt = f"""## 辩护对象
+        # 两次调用共享的材料段（前缀一致命中缓存）
+        material = f"""## 辩护对象
 被告人：**{defendant}**
 
 ## 指控文书（非证据）
@@ -922,63 +924,44 @@ class AnalysisEngine:
 {evidence_catalog_text}
 
 ## 全部案卷材料
-{all_text}
+{all_text}"""
 
----
-
-## 请完成以下分析
-
-### 一、事件时间线（JSON格式）
+        # 第一次调用：只输出时间线 JSON（单任务聚焦，避免时间线与叙述互相挤占）
+        timeline_raw = await client.chat(build_cached_messages(
+            system_prompt,
+            material,
+            """本次任务：只输出事件时间线（JSON格式），不要输出事件拆解叙述。
 
 ```json
-{{"title":"案件时间线","events":[{{"date":"2025-12-22","title":"事件简述","evidence":["见证据009"]}}]}}
+{"title":"案件时间线","events":[{"date":"2025-12-22","title":"事件简述","evidence":["见证据009"]}]}
 ```
 
-规则：date用原始格式，title不超30字，evidence仅正式证据。
+规则：date用原始格式，title不超30字，evidence仅正式证据。""",
+        ))
 
-### 二、事件拆解与证据归组
-
-每个事件列出：时间、地点、简述、相关证据（编号+名称+该证据说法1-2句）、初步观察（各证据是否一致、有无矛盾）。
-
-确保不遗漏重要事件，每个事件挂接全部相关证据。"""
-
-        md_output = await client.chat([
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ])
-
-        # 优先尝试从 JSON 生成 Mermaid 时间线
-        md_output = _extract_json_and_render(md_output, _json_to_mermaid_timeline)
+        # JSON → Mermaid 时间线
+        timeline_md = _extract_json_and_render(timeline_raw, _json_to_mermaid_timeline)
 
         # 如果 LLM 直接输出了 mermaid（未走 JSON 路径），用旧逻辑修复
-        if '```mermaid' in md_output:
-            md_output = _legacy_fix_mermaid_timeline(md_output)
+        if '```mermaid' in timeline_md:
+            timeline_md = _legacy_fix_mermaid_timeline(timeline_md)
 
-        # 叙述完整性校验：剥离代码块后文字过少（LLM 只输出了时间线没写事件拆解）→ 补全一次
-        import re as _re
-        narrative_text = _re.sub(r"```[\s\S]*?```", "", md_output).strip()
-        if len(narrative_text) < 500:
-            print("[阶段3] 事件拆解叙述缺失，发起补全调用...")
-            supplement = await client.chat([
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"""## 辩护对象
-被告人：**{defendant}**
-
-## 全部案卷材料
-{all_text}
-
----
-
-你的上一次输出只完成了事件时间线，缺少第二部分。请现在**只输出第二部分**：事件拆解与证据归组。
+        # 第二次调用：只输出事件拆解叙述（材料前缀与第一次一致，末尾追加时间线产物保持连贯）
+        if progress_cb:
+            progress_cb("正在拆解事件并归组证据...")
+        narrative = await client.chat(build_cached_messages(
+            system_prompt,
+            material + f"\n\n## 事件时间线（已生成）\n{timeline_md}",
+            """本次任务：只输出事件拆解与证据归组叙述（Markdown 正文），不要重复时间线 JSON 或时间线图。
 
 每个事件列出：时间、地点、简述、相关证据（编号+名称+该证据说法1-2句）、初步观察（各证据是否一致、有无矛盾）。
-确保不遗漏重要事件，每个事件挂接全部相关证据。直接输出 Markdown 正文，不要重复时间线。"""},
-            ])
-            supplement_narrative = _re.sub(r"```[\s\S]*?```", "", supplement).strip()
-            if len(supplement_narrative) >= 200:
-                md_output = md_output.rstrip() + "\n\n" + supplement.strip()
-            else:
-                print("[阶段3] 补全后仍无有效叙述，保留时间线产物")
+确保不遗漏重要事件，每个事件挂接全部相关证据。""",
+        ))
+
+        # 合并：时间线在前、叙述在后（stage_3/output.md 对外形态不变）
+        md_output = timeline_md.rstrip()
+        if narrative.strip():
+            md_output += "\n\n" + narrative.strip()
 
         data = {
             "stage": 3,
