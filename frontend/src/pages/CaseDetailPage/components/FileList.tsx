@@ -4,6 +4,7 @@ import React from 'react'
 import { RefreshCw, CheckSquare, Square, FileText, CheckCircle, Loader2, AlertCircle, XCircle, Trash2 } from 'lucide-react'
 import { MacOSCard, MacOSButton } from '../../../components/MacOSLayout'
 import type { CaseFile } from '../hooks/useCaseFiles'
+import type { MdIssue } from '../../../api/cases'
 
 interface FileListProps {
   files: CaseFile[]
@@ -19,6 +20,10 @@ interface FileListProps {
   onReconvertMd: (name: string) => Promise<void>
   onOpenFile: (file: CaseFile) => void
   onUploadClick: () => void
+  // md 识别异常列表（倒置/异常扫描页），已转换文件命中时显示 ⚠️
+  mdIssues: MdIssue[]
+  // 步骤 1 且存在未转换 PDF 时，在列表上方提示先做页面方向检查
+  showRotationHint: boolean
 }
 
 export function FileList({
@@ -27,6 +32,7 @@ export function FileList({
   refreshFiles,
   onRemoveFile, onDeleteMd, onDeletePdf, onReconvertMd, onOpenFile,
   onUploadClick,
+  mdIssues, showRotationHint,
 }: FileListProps) {
   const doneCount = files.filter(f => f.status === 'done').length
   const allDone = doneCount === files.length && files.length > 0
@@ -70,11 +76,22 @@ export function FileList({
         </div>
       </div>
 
+      {/* 转换前提示：步骤 1 且仍有未转换 PDF 时，建议先检查页面方向 */}
+      {showRotationHint && (
+        <div style={{ background: '#e8f0fe', color: '#1a56db', borderRadius: 8, padding: '8px 14px', margin: '8px 0', fontSize: 13 }}>
+          提示：转换前建议先「预览」→「页面管理」浏览缩略图，确认无倒置页面（倒置页会导致识别乱码）
+        </div>
+      )}
+
       {/* 文件行 */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
         {files.map(file => {
           const inputFile = currentStep === 0 ? file :
             currentStep === 1 ? { ...file, name: file.processedPath || file.name } : file
+          // 该文件已转换且其 md 命中识别异常列表时，文件名旁显示 ⚠️
+          // 注意步骤 1 行显示名可能是 processedPath，需用替换后的实际文件名推导 md 名
+          const hasMdIssue = currentStep === 1 && file.status === 'done' &&
+            mdIssues.some(i => i.md_file === inputFile.name.replace(/\.pdf$/i, '.md'))
 
           return (
             <div key={file.id} style={{
@@ -108,7 +125,12 @@ export function FileList({
 
               {/* 文件名 */}
               <div style={{ flex: 1, overflow: 'hidden' }}>
-                <div className="truncate text-sm font-medium">{inputFile.name}</div>
+                <div className="truncate text-sm font-medium">
+                  {inputFile.name}
+                  {hasMdIssue && (
+                    <span title="检测到识别异常页，请在「预览 → 页面管理」中处理" style={{ color: '#b7791f' }}> ⚠️</span>
+                  )}
+                </div>
                 <div className="text-xs text-secondary">
                   {currentStep === 0 ? `${(file.size / 1024).toFixed(1)} KB` :
                    currentStep === 1 ? (file.status === 'done' ? '已转换 MD' : file.status === 'processing' ? '转换中...' : '待转换') :

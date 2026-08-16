@@ -233,6 +233,9 @@ export function CaseDetailPage() {
   // === 进入证据提取步骤时加载完整性报告 ===
   useEffect(() => { if (currentStep === 1 && caseId) loadCompleteness() }, [currentStep, caseId, loadCompleteness])
 
+  // === 步骤 1 时刷新 md 识别异常列表（页面管理修复后会通过 onIssuesChanged 主动刷新） ===
+  useEffect(() => { if (currentStep === 1 && caseId) refreshMdIssues() }, [currentStep, caseId, refreshMdIssues])
+
   // === 流水线实时进度轮询 ===
   useEffect(() => {
     if (!pipelineRunning || !caseId || currentPipelineStep < 2) return
@@ -304,6 +307,8 @@ export function CaseDetailPage() {
             setProgress(`已转换 ${sc}/${sd.total || 0} 个文件，请点击「提取证据」继续`); setProcessing(false)
             const fd = await api.getStepFiles(caseId!, 2)
             if (Array.isArray(fd)) refreshFiles()
+            // 转换完成后刷新识别异常列表，已转换文件命中时文件列表会显示 ⚠️
+            refreshMdIssues()
           } else if (sd.status === 'failed' || sd.status === 'cancelled') {
             clearInterval(convertPollRef.current!); convertPollRef.current = null
             throw new Error(sd.message || '转换任务失败')
@@ -317,7 +322,7 @@ export function CaseDetailPage() {
       }, 2000)
       setTimeout(() => { if (convertPollRef.current) { clearInterval(convertPollRef.current); convertPollRef.current = null; setProcessing(false); setProgress('⚠️ 转换超时，请稍后刷新') } }, 900000)
     } catch (err) { setError(err instanceof Error ? err.message : '转换失败'); setProgress(''); setProcessing(false) }
-  }, [caseId, refreshFiles])
+  }, [caseId, refreshFiles, refreshMdIssues])
 
   const handleExtractEvidence = useCallback(async () => {
     try {
@@ -481,7 +486,9 @@ export function CaseDetailPage() {
                 toggleSelect={toggleSelect} toggleSelectAll={toggleSelectAll} getSelectedFiles={getSelectedFiles}
                 refreshFiles={refreshFiles} onRemoveFile={handleRemoveFile}
                 onDeleteMd={handleDeleteMd} onDeletePdf={handleDeletePdf} onReconvertMd={handleReconvertMd}
-                onOpenFile={handleOpenFilePlain} onUploadClick={() => document.getElementById('case-upload')?.click()} />
+                onOpenFile={handleOpenFilePlain} onUploadClick={() => document.getElementById('case-upload')?.click()}
+                mdIssues={mdIssues}
+                showRotationHint={currentStep === 1 && files.some(f => f.status !== 'done')} />
             )}
 
             {currentStep === 1 && (
