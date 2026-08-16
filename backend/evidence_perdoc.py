@@ -248,13 +248,26 @@ async def _extract_one_document(
     return block
 
 
+def _norm_name_key(name: str) -> str:
+    """文书名匹配键：去全部空白字符，容忍 LLM 重跑时的空白差异
+
+    只做空白规范化、不用子串模糊匹配：子串匹配会把"张三讯问笔录（第2次）"
+    误判为已存在的"张三讯问笔录"而静默跳过（正是本机制要修复的遗漏问题），
+    宁可因改名重复提取（可见、可去重），不可错误跳过（静默丢失）。
+    """
+    return "".join(str(name).split())
+
+
 async def extract_by_document(
     client, md_file: Path, md_text: str, charges_str: str, temp_dir: Path,
     max_concurrent: int = 3, timeout: int = 600, progress_cb=None,
+    skip_names: Optional[set] = None,
 ) -> Optional[list]:
     """两阶段按份提取主流程
 
     progress_cb(done, total)：每份笔录完成（含缓存命中/失败）后回调，供前端进度条。
+    skip_names：卷内已存在于 index.json 的文书名集合（失败重提场景），
+        命中的文书直接跳过、不产出证据块，避免整卷重提时重复提取成功文书。
 
     Returns:
         ev_block 列表（与 _parse_evidence_blocks 输出同构）；失败返回 None（调用方回退整卷路径）
@@ -293,6 +306,12 @@ async def extract_by_document(
 
     results = {}  # name -> block
 
+    # 卷内跳过名册：失败重提时，卷内已成功文书（已在 index.json 中）按名称跳过
+    skip_keys = {_norm_name_key(n) for n in (skip_names or set()) if n}
+
+    def _is_skipped(doc: dict) -> bool:
+        return _norm_name_key(doc.get("name", "")) in skip_keys
+
     # 笔录：按份提取（并发 + 校验 + 断点续传）
     sem = asyncio.Semaphore(max_concurrent)
     progress_done = {"n": 0}
@@ -306,6 +325,12 @@ async def extract_by_document(
                 pass
 
     async def _one(i: int, doc: dict):
+        # 已存在于 index.json 的文书：直接跳过，不计入提取结果
+        if _is_skipped(doc):
+            progress_done["n"] += 1
+            _report_progress()
+            logger.info(f"[按份提取] {md_name}《{doc['name']}》已存在，跳过")
+            return
         cache_file = temp_dir / f"_perdoc_{i:03d}.json"
         if cache_file.exists():
             try:
@@ -334,9 +359,10 @@ async def extract_by_document(
 
     # 其他短文书：一次批量调用
     async def _batch_others():
-        if not others:
+        todo = [d for d in others if not _is_skipped(d)]
+        if not todo:
             return
-        names = "、".join(f"《{d['name']}》" for d in others)
+        names = "、".join(f"《{d['name']}》" for d in todo)
         try:
             result = await asyncio.wait_for(client.chat([
                 {"role": "system", "content": _BATCH_SYSTEM},
@@ -380,6 +406,8 @@ async def extract_by_document(
     # 按目录顺序输出；失败的笔录补一个占位块（宁可标注缺失也不静默遗漏）
     blocks = []
     for i, d in enumerate(docs):
+        if _is_skipped(d):
+            continue  # 已存在于 index.json，不重复产出
         if i in results:
             blocks.append(results[i])
         else:

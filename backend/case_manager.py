@@ -1205,11 +1205,13 @@ async def _extract_single_file(
     charges: list = None,
     framework_prefix: str = "",
     progress_cb=None,
+    skip_names: set = None,
 ) -> tuple:
     """
     提取单个 MD 文件的证据（不含信号量和重试控制，由调用方管理）。
 
     progress_cb(done, total)：按份提取时每份笔录完成后回调（前端卷内进度条）。
+    skip_names：卷内已存在于 index.json 的文书名集合（失败重提时按名称跳过，避免重复提取）。
 
     返回：(md_filename, evidence_list)
     evidence_list 中每项包含证据数据，文件保存在 temp_dir 中。
@@ -1274,7 +1276,7 @@ async def _extract_single_file(
     if total_count >= 2:
         try:
             from evidence_perdoc import extract_by_document
-            evidence_blocks = await extract_by_document(client, md_file, md_text, charges_str, temp_dir, progress_cb=progress_cb)
+            evidence_blocks = await extract_by_document(client, md_file, md_text, charges_str, temp_dir, progress_cb=progress_cb, skip_names=skip_names)
             if evidence_blocks:
                 logger.info(f"[证据提取] {md_file.name}: 按份提取产出 {len(evidence_blocks)} 份证据")
         except Exception as e:
@@ -1408,6 +1410,7 @@ async def _extract_single_file_with_tracking(
     charges: list = None,
     framework_prefix: str = "",
     progress_cb=None,
+    skip_names: set = None,
 ) -> tuple:
     """
     包装 _extract_single_file，管理信号量和重试。
@@ -1420,7 +1423,7 @@ async def _extract_single_file_with_tracking(
         # 获取信号量，执行提取
         async with semaphore:
             try:
-                result = await _extract_single_file(md_file, md_text, temp_dir, charges, framework_prefix, progress_cb=progress_cb)
+                result = await _extract_single_file(md_file, md_text, temp_dir, charges, framework_prefix, progress_cb=progress_cb, skip_names=skip_names)
                 return result
             except asyncio.TimeoutError:
                 last_error = f"LLM 调用超时（600s）"
@@ -1533,6 +1536,77 @@ async def _run_extract_background(case_id: str, case_path, md_dir, evidence_dir)
         # 错误状态保留，不清除，让前端能读取到错误信息
 
 
+def _locate_evidence_file(evidence_dir: Path, md_name: str) -> Optional[Path]:
+    """定位证据文件：优先按 index.json 记录名，兼容实际文件名无数字前缀的情况"""
+    p = evidence_dir / md_name
+    if p.exists():
+        return p
+    stripped = re.sub(r"^\d+_", "", md_name)
+    if stripped != md_name:
+        alt = evidence_dir / stripped
+        if alt.exists():
+            return alt
+    return None
+
+
+def _is_failed_evidence_entry(evidence_dir: Path, ev: dict) -> bool:
+    """判定证据条目是否为按份提取失败的空壳（文件存在且内容含失败标记）"""
+    md_name = ev.get("md_file", "")
+    if not md_name:
+        return False
+    md_path = _locate_evidence_file(evidence_dir, md_name)
+    if md_path is None:
+        return False  # 文件不存在则无法确认失败，保守保留
+    try:
+        return "按份提取失败" in md_path.read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        return False
+
+
+def prune_failed_evidence(case_path: Path) -> list:
+    """清理按份提取失败的空壳证据条目，返回被移除的文书名列表
+
+    按份提取失败的文书会留下空壳证据文件（头部 + "按份提取失败"标记），
+    且 index.json 中保留条目，导致文件级断点续传误判该卷已处理、
+    失败文档永远不被重试。本函数移除这些条目并删除空壳文件（含其摘要缓存），
+    使所属卷在下次提取时重新进入待提取（卷内已成功文书按名称跳过，不重复提取）。
+    """
+    evidence_dir = case_path / "evidence"
+    index_file = evidence_dir / "index.json"
+    if not index_file.exists():
+        return []
+    try:
+        index_data = json.loads(index_file.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+
+    kept, failed = [], []
+    for ev in index_data.get("evidence", []):
+        (failed if _is_failed_evidence_entry(evidence_dir, ev) else kept).append(ev)
+    if not failed:
+        return []
+
+    index_data["evidence"] = kept
+    index_data["total_evidence"] = len(kept)
+    index_file.write_text(json.dumps(index_data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    # 删除空壳证据文件及其摘要缓存（若有）
+    summaries_dir = evidence_dir / "summaries"
+    for ev in failed:
+        md_name = ev.get("md_file", "")
+        if not md_name:
+            continue
+        md_path = _locate_evidence_file(evidence_dir, md_name)
+        if md_path is not None:
+            md_path.unlink(missing_ok=True)
+        (summaries_dir / md_name).unlink(missing_ok=True)
+        (summaries_dir / (Path(md_name).stem + ".meta.json")).unlink(missing_ok=True)
+
+    removed_names = [ev.get("name", "") for ev in failed]
+    logger.info(f"[证据提取] 清理 {len(failed)} 份失败空壳证据: {removed_names}")
+    return removed_names
+
+
 async def _do_extract_evidence(
     case_id: str,
     case_path: Path,
@@ -1614,6 +1688,28 @@ async def _do_extract_evidence(
             logger.info(f"[证据提取] 断点续传：已有 {len(existing_evidence)} 份证据，跳过已处理的 MD 文件")
         except Exception:
             pass
+
+    # 失败条目自动重提：按份提取失败的空壳条目占住 source，导致整卷被断点续传跳过。
+    # 清理空壳条目后其所属卷重新进入待提取；卷内已成功文书按名称跳过，不重复提取
+    if existing_evidence:
+        retried_sources = {ev["source"] for ev in existing_evidence
+                           if _is_failed_evidence_entry(evidence_dir, ev)}
+        if retried_sources:
+            removed_names = prune_failed_evidence(case_path)
+            try:
+                old_index = json.loads(index_file.read_text(encoding="utf-8"))
+                existing_evidence = old_index.get("evidence", [])
+            except Exception:
+                existing_evidence = []
+            processed_sources = {ev["source"] for ev in existing_evidence} - retried_sources
+            logger.info(f"[证据提取] 清理 {len(removed_names)} 份失败空壳，"
+                        f"{len(retried_sources)} 个卷将重提失败文书: {sorted(retried_sources)}")
+
+    # 卷内跳过名册：重提卷中已成功的文书名（按份提取时按名称跳过，避免重复提取）
+    existing_names_by_source = {}
+    for ev in existing_evidence:
+        if ev.get("source") and ev.get("name"):
+            existing_names_by_source.setdefault(ev["source"], set()).add(ev["name"])
 
     evidence_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1772,6 +1868,7 @@ async def _do_extract_evidence(
                     source_name, evidence_list = await _extract_single_file_with_tracking(
                         md_file, md_text, file_temp_dir, semaphore, case_charges, extraction_fw_prefix,
                         progress_cb=_doc_progress,
+                        skip_names=existing_names_by_source.get(md_file.name),
                     )
 
                     # 停止心跳
