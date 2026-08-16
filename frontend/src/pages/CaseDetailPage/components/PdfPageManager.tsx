@@ -20,6 +20,7 @@ export function PdfPageManager({ caseId, pdfFilename, issues, onFixed }: PdfPage
   const BACKEND_ORIGIN = API_BASE.replace(/\/api$/, '')
   const [thumbs, setThumbs] = useState<Array<{ page: number; url: string }>>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
   const [rotations, setRotations] = useState<Map<number, number>>(new Map())  // page → 累计角度
   const [saving, setSaving] = useState(false)
   const [fixing, setFixing] = useState(false)
@@ -32,9 +33,11 @@ export function PdfPageManager({ caseId, pdfFilename, issues, onFixed }: PdfPage
 
   useEffect(() => {
     setLoading(true)
+    setLoadError('')
     getThumbnails(caseId, pdfFilename, 'processed', 200)
       .then(r => { setThumbs(r.thumbnails || []); setLoading(false) })
-      .catch(() => setLoading(false))
+      // 失败须明示（文件不存在/生成失败），否则空网格看起来像"PDF 无页面"
+      .catch((e) => { setLoadError(e instanceof Error ? e.message : String(e)); setLoading(false) })
   }, [caseId, pdfFilename, cacheBust])
 
   const addRotation = (page: number, deg: number) => {
@@ -89,7 +92,8 @@ export function PdfPageManager({ caseId, pdfFilename, issues, onFixed }: PdfPage
     try {
       const r = await reconvertBlock(caseId, {
         file_path: pdfFilename, page,
-        md_file: pdfFilename.replace(/\.pdf$/i, '.md'),
+        // md 名直接取扫描结果（PDF 与 md 的 _去水印 后缀可能不一致，按 PDF 名推导会失配）
+        md_file: issue.md_file,
         start_line: issue.start_line, end_line: issue.end_line,
         invalidate_evidence: true,
       })
@@ -104,6 +108,7 @@ export function PdfPageManager({ caseId, pdfFilename, issues, onFixed }: PdfPage
   }
 
   if (loading) return <div style={{ padding: 24, color: '#86868b' }}>生成缩略图中...</div>
+  if (loadError) return <div style={{ padding: 24, color: '#d66' }}>缩略图生成失败或文件不存在：{loadError}</div>
 
   return (
     <div style={{ flex: 1, overflow: 'auto', background: '#1a1a1e', padding: 16 }}>

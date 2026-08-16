@@ -6,6 +6,7 @@ import type { MdIssue } from '../../../api/cases'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { PdfPageManager } from './PdfPageManager'
+import { isMdFileOfPdf } from '../utils/mdName'
 
 marked.setOptions({ async: false, gfm: true, breaks: true })
 
@@ -32,7 +33,8 @@ export function Preview({ file, onClose, digest, digestWarning, mdIssues, onIssu
   const [pageManage, setPageManage] = useState(false)
   const isPdf = !file.name.endsWith('.md')
   const canManage = isPdf && !!file.caseId && file.dir === 'processed'
-  const pdfIssues = (mdIssues || []).filter(i => i.md_file === file.name.replace(/\.pdf$/i, '.md'))
+  // _去水印 变体匹配：PDF 与 md 后缀可能不一致，单变体推导会让 ⚠️ 静默缺失
+  const pdfIssues = (mdIssues || []).filter(i => isMdFileOfPdf(i.md_file, file.name))
 
   return (
     <div style={{

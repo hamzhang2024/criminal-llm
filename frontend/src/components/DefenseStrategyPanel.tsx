@@ -69,7 +69,8 @@ function readDraft(key: string): StrategyDraft | null {
       additions: d.additions || [],
       newAddition: d.newAddition || '',
     }
-    const hasSelection = draft.selected !== undefined && draft.selected.length > 0
+    // selected 字段存在（非 undefined）即视为有草稿：全反选（空数组）也是用户的有效操作，须保留
+    const hasSelection = draft.selected !== undefined
     if (!hasSelection && Object.keys(draft.editedDirections).length === 0 && draft.additions.length === 0 && !draft.newAddition.trim()) return null
     return draft
   } catch { return null }
@@ -78,7 +79,8 @@ function readDraft(key: string): StrategyDraft | null {
 // 写入草稿；内容为空时清除 key
 function writeDraft(key: string, draft: StrategyDraft) {
   try {
-    const hasSelection = draft.selected !== undefined && draft.selected.length > 0
+    // selected 字段存在即视为有内容（含全反选的空数组）
+    const hasSelection = draft.selected !== undefined
     if (!hasSelection && Object.keys(draft.editedDirections).length === 0 && draft.additions.length === 0 && !draft.newAddition.trim()) {
       localStorage.removeItem(key)
     } else {
@@ -125,8 +127,10 @@ export default function DefenseStrategyPanel({ caseId, defendant, charges, onCon
             setAdditions(draft.additions)
             setNewAddition(draft.newAddition)
           } else {
+            // 无草稿时全部复位（含 newAddition，防跨案件残留上一个案件的输入）
             setEditedDirections({})
             setAdditions([])
+            setNewAddition('')
           }
         } else if (data.status === 'completed') {
           // completed 分支同样复位 justConfirmed：防重复确认的职责已由 stageRunning prop 接管，
@@ -179,7 +183,8 @@ export default function DefenseStrategyPanel({ caseId, defendant, charges, onCon
           // 草稿优先于确认稿解析值（草稿是用户最新未保存的劳动成果）
           setEditedDirections(draft ? draft.editedDirections : edited)
           setAdditions(draft ? draft.additions : parsed.additions)
-          if (draft) setNewAddition(draft.newAddition)
+          // 无草稿时复位为空（防跨案件残留上一个案件的输入）
+          setNewAddition(draft ? draft.newAddition : '')
         }
       })
       .catch(() => {})

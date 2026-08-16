@@ -256,11 +256,9 @@ export function useCaseFiles(caseId: string | undefined, currentStep: number) {
     if (currentStep === 1) dir = 'processed'
     else if (currentStep >= 2) dir = 'md'
 
-    let previewName = file.name
-    if (currentStep === 1 && !file.name.includes('_去水印')) {
-      const stem = file.name.replace(/\.pdf$/i, '')
-      previewName = `${stem}_去水印.pdf`
-    }
+    // 步骤 1 列表数据本就来自 processed/（getStepFiles(1) 返回该目录真实文件名），
+    // 直接用 file.name；此前猜测补 _去水印 后缀会让未去水印文件的预览/旋转/重转全部 404
+    const previewName = file.name
 
     const serveUrl = serveFileUrl(caseId!, previewName, dir)
     setPreviewFile({ ...file, path: serveUrl, name: previewName, dir })

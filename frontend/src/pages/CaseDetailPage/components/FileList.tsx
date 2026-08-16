@@ -5,6 +5,7 @@ import { RefreshCw, CheckSquare, Square, FileText, CheckCircle, Loader2, AlertCi
 import { MacOSCard, MacOSButton } from '../../../components/MacOSLayout'
 import type { CaseFile } from '../hooks/useCaseFiles'
 import type { MdIssue } from '../../../api/cases'
+import { isMdFileOfPdf } from '../utils/mdName'
 
 interface FileListProps {
   files: CaseFile[]
@@ -91,7 +92,7 @@ export function FileList({
           // 该文件已转换且其 md 命中识别异常列表时，文件名旁显示 ⚠️
           // 注意步骤 1 行显示名可能是 processedPath，需用替换后的实际文件名推导 md 名
           const hasMdIssue = currentStep === 1 && file.status === 'done' &&
-            mdIssues.some(i => i.md_file === inputFile.name.replace(/\.pdf$/i, '.md'))
+            mdIssues.some(i => isMdFileOfPdf(i.md_file, inputFile.name))
 
           return (
             <div key={file.id} style={{
