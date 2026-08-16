@@ -171,6 +171,7 @@ interface ConfigForm {
   llm_api_key: string
   llm_base_url: string
   llm_model: string
+  llm_model_heavy: string
   evidence_concurrency: number
   pdf_engine: 'mineru' | 'paddleocr'
   paddleocr_token: string
@@ -205,6 +206,7 @@ export function SettingsPage() {
     llm_api_key: '',
     llm_base_url: DEFAULT_LLM_BASE_URL,
     llm_model: DEFAULT_LLM_MODEL,
+    llm_model_heavy: '',
     evidence_concurrency: 3,
     pdf_engine: 'mineru',
     paddleocr_token: '',
@@ -249,6 +251,7 @@ export function SettingsPage() {
       config.llm_api_key !== initialConfig.llm_api_key ||
       config.llm_base_url !== initialConfig.llm_base_url ||
       config.llm_model !== initialConfig.llm_model ||
+      config.llm_model_heavy !== initialConfig.llm_model_heavy ||
       config.pdf_convert_concurrency !== initialConfig.pdf_convert_concurrency ||
       config.mineru_model_version !== initialConfig.mineru_model_version ||
       config.evidence_concurrency !== initialConfig.evidence_concurrency ||
@@ -293,6 +296,7 @@ export function SettingsPage() {
       if (data.llm_api_key_value) updates.llm_api_key = data.llm_api_key_value
       if (data.llm_base_url) updates.llm_base_url = data.llm_base_url
       if (data.llm_model) updates.llm_model = data.llm_model
+      if (data.llm_model_heavy !== undefined) updates.llm_model_heavy = data.llm_model_heavy
       if (data.evidence_concurrency) updates.evidence_concurrency = data.evidence_concurrency
       if (data.pdf_convert_concurrency) updates.pdf_convert_concurrency = data.pdf_convert_concurrency
       if (data.mineru_model_version) updates.mineru_model_version = data.mineru_model_version
@@ -344,6 +348,7 @@ export function SettingsPage() {
           llm_api_key: config.llm_api_key.trim(),
           llm_base_url: config.llm_base_url.trim(),
           llm_model: config.llm_model.trim(),
+          llm_model_heavy: config.llm_model_heavy.trim(),
           evidence_concurrency: config.evidence_concurrency,
           model_context_limit: config.model_context_limit * 1000,
           case_api_key: caseApiKey.trim(),
@@ -1099,6 +1104,26 @@ export function SettingsPage() {
                   检测到 {config.llm_model} 窗口为 {modelWindowDetected.toLocaleString()} tokens（可在下方覆盖）
                 </div>
               )}
+            </div>
+
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: '500', marginBottom: '8px' }}>
+                高质量任务模型（可选）
+              </label>
+              <input
+                type="text"
+                value={config.llm_model_heavy}
+                onChange={e => setConfig(prev => ({ ...prev, llm_model_heavy: e.target.value }))}
+                placeholder="如 deepseek-v4-pro，留空则不启用"
+                style={{
+                  width: '100%', padding: '10px 12px',
+                  border: '1px solid var(--macos-border)', borderRadius: '8px',
+                  fontSize: '14px', boxSizing: 'border-box',
+                }}
+              />
+              <div style={{ marginTop: '6px', fontSize: '11px', color: '#86868b' }}>
+                留空则全部任务使用上方模型。填入更强模型（如 deepseek-v4-pro）后，仅最终产物（辩护意见、控辩对抗）使用它，提取/摘要/质证仍用快省模型——成本与质量兼顾。
+              </div>
             </div>
 
             <div style={{ marginBottom: '20px' }}>
