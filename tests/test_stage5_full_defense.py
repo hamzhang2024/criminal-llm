@@ -53,8 +53,8 @@ async def test_stage5_full_defense_completes(tmp_path, monkeypatch):
     engine = AnalysisEngine("case_test", _make_case(tmp_path))
     await engine.stage_5_full_defense("张三")
 
-    # 5B 三次调用 + 5C 一次调用
-    assert fake.calls == 4
+    # 5B 三次调用 + 5C 六次调用（六子章节拆分后）
+    assert fake.calls == 9
     for stage in (51, 52, 53):
         out = engine.analysis_dir / f"stage_{stage}" / "output.md"
         assert out.exists(), f"stage_{stage} 未生成"
