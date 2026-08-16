@@ -2954,6 +2954,63 @@ async def md_issues(case_id: str):
     return {"issues": detect_md_issues(md_dir)}
 
 
+class ReconvertBlockRequest(BaseModel):
+    file_path: str          # processed/ 下 PDF 文件名
+    page: int               # 需重转的 PDF 页码（1 基）
+    md_file: str            # 待拼接的 md 文件名
+    start_line: int         # 乱码块起始行（md-issues 返回）
+    end_line: int           # 乱码块结束行（含）
+    invalidate_evidence: bool = False  # 是否同时失效该卷证据（供重新提取）
+
+
+@router.post("/{case_id}/reconvert-block")
+async def reconvert_block(case_id: str, req: ReconvertBlockRequest):
+    """单页重转修复：抽取旋转后的单页 → MinerU 转换 → 替换 md 乱码块 → 可选证据失效
+
+    成本：MinerU 1 页额度 + 0 次 LLM 调用（对比整卷重转 170 页+全卷重提取）。
+    注意：证据失效后重新提取时，新证据编号从现有最大编号之后继续分配（追加到清单
+    末尾，不回填空缺），重提取后该卷证据的编号与清单顺序可能变化。
+    """
+    import tempfile
+    from mineru_async import AsyncMinerUConverter
+    from page_rotation import extract_single_page, splice_md_block, invalidate_evidence_for_source
+
+    case_path = find_case_path(case_id)
+    if not case_path:
+        raise HTTPException(status_code=404, detail="案件不存在")
+    pdf = (case_path / "processed" / req.file_path).resolve()
+    md_path = (case_path / "md" / req.md_file).resolve()
+    if not str(pdf).startswith(str(case_path.resolve())) or not pdf.exists():
+        raise HTTPException(status_code=404, detail="PDF 不存在")
+    if not str(md_path).startswith(str(case_path.resolve())) or not md_path.exists():
+        raise HTTPException(status_code=404, detail="MD 文件不存在")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        single = extract_single_page(pdf, req.page, tmp / "page.pdf")
+        converter = AsyncMinerUConverter()
+        results = await converter.convert_batch([single], tmp, max_concurrent=1)
+        # 产物取 output_dir 下的 md 文件（convert_batch 写盘规则为 {stem}.md，
+        # 用 glob 兜底 chunk 命名差异）
+        md_files = sorted(tmp.glob("*.md"))
+        if not results or not md_files:
+            raise HTTPException(status_code=502, detail="单页转换失败，请稍后重试")
+        new_text = md_files[0].read_text(encoding="utf-8").strip()
+        if not new_text:
+            raise HTTPException(status_code=502, detail="单页转换结果为空，请稍后重试")
+
+    try:
+        splice_md_block(md_path, req.start_line, req.end_line, new_text)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    invalidated = []
+    if req.invalidate_evidence:
+        invalidated = invalidate_evidence_for_source(case_path, req.md_file)
+
+    return {"success": True, "spliced_chars": len(new_text), "invalidated": invalidated}
+
+
 @router.get("/{case_id}/processed-pdfs")
 async def list_processed_pdfs(case_id: str):
     """列出 processed/ 目录下的所有 PDF 文件"""

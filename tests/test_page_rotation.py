@@ -205,3 +205,40 @@ def test_invalidate_evidence_for_source(tmp_path):
     assert (ev / "030_笔录B.md").exists()
     kept = json.loads((ev / "index.json").read_text(encoding="utf-8"))["evidence"]
     assert len(kept) == 1 and kept[0]["name"] == "笔录B"
+
+
+def test_reconvert_block_flow(tmp_path, monkeypatch):
+    """重转闭环：抽页→转换→拼接→证据失效（MinerU 打桩，验证编排顺序与产物）"""
+    import asyncio, json
+    import case_manager
+
+    case_path = tmp_path / "case"
+    (case_path / "processed").mkdir(parents=True)
+    (case_path / "md").mkdir()
+    (case_path / "evidence").mkdir()
+    _make_pdf(case_path / "processed" / "第2卷_去水印.pdf", pages=3)
+    (case_path / "md" / "第2卷_去水印.md").write_text(
+        "前文\n<table><tr><td>第6页共11页</td></tr><tr><td>乱码</td></tr></table>\n后文\n", encoding="utf-8")
+    (case_path / "evidence" / "index.json").write_text(json.dumps({"evidence": [
+        {"name": "笔录A", "source": "第2卷_去水印.md", "md_file": "005_A.md"}]}, ensure_ascii=False), encoding="utf-8")
+
+    # MinerU 打桩：convert_batch 直接产出"修复文本"md（端点按 output_dir 下 *.md 取产物，与真实 convert_batch 写盘规则一致）
+    class FakeResult:
+        def __init__(self, md): self.md_path = md
+    async def fake_convert_batch(self, pdf_paths, output_dir, **kw):
+        md = output_dir / f"{pdf_paths[0].stem}.md"
+        md.write_text("修复后的笔录内容", encoding="utf-8")
+        return [FakeResult(md)]
+    monkeypatch.setattr("mineru_async.AsyncMinerUConverter.convert_batch", fake_convert_batch)
+    monkeypatch.setattr(case_manager, "find_case_path", lambda cid: case_path)
+
+    req = case_manager.ReconvertBlockRequest(
+        file_path="第2卷_去水印.pdf", page=2, md_file="第2卷_去水印.md",
+        start_line=1, end_line=1, invalidate_evidence=True)
+    resp = asyncio.run(case_manager.reconvert_block("c", req))
+
+    assert resp["success"] is True
+    assert "修复后的笔录内容" in (case_path / "md" / "第2卷_去水印.md").read_text(encoding="utf-8")
+    assert resp["invalidated"] == ["笔录A"]
+    # 证据已失效（index.json 清空）
+    assert json.loads((case_path / "evidence" / "index.json").read_text(encoding="utf-8"))["evidence"] == []
