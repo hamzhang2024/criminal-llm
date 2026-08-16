@@ -190,6 +190,15 @@ def _contains_indictment_title(text: str) -> bool:
     return False
 
 
+def _read_stage_md(analysis_dir: Path, stage: int) -> str:
+    """读取指定阶段的 Markdown 输出（与 stage_api 同名函数逻辑一致；
+    因 stage_api 依赖本模块，无法反向导入，故在此保留一份）"""
+    stage_file = analysis_dir / f"stage_{stage}" / "output.md"
+    if stage_file.exists():
+        return stage_file.read_text(encoding="utf-8")
+    return ""
+
+
 def _extract_fulltext_section(text: str) -> str:
     """提取件中的原文全文段（B'）；无则返回空"""
     marker = "## 原文全文"
@@ -1001,6 +1010,34 @@ class AnalysisPipeline:
                 pass
         return [crime_type] if crime_type else []
 
+    def _keyword_source_text(self, indictment_analyzed: bool, indictment_content: str) -> str:
+        """关键词推荐材料来源：有起诉书用指控要素分析；
+        无起诉书（羁押/侦查阶段案件常见）回退用阶段 3（事件拆解）/阶段 1 产物"""
+        if indictment_analyzed:
+            return indictment_content[:5000]
+        for st in (3, 1):
+            text = _read_stage_md(self.analysis_dir, st)[:5000]
+            if text.strip():
+                return text
+        return ""
+
+    async def _suggest_search_keywords(self, source_text: str) -> list[str]:
+        """从案件材料文本推荐 3-5 个类案检索关键词（罪名除外），写 case.json suggested_keywords"""
+        kw_text = await self.llm.chat([
+            {"role": "system", "content": "你是刑事律师。请从案件材料中提取 3-5 个类案检索关键词（不要包含罪名本身），聚焦行为特征、情节要素、对象特征，每行一个，只输出关键词。"},
+            {"role": "user", "content": source_text},
+        ])
+        suggested = []
+        for line in kw_text.strip().split("\n"):
+            # 剥离编号前缀（1. / 2、/ 3)）与列表符号，得到干净关键词
+            line = re.sub(r"^\d+[.、\)]\s*", "", line.strip()).strip("- •　 ")
+            if line:
+                suggested.append(line)
+        suggested = suggested[:5]
+        if suggested:
+            self._save_suggested_keywords(suggested)
+        return suggested
+
     def _save_suggested_keywords(self, keywords: list[str]):
         """LLM 推荐关键词写入 case.json（不覆盖用户已编辑的 search_keywords）"""
         meta_file = self.case_dir / "case.json"
@@ -1119,21 +1156,11 @@ class AnalysisPipeline:
         indictment_content = self._load_wiki_page("", "01-指控要素.md")
 
         # LLM 推荐类案检索关键词（罪名除外），存 case.json suggested_keywords
-        if indictment_analyzed:
+        # 无起诉书时回退用阶段 3（事件拆解）/阶段 1 产物作为材料来源
+        kw_source = self._keyword_source_text(indictment_analyzed, indictment_content)
+        if kw_source.strip():
             try:
-                kw_text = await self.llm.chat([
-                    {"role": "system", "content": "你是刑事律师。请从指控要素分析中提取 3-5 个类案检索关键词（不要包含罪名本身），聚焦行为特征、情节要素、对象特征，每行一个，只输出关键词。"},
-                    {"role": "user", "content": indictment_content[:5000]},
-                ])
-                suggested = []
-                for line in kw_text.strip().split("\n"):
-                    # 剥离编号前缀（1. / 2、/ 3)）与列表符号，得到干净关键词
-                    line = re.sub(r"^\d+[.、\)]\s*", "", line.strip()).strip("- •　 ")
-                    if line:
-                        suggested.append(line)
-                suggested = suggested[:5]
-                if suggested:
-                    self._save_suggested_keywords(suggested)
+                await self._suggest_search_keywords(kw_source)
             except Exception as e:
                 print(f"[步骤 4a] 关键词推荐失败（不影响主流程）: {e}")
 
