@@ -46,8 +46,9 @@ function parseConfirmation(md: string | null): { directions: string[]; additions
   return { directions, additions }
 }
 
-// 草稿：未确认的编辑/补充持久化到 localStorage（key 含 caseId），防止切界面丢失
+// 草稿：未确认的勾选/编辑/补充持久化到 localStorage（key 含 caseId），防止切界面丢失
 interface StrategyDraft {
+  selected?: number[]  // 勾选的建议下标；旧版草稿无此字段（兼容缺失）
   editedDirections: Record<number, string>
   additions: string[]
   newAddition: string
@@ -60,11 +61,13 @@ function readDraft(key: string): StrategyDraft | null {
     if (!raw) return null
     const d = JSON.parse(raw) as Partial<StrategyDraft>
     const draft: StrategyDraft = {
+      selected: Array.isArray(d.selected) ? d.selected : undefined,
       editedDirections: d.editedDirections || {},
       additions: d.additions || [],
       newAddition: d.newAddition || '',
     }
-    if (Object.keys(draft.editedDirections).length === 0 && draft.additions.length === 0 && !draft.newAddition.trim()) return null
+    const hasSelection = draft.selected !== undefined && draft.selected.length > 0
+    if (!hasSelection && Object.keys(draft.editedDirections).length === 0 && draft.additions.length === 0 && !draft.newAddition.trim()) return null
     return draft
   } catch { return null }
 }
@@ -72,7 +75,8 @@ function readDraft(key: string): StrategyDraft | null {
 // 写入草稿；内容为空时清除 key
 function writeDraft(key: string, draft: StrategyDraft) {
   try {
-    if (Object.keys(draft.editedDirections).length === 0 && draft.additions.length === 0 && !draft.newAddition.trim()) {
+    const hasSelection = draft.selected !== undefined && draft.selected.length > 0
+    if (!hasSelection && Object.keys(draft.editedDirections).length === 0 && draft.additions.length === 0 && !draft.newAddition.trim()) {
       localStorage.removeItem(key)
     } else {
       localStorage.setItem(key, JSON.stringify(draft))
@@ -104,12 +108,13 @@ export default function DefenseStrategyPanel({ caseId, defendant, charges, onCon
       .then(data => {
         if (cancelled) return
         setStrategy(data)
+        loadedCaseRef.current = caseId  // 仅成功路径标记：失败时保持旧值，避免草稿 effect 走 removeItem 分支误删既有草稿
         const directions = data.suggestion?.directions || []
         const draft = readDraft(draftKey)  // 本地草稿（未确认的编辑成果），优先于后端解析值
         if (data.status === 'awaiting_confirmation') {
           setJustConfirmed(false)
-          // 默认全部勾选
-          setSelected(new Set(directions.map((_, i) => i)))
+          // 默认全部勾选；草稿含勾选状态时以草稿为准
+          setSelected(draft?.selected !== undefined ? new Set(draft.selected) : new Set(directions.map((_, i) => i)))
           if (draft) {
             setEditedDirections(draft.editedDirections)
             setAdditions(draft.additions)
@@ -124,24 +129,42 @@ export default function DefenseStrategyPanel({ caseId, defendant, charges, onCon
           const origs = directions.map(d => d.direction)
           const consumed = new Set<number>()                    // 已被确认稿命中的建议下标
           const pairs: Array<{ idx: number; text: string }> = [] // 建议下标 ↔ 确认稿方向文本
-          const unmatched: string[] = []                         // 未按原文命中的确认稿文本（被律师改写过）
-          // 第一轮：文本精确匹配（建议原文即确认稿文本 → 未修改的采纳项）
-          for (const t of parsed.directions) {
+          // 第一轮：文本精确匹配，记录每个确认稿位置命中的建议下标（-1 = 未命中，即被律师改写过）
+          const matchIdx = parsed.directions.map(t => {
             const j = origs.findIndex((o, k) => !consumed.has(k) && o === t)
             if (j >= 0) { consumed.add(j); pairs.push({ idx: j, text: t }) }
-            else unmatched.push(t)
-          }
-          if (parsed.directions.length > 0 && pairs.length === 0) {
+            return j
+          })
+          if (parsed.directions.length === 0) {
+            // 确认稿为空（null 或无方向）→ 回退全选
+            // 与后端"空确认视为采纳系统建议"语义对齐，避免 UI 呈现全不勾、提交却全采纳的矛盾
+            directions.forEach((_, i) => consumed.add(i))
+          } else if (pairs.length === 0) {
             // 一条都匹配不上（全被改写）→ 回退全选，按位置一一对应
             directions.forEach((_, i) => consumed.add(i))
             parsed.directions.forEach((t, n) => { if (n < directions.length) pairs.push({ idx: n, text: t }) })
           } else {
-            // 未命中的确认稿文本按顺序配给未被消费的建议下标
-            // （后端按选中下标升序写入确认稿，方向顺序与勾选下标顺序一致）
+            // 第二轮：未命中（改写）文本按"递增约束"归并到剩余建议下标
+            // 后端按勾选下标升序写入确认稿，故确认稿第 N 条的真实下标必大于第 N-1 条。
+            // 旧实现把未命中文本按序配给 rest 升序下标，在"反选+改写"交错时错配：
+            //   建议 [A,B,C,D]，反选 A、改写 C→C'，确认稿 [B,C',D] → C' 被错配给下标 0（A）。
+            // 归并规则：遍历确认稿位置，遇精确匹配位置时丢弃 rest 中小于该下标的项；
+            // 未命中位置取 rest 中满足递增约束的最小下标（rest 升序，队首即所求）。
+            // 同上例：B 精确命中下标 1 → 丢弃 rest 中 <1 的 0 → C' 正确配给下标 2（C）。
             const rest = origs.map((_, k) => k).filter(k => !consumed.has(k))
-            unmatched.forEach((t, n) => { if (n < rest.length) { consumed.add(rest[n]); pairs.push({ idx: rest[n], text: t }) } })
+            parsed.directions.forEach((t, n) => {
+              const j = matchIdx[n]
+              if (j >= 0) {
+                while (rest.length > 0 && rest[0] < j) rest.shift()  // 小于已确定下标的项不可能再被命中
+              } else if (rest.length > 0) {
+                const idx = rest.shift()!
+                consumed.add(idx)
+                pairs.push({ idx, text: t })
+              }
+            })
           }
-          setSelected(new Set(consumed))
+          // 勾选状态：草稿含 selected 时优先（用户最新未保存的勾选），否则用确认稿推导值
+          setSelected(draft?.selected !== undefined ? new Set(draft.selected) : new Set(consumed))
           // 编辑文本恢复：确认稿文本与对应建议原文不同即为律师修改（不要求长度相等）
           const edited: Record<number, string> = {}
           for (const p of pairs) { if (p.text !== origs[p.idx]) edited[p.idx] = p.text }
@@ -152,15 +175,15 @@ export default function DefenseStrategyPanel({ caseId, defendant, charges, onCon
         }
       })
       .catch(() => {})
-      .finally(() => { if (!cancelled) { loadedCaseRef.current = caseId; setLoaded(true) } })
+      .finally(() => { if (!cancelled) setLoaded(true) })
     return () => { cancelled = true }
   }, [caseId, refreshKey])
 
-  // 草稿持久化：编辑方向/补充/新补充输入变化即写入 localStorage
+  // 草稿持久化：勾选/编辑方向/补充/新补充输入变化即写入 localStorage
   useEffect(() => {
     if (loadedCaseRef.current !== caseId) return  // 当前案件数据未加载完，不写
-    writeDraft(draftKey, { editedDirections, additions, newAddition })
-  }, [caseId, draftKey, editedDirections, additions, newAddition])
+    writeDraft(draftKey, { selected: Array.from(selected).sort((a, b) => a - b), editedDirections, additions, newAddition })
+  }, [caseId, draftKey, selected, editedDirections, additions, newAddition])
 
   const toggle = useCallback((idx: number) => {
     setSelected(prev => {
