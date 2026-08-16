@@ -11,6 +11,7 @@
 """
 import json
 import os
+import shutil
 import tempfile
 import time
 import logging
@@ -1423,6 +1424,24 @@ class AnalysisEngine:
         base = self.analysis_dir / charge / "stage_5" if charge else self.analysis_dir / "stage_5"
         return base / "sections"
 
+    def invalidate_stage5_cache(self, charges: Optional[list] = None):
+        """显式重跑阶段 5 前失效旧产物：删除 5B 共享层产物 + 各罪名 5C 子节目录。
+
+        调用时机：单阶段端点 /run-stage/5 调用前；run-all 在罪名循环开始前调用一次。
+        循环内后续罪名仍复用 5B/5C 共享层（多罪名共享设计，见 _run_5b_if_needed）。
+        """
+        stage52_dir = self.analysis_dir / "stage_52"
+        for name in ("output.md", "output.json"):
+            f = stage52_dir / name
+            if f.exists():
+                f.unlink()
+                logger.info(f"[阶段5] 显式重跑：已删除 5B 旧产物 {f}")
+        for charge in (charges or [None]):
+            sections_dir = self._stage5_sections_dir(charge)
+            if sections_dir.exists():
+                shutil.rmtree(sections_dir)
+                logger.info(f"[阶段5] 显式重跑：已删除 5C 子节目录 {sections_dir}")
+
     async def stage_5_full_defense(
         self,
         defendant: str,
@@ -1605,6 +1624,7 @@ class AnalysisEngine:
         sections_dir = self._stage5_sections_dir(crime_type)
         sections_dir.mkdir(parents=True, exist_ok=True)
         parts = []
+        failed_sections = []
         for idx, (filename, heading, instruction) in enumerate(sub_sections, 1):
             section_file = sections_dir / filename
             if section_file.exists():
@@ -1620,11 +1640,32 @@ class AnalysisEngine:
                 build_cached_messages(shared_system, material, instruction),
                 model_override=_get_heavy_model(),
             )
+            if not content.strip():
+                # LLM 返回空：不写节产物、记 warning、本节标记失败（与 45c/45d 空检查模式对齐），
+                # 重跑阶段 5 时只补失败节即可自愈
+                logger.warning(f"[阶段5C] {heading} 生成失败：LLM 返回空内容")
+                failed_sections.append(heading)
+                parts.append(f"### {heading}\n\n（本节生成失败：LLM 返回空内容，请重跑阶段 5 补齐）")
+                continue
             _atomic_write(section_file, content)
             parts.append(f"### {heading}\n\n{content.strip()}")
 
         # 合并六节为三阶层辩护报告（stage_53 对外形态不变）
         defense_md = "\n\n".join(parts)
+
+        if failed_sections:
+            # 有缺节时不落盘 stage_53/stage_5，避免残缺合并产物被当作完成态；
+            # 已生成的节保留在 sections/，重跑只补缺失节
+            logger.warning(f"[阶段5C] {len(failed_sections)} 个章节生成失败（{'、'.join(failed_sections)}），stage_53/stage_5 暂不落盘")
+            return {
+                "stage": 5,
+                "name": "综合辩护分析",
+                "defendant": defendant,
+                "crime_type": crime_type,
+                "partial": True,
+                "failed_sections": failed_sections,
+                "generated_at": datetime.now().isoformat(),
+            }
 
         self._save_stage(53, {"name": "三阶层辩护"}, defense_md, charge=crime_type)
 

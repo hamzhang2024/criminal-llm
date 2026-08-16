@@ -126,3 +126,120 @@ def test_45a_empty_llm_result_not_saved(tmp_path):
         assert f.read_text(encoding="utf-8").strip() != "", "空结果不得保存"
     status_45a = [s for s in result["sub_steps"] if s.get("step") == "45a"]
     assert status_45a and status_45a[0]["status"] != "done", "空结果不得标 done"
+
+
+def _seed_debate_files(tmp_path, files: dict) -> Path:
+    """在 debate 目录预置产物文件"""
+    debate_dir = tmp_path / "case_001" / "analysis" / "04.5-控辩对抗"
+    debate_dir.mkdir(parents=True, exist_ok=True)
+    for name, content in files.items():
+        (debate_dir / name).write_text(content, encoding="utf-8")
+    return debate_dir
+
+
+def test_45c_exception_does_not_poison_merged_file(tmp_path):
+    """45c 异常路径：不写"分析失败"合并产物（修复前：毒化跳过守卫，45c/45d 永远被跳过）"""
+    pipe = _make_pipeline(tmp_path)
+    debate_dir = _seed_debate_files(tmp_path, {
+        "01-控方指控.md": "控方",
+        "02-辩方辩护.md": "辩方",
+    })
+
+    async def boom(messages, **kw):
+        raise RuntimeError("LLM 网络故障")
+
+    pipe.llm.chat = boom
+    result = asyncio.run(pipe.step45_debate_simulation("张三", "诈骗罪"))
+
+    merged = debate_dir / "03-交叉对决.md"
+    assert (not merged.exists()) or merged.read_text(encoding="utf-8").strip() == "", \
+        "异常时不得写入非空合并产物（会毒化跳过守卫）"
+    status = [s for s in result["sub_steps"] if s.get("step") == "45c"]
+    assert status and status[0]["status"] == "failed"
+
+    # 重跑可自愈：LLM 恢复后 45c 正常生成
+    async def ok(messages, **kw):
+        return "对决内容"
+
+    pipe.llm.chat = ok
+    asyncio.run(pipe.step45_debate_simulation("张三", "诈骗罪"))
+    assert "对决内容" in merged.read_text(encoding="utf-8")
+
+
+def test_45d_exception_does_not_poison_merged_file(tmp_path):
+    """45d 异常路径：不写"分析失败"对抗分析产物，重跑可自愈"""
+    pipe = _make_pipeline(tmp_path)
+    debate_dir = _seed_debate_files(tmp_path, {
+        "01-控方指控.md": "控方",
+        "02-辩方辩护.md": "辩方",
+        "03-交叉对决.md": "交叉",
+    })
+
+    async def boom(messages, **kw):
+        raise RuntimeError("LLM 网络故障")
+
+    pipe.llm.chat = boom
+    result = asyncio.run(pipe.step45_debate_simulation("张三", "诈骗罪"))
+
+    merged = debate_dir / "对抗分析.md"
+    assert (not merged.exists()) or merged.read_text(encoding="utf-8").strip() == "", \
+        "异常时不得写入非空合并产物（会毒化跳过守卫）"
+    status = [s for s in result["sub_steps"] if s.get("step") == "45d"]
+    assert status and status[0]["status"] == "failed"
+
+    async def ok(messages, **kw):
+        return "裁决内容"
+
+    pipe.llm.chat = ok
+    asyncio.run(pipe.step45_debate_simulation("张三", "诈骗罪"))
+    assert "裁决内容" in merged.read_text(encoding="utf-8")
+
+
+def test_45c_merges_existing_sub_products_without_llm(tmp_path):
+    """45c 自愈：合并文件缺失但两个子产物齐全 → 直接重新合并，不调 LLM"""
+    pipe = _make_pipeline(tmp_path)
+    debate_dir = _seed_debate_files(tmp_path, {
+        "01-控方指控.md": "控方",
+        "02-辩方辩护.md": "辩方",
+        "03-交叉对决-逐焦点攻防.md": "攻防表",
+        "03-交叉对决-路径评估.md": "路径评估",
+        "对抗分析.md": "已有裁决",  # 45d 也跳过，确保全程零 LLM 调用
+    })
+
+    calls = []
+
+    async def spy(messages, **kw):
+        calls.append(1)
+        return "不应被调用"
+
+    pipe.llm.chat = spy
+    asyncio.run(pipe.step45_debate_simulation("张三", "诈骗罪"))
+
+    assert calls == [], "子产物齐全时应直接合并，不得调用 LLM"
+    merged = (debate_dir / "03-交叉对决.md").read_text(encoding="utf-8")
+    assert "攻防表" in merged and "路径评估" in merged
+
+
+def test_45d_merges_existing_sub_products_without_llm(tmp_path):
+    """45d 自愈：对抗分析.md 缺失但裁决总览/攻防建议齐全 → 直接重新合并，不调 LLM"""
+    pipe = _make_pipeline(tmp_path)
+    debate_dir = _seed_debate_files(tmp_path, {
+        "01-控方指控.md": "控方",
+        "02-辩方辩护.md": "辩方",
+        "03-交叉对决.md": "交叉",
+        "对抗分析-裁决总览.md": "裁决总览",
+        "对抗分析-攻防建议.md": "攻防建议",
+    })
+
+    calls = []
+
+    async def spy(messages, **kw):
+        calls.append(1)
+        return "不应被调用"
+
+    pipe.llm.chat = spy
+    asyncio.run(pipe.step45_debate_simulation("张三", "诈骗罪"))
+
+    assert calls == [], "子产物齐全时应直接合并，不得调用 LLM"
+    merged = (debate_dir / "对抗分析.md").read_text(encoding="utf-8")
+    assert "裁决总览" in merged and "攻防建议" in merged

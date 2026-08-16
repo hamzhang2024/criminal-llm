@@ -1767,7 +1767,8 @@ class AnalysisPipeline:
                     self._mark_substep_done("4.5", "45c", "done")
                     print("[步骤 4.5c] 完成交叉对决")
             except Exception as e:
-                self._save_debate_file("03-交叉对决.md", f"分析失败：{e}")
+                # 异常时不写合并产物：非空的"分析失败"文本会让 _debate_file_exists 永真，
+                # 导致 45c 永远被跳过且失败文本喂给下游；保留缺失状态，重跑可自愈
                 results_log["sub_steps"].append({"step": "45c", "name": "交叉对决", "status": "failed", "error": str(e)})
         else:
             results_log["sub_steps"].append({"step": "45c", "name": "交叉对决", "status": "skipped"})
@@ -1894,7 +1895,7 @@ class AnalysisPipeline:
                     self._mark_substep_done("4.5", "45d", "done")
                     print("[步骤 4.5d] 完成法官裁决")
             except Exception as e:
-                self._save_debate_file("对抗分析.md", f"分析失败：{e}")
+                # 异常时不写合并产物（同 45c）：避免"分析失败"文本毒化跳过守卫，重跑可自愈
                 results_log["sub_steps"].append({"step": "45d", "name": "法官裁决", "status": "failed", "error": str(e)})
         else:
             results_log["sub_steps"].append({"step": "45d", "name": "法官裁决", "status": "skipped"})

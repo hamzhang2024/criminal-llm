@@ -256,6 +256,9 @@ async def _execute_all_stages(case_id: str, defendant: str, charges: list = None
         r35 = await engine.stage_35_fund_flow(defendant, charges[0] if charges else None)
 
         # ── 罪名层(stage_4/5): 每个罪名独立 ──
+        # 显式重跑：罪名循环开始前失效一次 5B/5C 旧产物（重新提取证据后旧报告与上游阶段矛盾）；
+        # 循环内后续罪名仍复用 5B/5C 共享层（多罪名共享设计，见 _run_5b_if_needed）
+        engine.invalidate_stage5_cache(charges if charges else None)
         charge_count = len(charges) if charges else 1
         for idx, charge in enumerate(charges or [None]):
             charge_name = charge or "默认"
@@ -373,6 +376,10 @@ async def run_single_stage(
             raise HTTPException(status_code=500, detail=f"阶段 {stage_num} 执行失败: {str(e)}")
 
     engine = AnalysisEngine(case_id, case_path, indictment_file=indictment_file)
+
+    # 显式重跑阶段 5：先失效 5B/5C 旧产物，避免直接复用导致报告与新生成的上游阶段自相矛盾
+    if stage_num == 5:
+        engine.invalidate_stage5_cache([crime_type] if crime_type else None)
 
     stage_methods = {
         1: lambda: engine.stage_1_read_indictment(defendant, crime_type),
