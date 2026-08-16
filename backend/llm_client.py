@@ -20,6 +20,36 @@ from analysis_engine import (
 
 logger = logging.getLogger(__name__)
 
+# 进程级缓存命中率累计器：跨 LLMClient 实例累计（LLM 调用均在同一事件循环内，简单全局变量即可）
+_PROCESS_CACHE_STATS = {"hit": 0, "miss": 0, "calls": 0}
+
+
+def _record_process_cache_stats(hit: int, miss: int) -> None:
+    """累加进程级缓存命中统计（chat/completions 与豆包 Responses 两条路径共用）"""
+    _PROCESS_CACHE_STATS["hit"] += hit
+    _PROCESS_CACHE_STATS["miss"] += miss
+    _PROCESS_CACHE_STATS["calls"] += 1
+
+
+def get_cache_stats() -> dict:
+    """获取进程级缓存命中率统计（供 /api/llm/cache-stats 展示）"""
+    hit = _PROCESS_CACHE_STATS["hit"]
+    miss = _PROCESS_CACHE_STATS["miss"]
+    total = hit + miss
+    return {
+        "hit_tokens": hit,
+        "miss_tokens": miss,
+        "hit_rate": round(hit / total, 4) if total > 0 else 0,
+        "calls": _PROCESS_CACHE_STATS["calls"],
+    }
+
+
+def reset_cache_stats() -> None:
+    """重置进程级缓存命中率统计（主要供测试隔离使用）"""
+    _PROCESS_CACHE_STATS["hit"] = 0
+    _PROCESS_CACHE_STATS["miss"] = 0
+    _PROCESS_CACHE_STATS["calls"] = 0
+
 # 各模型家族的最大输出 token 上限与计算函数已移至 context_budget，
 # 供预算公式（输入侧）与 chat()（输出侧）共用同一事实源，防止 input+output 超上下文
 from context_budget import DEFAULT_OUTPUT_CAP, compute_max_output_tokens
@@ -240,6 +270,7 @@ class LLMClient:
                         self._cache_hit_tokens += hit
                         self._cache_miss_tokens += miss
                         self._total_requests += 1
+                        _record_process_cache_stats(hit, miss)
                         total = hit + miss
                         hit_rate = (hit / total * 100) if total > 0 else 0
                         overall_total = self._cache_hit_tokens + self._cache_miss_tokens
@@ -371,6 +402,7 @@ class LLMClient:
             self._cache_hit_tokens += hit
             self._cache_miss_tokens += miss
             self._total_requests += 1
+            _record_process_cache_stats(hit, miss)
             total = hit + miss
             hit_rate = (hit / total * 100) if total > 0 else 0
             overall_total = self._cache_hit_tokens + self._cache_miss_tokens

@@ -4,7 +4,8 @@ import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, Check, Eye, EyeOff, Settings as SettingsIcon, RotateCw, Download, FolderOpen, FileText } from 'lucide-react'
 import { MacOSTitlebar, MacOSCard, MacOSInput, MacOSButton } from '../components/MacOSLayout'
-import { API_BASE, getAuthEmail, clearToken, clearAuthEmail, getAppVersion, checkUpdate, openUrl } from '../api'
+import { API_BASE, getAuthEmail, clearToken, clearAuthEmail, getAppVersion, checkUpdate, openUrl, getCacheStats } from '../api'
+import type { CacheStats } from '../api'
 import { showAlert, showConfirm } from '../components/MacOSDialog'
 
 // ═══════════════════════════════════════════════════════════
@@ -239,6 +240,16 @@ export function SettingsPage() {
   const [showCaseKey, setShowCaseKey] = useState(false)
   const [appVersion, setAppVersion] = useState('')
   const [checkingUpdate, setCheckingUpdate] = useState(false)
+  // LLM 缓存命中率统计（进入页面拉一次 + 每 30s 轮询）
+  const [cacheStats, setCacheStats] = useState<CacheStats | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    const load = () => getCacheStats().then(s => { if (!cancelled) setCacheStats(s) }).catch(() => {})
+    load()
+    const timer = setInterval(load, 30000)
+    return () => { cancelled = true; clearInterval(timer) }
+  }, [])
 
   // 检测是否有未保存的变更
   const hasUnsavedChanges = useCallback((): boolean => {
@@ -1219,6 +1230,19 @@ export function SettingsPage() {
                 <li>摘要层：证据浓缩摘要供分析阶段消费，长卷宗不爆上下文</li>
                 <li>上下文预算：按上方「模型上下文大小」自动缩放分批与截断</li>
               </ul>
+              {/* 本次运行的实时缓存命中率（后端进程级累计） */}
+              {cacheStats && cacheStats.calls > 0 && (
+                <div style={{ marginTop: '8px', fontSize: '11px', color: '#86868b' }}>
+                  本次运行：{cacheStats.calls} 次调用，缓存命中率{' '}
+                  <span style={{
+                    fontWeight: 600,
+                    color: cacheStats.hit_rate >= 0.5 ? '#34c759' : 'var(--macos-accent)',
+                  }}>
+                    {Math.round(cacheStats.hit_rate * 100)}%
+                  </span>
+                  {' '}（{cacheStats.hit_tokens.toLocaleString()} / {(cacheStats.hit_tokens + cacheStats.miss_tokens).toLocaleString()} tokens）
+                </div>
+              )}
             </div>
           </MacOSCard>
 

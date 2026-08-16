@@ -10,8 +10,8 @@ export { login, verifyToken, register, resetPassword, sendResetCode, resetWithCo
 export type { LoginResponse, VerifyResponse } from './auth'
 
 // 版本与更新
-export { getAppVersion, checkUpdate } from './config'
-export type { UpdateInfo } from './config'
+export { getAppVersion, checkUpdate, getCacheStats } from './config'
+export type { UpdateInfo, CacheStats } from './config'
 
 // 案件管理
 export { listCases, getPendingCases, getTrash, getCaseInfo, getCaseFiles, getStepFiles, createCase, importCase, updateCaseCharges, updateCaseSearchKeywords, deleteCase, restoreCase, permanentDeleteCase, claimCases, uploadFiles, deleteFile, deleteOriginalFileOnly, batchProcess, convertToMd, deleteMdFile, deletePdfFile, openFile, getLlmSegmentNames, getThumbnails, cleanupProcessed } from './cases'
@@ -42,7 +42,7 @@ export { pickFiles, pickFolder, pickMultiple, sendNotification, showNativeConfir
 import { openUrl, waitForBackend, API_BASE, safeFetch } from './client'
 import { thumbnailUrl, serveFileUrl, thumbCacheUrl } from './cases'
 import { login, verifyToken, register, resetPassword, sendResetCode, resetWithCode, getToken, setToken, clearToken, getAuthEmail, setAuthEmail, clearAuthEmail } from './auth'
-import { getAppVersion, checkUpdate } from './config'
+import { getAppVersion, checkUpdate, getCacheStats } from './config'
 import { listCases, getPendingCases, getTrash, getCaseInfo, getCaseFiles, getStepFiles, createCase, importCase, updateCaseCharges, updateCaseSearchKeywords, deleteCase, restoreCase, permanentDeleteCase, claimCases, uploadFiles, deleteFile, deleteOriginalFileOnly, batchProcess, convertToMd, deleteMdFile, deletePdfFile, openFile, getLlmSegmentNames, getThumbnails, cleanupProcessed, createAnalysis, analyzeCase, getAnalysisProgress, chatAboutCase, getReport, selectEvidence } from './cases'
 import { extractEvidence, stopExtractEvidence, getEvidenceIndex, getExtractStatus, getEvidenceSummary, getMdFiles, getProcessedPdfs, getEvidenceCompleteness, getOcrImages, startOcrImages, getOcrStatus } from './evidence'
 import { runPipelineStep, getPipelineStatus, getPipelineProgress, getStepResult, getAnalysisState, resumePipeline, getDefenseStages, getDefenseStageContent, getDefenseStrategy, confirmDefenseStrategy, getWikiIndex, getWikiPage, getMdFile, getPdfText, uploadWikiReference, clearWiki, getEvidenceSummaries, getEvidenceOther, getSummaryContent, getEvidenceFiles, getContradictionFiles, getContradictionContent } from './pipeline'
@@ -187,4 +187,6 @@ export const api = {
   deleteWorkflow,
   // 日志
   getBackendLog,
+  // LLM 缓存命中率统计
+  getCacheStats,
 }

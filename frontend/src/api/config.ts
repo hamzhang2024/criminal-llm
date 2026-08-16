@@ -1,6 +1,6 @@
 // 版本、更新、配置 API
 
-import { isTauri, tauriInvoke, openUrl } from './client'
+import { isTauri, tauriInvoke, openUrl, API_BASE } from './client'
 
 export interface UpdateInfo {
   has_update: boolean
@@ -25,3 +25,16 @@ export async function checkUpdate(): Promise<UpdateInfo> {
 }
 
 export { openUrl }
+
+// LLM 前缀缓存命中率统计（后端进程级累计）
+export interface CacheStats {
+  hit_tokens: number
+  miss_tokens: number
+  hit_rate: number  // 0~1
+  calls: number
+}
+
+export async function getCacheStats(): Promise<CacheStats> {
+  const res = await fetch(`${API_BASE}/llm/cache-stats`)
+  return res.json()
+}

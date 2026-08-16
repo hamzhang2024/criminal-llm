@@ -114,6 +114,13 @@ async def health_check():
     return {"status": "ok", "version": "1.0.0"}
 
 
+@app.get("/api/llm/cache-stats")
+async def llm_cache_stats():
+    """LLM 前缀缓存命中率统计（进程级累计，供设置页与分析区实时展示）"""
+    from llm_client import get_cache_stats
+    return get_cache_stats()
+
+
 @app.get("/api/config")
 async def get_config():
     """获取配置状态（不返回实际值）"""

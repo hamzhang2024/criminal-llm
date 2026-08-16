@@ -8,6 +8,8 @@ import { SearchKeywordsEditor } from './SearchKeywordsEditor'
 import { STAGES } from '../hooks/useStageAnalysis'
 import type { CaseFile } from '../hooks/useCaseFiles'
 import type { EvidenceIndexFile, CompletenessReport } from '../../../api'
+import { getCacheStats } from '../../../api'
+import type { CacheStats } from '../../../api'
 
 interface EvidenceItem {
   id: number | string
@@ -56,6 +58,17 @@ export function Step2Analyze({
   for (const f of evidenceFiles) docTypeMap[f.name] = f.doc_type
   // 非证据文件（封面/目录等，不参与提取）
   const nonEvidenceFiles = evidenceFiles.filter(f => f.doc_type.startsWith('non_evidence'))
+
+  // 分析运行中轮询 LLM 缓存命中率（每 8s），空闲时隐藏徽标
+  const [cacheStats, setCacheStats] = React.useState<CacheStats | null>(null)
+  React.useEffect(() => {
+    if (runningStage === null) return
+    let cancelled = false
+    const load = () => getCacheStats().then(s => { if (!cancelled) setCacheStats(s) }).catch(() => {})
+    load()
+    const timer = setInterval(load, 8000)
+    return () => { cancelled = true; clearInterval(timer) }
+  }, [runningStage])
 
   return (
     <>
@@ -190,13 +203,21 @@ export function Step2Analyze({
       <MacOSCard style={{ marginBottom: '12px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
           <h4 style={{ fontSize: '14px', fontWeight: '600', margin: 0 }}>分析阶段（不建议并行处理）</h4>
-          <MacOSButton
-            variant="primary"
-            disabled={!evidenceExtracted || runningStage !== null}
-            onClick={onRunAll}
-          >
-            全部分析
-          </MacOSButton>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            {/* 分析运行中的实时缓存命中率徽标 */}
+            {runningStage !== null && cacheStats && cacheStats.calls > 0 && (
+              <span style={{ fontSize: '11px', color: 'var(--macos-text-tertiary)' }} title={`缓存命中 ${cacheStats.hit_tokens.toLocaleString()} / ${(cacheStats.hit_tokens + cacheStats.miss_tokens).toLocaleString()} tokens`}>
+                ⚡ 缓存 <span style={{ fontWeight: 600, color: cacheStats.hit_rate >= 0.5 ? '#34c759' : 'var(--macos-accent)' }}>{Math.round(cacheStats.hit_rate * 100)}%</span>
+              </span>
+            )}
+            <MacOSButton
+              variant="primary"
+              disabled={!evidenceExtracted || runningStage !== null}
+              onClick={onRunAll}
+            >
+              全部分析
+            </MacOSButton>
+          </div>
         </div>
         {!evidenceExtracted && (
           <div style={{
