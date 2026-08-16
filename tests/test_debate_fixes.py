@@ -71,7 +71,9 @@ def test_empty_debate_file_treated_as_missing(tmp_path):
     asyncio.run(pipe.step45_debate_simulation("张三", "诈骗罪"))
 
     assert len(calls) >= 1, "0 字节文件应触发 45d 重跑"
-    assert (debate_dir / "对抗分析.md").read_text(encoding="utf-8") == "法官裁决内容"
+    # 45d 拆分后合并产物 = ①裁决总览 + ②攻防建议（本桩两次应答相同）
+    merged = (debate_dir / "对抗分析.md").read_text(encoding="utf-8")
+    assert "法官裁决内容" in merged and merged.strip() != ""
 
 
 def test_merge_filenames_match_actual(tmp_path):

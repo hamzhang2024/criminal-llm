@@ -1672,22 +1672,30 @@ class AnalysisPipeline:
         blue_defense = self._load_debate_file("02-辩方辩护.md")
 
         # ===== 45c: 交叉对决（双方论点正面碰撞） =====
+        # 单任务聚焦拆分：①逐焦点攻防表 ②三条路径评估，两次调用共享 system + material 前缀
         if not self._debate_file_exists("03-交叉对决.md"):
             print("[步骤 4.5c] 交叉对决：双方论点正面碰撞...")
             if progress_cb:
                 progress_cb(sub_done, sub_total, "步骤 4.5：交叉对决")
             try:
-                clash_analysis = await self.llm.chat([
-                    {"role": "system", "content": "你是庭审对抗模拟系统。你的职责是让控辩双方观点正面交锋。"},
-                    {"role": "user", "content": f"""以下是控辩双方各自独立构建的论点：
+                clash_system = "你是庭审对抗模拟系统。你的职责是让控辩双方观点正面交锋。"
+                clash_material = f"""以下是控辩双方各自独立构建的论点：
 
 ## 控方指控
 {red_argument}
 
 ## 辩方辩护
-{blue_defense}
+{blue_defense}"""
 
-请以"交叉对决"的形式，让双方观点正面碰撞：
+                # ① 逐焦点攻防表（核心产物）
+                clash_table = self._load_debate_file("03-交叉对决-逐焦点攻防.md")
+                if not clash_table:
+                    clash_table = await self.llm.chat(build_cached_messages(
+                        clash_system,
+                        clash_material,
+                        """请以"交叉对决"的形式，让双方观点正面碰撞。
+
+本次只输出「逐焦点攻防」一个板块，不要输出其他内容：
 
 ## 一、逐焦点攻防
 
@@ -1701,6 +1709,20 @@ class AnalysisPipeline:
 - "辩方反驳"基于辩方的无罪辩护、改变定性辩护、罪轻辩护三条路径分别回应
 - "控方再反驳"模拟控方对辩方各路径的反击
 - "本焦点倾向"客观评估哪方更有说服力
+"""),
+                    )
+                    if clash_table.strip():
+                        self._save_debate_file("03-交叉对决-逐焦点攻防.md", clash_table)
+
+                # ② 三条辩护路径评估（无罪/改变定性/罪轻）
+                paths_eval = self._load_debate_file("03-交叉对决-路径评估.md")
+                if not paths_eval:
+                    paths_eval = await self.llm.chat(build_cached_messages(
+                        clash_system,
+                        clash_material,
+                        """请以"交叉对决"的形式，评估辩方三条辩护路径与控方指控的碰撞结果。
+
+本次只输出「三条辩护路径评估」板块（第二、三、四部分），不要输出逐焦点攻防表：
 
 ## 二、无罪辩护 vs 控方指控
 
@@ -1722,17 +1744,20 @@ class AnalysisPipeline:
 1. 从轻情节是否成立？
 2. 控方量刑建议是否适当？
 3. 在法庭上被采纳的可能性（高/中/低）
-"""},
-                ])
-                if not clash_analysis.strip():
-                    # LLM 返回空内容：不保存成功产物、不标记 done，保留重跑自愈机会
+"""),
+                    )
+                    if paths_eval.strip():
+                        self._save_debate_file("03-交叉对决-路径评估.md", paths_eval)
+
+                if not clash_table.strip() or not paths_eval.strip():
+                    # 任一子调用返回空：已产出的子产物保留（重跑只补缺失部分），不生成合并产物、不标 done
                     print("[步骤 4.5c] 交叉对决失败：LLM 返回空内容")
                     results_log["sub_steps"].append({
                         "step": "45c", "name": "交叉对决",
                         "status": "failed", "error": "LLM 返回空内容",
                     })
                 else:
-                    self._save_debate_file("03-交叉对决.md", clash_analysis)
+                    self._save_debate_file("03-交叉对决.md", f"{clash_table.strip()}\n\n{paths_eval.strip()}")
                     results_log["sub_steps"].append({"step": "45c", "name": "交叉对决", "status": "done"})
                     self._mark_substep_done("4.5", "45c", "done")
                     print("[步骤 4.5c] 完成交叉对决")
@@ -1746,26 +1771,35 @@ class AnalysisPipeline:
             progress_cb(sub_done, sub_total, "步骤 4.5：法官裁决")
 
         # ===== 45d: 法官裁决（独立评价） =====
+        # 单任务聚焦拆分：①裁决总览（总览表+三路径可行性+综合评估）
+        #                ②攻防建议（控方攻击点+辩方加强点+交叉询问预演）
         clash_analysis = self._load_debate_file("03-交叉对决.md")
         if not self._debate_file_exists("对抗分析.md"):
             print("[步骤 4.5d] 法官裁决...")
             if progress_cb:
                 progress_cb(sub_done, sub_total, "步骤 4.5：法官裁决")
             try:
-                # 45d 材料为红蓝产物 + 交叉对决，与 45a/45b 无公共前缀，独立组装
-                judge_verdict = await self.llm.chat(build_cached_messages(
-                    "你是中立法官。你的职责是客观评估控辩双方的论点，给出公正裁决。",
-                    f"""## 控方指控（独立构建）
+                # 45d 材料为红蓝产物 + 交叉对决，与 45a/45b 无公共前缀，独立组装；
+                # 两次子调用共享该 material 前缀命中缓存
+                judge_system = "你是中立法官。你的职责是客观评估控辩双方的论点，给出公正裁决。"
+                judge_material = f"""## 控方指控（独立构建）
 {red_argument}
 
 ## 辩方辩护（独立构建）
 {blue_defense}
 
 ## 交叉对决结果
-{clash_analysis}""",
-                    f"""你是本案主审法官。上述为控辩双方的独立论点及交叉对决结果。
+{clash_analysis}"""
 
-请以法官视角，输出以下裁决报告（Markdown 格式）：
+                # ① 裁决总览（总览表 + 三路径可行性 + 综合评估）
+                verdict_overview = self._load_debate_file("对抗分析-裁决总览.md")
+                if not verdict_overview:
+                    verdict_overview = await self.llm.chat(build_cached_messages(
+                        judge_system,
+                        judge_material,
+                        """你是本案主审法官。上述为控辩双方的独立论点及交叉对决结果。
+
+本次只输出「裁决总览」板块（第一、二、三部分），不要输出攻防建议内容：
 
 ## 一、攻防总览
 
@@ -1793,21 +1827,39 @@ class AnalysisPipeline:
 - 证据是否支持？
 - 法官综合评价：
 
-## 三、控方最可能攻击的弱点
+## 三、综合评估
+
+用一段话给出法官的综合评估：哪一方的论点更有说服力，本案的核心争议是什么，最可能影响判决的因素是什么。
+"""),
+                    )
+                    if verdict_overview.strip():
+                        self._save_debate_file("对抗分析-裁决总览.md", verdict_overview)
+
+                # ② 攻防建议（控方攻击点 + 辩方加强点 + 交叉询问预演）
+                verdict_advice = self._load_debate_file("对抗分析-攻防建议.md")
+                if not verdict_advice:
+                    verdict_advice = await self.llm.chat(build_cached_messages(
+                        judge_system,
+                        judge_material,
+                        """你是本案主审法官。上述为控辩双方的独立论点及交叉对决结果。
+
+本次只输出「攻防建议」板块（第四、五、六部分），不要输出总览与可行性评估：
+
+## 四、控方最可能攻击的弱点
 
 列出控方在真实庭审中最可能重点攻击的 3-5 个辩方弱点：
 1. 弱点描述
 2. 攻击方式（证据/逻辑/法律）
 3. 风险等级（高/中/低）
 
-## 四、辩方需要加强的领域
+## 五、辩方需要加强的领域
 
 列出辩方在真实庭审中需要重点准备的 3-5 个领域：
 1. 需要补充什么证据或论证
 2. 需要预判什么风险
 3. 建议的应对策略
 
-## 五、交叉询问预演指南
+## 六、交叉询问预演指南
 
 ### 控方交叉询问预演
 - 控方会向谁提问？
@@ -1817,21 +1869,20 @@ class AnalysisPipeline:
 ### 辩方交叉询问预演
 - 辩方是否有机会对控方证人提问？
 - 应该问什么来削弱控方证据？
-
-## 六、综合评估
-
-用一段话给出法官的综合评估：哪一方的论点更有说服力，本案的核心争议是什么，最可能影响判决的因素是什么。
 """),
-                )
-                if not judge_verdict.strip():
-                    # LLM 返回空内容：不保存成功产物、不标记 done，保留重跑自愈机会
+                    )
+                    if verdict_advice.strip():
+                        self._save_debate_file("对抗分析-攻防建议.md", verdict_advice)
+
+                if not verdict_overview.strip() or not verdict_advice.strip():
+                    # 任一子调用返回空：已产出的子产物保留（重跑只补缺失部分），不生成合并产物、不标 done
                     print("[步骤 4.5d] 法官裁决失败：LLM 返回空内容")
                     results_log["sub_steps"].append({
                         "step": "45d", "name": "法官裁决",
                         "status": "failed", "error": "LLM 返回空内容",
                     })
                 else:
-                    self._save_debate_file("对抗分析.md", judge_verdict)
+                    self._save_debate_file("对抗分析.md", f"{verdict_overview.strip()}\n\n{verdict_advice.strip()}")
                     results_log["sub_steps"].append({"step": "45d", "name": "法官裁决", "status": "done"})
                     self._mark_substep_done("4.5", "45d", "done")
                     print("[步骤 4.5d] 完成法官裁决")

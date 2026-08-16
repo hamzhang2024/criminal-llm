@@ -158,8 +158,8 @@ def test_debate_prompts_share_context_prefix(tmp_path):
     pipe.llm.chat = fake_chat
     asyncio.run(pipe.step45_debate_simulation("张三", "诈骗罪"))
 
-    # 45a/45b/45c/45d 各调用一次
-    assert len(captured) == 4, f"应调用 4 次 LLM，实际 {len(captured)}"
+    # 45a/45b 各一次；45c/45d 单任务聚焦拆分后各两次
+    assert len(captured) == 6, f"应调用 6 次 LLM，实际 {len(captured)}"
 
     msgs_45a, msgs_45b = captured[0], captured[1]
 
@@ -182,8 +182,8 @@ def test_debate_prompts_share_context_prefix(tmp_path):
     assert "## 指控要素" not in instruction_a
     assert "## 指控要素" not in instruction_b
 
-    # 45d：红蓝产物组装为 material，法官指令在末尾
-    user_d = captured[3][1]["content"]
+    # 45d：红蓝产物组装为 material，法官指令在末尾（45c 拆分后 45d① 在第 5 次调用）
+    user_d = captured[4][1]["content"]
     material_d, instruction_d = user_d.rsplit("\n\n---\n\n", 1)
     assert material_d.startswith("## 控方指控（独立构建）")
     assert "## 交叉对决结果" in material_d
