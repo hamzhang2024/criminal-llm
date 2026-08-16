@@ -17,7 +17,7 @@ class FakeClient:
     def __init__(self):
         self.calls = 0
 
-    async def chat(self, messages, model=None):
+    async def chat(self, messages, model=None, model_override=None):
         self.calls += 1
         return f"## 分析结果（第 {self.calls} 次调用）\n\n| 时间 | 关键陈述 | 变化 | 可能原因 |\n|---|---|---|---|\n| - | - | - | - |"
 

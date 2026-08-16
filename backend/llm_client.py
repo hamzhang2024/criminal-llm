@@ -142,10 +142,15 @@ class LLMClient:
     async def chat(
         self,
         messages: List[Dict[str, str]],
-        model: Optional[str] = None
+        model: Optional[str] = None,
+        model_override: Optional[str] = None
     ) -> str:
         """
         发送聊天请求
+
+        model_override：分层路由用，仅覆盖本次请求的 model 字段
+        （不改实例配置，不影响其他调用；base_url/key/超时/重试均不变）。
+        优先级：model_override > model > 实例默认模型。
         """
         # 每次请求前重新读取配置，确保配置变更后立即生效
         self.reload_config()
@@ -157,6 +162,9 @@ class LLMClient:
         if not self.model:
             raise Exception("模型名称未配置，请先在「设置」中填写模型名称")
 
+        # 本次请求生效的模型（分层路由只改这一处，其余配置共享）
+        effective_model = model_override or model or self.model
+
         url = f"{self.base_url}/chat/completions"
 
         # 根据模型上下文窗口动态计算最大输出 tokens（防止 API 默认值截断长输出）
@@ -164,10 +172,10 @@ class LLMClient:
         context_limit = int(get_config_value("model_context_limit", "250000"))
         # 预留 20% 给输入，其余作为输出上限；同时按模型家族上限截断，
         # 防止 context_limit 过大导致 max_tokens 超过模型实际上限而 API 400
-        max_output_tokens = compute_max_output_tokens(context_limit, model or self.model)
+        max_output_tokens = compute_max_output_tokens(context_limit, effective_model)
 
         payload = {
-            "model": model or self.model,
+            "model": effective_model,
             "messages": messages,
             "max_tokens": max_output_tokens
         }
@@ -181,7 +189,7 @@ class LLMClient:
         # chat/completions 端点没有缓存参数，保持原路径给其他提供商
         if self._is_doubao() and not self._responses_api_unsupported:
             try:
-                return await self._chat_via_responses_api(messages, model, headers, max_output_tokens)
+                return await self._chat_via_responses_api(messages, effective_model, headers, max_output_tokens)
             except httpx.HTTPStatusError as e:
                 status = e.response.status_code if e.response is not None else 0
                 if 400 <= status < 500:

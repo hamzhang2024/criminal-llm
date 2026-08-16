@@ -6,7 +6,7 @@
 import json
 import os
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 # 使用 config.py 的 DATA_DIR 确保开发和打包模式下路径一致
 from config import DATA_DIR
@@ -16,6 +16,8 @@ CONFIG_PATH = DATA_DIR / "criminal-llm-config.json"
 DEFAULTS = {
     "llm_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
     "llm_model": "qwen3.5-plus",
+    # 高质量任务模型（分层路由）：空字符串 = 不启用分层，全部走 llm_model
+    "llm_model_heavy": "",
     "evidence_concurrency": 3,
     # PDF 转 MD 引擎配置
     "pdf_engine": "mineru",          # "paddleocr" | "mineru"
@@ -73,6 +75,7 @@ def get_config_status() -> Dict[str, Any]:
         "llm_api_key_value": config.get("llm_api_key", ""),
         "llm_base_url": config.get("llm_base_url", ""),
         "llm_model": config.get("llm_model", ""),
+        "llm_model_heavy": config.get("llm_model_heavy", ""),
         "evidence_concurrency": config.get("evidence_concurrency", 3),
         # PDF 转 MD 引擎配置
         "pdf_engine": config.get("pdf_engine", "paddleocr"),
@@ -96,3 +99,14 @@ def get_config_value(key: str, default: str = "") -> str:
     """获取单个配置值（供其他模块调用）"""
     config = load_config()
     return config.get(key, default)
+
+
+def _get_heavy_model() -> Optional[str]:
+    """
+    高质量任务模型（分层路由）
+
+    读 llm_model_heavy：非空返回模型名（最终产物调用用），空返回 None（不启用分层，全部走默认模型）。
+    """
+    value = get_config_value("llm_model_heavy", "")
+    value = value.strip() if isinstance(value, str) else ""
+    return value or None

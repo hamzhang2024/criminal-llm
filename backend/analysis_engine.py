@@ -19,6 +19,7 @@ from typing import Optional, Callable, Dict, Any, List
 from datetime import datetime
 
 from prompt_cache import build_cached_messages
+from config_manager import _get_heavy_model
 
 logger = logging.getLogger(__name__)
 
@@ -1614,7 +1615,11 @@ class AnalysisEngine:
                     continue
             if progress_cb:
                 progress_cb(f"正在生成三阶层辩护报告（{idx}/6：{heading}）...")
-            content = await client.chat(build_cached_messages(shared_system, material, instruction))
+            # 最终产物（5C 六节辩护报告）走高质量模型（配置 llm_model_heavy 时）
+            content = await client.chat(
+                build_cached_messages(shared_system, material, instruction),
+                model_override=_get_heavy_model(),
+            )
             _atomic_write(section_file, content)
             parts.append(f"### {heading}\n\n{content.strip()}")
 
