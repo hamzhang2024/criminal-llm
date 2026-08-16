@@ -807,12 +807,12 @@ class AnalysisPipeline:
                     if progress_cb:
                         progress_cb(completed, total_sessions, f"正在总结：{person} 第{i}/{len(sessions)} 次笔录")
                     summary = await self.llm.chat([
-                        {"role": "system", "content": "你是一个专业的笔录整理员。你的任务是忠实转录笔录内容，并指出 PDF 转 Markdown 过程中的识别错误。不要加入律师观点或分析判断。"},
+                        {"role": "system", "content": "你是一个专业的笔录整理员。你的任务是忠实转录笔录内容。不要加入律师观点或分析判断。"},
                         {"role": "user", "content": f"""以下是{person}的第{i}次{etype.replace('笔录', '')}（时间：{session['time_range']}）。
 
 请完成以下任务：
 
-## 一、忠实转录
+## 忠实转录
 将笔录内容逐要点整理，要求：
 1. 完整保留所有陈述内容，不做分析判断
 2. 人名、时间、金额、事件等关键信息要准确，与原文一致
@@ -820,14 +820,6 @@ class AnalysisPipeline:
 4. 不要遗漏任何重要信息
 5. **不要加入律师观点、法律分析、定性判断**
 6. 保持原始陈述的语气和逻辑
-
-## 二、转换错误标记
-指出该笔录中明显的 PDF → Markdown 识别错误，例如：
-- 乱码、错字、漏字（OCR 识别错误）
-- 段落断裂或语句不通顺
-- 表格内容错位
-- 页眉页脚混入正文
-- 其他明显的格式异常
 
 笔录内容：
 {session['content'][:context_budget.content_budget_chars()]}"""},
