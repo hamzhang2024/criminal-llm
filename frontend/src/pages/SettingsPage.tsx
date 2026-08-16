@@ -1177,6 +1177,23 @@ export function SettingsPage() {
                 影响证据提取的分块策略。值越大，单次处理的文本越多，提取越完整。
               </div>
             </div>
+
+            {/* 分析链路优化说明：后端 prompt 结构对缓存/质量友好，自动生效，无需用户配置 */}
+            <div style={{ paddingTop: '16px', borderTop: '1px solid var(--macos-border)' }}>
+              <div style={{ fontSize: '12px', fontWeight: 600, color: '#1d1d1f', marginBottom: '6px' }}>
+                分析链路优化（自动生效）
+              </div>
+              <ul style={{ margin: 0, paddingLeft: '16px', fontSize: '11px', color: '#86868b', lineHeight: '1.8' }}>
+                <li>
+                  提示词结构：案件材料在前、任务指令在后——同一案件的多次分析调用共享前缀，
+                  命中供应商缓存后共享部分输入费用约省 80% 以上
+                  （DeepSeek / 千问 / Kimi 均为前缀自动命中，无需配置；Ollama 本地无计费概念）
+                </li>
+                <li>单任务调用：分析拆分为逐步聚焦调用（逐份提取 / 逐份摘要 / 分章节辩护意见），小模型输出质量更稳</li>
+                <li>摘要层：证据浓缩摘要供分析阶段消费，长卷宗不爆上下文</li>
+                <li>上下文预算：按上方「模型上下文大小」自动缩放分批与截断</li>
+              </ul>
+            </div>
           </MacOSCard>
 
           {/* 案例检索 API */}
