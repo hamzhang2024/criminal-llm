@@ -25,6 +25,10 @@ export function PdfPageManager({ caseId, pdfFilename, issues, onFixed }: PdfPage
   const [fixing, setFixing] = useState(false)
   const [message, setMessage] = useState('')
   const [cacheBust, setCacheBust] = useState(0)
+  // 行内修复输入：当前展开的 issue 下标（null = 未展开）及其页码输入值
+  // 注：macOS WKWebView 不实现 window.prompt（调用即抛 TypeError），故用行内输入代替
+  const [fixingIssue, setFixingIssue] = useState<number | null>(null)
+  const [fixPageInput, setFixPageInput] = useState('')
 
   useEffect(() => {
     setLoading(true)
@@ -62,13 +66,20 @@ export function PdfPageManager({ caseId, pdfFilename, issues, onFixed }: PdfPage
     }
   }
 
-  const fixIssue = async (issue: MdIssue) => {
-    const input = window.prompt(
-      `将重转「${pdfFilename}」中识别异常的页面并替换乱码内容。\n` +
-      `异常内容：${issue.page_label || issue.preview.slice(0, 40)}\n\n` +
-      `请输入该内容在 PDF 中的页码（缩略图中确认过的数字页码）：`)
-    const page = input ? parseInt(input, 10) : NaN
-    if (!page || page < 1) return
+  // 点击「重转并修复」：行内展开页码输入（替代 window.prompt，Tauri macOS 无此 API）
+  const openFixInput = (idx: number) => {
+    setFixingIssue(idx)
+    setFixPageInput('')
+    setMessage('')
+  }
+
+  // 确认行内输入的页码并执行重转修复
+  const confirmFixIssue = async (issue: MdIssue) => {
+    const page = parseInt(fixPageInput, 10)
+    if (!page || page < 1) {
+      setMessage('请输入有效的页码（从 1 开始的数字）')
+      return
+    }
     if (page > thumbs.length) {
       setMessage(`页码超出范围（共 ${thumbs.length} 页）`)
       return
@@ -83,6 +94,7 @@ export function PdfPageManager({ caseId, pdfFilename, issues, onFixed }: PdfPage
         invalidate_evidence: true,
       })
       setMessage(`修复完成${r.invalidated?.length ? `，${r.invalidated.length} 份相关证据已标记重提取（请回案件页点「提取证据」）` : ''}`)
+      setFixingIssue(null)
       onFixed()
     } catch (e: any) {
       setMessage(`修复失败：${e.message}`)
@@ -99,14 +111,39 @@ export function PdfPageManager({ caseId, pdfFilename, issues, onFixed }: PdfPage
         <div style={{ background: '#fff3cd', color: '#664d03', borderRadius: 8, padding: '10px 14px', marginBottom: 12, fontSize: 13 }}>
           <div style={{ fontWeight: 600, marginBottom: 6 }}>⚠️ 检测到 {issues.length} 处识别异常（可能页面倒置或扫描异常）</div>
           {issues.map((iss, i) => (
-            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
-              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {iss.page_label || '未知页'}：{iss.preview.slice(0, 50)}…
-              </span>
-              <button onClick={() => fixIssue(iss)} disabled={fixing}
-                style={{ padding: '4px 10px', fontSize: 12, border: 'none', borderRadius: 4, background: '#0d6efd', color: '#fff', cursor: 'pointer' }}>
-                {fixing ? '修复中…' : '重转并修复'}
-              </button>
+            <div key={i} style={{ marginTop: 6 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {iss.page_label || '未知页'}：{iss.preview.slice(0, 50)}…
+                </span>
+                <button onClick={() => (fixingIssue === i ? setFixingIssue(null) : openFixInput(i))} disabled={fixing}
+                  style={{ padding: '4px 10px', fontSize: 12, border: 'none', borderRadius: 4, background: '#0d6efd', color: '#fff', cursor: 'pointer' }}>
+                  {fixing ? '修复中…' : fixingIssue === i ? '收起' : '重转并修复'}
+                </button>
+              </div>
+              {fixingIssue === i && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, paddingLeft: 4 }}>
+                  <span style={{ fontSize: 12 }}>页码：</span>
+                  <input
+                    type="number" min={1} max={thumbs.length} value={fixPageInput}
+                    onChange={e => setFixPageInput(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); confirmFixIssue(iss) } }}
+                    placeholder={`1-${thumbs.length}`}
+                    aria-label="输入该内容在 PDF 中的页码"
+                    autoFocus
+                    style={{ width: 72, padding: '3px 6px', fontSize: 12, borderRadius: 4, border: '1px solid #c3a955', background: '#fff' }}
+                  />
+                  <button onClick={() => confirmFixIssue(iss)} disabled={fixing || !fixPageInput.trim()}
+                    style={{ padding: '3px 10px', fontSize: 12, border: 'none', borderRadius: 4, background: '#0d6efd', color: '#fff', cursor: 'pointer' }}>
+                    {fixing ? '修复中…' : '确认'}
+                  </button>
+                  <button onClick={() => setFixingIssue(null)} disabled={fixing}
+                    style={{ padding: '3px 10px', fontSize: 12, border: '1px solid #adb5bd', borderRadius: 4, background: 'transparent', color: '#664d03', cursor: 'pointer' }}>
+                    取消
+                  </button>
+                  <span style={{ fontSize: 11, opacity: 0.8 }}>在下方缩略图中确认过的数字页码</span>
+                </div>
+              )}
             </div>
           ))}
         </div>

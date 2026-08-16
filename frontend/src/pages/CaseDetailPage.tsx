@@ -515,6 +515,8 @@ export function CaseDetailPage() {
                   charges={charges}
                   onConfirmed={strategyFlow === 'stage' ? continueStageFlowAfterConfirm : loadPipelineState}
                   skipRunStep5={strategyFlow === 'stage'}
+                  // runToEnd 选择框仅 stage 流展示（pipeline 流的 onConfirmed 不消费该参数）
+                  showRunToEnd={strategyFlow === 'stage'}
                   refreshKey={strategyRefreshKey}
                   // 步骤 5/6 运行中时面板改只读状态条（stage 流或流水线步骤 5）
                   stageRunning={runningStage === 5 || runningStage === 6 || (pipelineRunning && currentPipelineStep === 5)}

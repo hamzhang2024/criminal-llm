@@ -21,6 +21,7 @@ interface DefenseStrategyPanelProps {
   refreshKey?: number  // 变化时重新拉取辩护思路状态
   skipRunStep5?: boolean  // true 时确认后不跑流水线步骤5（stage 流由 onConfirmed 接管后续阶段）
   stageRunning?: boolean  // 步骤 5/6 正在运行（切界面回来后由父组件传入），面板改为只读状态条
+  showRunToEnd?: boolean  // true 时显示「连续完成剩余全部分析」选择框（仅 stage 流父组件消费 runToEnd 时传）
 }
 
 // 类型徽标配色：主攻=金，备选=灰蓝
@@ -86,7 +87,7 @@ function writeDraft(key: string, draft: StrategyDraft) {
   } catch { /* ignore */ }
 }
 
-export default function DefenseStrategyPanel({ caseId, defendant, charges, onConfirmed, refreshKey, skipRunStep5, stageRunning }: DefenseStrategyPanelProps) {
+export default function DefenseStrategyPanel({ caseId, defendant, charges, onConfirmed, refreshKey, skipRunStep5, stageRunning, showRunToEnd = false }: DefenseStrategyPanelProps) {
   const [strategy, setStrategy] = useState<DefenseStrategy | null>(null)
   const [loaded, setLoaded] = useState(false)
   const [selected, setSelected] = useState<Set<number>>(new Set())
@@ -128,6 +129,9 @@ export default function DefenseStrategyPanel({ caseId, defendant, charges, onCon
             setAdditions([])
           }
         } else if (data.status === 'completed') {
+          // completed 分支同样复位 justConfirmed：防重复确认的职责已由 stageRunning prop 接管，
+          // 否则 runToEnd=false 跑完步骤 5 后用户会永远看到"生成中…"只读状态条
+          setJustConfirmed(false)
           // 已确认 → 编辑态预填：勾选状态与编辑文本从确认稿恢复
           const parsed = parseConfirmation(data.confirmation)
           const origs = directions.map(d => d.direction)
@@ -188,6 +192,14 @@ export default function DefenseStrategyPanel({ caseId, defendant, charges, onCon
     if (loadedCaseRef.current !== caseId) return  // 当前案件数据未加载完，不写
     writeDraft(draftKey, { selected: Array.from(selected).sort((a, b) => a - b), editedDirections, additions, newAddition })
   }, [caseId, draftKey, selected, editedDirections, additions, newAddition])
+
+  // 双保险：stageRunning 从 true→false 跳变时复位 justConfirmed，
+  // 防止步骤 5/6 跑完后面板卡在"生成中…"只读状态条
+  const prevStageRunningRef = useRef(false)
+  useEffect(() => {
+    if (prevStageRunningRef.current && !stageRunning) setJustConfirmed(false)
+    prevStageRunningRef.current = !!stageRunning
+  }, [stageRunning])
 
   const toggle = useCallback((idx: number) => {
     setSelected(prev => {
@@ -444,15 +456,19 @@ export default function DefenseStrategyPanel({ caseId, defendant, charges, onCon
           {confirming && <Loader2 className="w-3 h-3 animate-spin" />}
           {isCompleted ? '重新确认并重跑步骤 5' : '确认并生成辩护意见（步骤 5）'}
         </button>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: colors.textTertiary, cursor: 'pointer' }}>
-          <input
-            type="checkbox"
-            checked={runToEnd}
-            onChange={e => setRunToEnd(e.target.checked)}
-            aria-label="连续完成剩余全部分析（步骤 5、6）"
-          />
-          连续完成剩余全部分析（步骤 5、6）
-        </label>
+        {/* runToEnd 选择框仅 stage 流展示（父组件消费 runToEnd 时传 showRunToEnd），
+            pipeline 流和 ReportPage 下该选项不生效，渲染即为误导 */}
+        {showRunToEnd && (
+          <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: colors.textTertiary, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={runToEnd}
+              onChange={e => setRunToEnd(e.target.checked)}
+              aria-label="连续完成剩余全部分析（步骤 5、6）"
+            />
+            连续完成剩余全部分析（步骤 5、6）
+          </label>
+        )}
         <span style={{ fontSize: 11, color: colors.textTertiary }}>
           默认全选，可反选不需要的方向；你的修改和补充都会被采纳
         </span>
