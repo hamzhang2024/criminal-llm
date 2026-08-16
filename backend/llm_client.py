@@ -94,6 +94,9 @@ class LLMClient:
         self._cache_miss_tokens = 0
         self._total_requests = 0
 
+        # 豆包 Responses API 降级标记：/responses 返回 4xx 后本进程不再尝试
+        self._responses_api_unsupported = False
+
         logger.info("[LLM 客户端] baseUrl: %s", base_url)
         logger.info("[LLM 客户端] model: %s", self.model)
         logger.info("[LLM 客户端] apiKey: %s", '已配置' if api_key else '未配置')
@@ -174,6 +177,24 @@ class LLMClient:
             "Authorization": f"Bearer {self.api_key}"
         }
 
+        # 豆包（火山方舟）：前缀缓存只在 Responses API 暴露，走 /responses 端点；
+        # chat/completions 端点没有缓存参数，保持原路径给其他提供商
+        if self._is_doubao() and not self._responses_api_unsupported:
+            try:
+                return await self._chat_via_responses_api(messages, model, headers, max_output_tokens)
+            except httpx.HTTPStatusError as e:
+                status = e.response.status_code if e.response is not None else 0
+                if 400 <= status < 500:
+                    # 模型/账户不支持 Responses API：本进程内降级 chat/completions，记一次性 warning
+                    logger.warning(
+                        "[LLM] Responses API 返回 %s（模型或账户不支持），本进程后续调用回退 chat/completions，前缀缓存不生效",
+                        status,
+                    )
+                    self._responses_api_unsupported = True
+                else:
+                    error_body = e.response.text[:500] if e.response else "无响应内容"
+                    raise Exception(f"API 请求失败：{status}\n{error_body}")
+
         logger.info("[LLM 请求] url=%s, model=%s, messages=%d", url, payload['model'], len(messages))
 
         # 重试 2 次，指数退避
@@ -238,7 +259,119 @@ class LLMClient:
                 raise Exception(f"API 请求失败：{e.response.status_code}\n{error_body}")
 
         raise LLMRetryExhaustedError(f"LLM 请求超时（已重试 {3} 次）: {last_error}")
-    
+
+    def _is_doubao(self) -> bool:
+        """是否为豆包（火山方舟）服务：前缀缓存只在火山方舟 Responses API 暴露"""
+        return "volces.com" in (self.base_url or "")
+
+    async def _chat_via_responses_api(
+        self,
+        messages: List[Dict[str, str]],
+        model: Optional[str],
+        headers: Dict[str, str],
+        max_output_tokens: int,
+    ) -> str:
+        """
+        豆包（火山方舟）Responses API 调用路径
+
+        请求体启用前缀缓存：caching={"type": "enabled", "prefix": True} + store=True。
+        我们的调用是独立的共享前缀调用（非多轮会话），不使用 previous_response_id。
+        messages 风格 [{role, content}] 与 input 字段直接兼容，原样传递。
+        """
+        url = f"{self.base_url}/responses"
+        payload = {
+            "model": model or self.model,
+            "input": messages,
+            "caching": {"type": "enabled", "prefix": True},
+            "store": True,
+            "max_output_tokens": max_output_tokens,
+        }
+
+        logger.info("[LLM 请求] url=%s, model=%s, messages=%d（Responses API 前缀缓存）", url, payload["model"], len(messages))
+
+        # 重试策略与 chat() 主路径一致：3 次，指数退避
+        last_error = None
+        for attempt in range(3):
+            try:
+                req_start = time.time()
+
+                async def progress_tick():
+                    while True:
+                        await asyncio.sleep(30)
+                        logger.info("[LLM 请求] 等待响应... %.0fs", time.time() - req_start)
+
+                tick = asyncio.create_task(progress_tick())
+                try:
+                    response = await self.client.post(url, json=payload, headers=headers)
+                finally:
+                    tick.cancel()
+
+                response.raise_for_status()
+                latency_ms = (time.time() - req_start) * 1000
+
+                data = response.json()
+                logger.info("[LLM 请求] 成功，耗时 %.1fs", latency_ms / 1000)
+
+                # 缓存命中率统计（前缀缓存命中并入会话级统计）
+                self._record_responses_cache_stats(data)
+
+                return self._parse_responses_text(data)
+            except (httpx.ReadTimeout, httpx.ConnectTimeout) as e:
+                last_error = e
+                wait = 5 * (attempt + 1)  # 5s, 10s, 15s
+                print(f"[LLM 超时] 第 {attempt+1}/3 次重试，等待 {wait}s...")
+                await asyncio.sleep(wait)
+            except httpx.HTTPStatusError:
+                # 交回 chat() 决定降级（4xx）或报错（5xx）
+                raise
+
+        raise LLMRetryExhaustedError(f"LLM 请求超时（已重试 {3} 次）: {last_error}")
+
+    @staticmethod
+    def _parse_responses_text(data: Dict[str, Any]) -> str:
+        """
+        解析 Responses API 响应文本，防御性兼容两种形态：
+        1. 扁平形态（ark-cli 扁平化后）：content 直接是文本
+        2. 原始 output 列表形态：取 role=assistant 项的 content[0].text
+        """
+        content = data.get("content")
+        if isinstance(content, str) and content:
+            return content
+
+        for item in data.get("output") or []:
+            if not isinstance(item, dict):
+                continue
+            if item.get("role") == "assistant" or item.get("type") == "message":
+                parts = item.get("content")
+                if isinstance(parts, str) and parts:
+                    return parts
+                for part in parts or []:
+                    if isinstance(part, dict) and part.get("text"):
+                        return part["text"]
+
+        return str(data)
+
+    def _record_responses_cache_stats(self, data: Dict[str, Any]) -> None:
+        """Responses API 缓存命中统计：cached_tokens 并入会话级缓存命中率统计"""
+        usage = data.get("usage") or {}
+        hit = usage.get("cached_tokens") or 0
+        # 兼容 prompt_tokens / input_tokens 两种字段名
+        prompt_tokens = usage.get("prompt_tokens", usage.get("input_tokens", 0)) or 0
+        miss = max(prompt_tokens - hit, 0) if prompt_tokens else 0
+
+        if hit > 0 or miss > 0:
+            self._cache_hit_tokens += hit
+            self._cache_miss_tokens += miss
+            self._total_requests += 1
+            total = hit + miss
+            hit_rate = (hit / total * 100) if total > 0 else 0
+            overall_total = self._cache_hit_tokens + self._cache_miss_tokens
+            overall_rate = (self._cache_hit_tokens / overall_total * 100) if overall_total > 0 else 0
+            logger.info("[LLM 缓存] 本次命中: %d/%d tokens (%.0f%%), 累计: %d/%d (%.0f%%), 共 %d 次请求", hit, total, hit_rate, self._cache_hit_tokens, overall_total, overall_rate, self._total_requests)
+        elif data.get("caching"):
+            # 无 usage 缓存字段时至少打印 caching 对象，便于排查缓存是否启用
+            logger.info("[LLM 缓存] caching=%s", data.get("caching"))
+
     async def analyze_case(
         self,
         defendant: str,
