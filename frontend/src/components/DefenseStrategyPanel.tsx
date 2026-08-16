@@ -1,6 +1,7 @@
 // 辩护思路确认面板（步骤 4.75）
 // awaiting_confirmation：律师可勾选/编辑系统建议、补充自己的思路，确认后自动触发步骤 5
 // completed：以编辑态渲染（预填确认稿），可修改后重新确认（将重跑步骤 5）
+// 步骤 5/6 运行中（含本会话刚确认）：只读状态条展示确认内容，避免误以为要重新决策
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Scale, Loader2, Plus, X } from 'lucide-react'
@@ -19,6 +20,7 @@ interface DefenseStrategyPanelProps {
   onConfirmed?: () => void
   refreshKey?: number  // 变化时重新拉取辩护思路状态
   skipRunStep5?: boolean  // true 时确认后不跑流水线步骤5（stage 流由 onConfirmed 接管后续阶段）
+  stageRunning?: boolean  // 步骤 5/6 正在运行（切界面回来后由父组件传入），面板改为只读状态条
 }
 
 // 类型徽标配色：主攻=金，备选=灰蓝
@@ -84,7 +86,7 @@ function writeDraft(key: string, draft: StrategyDraft) {
   } catch { /* ignore */ }
 }
 
-export default function DefenseStrategyPanel({ caseId, defendant, charges, onConfirmed, refreshKey, skipRunStep5 }: DefenseStrategyPanelProps) {
+export default function DefenseStrategyPanel({ caseId, defendant, charges, onConfirmed, refreshKey, skipRunStep5, stageRunning }: DefenseStrategyPanelProps) {
   const [strategy, setStrategy] = useState<DefenseStrategy | null>(null)
   const [loaded, setLoaded] = useState(false)
   const [selected, setSelected] = useState<Set<number>>(new Set())
@@ -208,28 +210,25 @@ export default function DefenseStrategyPanel({ caseId, defendant, charges, onCon
     if (!result.success) throw new Error(result.detail || result.error || '步骤 5 执行失败')
   }, [caseId, defendant, charges])
 
-  const handleConfirm = useCallback(async (useSystemDefault: boolean) => {
+  // 确认：始终提交律师的勾选/修改/补充（不再提供"全部采纳"捷径，避免丢失编辑成果）
+  const handleConfirm = useCallback(async () => {
     if (confirming) return
     setConfirming(true)
     setError('')
     setProgressMsg('正在确认辩护思路...')
     try {
-      if (useSystemDefault) {
-        await confirmDefenseStrategy(caseId, { use_system_default: true })
-      } else {
-        const directions = strategy?.suggestion?.directions || []
-        // 只提交真正被修改过的方向文本
-        const edited: Record<string, string> = {}
-        directions.forEach((d, i) => {
-          const v = editedDirections[i]
-          if (v !== undefined && v.trim() && v !== d.direction) edited[String(i)] = v.trim()
-        })
-        await confirmDefenseStrategy(caseId, {
-          selected: Array.from(selected).sort((a, b) => a - b),
-          edited,
-          user_additions: additions,
-        })
-      }
+      const directions = strategy?.suggestion?.directions || []
+      // 只提交真正被修改过的方向文本
+      const edited: Record<string, string> = {}
+      directions.forEach((d, i) => {
+        const v = editedDirections[i]
+        if (v !== undefined && v.trim() && v !== d.direction) edited[String(i)] = v.trim()
+      })
+      await confirmDefenseStrategy(caseId, {
+        selected: Array.from(selected).sort((a, b) => a - b),
+        edited,
+        user_additions: additions,
+      })
       // 确认成功：草稿已落库为确认稿，清除本地草稿
       try { localStorage.removeItem(draftKey) } catch { /* ignore */ }
       // stage 流：确认后由 onConfirmed 接管后续阶段（5/6），不跑流水线步骤 5
@@ -249,12 +248,61 @@ export default function DefenseStrategyPanel({ caseId, defendant, charges, onCon
     }
   }, [confirming, caseId, draftKey, strategy, editedDirections, selected, additions, runStep5, onConfirmed])
 
-  // 待确认 / 已确认（可重新编辑）状态渲染；刚确认过的会话内隐藏
-  if (!loaded || !strategy || justConfirmed) return null
+  // 待确认 / 已确认（可重新编辑）状态渲染
+  if (!loaded || !strategy) return null
   if (strategy.status !== 'awaiting_confirmation' && strategy.status !== 'completed') return null
 
   const isCompleted = strategy.status === 'completed'
   const directions = strategy.suggestion?.directions || []
+
+  // 步骤 5/6 运行中（含本会话刚确认）：只读状态条展示确认内容，不可编辑
+  // 避免切界面回来后面板呈现"重新确认"编辑态，误导用户以为要重新决策
+  if (justConfirmed || (isCompleted && stageRunning)) {
+    // 已采纳方向的最终文本（勾选下标 + 律师修改后的文本）
+    const confirmedDirections = directions
+      .map((d, i) => ({ d, i }))
+      .filter(({ i }) => selected.has(i))
+      .map(({ d, i }) => ({ type: d.type, text: editedDirections[i] ?? d.direction }))
+    return (
+      <div style={{
+        marginBottom: 12, padding: '16px', borderRadius: '10px',
+        border: `1px solid ${colors.goldBorder}`, background: colors.goldBg,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+          <Scale className="w-4 h-4" style={{ color: colors.gold }} />
+          <span style={{ fontSize: 14, fontWeight: 600, color: colors.textPrimary }}>辩护思路已确认</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: colors.gold, marginBottom: 12 }}>
+          <Loader2 className="w-3 h-3 animate-spin" /> 辩护思路已确认，辩护意见生成中…
+        </div>
+        {confirmedDirections.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: additions.length > 0 ? 8 : 0 }}>
+            {confirmedDirections.map((item, k) => {
+              const badge = typeBadgeStyle(item.type)
+              return (
+                <div key={k} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 12, color: colors.textPrimary, lineHeight: 1.6 }}>
+                  <span style={{
+                    flexShrink: 0, fontSize: 10, padding: '1px 6px', borderRadius: 4,
+                    background: badge.background, color: badge.color, border: badge.border,
+                    whiteSpace: 'nowrap', marginTop: 2,
+                  }}>{item.type || '备选'}</span>
+                  <span>{item.text}</span>
+                </div>
+              )
+            })}
+          </div>
+        )}
+        {additions.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: colors.textSecondary }}>律师补充</div>
+            {additions.map((a, k) => (
+              <div key={k} style={{ fontSize: 12, color: colors.textPrimary, lineHeight: 1.6 }}>{a}</div>
+            ))}
+          </div>
+        )}
+      </div>
+    )
+  }
 
   return (
     <div style={{
@@ -379,10 +427,10 @@ export default function DefenseStrategyPanel({ caseId, defendant, charges, onCon
         </div>
       )}
 
-      {/* 操作按钮 */}
-      <div style={{ display: 'flex', gap: 8 }}>
+      {/* 操作按钮：单一主按钮，始终提交勾选 + 修改 + 补充 */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <button
-          onClick={() => handleConfirm(false)}
+          onClick={handleConfirm}
           disabled={confirming}
           style={{
             padding: '8px 16px', fontSize: 13, fontWeight: 500, borderRadius: 8, border: 'none',
@@ -394,17 +442,9 @@ export default function DefenseStrategyPanel({ caseId, defendant, charges, onCon
           {confirming && <Loader2 className="w-3 h-3 animate-spin" />}
           {isCompleted ? '重新确认并重跑步骤 5' : '确认并继续分析'}
         </button>
-        <button
-          onClick={() => handleConfirm(true)}
-          disabled={confirming}
-          style={{
-            padding: '8px 16px', fontSize: 13, fontWeight: 500, borderRadius: 8,
-            border: `1px solid ${colors.goldBorder}`, background: 'transparent',
-            color: colors.gold, cursor: confirming ? 'not-allowed' : 'pointer',
-          }}
-        >
-          全部采纳并继续
-        </button>
+        <span style={{ fontSize: 11, color: colors.textTertiary }}>
+          默认全选，可反选不需要的方向；你的修改和补充都会被采纳
+        </span>
       </div>
     </div>
   )

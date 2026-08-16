@@ -516,6 +516,8 @@ export function CaseDetailPage() {
                   onConfirmed={strategyFlow === 'stage' ? continueStageFlowAfterConfirm : loadPipelineState}
                   skipRunStep5={strategyFlow === 'stage'}
                   refreshKey={strategyRefreshKey}
+                  // 步骤 5/6 运行中时面板改只读状态条（stage 流或流水线步骤 5）
+                  stageRunning={runningStage === 5 || runningStage === 6 || (pipelineRunning && currentPipelineStep === 5)}
                 />
                 <Step2Analyze caseId={caseId!} defendant={defendant} charges={charges} setCharges={setCharges}
                 evidenceList={evidenceList} evidenceExtracted={evidenceExtracted}
