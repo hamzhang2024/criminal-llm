@@ -186,13 +186,16 @@ export function useStageAnalysis(caseId: string | undefined, defendant: string, 
     setTimeout(() => navigate(`/case/${caseId}/report`), 2000)
   }, [caseId, defendant, charges, navigate, pipelineStatus])
 
-  // 辩护思路确认后继续 stage 流的 5、6 阶段（由确认面板 onConfirmed 触发）
-  const continueStageFlowAfterConfirm = useCallback(async () => {
+  // 辩护思路确认后继续 stage 流的后续阶段（由确认面板 onConfirmed 触发）
+  // runToEnd=true：连续跑完步骤 5、6 并跳转报告页；runToEnd=false：只跑步骤 5，停留在分析页查看结果
+  const continueStageFlowAfterConfirm = useCallback(async (runToEnd = true) => {
     if (!defendant.trim() || !caseId) return
     setPipelineStatus(prev => ({ ...prev, [4.75]: true }))
     const stageStatusData = await api.getStageStatus(caseId)
     const stagesMap = stageStatusData?.status || {}
-    for (const i of [5, 6]) {
+    // 步骤 5 始终执行（已完成的跳过）；步骤 6 仅在 runToEnd 时执行
+    const stagesToRun = runToEnd ? [5, 6] : [5]
+    for (const i of stagesToRun) {
       if (stagesMap[`stage_${i}`]?.completed) continue
       const stage = STAGES.find(s => s.num === i)
       setStageStatus(prev => ({ ...prev, [i]: 'running' }))
@@ -210,7 +213,10 @@ export function useStageAnalysis(caseId: string | undefined, defendant: string, 
       }
       setRunningStage(null)
     }
-    setTimeout(() => navigate(`/case/${caseId}/report`), 2000)
+    // 仅"跑到底"时跳转报告页；只跑步骤 5 时停留分析页查看结果
+    if (runToEnd) {
+      setTimeout(() => navigate(`/case/${caseId}/report`), 2000)
+    }
   }, [caseId, defendant, charges, navigate])
 
   // 停止阶段

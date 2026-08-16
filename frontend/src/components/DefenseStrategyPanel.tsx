@@ -17,7 +17,7 @@ interface DefenseStrategyPanelProps {
   caseId: string
   defendant: string
   charges: string[]
-  onConfirmed?: () => void
+  onConfirmed?: (runToEnd?: boolean) => void  // runToEnd：确认后是否连续跑完剩余阶段（仅 stage 流有效）
   refreshKey?: number  // 变化时重新拉取辩护思路状态
   skipRunStep5?: boolean  // true 时确认后不跑流水线步骤5（stage 流由 onConfirmed 接管后续阶段）
   stageRunning?: boolean  // 步骤 5/6 正在运行（切界面回来后由父组件传入），面板改为只读状态条
@@ -99,6 +99,8 @@ export default function DefenseStrategyPanel({ caseId, defendant, charges, onCon
   const [error, setError] = useState('')
   // 本次会话内刚确认过：隐藏面板，避免步骤 5 运行期间重复确认
   const [justConfirmed, setJustConfirmed] = useState(false)
+  // 确认后是否连续完成剩余全部分析（stage 流：步骤 5 之后是否继续步骤 6）
+  const [runToEnd, setRunToEnd] = useState(true)
 
   const draftKey = `defense_strategy_draft_${caseId}`
   // 标记后端数据已加载到哪个案件，防止 caseId 切换瞬间把旧草稿写入新案件
@@ -239,14 +241,14 @@ export default function DefenseStrategyPanel({ caseId, defendant, charges, onCon
       // 本地置为已确认并隐藏面板，防止步骤 5 完成后重复确认
       setStrategy(prev => prev ? { ...prev, status: 'completed' } : prev)
       setJustConfirmed(true)
-      onConfirmed?.()
+      onConfirmed?.(runToEnd)
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : '确认失败，请重试')
       setProgressMsg('')
     } finally {
       setConfirming(false)
     }
-  }, [confirming, caseId, draftKey, strategy, editedDirections, selected, additions, runStep5, onConfirmed])
+  }, [confirming, caseId, draftKey, strategy, editedDirections, selected, additions, runStep5, onConfirmed, runToEnd])
 
   // 待确认 / 已确认（可重新编辑）状态渲染
   if (!loaded || !strategy) return null
@@ -442,6 +444,15 @@ export default function DefenseStrategyPanel({ caseId, defendant, charges, onCon
           {confirming && <Loader2 className="w-3 h-3 animate-spin" />}
           {isCompleted ? '重新确认并重跑步骤 5' : '确认并生成辩护意见（步骤 5）'}
         </button>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: colors.textTertiary, cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={runToEnd}
+            onChange={e => setRunToEnd(e.target.checked)}
+            aria-label="连续完成剩余全部分析（步骤 5、6）"
+          />
+          连续完成剩余全部分析（步骤 5、6）
+        </label>
         <span style={{ fontSize: 11, color: colors.textTertiary }}>
           默认全选，可反选不需要的方向；你的修改和补充都会被采纳
         </span>
