@@ -440,7 +440,7 @@ export default function DefenseStrategyPanel({ caseId, defendant, charges, onCon
           }}
         >
           {confirming && <Loader2 className="w-3 h-3 animate-spin" />}
-          {isCompleted ? '重新确认并重跑步骤 5' : '确认并继续分析'}
+          {isCompleted ? '重新确认并重跑步骤 5' : '确认并生成辩护意见（步骤 5）'}
         </button>
         <span style={{ fontSize: 11, color: colors.textTertiary }}>
           默认全选，可反选不需要的方向；你的修改和补充都会被采纳
