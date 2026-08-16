@@ -17,7 +17,7 @@ from typing import Optional
 
 from llm_client import get_llm_client
 from prompt_cache import build_cached_messages
-from config_manager import _get_heavy_model
+from config_manager import get_heavy_model
 import context_budget
 
 # 默认分析状态结构
@@ -1581,7 +1581,7 @@ class AnalysisPipeline:
 3. 期望通过这些问题证明什么？
 4. 预判证人可能怎么回答？
 """),
-                    model_override=_get_heavy_model(),
+                    model_override=get_heavy_model(),
                 )
                 if not red_argument.strip():
                     # LLM 返回空内容：不保存成功产物、不标记 done，保留重跑自愈机会
@@ -1649,7 +1649,7 @@ class AnalysisPipeline:
 
 用一段话总结三条路径的综合辩护策略。
 """),
-                    model_override=_get_heavy_model(),
+                    model_override=get_heavy_model(),
                 )
                 if not blue_defense.strip():
                     # LLM 返回空内容：不保存成功产物、不标记 done，保留重跑自愈机会
@@ -1713,7 +1713,7 @@ class AnalysisPipeline:
 - "控方再反驳"模拟控方对辩方各路径的反击
 - "本焦点倾向"客观评估哪方更有说服力
 """),
-                        model_override=_get_heavy_model(),
+                        model_override=get_heavy_model(),
                     )
                     if clash_table.strip():
                         self._save_debate_file("03-交叉对决-逐焦点攻防.md", clash_table)
@@ -1749,7 +1749,7 @@ class AnalysisPipeline:
 2. 控方量刑建议是否适当？
 3. 在法庭上被采纳的可能性（高/中/低）
 """),
-                        model_override=_get_heavy_model(),
+                        model_override=get_heavy_model(),
                     )
                     if paths_eval.strip():
                         self._save_debate_file("03-交叉对决-路径评估.md", paths_eval)
@@ -1837,7 +1837,7 @@ class AnalysisPipeline:
 
 用一段话给出法官的综合评估：哪一方的论点更有说服力，本案的核心争议是什么，最可能影响判决的因素是什么。
 """),
-                        model_override=_get_heavy_model(),
+                        model_override=get_heavy_model(),
                     )
                     if verdict_overview.strip():
                         self._save_debate_file("对抗分析-裁决总览.md", verdict_overview)
@@ -1877,7 +1877,7 @@ class AnalysisPipeline:
 - 辩方是否有机会对控方证人提问？
 - 应该问什么来削弱控方证据？
 """),
-                        model_override=_get_heavy_model(),
+                        model_override=get_heavy_model(),
                     )
                     if verdict_advice.strip():
                         self._save_debate_file("对抗分析-攻防建议.md", verdict_advice)
@@ -2302,7 +2302,7 @@ class AnalysisPipeline:
                     material = strategy_prefix + context[:20000]
                 messages = build_cached_messages(shared_system, material, instruction)
                 # 最终产物（5a-5f 辩护意见）走高质量模型（配置 llm_model_heavy 时）
-                section_content = await self.llm.chat(messages, model_override=_get_heavy_model())
+                section_content = await self.llm.chat(messages, model_override=get_heavy_model())
                 self._save_defense_section(filename, section_content)
                 results_log["sub_steps"].append({"step": stage_key, "name": stage_name, "status": "done"})
                 print(f"[步骤 5-{stage_key}] 完成 {stage_name}")

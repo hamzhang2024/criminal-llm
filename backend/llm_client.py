@@ -313,8 +313,9 @@ class LLMClient:
         """
         豆包（火山方舟）Responses API 调用路径
 
-        请求体启用前缀缓存：caching={"type": "enabled", "prefix": True} + store=True。
-        我们的调用是独立的共享前缀调用（非多轮会话），不使用 previous_response_id。
+        请求体启用前缀缓存：caching={"type": "enabled", "prefix": True}。
+        我们的调用是独立的共享前缀调用（非多轮会话），不使用 previous_response_id，
+        故不带 store=True（store 会把案卷材料持久化到火山方舟服务器，前缀缓存不需要它）。
         messages 风格 [{role, content}] 与 input 字段直接兼容，原样传递。
         """
         url = f"{self.base_url}/responses"
@@ -322,7 +323,6 @@ class LLMClient:
             "model": model or self.model,
             "input": messages,
             "caching": {"type": "enabled", "prefix": True},
-            "store": True,
             "max_output_tokens": max_output_tokens,
         }
 
@@ -391,9 +391,14 @@ class LLMClient:
         return str(data)
 
     def _record_responses_cache_stats(self, data: Dict[str, Any]) -> None:
-        """Responses API 缓存命中统计：cached_tokens 并入会话级缓存命中率统计"""
+        """Responses API 缓存命中统计：cached_tokens 并入会话级缓存命中率统计
+
+        火山方舟 Responses API 的命中字段是嵌套的 usage.input_tokens_details.cached_tokens，
+        顶层 usage.cached_tokens 仅作回退兼容（旧形态/扁平化响应）。
+        """
         usage = data.get("usage") or {}
-        hit = usage.get("cached_tokens") or 0
+        details = usage.get("input_tokens_details") or {}
+        hit = details.get("cached_tokens") or usage.get("cached_tokens") or 0
         # 兼容 prompt_tokens / input_tokens 两种字段名
         prompt_tokens = usage.get("prompt_tokens", usage.get("input_tokens", 0)) or 0
         miss = max(prompt_tokens - hit, 0) if prompt_tokens else 0

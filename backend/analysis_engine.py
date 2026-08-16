@@ -20,7 +20,7 @@ from typing import Optional, Callable, Dict, Any, List
 from datetime import datetime
 
 from prompt_cache import build_cached_messages
-from config_manager import _get_heavy_model
+from config_manager import get_heavy_model
 
 logger = logging.getLogger(__name__)
 
@@ -967,6 +967,9 @@ class AnalysisEngine:
         md_output = timeline_md.rstrip()
         if narrative.strip():
             md_output += "\n\n" + narrative.strip()
+        else:
+            # 叙述为空时 stage_3 只剩时间线（事件拆解/证据归组缺失），记 warning 便于排查
+            logger.warning("[阶段3] 事件拆解叙述为空（LLM 返回空内容），stage_3 仅含时间线")
 
         data = {
             "stage": 3,
@@ -1580,7 +1583,8 @@ class AnalysisEngine:
             ("01-案件概述.md", "一、辩护概要",
              f"""为被告人 **{defendant}** 撰写辩护报告的「辩护概要」章节。
 要求：简要概括本案的辩护方向和核心论点（200 字以内）。
-请输出 Markdown 格式，本次只输出辩护概要章节，不要输出其他章节。"""),
+请输出 Markdown 格式，本次只输出辩护概要章节，不要输出其他章节。
+不要输出章节标题，直接写正文（章节标题由合并时统一添加）。"""),
             ("02-证据评估.md", "二、事实与证据支撑分析",
              f"""为被告人 **{defendant}** 撰写辩护报告的「事实与证据支撑分析」章节。
 要求：
@@ -1588,12 +1592,14 @@ class AnalysisEngine:
 2. **程序合法性**：本案是否存在程序违法（如超期羁押、未告知权利、非法搜查等）
 3. **证据收集合法性**：证据收集是否符合法定程序（如电子数据提取程序、扣押程序、辨认程序等）
 4. **证据链条完整性**：是否存在断裂，哪些环节仅靠言词证据
-请输出 Markdown 格式，本次只输出事实与证据支撑分析章节。"""),
+请输出 Markdown 格式，本次只输出事实与证据支撑分析章节。
+不要输出章节标题，直接写正文（章节标题由合并时统一添加）。"""),
             ("03-矛盾利用.md", "三、核心矛盾点及其法律影响",
              f"""为被告人 **{defendant}** 撰写辩护报告的「核心矛盾点及其法律影响」章节。
 要求：基于阶段 5B 矛盾分析产物，找出对辩方有利、对控方不利的核心矛盾点（证据之间的矛盾），
 分析每个矛盾点对指控证明力的法律影响及庭审质证中的利用方式。
-请输出 Markdown 格式，本次只输出核心矛盾点及其法律影响章节。"""),
+请输出 Markdown 格式，本次只输出核心矛盾点及其法律影响章节。
+不要输出章节标题，直接写正文（章节标题由合并时统一添加）。"""),
             ("04-三阶层辩护.md", "四、三阶层犯罪论审查与辩护",
              f"""为被告人 **{defendant}** 撰写辩护报告的「三阶层犯罪论审查与辩护」章节。
 要求：运用三阶层犯罪论体系递进审查，三个子部分分别用「### 构成要件符合性分析」「### 违法性分析」「### 有责性分析」作为小标题：
@@ -1604,12 +1610,14 @@ class AnalysisEngine:
 
 2. **违法性**：是否存在违法阻却事由（正当防卫、紧急避险等）；程序合法性与证据收集合法性引用前文结论
 3. **有责性**：责任能力、故意/过失的认定、期待可能性
-请输出 Markdown 格式，本次只输出三阶层犯罪论审查与辩护章节。"""),
+请输出 Markdown 格式，本次只输出三阶层犯罪论审查与辩护章节。
+不要输出章节标题，直接写正文（章节标题由合并时统一添加）。"""),
             ("05-量刑情节.md", "五、量刑情节分析",
              f"""为被告人 **{defendant}** 撰写辩护报告的「量刑情节分析」章节。
 要求：分析法定/酌定量刑情节（自首、立功、从犯、未遂、中止、认罪认罚、退赃退赔等），
 引用证据时用"见证据XXX"格式。
-请输出 Markdown 格式，本次只输出量刑情节分析章节。"""),
+请输出 Markdown 格式，本次只输出量刑情节分析章节。
+不要输出章节标题，直接写正文（章节标题由合并时统一添加）。"""),
             ("06-结论建议.md", "六、综合辩护意见",
              f"""为被告人 **{defendant}** 撰写辩护报告的「综合辩护意见」章节。
 要求：基于全案分析提出完整的辩护意见：
@@ -1617,7 +1625,8 @@ class AnalysisEngine:
 2. 核心辩护要点（3-5 条）
 3. 预期结果评估
 4. 下一步建议（需要补充的证据、申请事项等）
-请输出 Markdown 格式，本次只输出综合辩护意见章节。"""),
+请输出 Markdown 格式，本次只输出综合辩护意见章节。
+不要输出章节标题，直接写正文（章节标题由合并时统一添加）。"""),
         ]
 
         # 逐节生成：已存在的节跳过（断点续跑），产物分别落盘 stage_5/sections/
@@ -1638,7 +1647,7 @@ class AnalysisEngine:
             # 最终产物（5C 六节辩护报告）走高质量模型（配置 llm_model_heavy 时）
             content = await client.chat(
                 build_cached_messages(shared_system, material, instruction),
-                model_override=_get_heavy_model(),
+                model_override=get_heavy_model(),
             )
             if not content.strip():
                 # LLM 返回空：不写节产物、记 warning、本节标记失败（与 45c/45d 空检查模式对齐），

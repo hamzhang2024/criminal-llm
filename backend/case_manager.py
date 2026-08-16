@@ -3076,7 +3076,10 @@ async def pdf_thumbnails(case_id: str, file_path: str, dir: str = "processed", w
         raise HTTPException(status_code=404, detail="文件不存在")
     width = max(100, min(width, 800))
     cache_dir = thumb_cache_dir_for(CACHE_DIR, case_id, pdf.name)
-    thumbs = generate_pdf_thumbnails(pdf, cache_dir, width)
+    # 几百页 PDF 逐页 get_pixmap 是 CPU 密集同步操作，放线程池执行，
+    # 避免首次请求冻结事件循环（与 batch_process 的 run_in_executor 用法对齐）
+    loop = asyncio.get_event_loop()
+    thumbs = await loop.run_in_executor(None, generate_pdf_thumbnails, pdf, cache_dir, width)
     base = f"/thumbnails/thumb/{case_id}/{pdf.stem}"
     return {"thumbnails": [{"page": t["page"], "url": f"{base}/{t['file']}"} for t in thumbs],
             "total_pages": len(thumbs)}
@@ -3145,7 +3148,10 @@ async def reconvert_block(case_id: str, req: ReconvertBlockRequest):
     """
     import tempfile
     from mineru_async import AsyncMinerUConverter
-    from page_rotation import extract_single_page, splice_md_block, invalidate_evidence_for_source
+    from page_rotation import (
+        extract_single_page, splice_md_block, invalidate_evidence_for_source,
+        MdBlockMismatchError,
+    )
 
     case_path = find_case_path(case_id)
     if not case_path:
@@ -3179,6 +3185,9 @@ async def reconvert_block(case_id: str, req: ReconvertBlockRequest):
 
     try:
         splice_md_block(md_path, req.start_line, req.end_line, new_text)
+    except MdBlockMismatchError as e:
+        # md 在扫描后被改动导致行号漂移：409 提示前端重新扫描，不做静默替换
+        raise HTTPException(status_code=409, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

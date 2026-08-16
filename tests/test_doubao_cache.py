@@ -1,11 +1,12 @@
 """豆包（火山方舟）Responses API 前缀缓存集成测试
 
 验证 llm_client 在 base_url 指向火山方舟（volces.com）时：
-- 走 /responses 端点并携带 caching prefix + store
+- 走 /responses 端点并携带 caching prefix（不带 store：案卷材料不持久化到方舟服务器）
 - 响应解析兼容扁平 content 形态与 output 列表形态
 - 4xx 时本进程内降级 chat/completions 且不再尝试 /responses
 - 非豆包 base_url 行为不回归（仍走 chat/completions）
-- 缓存命中字段（cached_tokens）并入会话级缓存命中率统计
+- 缓存命中字段（usage.input_tokens_details.cached_tokens，顶层 cached_tokens 回退）
+  并入会话级缓存命中率统计
 """
 import asyncio
 
@@ -74,7 +75,7 @@ MESSAGES = [
 
 
 def test_doubao_uses_responses_api_with_prefix_caching(monkeypatch):
-    """豆包 base_url → 请求发往 /responses，body 含 caching prefix + store，messages 原样在 input"""
+    """豆包 base_url → 请求发往 /responses，body 含 caching prefix 且不带 store，messages 原样在 input"""
     fake = FakeAsyncClient({
         "/responses": FakeResponse({
             "id": "resp_001",
@@ -94,7 +95,8 @@ def test_doubao_uses_responses_api_with_prefix_caching(monkeypatch):
     assert call["url"] == f"{DOUBAO_URL}/responses"
     body = call["json"]
     assert body["caching"] == {"type": "enabled", "prefix": True}
-    assert body["store"] is True
+    # store 会把案卷材料持久化到火山方舟服务器：不使用 previous_response_id 就必须不带
+    assert "store" not in body or body["store"] is False
     assert body["input"] == MESSAGES  # messages 原样传递
     assert body["model"] == "doubao-seed-1-6"
     assert call["headers"]["Authorization"] == "Bearer test-key"
@@ -180,7 +182,7 @@ def test_non_doubao_still_uses_chat_completions(monkeypatch):
 
 
 def test_doubao_cached_tokens_counted_in_stats(monkeypatch):
-    """usage.cached_tokens 并入会话级缓存命中率统计"""
+    """嵌套 usage.input_tokens_details.cached_tokens（火山方舟真实字段路径）并入会话级缓存命中率统计"""
     fake = FakeAsyncClient({
         "/responses": FakeResponse({
             "content": "带缓存命中",
@@ -188,7 +190,7 @@ def test_doubao_cached_tokens_counted_in_stats(monkeypatch):
                 "prompt_tokens": 1000,
                 "completion_tokens": 20,
                 "total_tokens": 1020,
-                "cached_tokens": 800,
+                "input_tokens_details": {"cached_tokens": 800},
             },
             "caching": {"type": "enabled", "prefix": True},
         }),
@@ -202,3 +204,25 @@ def test_doubao_cached_tokens_counted_in_stats(monkeypatch):
     assert stats["miss_tokens"] == 200  # prompt_tokens - cached_tokens
     assert stats["total_requests"] == 1
     assert stats["hit_rate"] == 80.0
+
+
+def test_doubao_cached_tokens_top_level_fallback(monkeypatch):
+    """顶层 usage.cached_tokens 作回退兼容（旧形态/扁平化响应）仍被统计"""
+    fake = FakeAsyncClient({
+        "/responses": FakeResponse({
+            "content": "顶层缓存字段",
+            "usage": {
+                "prompt_tokens": 500,
+                "completion_tokens": 10,
+                "total_tokens": 510,
+                "cached_tokens": 300,
+            },
+        }),
+    })
+    client = _make_client(monkeypatch, DOUBAO_URL, fake)
+
+    asyncio.run(client.chat(MESSAGES))
+
+    stats = client.get_cache_stats()
+    assert stats["hit_tokens"] == 300
+    assert stats["miss_tokens"] == 200

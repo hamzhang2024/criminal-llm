@@ -101,7 +101,7 @@ def get_config_value(key: str, default: str = "") -> str:
     return config.get(key, default)
 
 
-def _get_heavy_model() -> Optional[str]:
+def get_heavy_model() -> Optional[str]:
     """
     高质量任务模型（分层路由）
 

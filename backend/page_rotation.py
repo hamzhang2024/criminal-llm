@@ -151,11 +151,24 @@ def extract_single_page(pdf_path: Path, page_no: int, out_path: Path) -> Path:
         doc.close()
 
 
+class MdBlockMismatchError(ValueError):
+    """md 行号漂移：目标区间不再是扫描时识别的乱码表格块（md 在扫描后被改动）"""
+
+
 def splice_md_block(md_path: Path, start_line: int, end_line: int, new_text: str) -> None:
-    """用新文本替换 md 的 [start_line, end_line] 行区间（0 基含两端）"""
+    """用新文本替换 md 的 [start_line, end_line] 行区间（0 基含两端）
+
+    拼接前校验目标区间仍是 md-issues 扫描时识别的乱码表格块
+    （起始行以 <table> 开头、结束行含 </table>）：md 在扫描后被改动会导致
+    行号漂移，静默替换会损毁正常内容，此时抛 MdBlockMismatchError 让端点
+    返回 409 提示前端重新扫描。
+    """
     lines = md_path.read_text(encoding="utf-8").splitlines()
     if not (0 <= start_line <= end_line < len(lines)):
         raise ValueError(f"行区间 [{start_line}, {end_line}] 超出范围（共 {len(lines)} 行）")
+    if not lines[start_line].strip().startswith("<table>") or "</table>" not in lines[end_line]:
+        raise MdBlockMismatchError(
+            f"行区间 [{start_line}, {end_line}] 不再是乱码表格块（md 可能已改动），请重新扫描后再修复")
     lines[start_line:end_line + 1] = [new_text]
     _atomic_write_text(md_path, "\n".join(lines) + "\n")
     logger.info(f"[md拼接] {md_path.name}: 行 {start_line}-{end_line} 已替换（{len(new_text)} 字符）")

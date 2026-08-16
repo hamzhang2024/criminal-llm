@@ -175,9 +175,21 @@ def test_splice_md_block(tmp_path):
     """md 拼接：新文本替换 [start_line, end_line] 行区间"""
     from page_rotation import splice_md_block
     md = tmp_path / "a.md"
-    md.write_text("行0\n行1垃圾开始\n行2垃圾结束\n行3\n", encoding="utf-8")
+    md.write_text("行0\n<table>行1垃圾开始\n行2垃圾结束</table>\n行3\n", encoding="utf-8")
     splice_md_block(md, 1, 2, "修复后的内容")
     assert md.read_text(encoding="utf-8") == "行0\n修复后的内容\n行3\n"
+
+
+def test_splice_md_block_rejects_non_table_block(tmp_path):
+    """md 行号漂移防护：目标区间不再是乱码表格块时抛 MdBlockMismatchError（端点返回 409），
+    防止扫描后 md 被改动导致正常内容被静默替换"""
+    from page_rotation import splice_md_block, MdBlockMismatchError
+    md = tmp_path / "a.md"
+    md.write_text("行0\n行1正常内容\n行2正常内容\n行3\n", encoding="utf-8")
+    with pytest.raises(MdBlockMismatchError):
+        splice_md_block(md, 1, 2, "修复后的内容")
+    # 内容未被改动
+    assert md.read_text(encoding="utf-8") == "行0\n行1正常内容\n行2正常内容\n行3\n"
 
 
 def test_invalidate_evidence_for_source(tmp_path):
@@ -243,6 +255,38 @@ def test_reconvert_block_flow(tmp_path, monkeypatch):
     assert resp["invalidated"] == ["笔录A"]
     # 证据已失效（index.json 清空）
     assert json.loads((case_path / "evidence" / "index.json").read_text(encoding="utf-8"))["evidence"] == []
+
+
+def test_reconvert_block_returns_409_on_line_drift(tmp_path, monkeypatch):
+    """md 扫描后被改动（行号漂移）：目标行不再是乱码表格块 → 409 提示重新扫描，
+    md 内容不做静默替换"""
+    import asyncio
+    import case_manager
+    from fastapi import HTTPException
+
+    case_path = _make_case(tmp_path)
+    _make_pdf(case_path / "processed" / "第2卷_去水印.pdf", pages=3)
+    # 扫描时第 1 行是乱码块，之后 md 被改动（漂移），第 1 行变成正常文本
+    (case_path / "md" / "第2卷_去水印.md").write_text("前文\n正常笔录内容\n后文\n", encoding="utf-8")
+
+    class FakeResult:
+        success = True
+        def __init__(self, md): self.md_path = md
+    async def fake_convert_batch(self, pdf_paths, output_dir, **kw):
+        md = output_dir / f"{pdf_paths[0].stem}.md"
+        md.write_text("修复后的笔录内容", encoding="utf-8")
+        return [FakeResult(md)]
+    monkeypatch.setattr("mineru_async.AsyncMinerUConverter.convert_batch", fake_convert_batch)
+    monkeypatch.setattr(case_manager, "find_case_path", lambda cid: case_path)
+
+    req = case_manager.ReconvertBlockRequest(
+        file_path="第2卷_去水印.pdf", page=2, md_file="第2卷_去水印.md",
+        start_line=1, end_line=1)
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(case_manager.reconvert_block("c", req))
+    assert exc.value.status_code == 409
+    # md 未被改动
+    assert (case_path / "md" / "第2卷_去水印.md").read_text(encoding="utf-8") == "前文\n正常笔录内容\n后文\n"
 
 
 # ═══════════════════════════════════════════════════════════
@@ -407,7 +451,7 @@ def test_splice_md_block_leaves_no_tmp(tmp_path):
     """splice_md_block 走原子写：替换后不残留 .tmp"""
     from page_rotation import splice_md_block
     md = tmp_path / "卷一.md"
-    md.write_text("第一行\n第二行\n第三行\n", encoding="utf-8")
+    md.write_text("第一行\n<table>第二行乱码</table>\n第三行\n", encoding="utf-8")
     splice_md_block(md, 1, 1, "替换后的第二行")
     assert md.read_text(encoding="utf-8") == "第一行\n替换后的第二行\n第三行\n"
     assert list(tmp_path.glob("*.tmp")) == []

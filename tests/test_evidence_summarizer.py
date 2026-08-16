@@ -79,6 +79,28 @@ def test_victim_and_witness_roles_exempt():
     assert issues == []
 
 
+def test_criminal_suspect_role_with_demographics_exempt():
+    """真实数据形态"张三（犯罪嫌疑人，男，1981年…）"：角色后接逗号分隔的人口学信息，
+    逗号拆分后"犯罪嫌疑人"精确命中豁免清单（供述主体摘要不重复本人姓名）"""
+    persons = "张三（犯罪嫌疑人，男，1981年3月5日出生，汉族）"
+    assert verify_summary_fidelity(FULL_TEXT, GOOD_SUMMARY, persons=persons) == []
+
+
+def test_detainee_role_exempt():
+    """被拘留人同为供述主体（拘留所询问笔录），豁免人名检查"""
+    issues = verify_summary_fidelity(FULL_TEXT, GOOD_SUMMARY, persons="李某（被拘留人）")
+    assert issues == []
+
+
+def test_colon_non_person_fields_produce_no_fake_entry():
+    """冒号式非人名字段（时间/地点等）不产生伪人名条目：
+    "讯问时间：2026年3月12日14时"的值以数字开头，不满足 [一-龥]{2,4} 姓名约束，
+    若被捕获会触发"人名未出现"重试死循环"""
+    persons = "讯问时间：2026年3月12日14时；讯问地点：江阴市看守所；被讯问人：冯叶飞"
+    issues = verify_summary_fidelity(FULL_TEXT, GOOD_SUMMARY, persons=persons)
+    assert issues == []
+
+
 # ---------- persons 占位符与多格式解析（冯叶飞案 25 份证据校验未过的修复） ----------
 
 def test_placeholder_person_name_exempt():
