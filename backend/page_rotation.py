@@ -38,6 +38,11 @@ def generate_pdf_thumbnails(pdf_path: Path, cache_dir: Path, width: int = THUMB_
         doc.close()
 
 
+def thumb_cache_dir_for(cache_root: Path, case_id: str, pdf_name: str) -> Path:
+    """案件 PDF 的缩略图缓存目录（与 /thumbnails 静态挂载下的 URL 一一对应）"""
+    return cache_root / "thumb" / case_id / Path(pdf_name).stem
+
+
 def rotate_pdf_page(pdf_path: Path, page_no: int, degrees: int,
                     thumb_cache_dir: Path | None = None) -> int:
     """将 page_no（1 基）顺时针旋转 degrees（90/180/270），增量保存

@@ -55,6 +55,14 @@ def test_rotate_accumulates(tmp_path):
     assert rotate_pdf_page(pdf, 1, 90) == 180
 
 
+def test_thumb_cache_dir_naming():
+    """缩略图缓存目录命名：cache/thumb/{case_id}/{pdf_stem}/（供端点与前端 URL 一致）"""
+    from page_rotation import thumb_cache_dir_for
+    from pathlib import Path
+    d = thumb_cache_dir_for(Path("/data/cache"), "case_abc", "第2卷_去水印.pdf")
+    assert d == Path("/data/cache/thumb/case_abc/第2卷_去水印")
+
+
 def test_rotate_invalid_args(tmp_path):
     """非法角度/页码抛 ValueError"""
     pdf = tmp_path / "test.pdf"

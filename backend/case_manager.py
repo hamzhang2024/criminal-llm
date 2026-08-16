@@ -2894,6 +2894,53 @@ async def serve_file(case_id: str, file_path: str, dir: Optional[str] = None):
     return FileResponse(str(fp), media_type=media_type, filename=fp.name, headers={"Content-Disposition": "inline"})
 
 
+@router.get("/{case_id}/pdf-thumbnails")
+async def pdf_thumbnails(case_id: str, file_path: str, dir: str = "processed", width: int = 200):
+    """生成并返回案件 PDF 的逐页缩略图（缓存于 DATA_DIR/cache/thumb/，复用 /thumbnails 挂载）"""
+    from config import CACHE_DIR
+    from page_rotation import generate_pdf_thumbnails, thumb_cache_dir_for
+    case_path = find_case_path(case_id)
+    if not case_path:
+        raise HTTPException(status_code=404, detail="案件不存在")
+    pdf = (case_path / dir / file_path).resolve()
+    if not str(pdf).startswith(str(case_path.resolve())) or not pdf.exists():
+        raise HTTPException(status_code=404, detail="文件不存在")
+    width = max(100, min(width, 800))
+    cache_dir = thumb_cache_dir_for(CACHE_DIR, case_id, pdf.name)
+    thumbs = generate_pdf_thumbnails(pdf, cache_dir, width)
+    base = f"/thumbnails/thumb/{case_id}/{pdf.stem}"
+    return {"thumbnails": [{"page": t["page"], "url": f"{base}/{t['file']}"} for t in thumbs],
+            "total_pages": len(thumbs)}
+
+
+class RotatePageRequest(BaseModel):
+    file_path: str
+    dir: str = "processed"
+    page: int
+    degrees: int  # 90/180/270，顺时针累加
+
+
+@router.post("/{case_id}/rotate-page")
+async def rotate_page(case_id: str, req: RotatePageRequest):
+    """旋转 processed/ 下 PDF 的指定页（只改显示朝向，不动 original/ 原件）"""
+    from config import CACHE_DIR
+    from page_rotation import rotate_pdf_page, thumb_cache_dir_for
+    case_path = find_case_path(case_id)
+    if not case_path:
+        raise HTTPException(status_code=404, detail="案件不存在")
+    if req.dir != "processed":
+        raise HTTPException(status_code=400, detail="仅支持旋转 processed/ 下的文件")
+    pdf = (case_path / req.dir / req.file_path).resolve()
+    if not str(pdf).startswith(str(case_path.resolve())) or not pdf.exists():
+        raise HTTPException(status_code=404, detail="文件不存在")
+    try:
+        new_rot = rotate_pdf_page(pdf, req.page, req.degrees,
+                                  thumb_cache_dir_for(CACHE_DIR, case_id, pdf.name))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"success": True, "page": req.page, "rotation": new_rot}
+
+
 @router.get("/{case_id}/processed-pdfs")
 async def list_processed_pdfs(case_id: str):
     """列出 processed/ 目录下的所有 PDF 文件"""
