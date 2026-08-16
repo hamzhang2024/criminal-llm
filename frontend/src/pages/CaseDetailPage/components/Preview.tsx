@@ -2,8 +2,10 @@
 
 import React, { useState, useEffect } from 'react'
 import { API_BASE } from '../../../api'
+import type { MdIssue } from '../../../api/cases'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
+import { PdfPageManager } from './PdfPageManager'
 
 marked.setOptions({ async: false, gfm: true, breaks: true })
 
@@ -11,6 +13,8 @@ interface PreviewFile {
   id: string | number
   name: string
   path: string
+  caseId?: string
+  dir?: string
 }
 
 interface PreviewProps {
@@ -18,10 +22,17 @@ interface PreviewProps {
   onClose: () => void
   digest?: string
   digestWarning?: boolean
+  mdIssues?: MdIssue[]
+  onIssuesChanged?: () => void
 }
 
-export function Preview({ file, onClose, digest, digestWarning }: PreviewProps) {
+export function Preview({ file, onClose, digest, digestWarning, mdIssues, onIssuesChanged }: PreviewProps) {
   const [viewMode, setViewMode] = useState<'digest' | 'full'>(digest ? 'digest' : 'full')
+  // 页面管理模式（仅 processed/ 下的 PDF 可用）
+  const [pageManage, setPageManage] = useState(false)
+  const isPdf = !file.name.endsWith('.md')
+  const canManage = isPdf && !!file.caseId && file.dir === 'processed'
+  const pdfIssues = (mdIssues || []).filter(i => i.md_file === file.name.replace(/\.pdf$/i, '.md'))
 
   return (
     <div style={{
@@ -67,6 +78,26 @@ export function Preview({ file, onClose, digest, digestWarning }: PreviewProps) 
         >
           ← 返回
         </button>
+        {canManage && (
+          <button
+            onClick={() => setPageManage(v => !v)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '6px 14px',
+              background: 'rgba(0, 122, 255, 0.15)',
+              border: 'none',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              fontSize: '13px',
+              color: 'var(--macos-accent)',
+              fontWeight: '500'
+            }}
+          >
+            {pageManage ? '文档预览' : `页面管理${pdfIssues.length ? ` ⚠️${pdfIssues.length}` : ''}`}
+          </button>
+        )}
         <span style={{ fontSize: '13px', color: 'var(--macos-text-secondary)', flex: 1 }}>
           {file.name}
         </span>
@@ -105,6 +136,9 @@ export function Preview({ file, onClose, digest, digestWarning }: PreviewProps) 
             </div>
           )}
         </div>
+      ) : pageManage && canManage ? (
+        <PdfPageManager caseId={file.caseId!} pdfFilename={file.name} issues={pdfIssues}
+          onFixed={() => onIssuesChanged?.()} />
       ) : (
         <div style={{ flex: 1, overflow: 'hidden', background: '#1a1a1e' }}>
           <iframe

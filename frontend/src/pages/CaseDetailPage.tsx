@@ -5,10 +5,12 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { Upload, FileDown, Scale, Loader2, CheckCircle, FileText } from 'lucide-react'
 import { MacOSToolbar, MacOSButton, MacOSCard, PageLayout, StatusBar } from '../components/MacOSLayout'
 import { api, API_BASE } from '../api'
+import { getMdIssues } from '../api/cases'
+import type { MdIssue } from '../api/cases'
 import { showConfirm, showAlert } from '../components/MacOSDialog'
 import { FileList, Step0Upload, Step1Extract, Step2Analyze, Preview } from './CaseDetailPage/components'
 import DefenseStrategyPanel from '../components/DefenseStrategyPanel'
-import type { CaseFile, PreviewFile } from './CaseDetailPage/hooks/useCaseFiles'
+import type { CaseFile } from './CaseDetailPage/hooks/useCaseFiles'
 import { useCaseFiles } from './CaseDetailPage/hooks/useCaseFiles'
 import { useEvidenceExtraction } from './CaseDetailPage/hooks/useEvidenceExtraction'
 import { useStageAnalysis } from './CaseDetailPage/hooks/useStageAnalysis'
@@ -60,6 +62,17 @@ export function CaseDetailPage() {
   // 证据预览摘要/全文切换状态
   const [previewDigest, setPreviewDigest] = useState('')
   const [previewDigestWarning, setPreviewDigestWarning] = useState(false)
+
+  // md 识别异常页（倒置/异常扫描导致的乱码块），供预览页「页面管理」展示与修复
+  // 获取时机在 Task 7 接线（步骤切换/批量转换完成时刷新）
+  const [mdIssues, setMdIssues] = useState<MdIssue[]>([])
+  const refreshMdIssues = useCallback(async () => {
+    if (!caseId) return
+    try {
+      const r = await getMdIssues(caseId)
+      setMdIssues(r.issues || [])
+    } catch { setMdIssues([]) }
+  }, [caseId])
 
   // 重置证据摘要状态，避免摘要串到普通文件预览
   const resetPreviewDigest = useCallback(() => {
@@ -501,7 +514,7 @@ export function CaseDetailPage() {
                   // 证据全文在 evidence/ 目录，直接 setPreviewFile 指向 evidence，
                   // 不走 handleOpenFile（它会把 .md 强制指到 md/ 原始卷宗目录）
                   const mdPath = `${API_BASE}/cases/${caseId}/serve-file?file_path=${encodeURIComponent(mdFile)}&dir=evidence`
-                  setPreviewFile({ id: String(evId), name: mdFile, size: 0, status: 'done', path: mdPath })
+                  setPreviewFile({ id: String(evId), name: mdFile, size: 0, status: 'done', path: mdPath, dir: 'evidence' })
                   // 按 md_file 匹配证据（id 类型不稳定：部分条目无 id 字段），取摘要与保真告警标记
                   const ev = evidenceList.find((e: any) => e.md_file === mdFile)
                   setPreviewDigest(ev?.digest || '')
@@ -515,7 +528,7 @@ export function CaseDetailPage() {
         </div>
       </div>
 
-      {previewFile && <Preview file={previewFile as unknown as PreviewFile} onClose={handleClosePreview} digest={previewDigest} digestWarning={previewDigestWarning} />}
+      {previewFile && <Preview file={{ ...previewFile, caseId }} onClose={handleClosePreview} digest={previewDigest} digestWarning={previewDigestWarning} mdIssues={mdIssues} onIssuesChanged={refreshMdIssues} />}
       <input id="case-upload" type="file" accept=".pdf" multiple style={{ display: 'none' }} onChange={handleFileSelect} />
     </PageLayout>
   )

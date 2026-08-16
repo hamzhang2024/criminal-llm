@@ -242,6 +242,53 @@ export async function cleanupProcessed(caseId: string): Promise<any> {
   return res.json()
 }
 
+// ========== 页面旋转干预 ==========
+
+// 旋转 processed/ 下 PDF 的指定页（degrees 为 90/180/270，顺时针累加）
+export async function rotatePage(caseId: string, filePath: string, page: number, degrees: number, dir = 'processed'): Promise<any> {
+  const res = await fetch(`${API_BASE}/cases/${caseId}/rotate-page`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ file_path: filePath, dir, page, degrees })
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail || res.statusText)
+  }
+  return res.json()
+}
+
+// md 识别异常页（MinerU 把倒置/异常页误判为表格的乱码块）
+export interface MdIssue {
+  md_file: string
+  page_label: string
+  start_line: number
+  end_line: number
+  preview: string
+}
+
+export async function getMdIssues(caseId: string): Promise<{ issues: MdIssue[] }> {
+  const res = await fetch(`${API_BASE}/cases/${caseId}/md-issues`)
+  return res.json()
+}
+
+// 单页重转修复：抽页 → MinerU 转换 → 替换 md 乱码块 → 可选证据失效
+export async function reconvertBlock(caseId: string, params: {
+  file_path: string; page: number; md_file: string;
+  start_line: number; end_line: number; invalidate_evidence?: boolean
+}): Promise<any> {
+  const res = await fetch(`${API_BASE}/cases/${caseId}/reconvert-block`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params)
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail || res.statusText)
+  }
+  return res.json()
+}
+
 // ========== 案卷分析（旧 analyze-case API）==========
 
 export async function createAnalysis(caseDir: string): Promise<any> {

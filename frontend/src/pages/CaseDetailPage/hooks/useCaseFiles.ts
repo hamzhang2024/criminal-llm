@@ -20,6 +20,7 @@ export interface CaseFile {
 
 export interface PreviewFile extends CaseFile {
   path: string
+  dir?: string  // 预览文件所在目录（original/processed/md/evidence），页面管理功能依赖
 }
 
 export function useCaseFiles(caseId: string | undefined, currentStep: number) {
@@ -247,7 +248,7 @@ export function useCaseFiles(caseId: string | undefined, currentStep: number) {
   const handleOpenFile = useCallback((file: CaseFile) => {
     if (file.name.endsWith('.md')) {
       const serveUrl = serveFileUrl(caseId!, file.name, 'md')
-      setPreviewFile({ ...file, path: serveUrl })
+      setPreviewFile({ ...file, path: serveUrl, dir: 'md' })
       return
     }
 
@@ -262,7 +263,7 @@ export function useCaseFiles(caseId: string | undefined, currentStep: number) {
     }
 
     const serveUrl = serveFileUrl(caseId!, previewName, dir)
-    setPreviewFile({ ...file, path: serveUrl, name: previewName })
+    setPreviewFile({ ...file, path: serveUrl, name: previewName, dir })
   }, [caseId, currentStep])
 
   const closePreview = useCallback(() => {
