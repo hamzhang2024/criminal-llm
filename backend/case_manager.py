@@ -63,6 +63,30 @@ def natural_sort_key(path):
     return [int(p) if p.isdigit() else p.lower() for p in parts]
 
 
+def _parse_charges_from_name(case_name: str, defendant: str = "") -> list:
+    """从案件文件夹名推断罪名列表。
+
+    策略：先移除嫌疑人姓名、"涉嫌"、"案件"前缀和尾部日期，再按"罪"切分。
+    例如 "案件_冯叶飞涉嫌非法经营罪诈骗罪_20260815" → ["非法经营罪", "诈骗罪"]
+    """
+    clean_name = case_name
+    if defendant:
+        clean_name = clean_name.replace(defendant, "")
+    clean_name = clean_name.replace("涉嫌", "").replace("、", "").replace("_", "")
+    # 剥离"案件"前缀，避免混入罪名（如 "案件非法经营罪"）
+    clean_name = re.sub(r'^案件', '', clean_name)
+    # 剥离尾部 6-8 位连续数字（日期后缀，如 20260815），避免解析出 "20260815罪"
+    clean_name = re.sub(r'\d{6,8}$', '', clean_name)
+
+    if not clean_name:
+        return []
+    # 按"罪"切分：["诈骗", "非法经营", ""] → ["诈骗罪", "非法经营罪"]
+    parts = re.split(r'罪', clean_name)
+    case_charges = [p + '罪' for p in parts if p and len(p) >= 2]
+    case_charges = [c for c in case_charges if c not in ('犯罪', '罪犯')]
+    return case_charges
+
+
 def cleanup_trash():
     """清理回收站中超过保留天数的案件"""
     import time
@@ -1539,7 +1563,6 @@ async def _do_extract_evidence(
 
     # 如果 case_charges 为空，从案件名称推断可能的罪名
     if not case_charges:
-        import re as _re
         case_name = case_path.name
         # 从 case.json 获取嫌疑人姓名
         defendant = ""
@@ -1550,17 +1573,7 @@ async def _do_extract_evidence(
             except Exception:
                 pass
 
-        # 策略：先移除嫌疑人姓名和"涉嫌"，再按"罪"切分
-        clean_name = case_name
-        if defendant:
-            clean_name = clean_name.replace(defendant, "")
-        clean_name = clean_name.replace("涉嫌", "").replace("、", "").replace("_", "")
-
-        # 按"罪"切分：["诈骗", "非法经营", ""] → ["诈骗罪", "非法经营罪"]
-        if clean_name:
-            parts = _re.split(r'罪', clean_name)
-            case_charges = [p + '罪' for p in parts if p and len(p) >= 2]
-            case_charges = [c for c in case_charges if c not in ('犯罪', '罪犯')]
+        case_charges = _parse_charges_from_name(case_name, defendant)
         if case_charges:
             case_charges = list(dict.fromkeys(case_charges))
             # 更新 case.json 保存推断的罪名
