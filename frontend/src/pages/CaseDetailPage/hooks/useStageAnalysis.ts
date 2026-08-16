@@ -232,18 +232,11 @@ export function useStageAnalysis(caseId: string | undefined, defendant: string, 
     } catch { /* ignore */ }
   }, [caseId])
 
-  // 查看阶段 Markdown
-  const handleViewStage = useCallback(async (stageNum: number) => {
+  // 查看阶段结果：改为 StageResultModal 弹窗渲染 Markdown（不再用纯文本 showAlert）
+  const [viewingStage, setViewingStage] = useState<{ num: number; name: string } | null>(null)
+  const handleViewStage = useCallback((stageNum: number) => {
     if (!caseId) return
-    try {
-      const result = await api.getStageMarkdown(caseId, stageNum)
-      const mdContent = result?.content || '无内容'
-      showAlert({
-        title: `${STAGES.find(s => s.num === stageNum)?.name} - 分析结果`,
-        message: mdContent.substring(0, 3000) + (mdContent.length > 3000 ? '\n\n...内容过长，请在报告中查看完整版本' : ''),
-        variant: 'info'
-      })
-    } catch { /* ignore */ }
+    setViewingStage({ num: stageNum, name: STAGES.find(s => s.num === stageNum)?.name || `阶段 ${stageNum}` })
   }, [caseId])
 
   // ========== 流水线操作 ==========
@@ -473,6 +466,7 @@ export function useStageAnalysis(caseId: string | undefined, defendant: string, 
     runningStage, setRunningStage,
     handleRunStage, handleRunAllAnalysis,
     handleStopStage, handleClearStage, handleViewStage,
+    viewingStage, setViewingStage,
 
     // 流水线
     pipelineStatus, setPipelineStatus,

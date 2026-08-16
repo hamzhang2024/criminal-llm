@@ -9,6 +9,7 @@ import { getMdIssues } from '../api/cases'
 import type { MdIssue } from '../api/cases'
 import { showConfirm, showAlert } from '../components/MacOSDialog'
 import { FileList, Step0Upload, Step1Extract, Step2Analyze, Preview } from './CaseDetailPage/components'
+import { StageResultModal } from './CaseDetailPage/components/StageResultModal'
 import DefenseStrategyPanel from '../components/DefenseStrategyPanel'
 import type { CaseFile } from './CaseDetailPage/hooks/useCaseFiles'
 import { useCaseFiles } from './CaseDetailPage/hooks/useCaseFiles'
@@ -115,7 +116,7 @@ export function CaseDetailPage() {
   const {
     stageStatus, setStageStatus, stageMessages, stageErrors, runningStage, setRunningStage,
     handleRunStage, handleRunAllAnalysis, handleStopStage,
-    handleClearStage, handleViewStage,
+    handleClearStage, handleViewStage, viewingStage, setViewingStage,
     pipelineStatus, pipelineRunning, currentPipelineStep, stepResults,
     analysisState, setAnalysisState, nextStep, setNextStep, liveProgress, setLiveProgress,
     strategyAwaiting, strategyRefreshKey, strategyFlow, setStrategyFlow, continueStageFlowAfterConfirm,
@@ -541,6 +542,10 @@ export function CaseDetailPage() {
       </div>
 
       {previewFile && <Preview file={{ ...previewFile, caseId }} onClose={handleClosePreview} digest={previewDigest} digestWarning={previewDigestWarning} mdIssues={mdIssues} onIssuesChanged={refreshMdIssues} />}
+      {viewingStage && caseId && (
+        <StageResultModal caseId={caseId} stageNum={viewingStage.num} stageName={viewingStage.name}
+          onClose={() => setViewingStage(null)} />
+      )}
       <input id="case-upload" type="file" accept=".pdf" multiple style={{ display: 'none' }} onChange={handleFileSelect} />
     </PageLayout>
   )

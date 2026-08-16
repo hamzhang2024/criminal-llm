@@ -670,3 +670,12 @@ div.macOS-avatar-button:hover {
 .flex-shrink-0 { flex-shrink: 0; }
 .cursor-pointer { cursor: pointer; }
 .w-full { width: 100%; }
+
+/* ── Markdown 预览样式（Preview / StageResultModal 共用） ── */
+.md-preview table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 12px; }
+.md-preview th { background: #f5f5f7; font-weight: 600; padding: 8px 10px; border: 1px solid #e5e5e7; text-align: left; }
+.md-preview td { padding: 6px 10px; border: 1px solid #e5e5e7; }
+.md-preview tr:nth-child(even) { background: #fafafa; }
+.md-preview h1, .md-preview h2, .md-preview h3 { margin: 16px 0 8px; color: #1d1d1f; }
+.md-preview img { max-width: 100%; border-radius: 4px; margin: 8px 0; }
+.md-preview p { margin: 8px 0; }
