@@ -182,13 +182,13 @@ interface ConfigForm {
 
 // 默认 LLM 配置（阿里云百炼 Token Plan）
 const DEFAULT_LLM_BASE_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1'
-const DEFAULT_LLM_MODEL = 'qwen3.5-plus'
+const DEFAULT_LLM_MODEL = 'deepseek-v4-flash'
 
 // LLM 供应商预设：选中自动填 base_url + 模型 + 上下文大小（K tokens）
 // coding 套餐端点与按量端点不通用（Key 前缀不同），选错会 401
 const LLM_PRESETS = [
   { key: 'custom', label: '自定义', baseUrl: '', model: '', contextK: 0, keyHint: '' },
-  { key: 'deepseek', label: 'DeepSeek 官方', baseUrl: 'https://api.deepseek.com', model: 'deepseek-v4-pro', contextK: 1000, keyHint: '' },
+  { key: 'deepseek', label: 'DeepSeek 官方（推荐）', baseUrl: 'https://api.deepseek.com', model: 'deepseek-v4-flash', contextK: 1000, keyHint: 'v4-flash 快且便宜（缓存命中价仅 2%），适合本应用全链路；追求最高报告质量可手动改为 deepseek-v4-pro' },
   { key: 'bailian', label: '阿里云百炼（按量）', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen3.5-plus', contextK: 128, keyHint: 'Key 为 sk- 开头，百炼控制台创建' },
   { key: 'kimi', label: 'Kimi 开放平台（按量）', baseUrl: 'https://api.moonshot.cn/v1', model: 'kimi-k2.6', contextK: 256, keyHint: 'Key 为 sk- 开头，platform.moonshot.cn 创建；kimi-k3（1M 上下文）可手动改模型名' },
   { key: 'kimi-coding', label: 'Kimi Coding 套餐', baseUrl: 'https://api.kimi.com/coding/v1', model: 'kimi-for-coding', contextK: 256, keyHint: 'Key 为 sk-kimi- 开头，kimi.com/code/console 创建，与按量 Key 不通用；可选模型 kimi-for-coding / kimi-for-coding-highspeed / k3（Kimi K3，手动改模型名）' },
