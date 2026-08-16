@@ -14,6 +14,7 @@ interface EvidenceItem {
   type?: string
   source?: string
   page_range?: string
+  failed?: boolean  // 按份提取失败的空壳条目（后端 index.json 标记）
 }
 
 interface Step1ExtractProps {
@@ -88,6 +89,9 @@ export function Step1Extract({
   if (suspectCount > 0) summaryParts.push(`${suspectCount} 份疑似遗漏`)
   if (nonEvidenceFiles.length > 0) summaryParts.push(`${nonEvidenceFiles.length} 份非证据`)
 
+  // 按份提取失败份数（空壳条目，下次提取自动重试）
+  const failedCount = evidenceList.filter(ev => ev.failed).length
+
   return (
     <MacOSCard style={{ marginTop: 12 }}>
       <div className="flex-between mb-md">
@@ -161,6 +165,9 @@ export function Step1Extract({
                 <div style={{ flex: 1, overflow: 'hidden' }}>
                   <div style={{ fontSize: '13px', fontWeight: '500', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {ev.name}
+                    {ev.failed && (
+                      <span title="提取失败，下次提取将自动重试" style={{ color: '#b7791f' }}> ⚠️</span>
+                    )}
                     <DocTypeBadge docType={ev.source ? docTypeMap[ev.source] : undefined} />
                   </div>
                   <div style={{ fontSize: '11px', color: 'var(--macos-text-secondary)' }}>
@@ -209,8 +216,8 @@ export function Step1Extract({
         </div>
       )}
       {evidenceExtracted && (
-        <div style={{ fontSize: '12px', color: '#3b5998', padding: '12px 0' }}>
-          已完成证据提取
+        <div style={{ fontSize: '12px', color: failedCount > 0 ? '#b7791f' : '#3b5998', padding: '12px 0' }}>
+          已完成证据提取{failedCount > 0 && `（${failedCount} 份失败待重提，下次提取自动重试）`}
         </div>
       )}
     </MacOSCard>

@@ -2199,6 +2199,12 @@ async def _do_extract_evidence(
             next_id += 1
 
         # ── 最终保存 ──
+        # 标记按份提取失败的空壳条目（前端列表 ⚠️ 展示；prune 判定仍按文件内容，不依赖该字段）
+        failed_count = 0
+        for ev in all_evidence:
+            ev["failed"] = _is_failed_evidence_entry(evidence_dir, ev)
+            if ev["failed"]:
+                failed_count += 1
         index_data = {
             "case_id": case_id,
             "total_evidence": len(all_evidence),
@@ -2207,6 +2213,10 @@ async def _do_extract_evidence(
             "files": [{"name": n, "doc_type": t} for n, t in file_classifications.items()],
             "generated_at": datetime.now().isoformat(),
         }
+        # 失败数写入任务状态，供 extract-status 返回给前端汇总展示
+        task = EXTRACT_TASKS.get(case_id)
+        if isinstance(task, dict):
+            task["failed_count"] = failed_count
         # 如果提取结果为 0，记录可能的原因供前端展示
         if len(all_evidence) == 0:
             index_data["error_hint"] = "LLM 提取全部失败（详见后端日志），可能原因：API Key 无效、Base URL 不可达、模型名称错误、或所有 MD 文件解析失败"
@@ -2260,7 +2270,7 @@ async def _do_extract_evidence(
         except Exception as e:
             logger.warning(f"[证据摘要] 生成失败（不影响提取与分析，将回退全文）: {e}")
 
-        logger.info(f"[证据提取] 完成，共 {len(all_evidence)} 份证据")
+        logger.info(f"[证据提取] 提取完成：共 {len(all_evidence)} 份证据，{failed_count} 份失败待重提（下次提取自动重试）")
 
     EXTRACT_TASKS.pop(case_id, None)
 
@@ -2268,6 +2278,7 @@ async def _do_extract_evidence(
         "success": True,
         "case_id": case_id,
         "total_evidence": len(all_evidence),
+        "failed_count": failed_count,
         "evidence": all_evidence,
     }
 
@@ -2316,7 +2327,22 @@ async def get_evidence_index(case_id: str):
     if not index_file.exists():
         return {"total_evidence": 0, "evidence": []}
 
-    return json.loads(index_file.read_text(encoding="utf-8"))
+    index_data = json.loads(index_file.read_text(encoding="utf-8"))
+
+    # 兼容旧版 index.json：条目缺少 failed 字段时按文件内容补齐并一次性回写，
+    # 避免每次请求逐条读文件的 IO 开销（prune 判定仍按文件内容，不依赖该字段）
+    dirty = False
+    for ev in index_data.get("evidence", []):
+        if "failed" not in ev:
+            ev["failed"] = _is_failed_evidence_entry(evidence_dir, ev)
+            dirty = True
+    if dirty:
+        try:
+            index_file.write_text(json.dumps(index_data, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception as e:
+            logger.warning(f"[证据索引] failed 字段回写失败（不影响返回）: {e}")
+
+    return index_data
 
 
 @router.get("/{case_id}/evidence/completeness")
@@ -2355,6 +2381,7 @@ async def get_extract_status(case_id: str):
             "llm_latency_ms": task.get("llm_latency", 0),
             "stopped_by_user": task.get("stopped_by_user", False),
             "recoverable": task.get("recoverable", True),
+            "failed_count": task.get("failed_count", 0),  # 按份提取失败份数（写 index.json 时统计）
         }
         # 传递错误详情给前端
         if task.get("error_details"):
