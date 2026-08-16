@@ -6,6 +6,7 @@
 本模块全部为纯函数，FastAPI 端点在 case_manager.py 中做薄封装。
 """
 import logging
+import re
 from pathlib import Path
 
 import fitz  # PyMuPDF
@@ -68,3 +69,38 @@ def rotate_pdf_page(pdf_path: Path, page_no: int, degrees: int,
             stale.unlink()
     logger.info(f"[页面旋转] {pdf_path.name} 第 {page_no} 页旋转 {degrees}° → {new_rot}°")
     return new_rot
+
+
+_PAGE_LABEL_RE = re.compile(r"第\s*\d+\s*页\s*共\s*\d+\s*页")
+
+
+def detect_md_issues(md_dir: Path) -> list[dict]:
+    """扫描 md/*.md，找出被 MinerU 误判为表格的笔录页（倒置/异常扫描页的特征）
+
+    判定：整块 <table>...</table> 内含「第N页共M页」页码标记或 ≥1 个「问：」。
+    正常表格（卷内目录等）不含这些特征，不误报。
+    Returns: [{"md_file", "page_label", "start_line", "end_line", "preview"}]
+    （行号为 0 基，end_line 含；供重转拼接定位）
+    """
+    issues = []
+    for md in sorted(md_dir.glob("*.md")):
+        lines = md.read_text(encoding="utf-8").splitlines()
+        i = 0
+        while i < len(lines):
+            if lines[i].strip().startswith("<table>"):
+                start = i
+                while i < len(lines) and "</table>" not in lines[i]:
+                    i += 1
+                end = min(i, len(lines) - 1)
+                text = "\n".join(lines[start:end + 1])
+                if _PAGE_LABEL_RE.search(text) or "问：" in text or "问:" in text:
+                    m = _PAGE_LABEL_RE.search(text)
+                    issues.append({
+                        "md_file": md.name,
+                        "page_label": m.group(0) if m else "",
+                        "start_line": start,
+                        "end_line": end,
+                        "preview": re.sub(r"<[^>]+>", " ", text)[:120].strip(),
+                    })
+            i += 1
+    return issues

@@ -71,3 +71,33 @@ def test_rotate_invalid_args(tmp_path):
         rotate_pdf_page(pdf, 1, 45)
     with pytest.raises(ValueError):
         rotate_pdf_page(pdf, 99, 90)
+
+
+def test_detect_table_wrapped_transcript(tmp_path):
+    """检测：含页码标记/问答的 <table> 块（MinerU 把倒置笔录页误判为表格）"""
+    md_dir = tmp_path / "md"
+    md_dir.mkdir()
+    # 真实乱码样本（已脱敏简化）
+    (md_dir / "第2卷_去水印.md").write_text(
+        "# 讯问笔录\n\n正常内容。\n\n"
+        "<table><tr><td>第6页共11页</td></tr><tr><td>装打了个电话讲了一下这个事情,之后泻叶无也给期拟打了电话</td></tr>"
+        "<tr><td>问:(向其展示次嘉豪在收取团购五万块钱抵押款后的明细)通过明细来看,</td></tr></table>\n\n"
+        "后续正常内容。\n", encoding="utf-8")
+    (md_dir / "正常卷.md").write_text("# 卷内文书目录\n\n<table><tr><td>序号</td><td>标题</td></tr></table>\n", encoding="utf-8")
+
+    from page_rotation import detect_md_issues
+    issues = detect_md_issues(md_dir)
+    assert len(issues) == 1
+    assert issues[0]["md_file"] == "第2卷_去水印.md"
+    assert issues[0]["page_label"] == "第6页共11页"
+    assert issues[0]["start_line"] >= 0 and issues[0]["end_line"] >= issues[0]["start_line"]
+    assert "泻叶无" in issues[0]["preview"]
+
+
+def test_detect_ignores_normal_tables(tmp_path):
+    """正常表格（卷内目录等）不误报"""
+    md_dir = tmp_path / "md"
+    md_dir.mkdir()
+    (md_dir / "a.md").write_text("<table><tr><td>序号</td><td>责任者</td></tr><tr><td>1</td><td>告知书</td></tr></table>\n", encoding="utf-8")
+    from page_rotation import detect_md_issues
+    assert detect_md_issues(md_dir) == []

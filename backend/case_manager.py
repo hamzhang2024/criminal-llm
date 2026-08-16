@@ -2941,6 +2941,19 @@ async def rotate_page(case_id: str, req: RotatePageRequest):
     return {"success": True, "page": req.page, "rotation": new_rot}
 
 
+@router.get("/{case_id}/md-issues")
+async def md_issues(case_id: str):
+    """扫描案件 md/ 下的识别异常页（MinerU 把倒置/异常页误判为表格的乱码块）"""
+    from page_rotation import detect_md_issues
+    case_path = find_case_path(case_id)
+    if not case_path:
+        raise HTTPException(status_code=404, detail="案件不存在")
+    md_dir = case_path / "md"
+    if not md_dir.exists():
+        return {"issues": []}
+    return {"issues": detect_md_issues(md_dir)}
+
+
 @router.get("/{case_id}/processed-pdfs")
 async def list_processed_pdfs(case_id: str):
     """列出 processed/ 目录下的所有 PDF 文件"""
