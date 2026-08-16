@@ -14,9 +14,10 @@ interface PdfPageManagerProps {
 
 // 缩略图 URL 是后端返回的根路径（/thumbnails/...），需拼上后端源：
 // 开发模式 API_BASE='/api' → 同源相对路径（走 Vite 代理）；生产模式为 http://localhost:PORT
-const BACKEND_ORIGIN = API_BASE.replace(/\/api$/, '')
+// 注意：API_BASE 是可变的 let，BACKEND_ORIGIN 在组件体内每次渲染计算，避免拿到陈旧快照
 
 export function PdfPageManager({ caseId, pdfFilename, issues, onFixed }: PdfPageManagerProps) {
+  const BACKEND_ORIGIN = API_BASE.replace(/\/api$/, '')
   const [thumbs, setThumbs] = useState<Array<{ page: number; url: string }>>([])
   const [loading, setLoading] = useState(true)
   const [rotations, setRotations] = useState<Map<number, number>>(new Map())  // page → 累计角度
@@ -45,9 +46,13 @@ export function PdfPageManager({ caseId, pdfFilename, issues, onFixed }: PdfPage
     setMessage('')
     try {
       for (const [page, deg] of rotations) {
-        if (deg !== 0) await rotatePage(caseId, pdfFilename, page, deg)
+        if (deg !== 0) {
+          await rotatePage(caseId, pdfFilename, page, deg)
+          // 每成功一页即从 Map 出队：中途失败时重试不会重复累加已成功页的角度
+          setRotations(prev => { const n = new Map(prev); n.delete(page); return n })
+        }
       }
-      setRotations(new Map())
+      setRotations(new Map())  // 兜底：循环全部成功时整体清空
       setCacheBust(b => b + 1)  // 旋转后缩略图缓存已失效，重新拉取
       setMessage('旋转已保存')
     } catch (e: any) {
@@ -64,6 +69,10 @@ export function PdfPageManager({ caseId, pdfFilename, issues, onFixed }: PdfPage
       `请输入该内容在 PDF 中的页码（缩略图中确认过的数字页码）：`)
     const page = input ? parseInt(input, 10) : NaN
     if (!page || page < 1) return
+    if (page > thumbs.length) {
+      setMessage(`页码超出范围（共 ${thumbs.length} 页）`)
+      return
+    }
     setFixing(true)
     setMessage('')
     try {
@@ -109,7 +118,7 @@ export function PdfPageManager({ caseId, pdfFilename, issues, onFixed }: PdfPage
           return (
             <div key={t.page} style={{ background: '#2c2c30', borderRadius: 8, padding: 8, textAlign: 'center' }}>
               <div style={{ overflow: 'hidden', borderRadius: 4, marginBottom: 6 }}>
-                <img src={`${BACKEND_ORIGIN}${t.url}${cacheBust ? `?t=${cacheBust}` : ''}`} alt={`第${t.page}页`}
+                <img src={`${BACKEND_ORIGIN}${t.url}${cacheBust ? `?t=${cacheBust}` : ''}`} alt={`第${t.page}页`} loading="lazy"
                   style={{ width: '100%', transform: `rotate(${deg}deg)`, transition: 'transform 0.2s' }} />
               </div>
               <div style={{ fontSize: 12, color: '#c8c8ce', marginBottom: 6 }}>第 {t.page} 页{deg ? `（待保存 ${deg}°）` : ''}</div>
