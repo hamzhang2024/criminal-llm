@@ -101,3 +101,44 @@ def test_detect_ignores_normal_tables(tmp_path):
     (md_dir / "a.md").write_text("<table><tr><td>序号</td><td>责任者</td></tr><tr><td>1</td><td>告知书</td></tr></table>\n", encoding="utf-8")
     from page_rotation import detect_md_issues
     assert detect_md_issues(md_dir) == []
+
+
+def test_detect_unclosed_table_not_false_positive(tmp_path):
+    """未闭合 <table> 后跟 60 行正常笔录（含「问：」和页脚）→ 不误报（MinerU 表格碎片）"""
+    md_dir = tmp_path / "md"
+    md_dir.mkdir()
+    body = ["<table>", "<tr><td>表格碎片</td></tr>"]
+    for n in range(60):
+        body.append(f"问：第{n}个问题？答：正常笔录内容。")
+        body.append(f"第{n+1}页共60页")
+    (md_dir / "a.md").write_text("\n".join(body) + "\n", encoding="utf-8")
+    from page_rotation import detect_md_issues
+    assert detect_md_issues(md_dir) == []
+
+
+def test_detect_resumes_scan_after_unclosed_table(tmp_path):
+    """未闭合 <table> 的块内后方存在一个真正的单行乱码块 → 后者仍被检出（start+1 继续扫描不错漏）"""
+    md_dir = tmp_path / "md"
+    md_dir.mkdir()
+    body = ["<table>"]  # 未闭合的表格碎片
+    body.extend(f"第{n}行正常笔录内容。" for n in range(60))
+    body.append("<table><tr><td>第3页共9页</td></tr><tr><td>问：展示泻叶无相关明细</td></tr></table>")
+    (md_dir / "a.md").write_text("\n".join(body) + "\n", encoding="utf-8")
+    from page_rotation import detect_md_issues
+    issues = detect_md_issues(md_dir)
+    assert len(issues) == 1
+    assert issues[0]["page_label"] == "第3页共9页"
+    assert issues[0]["end_line"] == issues[0]["start_line"]  # 单行块
+
+
+def test_detect_skips_unreadable_file(tmp_path):
+    """单个损坏文件记 warning 后继续扫描其他文件"""
+    md_dir = tmp_path / "md"
+    md_dir.mkdir()
+    (md_dir / "bad.md").write_bytes(b"\xff\xfe\x80\x81")
+    (md_dir / "good.md").write_text(
+        "<table><tr><td>第1页共2页</td></tr><tr><td>问：正常检出</td></tr></table>\n", encoding="utf-8")
+    from page_rotation import detect_md_issues
+    issues = detect_md_issues(md_dir)
+    assert len(issues) == 1
+    assert issues[0]["md_file"] == "good.md"

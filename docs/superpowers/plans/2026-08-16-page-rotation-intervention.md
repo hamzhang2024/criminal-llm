@@ -331,6 +331,11 @@ def test_detect_ignores_normal_tables(tmp_path):
 ```python
 _PAGE_LABEL_RE = re.compile(r"第\s*\d+\s*页\s*共\s*\d+\s*页")
 
+# 扫描 </table> 闭合标签的最大前瞻行数。
+# 依据：真实乱码块（倒置页产物）是单行 <table>...</table>；超长未闭合是
+# MinerU 表格碎片而非倒置页特征，50 行内仍不闭合则放弃该开口行。
+_MAX_TABLE_BLOCK_LINES = 50
+
 
 def detect_md_issues(md_dir: Path) -> list[dict]:
     """扫描 md/*.md，找出被 MinerU 误判为表格的笔录页（倒置/异常扫描页的特征）
@@ -342,14 +347,25 @@ def detect_md_issues(md_dir: Path) -> list[dict]:
     """
     issues = []
     for md in sorted(md_dir.glob("*.md")):
-        lines = md.read_text(encoding="utf-8").splitlines()
+        try:
+            lines = md.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeDecodeError) as e:
+            logger.warning(f"[乱码检测] 读取 {md.name} 失败，跳过: {e}")
+            continue
         i = 0
         while i < len(lines):
             if lines[i].strip().startswith("<table>"):
                 start = i
-                while i < len(lines) and "</table>" not in lines[i]:
-                    i += 1
-                end = min(i, len(lines) - 1)
+                j = i
+                # 最多向前看 _MAX_TABLE_BLOCK_LINES 行寻找 </table>
+                while j < len(lines) and "</table>" not in lines[j] and j - start < _MAX_TABLE_BLOCK_LINES:
+                    j += 1
+                if j >= len(lines) or "</table>" not in lines[j]:
+                    # 超上限未闭合：MinerU 表格碎片而非倒置页特征，跳过开口行，
+                    # 从 start+1 继续扫描，避免漏掉块内后续真正的乱码开口行
+                    i = start + 1
+                    continue
+                end = j
                 text = "\n".join(lines[start:end + 1])
                 if _PAGE_LABEL_RE.search(text) or "问：" in text or "问:" in text:
                     m = _PAGE_LABEL_RE.search(text)
@@ -360,9 +376,16 @@ def detect_md_issues(md_dir: Path) -> list[dict]:
                         "end_line": end,
                         "preview": re.sub(r"<[^>]+>", " ", text)[:120].strip(),
                     })
-            i += 1
+                i = end + 1
+            else:
+                i += 1
     return issues
 ```
+
+> **50 行上限说明**（真实案件数据验证后补充）：未闭合 `<table>` 标签会让扫描吞噬
+> 140-271 行正常笔录（4 个检出中 3 个误报）。真实乱码块（倒置页产物）特征为整块
+> 在 1 行内，故扫描 `</table>` 最多前瞻 50 行；超限视为 MinerU 表格碎片，跳过开口
+> 行并从 start+1 继续扫描，既消除误报又不漏检块内后续真正的乱码块。
 
 `backend/case_manager.py` 追加端点：
 
@@ -383,7 +406,7 @@ async def md_issues(case_id: str):
 - [ ] **Step 4: 运行测试 + 回归**
 
 Run: `python3 -m pytest tests/test_page_rotation.py -q && python3 -m pytest tests/ -q 2>&1 | tail -1`
-Expected: 7 passed；全量无失败
+Expected: 11 passed（含 50 行上限/损坏文件容错回归用例）；全量无失败
 
 - [ ] **Step 5: Commit**
 
