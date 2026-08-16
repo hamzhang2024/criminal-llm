@@ -2987,13 +2987,16 @@ async def reconvert_block(case_id: str, req: ReconvertBlockRequest):
 
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
-        single = extract_single_page(pdf, req.page, tmp / "page.pdf")
+        try:
+            single = extract_single_page(pdf, req.page, tmp / "page.pdf")
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
         converter = AsyncMinerUConverter()
         results = await converter.convert_batch([single], tmp, max_concurrent=1)
         # 产物取 output_dir 下的 md 文件（convert_batch 写盘规则为 {stem}.md，
         # 用 glob 兜底 chunk 命名差异）
         md_files = sorted(tmp.glob("*.md"))
-        if not results or not md_files:
+        if not results or not results[0].success or not md_files:
             raise HTTPException(status_code=502, detail="单页转换失败，请稍后重试")
         new_text = md_files[0].read_text(encoding="utf-8").strip()
         if not new_text:

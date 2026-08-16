@@ -224,6 +224,7 @@ def test_reconvert_block_flow(tmp_path, monkeypatch):
 
     # MinerU 打桩：convert_batch 直接产出"修复文本"md（端点按 output_dir 下 *.md 取产物，与真实 convert_batch 写盘规则一致）
     class FakeResult:
+        success = True  # 对齐真实 ConvertResult 契约
         def __init__(self, md): self.md_path = md
     async def fake_convert_batch(self, pdf_paths, output_dir, **kw):
         md = output_dir / f"{pdf_paths[0].stem}.md"
