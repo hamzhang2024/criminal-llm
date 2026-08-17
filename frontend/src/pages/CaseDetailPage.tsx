@@ -99,7 +99,7 @@ export function CaseDetailPage() {
     loadEvidence, handleExtractEvidence: extractEvidenceFn,
     handleStopExtract, handleClearEvidence, handleRefreshEvidence,
     checkExtractStatus, pollExtractProgress, stopPolling: stopExtractPolling,
-    extractProgress,
+    extractProgress, setExtracting,
   } = useEvidenceExtraction(caseId, (result) => {
     // 提取完成后清除页面级 processing 状态，根据结果给准确提示
     setProcessing(false)
@@ -200,6 +200,8 @@ export function CaseDetailPage() {
     checkExtractStatus().then(running => {
       if (running) {
         setProcessing(true); setProgress('正在提取证据...')
+        // 恢复卡片级提取状态：进度条（processing && extractProgress）依赖 extracting 为 true
+        setExtracting(true)
         // 启动轮询监控提取进度，完成后自动清除状态
         pollExtractProgress()
         return
