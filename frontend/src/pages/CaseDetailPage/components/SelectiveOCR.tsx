@@ -176,7 +176,17 @@ export function SelectiveOCR({ caseId, onUnocrCountChange, conversionDone }: Pro
   return (
     <div style={{ border: '1px solid var(--macos-border)', borderRadius: '8px', padding: '12px', marginBottom: '12px' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span style={{ fontSize: '13px', fontWeight: '500' }}>选择性 OCR 图片</span>
+        <span style={{ fontSize: '13px', fontWeight: '500' }}>
+          选择性 OCR 图片
+          {/* 识别状态一目了然：总数 / 已识别 / 未识别 */}
+          <span style={{ marginLeft: 8, fontSize: '11px', fontWeight: 'normal', color: '#86868b' }}>
+            {(() => {
+              let total = 0, done = 0
+              for (const imgs of Object.values(groups)) for (const m of Object.values(imgs)) { total++; if (m.ocr) done++ }
+              return total > 0 ? `共 ${total} 张 · 已识别 ${done} · 未识别 ${total - done}` : ''
+            })()}
+          </span>
+        </span>
         <button type="button" onClick={runOcr} disabled={selectedCount === 0 || ocrStatus?.status === 'running'}
           style={{ padding: '5px 12px', background: 'var(--macos-accent)', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px' }}>
           OCR 选中图片（{selectedCount} 张）

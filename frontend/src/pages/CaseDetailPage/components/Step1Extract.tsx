@@ -64,9 +64,9 @@ export function Step1Extract({
     if (unocrCount > 0) {
       const goOcr = await showConfirm({
         title: '还有图片未识别文字',
-        message: `还有 ${unocrCount} 张图片（转账凭证/流水截图等）未 OCR。建议先在上方「选择性 OCR 图片」中选图识别，再提取证据，资金流数据会更完整。`,
+        message: `还有 ${unocrCount} 张图片未 OCR。\n\n这些图片（转账凭证/流水截图等）里的文字不会进入证据文本，可能让资金流分析不完整。\n\n· 点「去选图 OCR」：先识别再提取（推荐）\n· 点「直接提取」：跳过这些图片文字，现在就开始`,
         confirmText: '去选图 OCR',
-        cancelText: '跳过继续提取',
+        cancelText: '直接提取',
         variant: 'warning',
       })
       if (goOcr) return // 留在页面让用户展开 OCR 卡片选图
