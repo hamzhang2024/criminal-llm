@@ -116,7 +116,7 @@ async def health_check():
 
 @app.get("/api/llm/cache-stats")
 async def llm_cache_stats():
-    """LLM 前缀缓存命中率统计（进程级累计，供设置页与分析区实时展示）"""
+    """LLM 用量统计（进程级累计：调用数/输入/输出/缓存命中，供设置页与提取/分析区实时展示）"""
     from llm_client import get_cache_stats
     return get_cache_stats()
 

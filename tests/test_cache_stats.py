@@ -1,8 +1,10 @@
-"""进程级缓存命中率统计 + /api/llm/cache-stats 端点测试
+"""进程级 LLM 用量统计 + /api/llm/cache-stats 端点测试
 
 验证：
-- chat/completions 路径（prompt_cache_hit/miss_tokens）计入进程级累计
-- 豆包 Responses 路径（cached_tokens）同样计入进程级累计
+- 每次调用都累计 calls/input_tokens/output_tokens（与供应商无关，qwen 形态无缓存字段也统计）
+- 缓存命中按供应商兼容读取：DeepSeek（prompt_cache_hit_tokens）、
+  嵌套形态（prompt_tokens_details.cached_tokens）、顶层 cached_tokens（豆包）
+- 豆包 Responses 路径同样计入进程级累计
 - get_cache_stats() 的 hit_rate 计算与无调用时的默认值
 - reset_cache_stats() 重置
 - GET /api/llm/cache-stats 返回结构正确
@@ -81,18 +83,29 @@ def _make_client(monkeypatch, base_url, fake_client):
 def test_empty_stats_default():
     """无调用时：全部归零，hit_rate 为 0"""
     stats = llm_client.get_cache_stats()
-    assert stats == {"hit_tokens": 0, "miss_tokens": 0, "hit_rate": 0, "calls": 0}
+    assert stats == {
+        "calls": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_hit_tokens": 0,
+        "hit_rate": 0,
+    }
 
 
 def test_chat_completions_path_accumulates(monkeypatch):
-    """chat/completions 路径：prompt_cache_hit/miss_tokens 计入进程级累计"""
+    """chat/completions 路径（DeepSeek 形态）：命中/输入/输出全部计入进程级累计"""
     fake = FakeAsyncClient({
         "/chat/completions": FakeResponse({
             "choices": [{
                 "message": {"role": "assistant", "content": "结论"},
                 "finish_reason": "stop",
             }],
-            "usage": {"prompt_cache_hit_tokens": 600, "prompt_cache_miss_tokens": 400},
+            "usage": {
+                "prompt_tokens": 1000,
+                "completion_tokens": 50,
+                "prompt_cache_hit_tokens": 600,
+                "prompt_cache_miss_tokens": 400,
+            },
         }),
     })
     client = _make_client(monkeypatch, ALI_URL, fake)
@@ -101,10 +114,61 @@ def test_chat_completions_path_accumulates(monkeypatch):
     asyncio.run(client.chat(MESSAGES))
 
     stats = llm_client.get_cache_stats()
-    assert stats["hit_tokens"] == 1200
-    assert stats["miss_tokens"] == 800
     assert stats["calls"] == 2
+    assert stats["input_tokens"] == 2000
+    assert stats["output_tokens"] == 100
+    assert stats["cache_hit_tokens"] == 1200
     assert stats["hit_rate"] == 0.6
+
+
+def test_qwen_style_usage_without_cache_fields_still_counted(monkeypatch):
+    """qwen 形态 usage（无缓存字段）：calls/input/output 照常累计，hit_rate 为 0"""
+    fake = FakeAsyncClient({
+        "/chat/completions": FakeResponse({
+            "choices": [{
+                "message": {"role": "assistant", "content": "结论"},
+                "finish_reason": "stop",
+            }],
+            "usage": {"prompt_tokens": 500, "completion_tokens": 30},
+        }),
+    })
+    client = _make_client(monkeypatch, ALI_URL, fake)
+
+    asyncio.run(client.chat(MESSAGES))
+
+    stats = llm_client.get_cache_stats()
+    assert stats["calls"] == 1
+    assert stats["input_tokens"] == 500
+    assert stats["output_tokens"] == 30
+    assert stats["cache_hit_tokens"] == 0
+    assert stats["hit_rate"] == 0
+
+
+def test_nested_cached_tokens_counted(monkeypatch):
+    """嵌套形态（prompt_tokens_details.cached_tokens，千问/豆包）命中读取正确"""
+    fake = FakeAsyncClient({
+        "/chat/completions": FakeResponse({
+            "choices": [{
+                "message": {"role": "assistant", "content": "结论"},
+                "finish_reason": "stop",
+            }],
+            "usage": {
+                "prompt_tokens": 1000,
+                "completion_tokens": 20,
+                "prompt_tokens_details": {"cached_tokens": 700},
+            },
+        }),
+    })
+    client = _make_client(monkeypatch, ALI_URL, fake)
+
+    asyncio.run(client.chat(MESSAGES))
+
+    stats = llm_client.get_cache_stats()
+    assert stats["calls"] == 1
+    assert stats["input_tokens"] == 1000
+    assert stats["output_tokens"] == 20
+    assert stats["cache_hit_tokens"] == 700
+    assert stats["hit_rate"] == 0.7
 
 
 def test_doubao_responses_path_accumulates(monkeypatch):
@@ -125,9 +189,10 @@ def test_doubao_responses_path_accumulates(monkeypatch):
     asyncio.run(client.chat(MESSAGES))
 
     stats = llm_client.get_cache_stats()
-    assert stats["hit_tokens"] == 800
-    assert stats["miss_tokens"] == 200
     assert stats["calls"] == 1
+    assert stats["input_tokens"] == 1000
+    assert stats["output_tokens"] == 20
+    assert stats["cache_hit_tokens"] == 800
     assert stats["hit_rate"] == 0.8
 
 
@@ -139,7 +204,12 @@ def test_stats_accumulate_across_client_instances(monkeypatch):
                 "message": {"role": "assistant", "content": "结论"},
                 "finish_reason": "stop",
             }],
-            "usage": {"prompt_cache_hit_tokens": 100, "prompt_cache_miss_tokens": 100},
+            "usage": {
+                "prompt_tokens": 200,
+                "completion_tokens": 10,
+                "prompt_cache_hit_tokens": 100,
+                "prompt_cache_miss_tokens": 100,
+            },
         }),
     })
     client1 = _make_client(monkeypatch, ALI_URL, fake)
@@ -151,40 +221,22 @@ def test_stats_accumulate_across_client_instances(monkeypatch):
 
     stats = llm_client.get_cache_stats()
     assert stats["calls"] == 2
-    assert stats["hit_tokens"] == 200
-
-
-def test_no_cache_fields_not_counted(monkeypatch):
-    """响应无缓存字段时不计入累计"""
-    fake = FakeAsyncClient({
-        "/chat/completions": FakeResponse({
-            "choices": [{
-                "message": {"role": "assistant", "content": "结论"},
-                "finish_reason": "stop",
-            }],
-            "usage": {},
-        }),
-    })
-    client = _make_client(monkeypatch, ALI_URL, fake)
-
-    asyncio.run(client.chat(MESSAGES))
-
-    stats = llm_client.get_cache_stats()
-    assert stats["calls"] == 0
-    assert stats["hit_rate"] == 0
+    assert stats["input_tokens"] == 400
+    assert stats["cache_hit_tokens"] == 200
 
 
 def test_cache_stats_endpoint():
     """GET /api/llm/cache-stats 返回结构正确"""
     from main import app
 
-    llm_client._record_process_cache_stats(300, 100)
+    llm_client._record_process_llm_stats(400, 50, 300)
 
     client = TestClient(app)
     resp = client.get("/api/llm/cache-stats")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["hit_tokens"] == 300
-    assert data["miss_tokens"] == 100
     assert data["calls"] == 1
+    assert data["input_tokens"] == 400
+    assert data["output_tokens"] == 50
+    assert data["cache_hit_tokens"] == 300
     assert data["hit_rate"] == 0.75

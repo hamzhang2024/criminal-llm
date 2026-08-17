@@ -20,35 +20,61 @@ from analysis_engine import (
 
 logger = logging.getLogger(__name__)
 
-# 进程级缓存命中率累计器：跨 LLMClient 实例累计（LLM 调用均在同一事件循环内，简单全局变量即可）
-_PROCESS_CACHE_STATS = {"hit": 0, "miss": 0, "calls": 0}
+# 进程级 LLM 用量累计器：跨 LLMClient 实例累计（LLM 调用均在同一事件循环内，简单全局变量即可）
+# 每次成功调用都统计（与供应商无关），修复仅 DeepSeek 缓存字段路径才累计导致统计全 0 的问题
+_PROCESS_LLM_STATS = {"calls": 0, "input_tokens": 0, "output_tokens": 0, "cache_hit_tokens": 0}
 
 
-def _record_process_cache_stats(hit: int, miss: int) -> None:
-    """累加进程级缓存命中统计（chat/completions 与豆包 Responses 两条路径共用）"""
-    _PROCESS_CACHE_STATS["hit"] += hit
-    _PROCESS_CACHE_STATS["miss"] += miss
-    _PROCESS_CACHE_STATS["calls"] += 1
+def _extract_usage_tokens(usage: Dict[str, Any]) -> tuple[int, int]:
+    """从 usage 提取输入/输出 tokens，兼容两种字段命名：
+    chat/completions（prompt_tokens/completion_tokens）与 Responses API（input_tokens/output_tokens）"""
+    input_tokens = usage.get("prompt_tokens", usage.get("input_tokens", 0)) or 0
+    output_tokens = usage.get("completion_tokens", usage.get("output_tokens", 0)) or 0
+    return input_tokens, output_tokens
+
+
+def _extract_cache_hit_tokens(usage: Dict[str, Any]) -> int:
+    """从 usage 按供应商兼容读取缓存命中 tokens，优先级：
+    DeepSeek 顶层 prompt_cache_hit_tokens → 千问/豆包嵌套 prompt_tokens_details/input_tokens_details.cached_tokens
+    → 顶层 cached_tokens（豆包扁平形态 / 千问部分版本）"""
+    hit = usage.get("prompt_cache_hit_tokens") or 0
+    if hit:
+        return hit
+    details = usage.get("prompt_tokens_details") or usage.get("input_tokens_details") or {}
+    hit = details.get("cached_tokens") or 0
+    if hit:
+        return hit
+    return usage.get("cached_tokens") or 0
+
+
+def _record_process_llm_stats(input_tokens: int, output_tokens: int, cache_hit_tokens: int) -> None:
+    """累加进程级 LLM 用量统计（chat/completions 与豆包 Responses 两条路径共用，
+    每次成功调用都累计，无论供应商是否返回缓存字段）"""
+    _PROCESS_LLM_STATS["calls"] += 1
+    _PROCESS_LLM_STATS["input_tokens"] += input_tokens
+    _PROCESS_LLM_STATS["output_tokens"] += output_tokens
+    _PROCESS_LLM_STATS["cache_hit_tokens"] += cache_hit_tokens
 
 
 def get_cache_stats() -> dict:
-    """获取进程级缓存命中率统计（供 /api/llm/cache-stats 展示）"""
-    hit = _PROCESS_CACHE_STATS["hit"]
-    miss = _PROCESS_CACHE_STATS["miss"]
-    total = hit + miss
+    """获取进程级 LLM 用量统计（供 /api/llm/cache-stats 展示）"""
+    input_tokens = _PROCESS_LLM_STATS["input_tokens"]
+    cache_hit = _PROCESS_LLM_STATS["cache_hit_tokens"]
     return {
-        "hit_tokens": hit,
-        "miss_tokens": miss,
-        "hit_rate": round(hit / total, 4) if total > 0 else 0,
-        "calls": _PROCESS_CACHE_STATS["calls"],
+        "calls": _PROCESS_LLM_STATS["calls"],
+        "input_tokens": input_tokens,
+        "output_tokens": _PROCESS_LLM_STATS["output_tokens"],
+        "cache_hit_tokens": cache_hit,
+        "hit_rate": round(cache_hit / input_tokens, 4) if input_tokens > 0 else 0,
     }
 
 
 def reset_cache_stats() -> None:
-    """重置进程级缓存命中率统计（主要供测试隔离使用）"""
-    _PROCESS_CACHE_STATS["hit"] = 0
-    _PROCESS_CACHE_STATS["miss"] = 0
-    _PROCESS_CACHE_STATS["calls"] = 0
+    """重置进程级 LLM 用量统计（主要供测试隔离使用）"""
+    _PROCESS_LLM_STATS["calls"] = 0
+    _PROCESS_LLM_STATS["input_tokens"] = 0
+    _PROCESS_LLM_STATS["output_tokens"] = 0
+    _PROCESS_LLM_STATS["cache_hit_tokens"] = 0
 
 # 各模型家族的最大输出 token 上限与计算函数已移至 context_budget，
 # 供预算公式（输入侧）与 chat()（输出侧）共用同一事实源，防止 input+output 超上下文
@@ -262,15 +288,16 @@ class LLMClient:
                 if "choices" in data and len(data["choices"]) > 0:
                     logger.info("[LLM 请求] 成功，耗时 %.1fs", latency_ms/1000)
 
-                    # 缓存命中率统计
+                    # 用量统计：每次调用都累计（与供应商无关），缓存命中按供应商兼容读取
                     usage = data.get("usage", {})
-                    hit = usage.get("prompt_cache_hit_tokens", 0)
-                    miss = usage.get("prompt_cache_miss_tokens", 0)
+                    input_tokens, output_tokens = _extract_usage_tokens(usage)
+                    hit = _extract_cache_hit_tokens(usage)
+                    miss = usage.get("prompt_cache_miss_tokens", 0) or 0
+                    _record_process_llm_stats(input_tokens, output_tokens, hit)
                     if hit > 0 or miss > 0:
                         self._cache_hit_tokens += hit
                         self._cache_miss_tokens += miss
                         self._total_requests += 1
-                        _record_process_cache_stats(hit, miss)
                         total = hit + miss
                         hit_rate = (hit / total * 100) if total > 0 else 0
                         overall_total = self._cache_hit_tokens + self._cache_miss_tokens
@@ -391,23 +418,22 @@ class LLMClient:
         return str(data)
 
     def _record_responses_cache_stats(self, data: Dict[str, Any]) -> None:
-        """Responses API 缓存命中统计：cached_tokens 并入会话级缓存命中率统计
+        """Responses API 用量统计：每次调用累计进程级输入/输出 tokens，
+        缓存命中并入会话级缓存命中率统计
 
         火山方舟 Responses API 的命中字段是嵌套的 usage.input_tokens_details.cached_tokens，
         顶层 usage.cached_tokens 仅作回退兼容（旧形态/扁平化响应）。
         """
         usage = data.get("usage") or {}
-        details = usage.get("input_tokens_details") or {}
-        hit = details.get("cached_tokens") or usage.get("cached_tokens") or 0
-        # 兼容 prompt_tokens / input_tokens 两种字段名
-        prompt_tokens = usage.get("prompt_tokens", usage.get("input_tokens", 0)) or 0
-        miss = max(prompt_tokens - hit, 0) if prompt_tokens else 0
+        input_tokens, output_tokens = _extract_usage_tokens(usage)
+        hit = _extract_cache_hit_tokens(usage)
+        miss = max(input_tokens - hit, 0) if input_tokens else 0
+        _record_process_llm_stats(input_tokens, output_tokens, hit)
 
         if hit > 0 or miss > 0:
             self._cache_hit_tokens += hit
             self._cache_miss_tokens += miss
             self._total_requests += 1
-            _record_process_cache_stats(hit, miss)
             total = hit + miss
             hit_rate = (hit / total * 100) if total > 0 else 0
             overall_total = self._cache_hit_tokens + self._cache_miss_tokens
