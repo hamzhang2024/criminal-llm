@@ -1,6 +1,6 @@
 // PDF 页面管理：缩略图网格 + 页面旋转 + 乱码页修复闭环
 
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { API_BASE } from '../../../api/client'
 import { getThumbnails, rotatePage, reconvertBlock } from '../../../api/cases'
 import type { MdIssue } from '../../../api/cases'
@@ -30,6 +30,19 @@ export function PdfPageManager({ caseId, pdfFilename, issues, onFixed }: PdfPage
   // 注：macOS WKWebView 不实现 window.prompt（调用即抛 TypeError），故用行内输入代替
   const [fixingIssue, setFixingIssue] = useState<number | null>(null)
   const [fixPageInput, setFixPageInput] = useState('')
+  // 「定位」高亮：当前高亮的缩略图页码（短暂闪烁后自动取消）
+  const [highlightPage, setHighlightPage] = useState<number | null>(null)
+  // 刚保存旋转的页码：重转输入框预填优先取它（旋转→重转闭环），其次 issue 的估算页
+  const [lastRotatedPage, setLastRotatedPage] = useState<number | null>(null)
+  // 缩略图 DOM 引用（页码 → 容器），供「定位」scrollIntoView 用
+  const thumbRefs = useRef<Map<number, HTMLDivElement>>(new Map())
+
+  // 高亮闪烁动画结束后自动取消高亮
+  useEffect(() => {
+    if (highlightPage == null) return
+    const t = window.setTimeout(() => setHighlightPage(null), 2000)
+    return () => clearTimeout(t)
+  }, [highlightPage])
 
   useEffect(() => {
     setLoading(true)
@@ -51,6 +64,8 @@ export function PdfPageManager({ caseId, pdfFilename, issues, onFixed }: PdfPage
   const saveRotations = async () => {
     setSaving(true)
     setMessage('')
+    // 记录本次旋转的页码（供「重转并修复」预填：旋转的页通常就是要重转的页）
+    const rotatedPages = [...rotations.entries()].filter(([, d]) => d !== 0).map(([p]) => p)
     try {
       for (const [page, deg] of rotations) {
         if (deg !== 0) {
@@ -61,7 +76,11 @@ export function PdfPageManager({ caseId, pdfFilename, issues, onFixed }: PdfPage
       }
       setRotations(new Map())  // 兜底：循环全部成功时整体清空
       setCacheBust(b => b + 1)  // 旋转后缩略图缓存已失效，重新拉取
-      setMessage('旋转已保存')
+      if (rotatedPages.length > 0) setLastRotatedPage(rotatedPages[0])
+      // 旋转只是改了 PDF 页面方向，md 乱码块仍在——仍有未修复异常时引导用户接着重转
+      setMessage(issues.length > 0
+        ? '旋转已保存。点击上方「重转并修复」重新转换该页'
+        : '旋转已保存')
     } catch (e: any) {
       setMessage(`保存失败：${e.message}`)
     } finally {
@@ -69,10 +88,24 @@ export function PdfPageManager({ caseId, pdfFilename, issues, onFixed }: PdfPage
     }
   }
 
+  // 「定位」：滚动到估算页缩略图并金色高亮闪烁（估算误差 ±2 页，用户视觉上确认即可）
+  const locatePage = (page: number | null) => {
+    if (page == null) return
+    const el = thumbRefs.current.get(page)
+    if (!el) {
+      setMessage(`未找到第 ${page} 页缩略图`)
+      return
+    }
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    setHighlightPage(page)
+  }
+
   // 点击「重转并修复」：行内展开页码输入（替代 window.prompt，Tauri macOS 无此 API）
+  // 预填页码：优先刚旋转保存的页（旋转→重转闭环），其次后端估算页，都没有则留空手输
   const openFixInput = (idx: number) => {
     setFixingIssue(idx)
-    setFixPageInput('')
+    const prefill = lastRotatedPage ?? issues[idx]?.estimated_page
+    setFixPageInput(prefill != null ? String(prefill) : '')
     setMessage('')
   }
 
@@ -112,6 +145,8 @@ export function PdfPageManager({ caseId, pdfFilename, issues, onFixed }: PdfPage
 
   return (
     <div style={{ flex: 1, overflow: 'auto', background: '#1a1a1e', padding: 16 }}>
+      {/* 定位高亮的闪烁动画（金色光晕，与横幅警告色系一致） */}
+      <style>{`@keyframes pdfPageFlash { 0%,100% { box-shadow: 0 0 0 0 rgba(245,197,24,0) } 50% { box-shadow: 0 0 14px 4px rgba(245,197,24,0.85) } }`}</style>
       {issues.length > 0 && (
         <div style={{ background: '#fff3cd', color: '#664d03', borderRadius: 8, padding: '10px 14px', marginBottom: 12, fontSize: 13 }}>
           <div style={{ fontWeight: 600, marginBottom: 6 }}>⚠️ 检测到 {issues.length} 处识别异常（可能页面倒置或扫描异常）</div>
@@ -119,8 +154,17 @@ export function PdfPageManager({ caseId, pdfFilename, issues, onFixed }: PdfPage
             <div key={i} style={{ marginTop: 6 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {iss.page_label || '未知页'}：{iss.preview.slice(0, 50)}…
+                  {iss.page_label || '未知页'}
+                  {iss.estimated_page != null && `（PDF 约第 ${iss.estimated_page} 页）`}
+                  ：{iss.preview.slice(0, 50)}…
                 </span>
+                {iss.estimated_page != null && (
+                  <button onClick={() => locatePage(iss.estimated_page)}
+                    title="滚动到估算页缩略图并高亮"
+                    style={{ padding: '4px 10px', fontSize: 12, border: 'none', borderRadius: 4, background: '#c3a955', color: '#fff', cursor: 'pointer' }}>
+                    定位
+                  </button>
+                )}
                 <button onClick={() => (fixingIssue === i ? setFixingIssue(null) : openFixInput(i))} disabled={fixing}
                   style={{ padding: '4px 10px', fontSize: 12, border: 'none', borderRadius: 4, background: '#0d6efd', color: '#fff', cursor: 'pointer' }}>
                   {fixing ? '修复中…' : fixingIssue === i ? '收起' : '重转并修复'}
@@ -157,8 +201,15 @@ export function PdfPageManager({ caseId, pdfFilename, issues, onFixed }: PdfPage
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12 }}>
         {thumbs.map(t => {
           const deg = rotations.get(t.page) || 0
+          const highlighted = highlightPage === t.page
           return (
-            <div key={t.page} style={{ background: '#2c2c30', borderRadius: 8, padding: 8, textAlign: 'center' }}>
+            <div key={t.page}
+              ref={el => { if (el) thumbRefs.current.set(t.page, el); else thumbRefs.current.delete(t.page) }}
+              style={{
+                background: '#2c2c30', borderRadius: 8, padding: 8, textAlign: 'center',
+                // 定位高亮：金色边框 + 短暂闪烁动画（2s 后由 effect 自动取消）
+                ...(highlighted ? { outline: '2px solid #f5c518', animation: 'pdfPageFlash 0.65s ease-in-out 3' } : {}),
+              }}>
               <div style={{ overflow: 'hidden', borderRadius: 4, marginBottom: 6 }}>
                 <img src={`${BACKEND_ORIGIN}${t.url}${cacheBust ? `?t=${cacheBust}` : ''}`} alt={`第${t.page}页`} loading="lazy"
                   style={{ width: '100%', transform: `rotate(${deg}deg)`, transition: 'transform 0.2s' }} />

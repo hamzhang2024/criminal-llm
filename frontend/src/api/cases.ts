@@ -265,6 +265,8 @@ export interface MdIssue {
   start_line: number
   end_line: number
   preview: string
+  estimated_page: number | null  // 按行数比例估算的 PDF 页码（误差 ±2 页，无法估算为 null）
+  total_pages: number | null     // 对应 PDF 总页数（未知为 null）
 }
 
 export async function getMdIssues(caseId: string): Promise<{ issues: MdIssue[] }> {

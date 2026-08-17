@@ -19,12 +19,42 @@ function imgUrl(caseId: string, name: string): string {
 
 export function SelectiveOCR({ caseId, onUnocrCountChange, conversionDone }: Props) {
   const [groups, setGroups] = useState<OcrImageGroup>({})
-  const [selected, setSelected] = useState<Record<string, Set<string>>>({})
+  // 勾选状态 localStorage 持久化：切界面组件卸载后不丢失（key 按案件隔离）
+  const storageKey = `selective_ocr_selection_${caseId}`
+  // 是否从 localStorage 恢复过选择（区分"首次访问默认全选"和"用户曾全不选"）
+  const restoredRef = useRef(false)
+  const [selected, setSelected] = useState<Record<string, Set<string>>>(() => {
+    try {
+      const raw = localStorage.getItem(storageKey)
+      if (!raw) return {}
+      const obj = JSON.parse(raw) as Record<string, string[]>
+      const sel: Record<string, Set<string>> = {}
+      let hasAny = false
+      for (const [vol, names] of Object.entries(obj)) {
+        sel[vol] = new Set(names)
+        if (names.length > 0) hasAny = true
+      }
+      // 空选择视为无历史（下次加载走默认全选），避免"全不选"被当成有效偏好
+      restoredRef.current = hasAny
+      return sel
+    } catch { return {} }  // 解析失败视为无历史选择
+  })
   const [loading, setLoading] = useState(false)
   const [ocrStatus, setOcrStatus] = useState<{ status: string; done: number; total: number; current?: string; failed?: string[] } | null>(null)
   const [error, setError] = useState('')
   // 放大预览：点击缩略图打开大图，在 lightbox 里决定是否勾选
   const [preview, setPreview] = useState<{ vol: string; name: string; url: string } | null>(null)
+
+  // 勾选变化即写入 localStorage（Set → Array 序列化）；空选择不写（视为无偏好，移除旧 key）
+  useEffect(() => {
+    try {
+      const total = Object.values(selected).reduce((a, s) => a + s.size, 0)
+      if (total === 0) { localStorage.removeItem(storageKey); return }
+      const obj: Record<string, string[]> = {}
+      for (const [vol, s] of Object.entries(selected)) obj[vol] = Array.from(s)
+      localStorage.setItem(storageKey, JSON.stringify(obj))
+    } catch { /* 写入失败（隐私模式/超限）不影响功能 */ }
+  }, [selected, storageKey])
 
   // 轮询 timer 用 ref 保存，组件卸载时清理（避免定时器泄漏 + 卸载后 setState）
   const timerRef = useRef<number | null>(null)
@@ -49,8 +79,9 @@ export function SelectiveOCR({ caseId, onUnocrCountChange, conversionDone }: Pro
       const g = await getOcrImages(caseId)
       setGroups(g)
       setSelected(prev => {
-        // 首次加载默认全选；OCR 完成后刷新时保留用户勾选（仅剔除已消失的图片）
-        if (Object.keys(prev).length === 0) {
+        // 首次访问（无历史勾选）默认全选；从 localStorage 恢复或刷新时保留用户勾选，
+        // 仅剔除已消失的图片（防止旧 key 指向已删除图片）
+        if (Object.keys(prev).length === 0 && !restoredRef.current) {
           const sel: Record<string, Set<string>> = {}
           for (const [vol, imgs] of Object.entries(g)) sel[vol] = new Set(Object.keys(imgs))
           return sel
@@ -115,6 +146,11 @@ export function SelectiveOCR({ caseId, onUnocrCountChange, conversionDone }: Pro
     if (!Object.keys(body).length) { setError('未选择图片'); return }
     try {
       await startOcrImages(caseId, body)
+      // 任务已成功提交，勾选无需再持久化：清 key + 清内存选择，
+      // OCR 完成刷新后按默认全选重新来（剩余未识别图通常是下一轮目标）
+      try { localStorage.removeItem(storageKey) } catch { /* 忽略 */ }
+      restoredRef.current = false
+      setSelected({})
       setOcrStatus({ status: 'running', done: 0, total: selectedCount })
       // 启动前清掉旧 timer，避免重复轮询
       if (timerRef.current) clearInterval(timerRef.current)
