@@ -64,6 +64,38 @@ def natural_sort_key(path):
     return [int(p) if p.isdigit() else p.lower() for p in parts]
 
 
+# 通用笔录名：目录清点只写"讯问笔录"这类，没有人名，需从 persons 字段回填
+_GENERIC_TRANSCRIPT_RE = re.compile(r'^(询问|讯问|询问/讯问)笔录$')
+
+
+def _enrich_transcript_name(name: str, persons: str, existing_names: set) -> str:
+    """通用笔录名回填被讯问人/被询问人姓名；与既有证据重名时加序号。
+
+    persons 形如 "讯问人：夏海峰；记录人：张福如；被讯问人：冯叶飞"，
+    人名取到第一个 ；/，/。/（ 分隔符为止；被讯问人优先于被询问人。
+    纯函数，不修改 existing_names，调用方负责把返回名加入集合。
+    """
+    stripped = name.strip()
+    if not _GENERIC_TRANSCRIPT_RE.match(stripped):
+        return name
+    person = ""
+    if persons:
+        m = re.search(r'被讯问人[：:]\s*([^；;，,。/（(]+)', persons) or \
+            re.search(r'被询问人[：:]\s*([^；;，,。/（(]+)', persons)
+        if m:
+            person = m.group(1).strip()
+    if not person:
+        return name
+    candidate = f"{stripped}（{person}）"
+    if candidate not in existing_names:
+        return candidate
+    # 同卷同人多份通用笔录：加序号区分
+    n = 2
+    while f"{stripped}（{person}，第{n}份）" in existing_names:
+        n += 1
+    return f"{stripped}（{person}，第{n}份）"
+
+
 def _parse_charges_from_name(case_name: str, defendant: str = "") -> list:
     """从案件文件夹名推断罪名列表。
 
@@ -1805,11 +1837,17 @@ async def _do_extract_evidence(
         other_files = [f for f in evidence_md_files if not _is_indictment(f.name)]
 
         # ── 第1步：普通文件并发提取（先处理，让用户快速看到进度）──
-        pending_files = [f for f in other_files if f.name not in processed_sources]
+        # 按卷号自然排序，保证证据编号跟随卷号顺序（glob 返回顺序不可靠）
+        pending_files = sorted(
+            (f for f in other_files if f.name not in processed_sources),
+            key=natural_sort_key,
+        )
         all_evidence = list(existing_evidence)
         # 编号从既有条目最大值续排：prune/invalidate 删除中部条目后
         # len()+1 会撞号（报告超链接歧义 + {id:03d}_姓名.md 文件覆盖）
         next_id = _next_evidence_id(all_evidence)
+        # 已入库证据名集合：通用笔录名回填人名时判重（同卷同人多份加序号）
+        existing_names = {ev.get("name", "") for ev in all_evidence}
 
         # 分支外（起诉意见书结果合并、起诉书兜底分类）仍使用的名字，须在分支前初始化，
         # 否则断点续传全部跳过（不进入 if pending_files 分支）时触发 UnboundLocalError
@@ -2117,7 +2155,12 @@ async def _do_extract_evidence(
                         continue
 
                 for ev_data in ev_list:
-                    new_name = f"{next_id:03d}_{_sanitize_filename(ev_data['name'])}.md"
+                    # 通用笔录名（"讯问笔录"无人名）从 persons 回填被讯问人/被询问人
+                    ev_name = _enrich_transcript_name(
+                        ev_data["name"], ev_data.get("persons", ""), existing_names
+                    )
+                    existing_names.add(ev_name)
+                    new_name = f"{next_id:03d}_{_sanitize_filename(ev_name)}.md"
                     final_path = evidence_dir / new_name
 
                     temp_path = Path(ev_data["_temp_dir"]) / ev_data["md_file"]
@@ -2126,7 +2169,7 @@ async def _do_extract_evidence(
 
                     all_evidence.append({
                         "id": next_id,
-                        "name": ev_data["name"],
+                        "name": ev_name,
                         "type": ev_data["type"],
                         "source": ev_data["source"],
                         # 条目级非证据标注（封面/目录等）：上游已标注则沿用，否则现算
