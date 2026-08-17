@@ -82,8 +82,11 @@ export function SelectiveOCR({ caseId, onUnocrCountChange, conversionDone }: Pro
         // 首次访问（无历史勾选）默认全选；从 localStorage 恢复或刷新时保留用户勾选，
         // 仅剔除已消失的图片（防止旧 key 指向已删除图片）
         if (Object.keys(prev).length === 0 && !restoredRef.current) {
+          // 首次访问：默认勾选未识别的图片（已 OCR 的无需重跑，后端缓存命中也会跳过）
           const sel: Record<string, Set<string>> = {}
-          for (const [vol, imgs] of Object.entries(g)) sel[vol] = new Set(Object.keys(imgs))
+          for (const [vol, imgs] of Object.entries(g)) {
+            sel[vol] = new Set(Object.keys(imgs).filter(n => !imgs[n].ocr))
+          }
           return sel
         }
         const next: Record<string, Set<string>> = {}
@@ -196,7 +199,7 @@ export function SelectiveOCR({ caseId, onUnocrCountChange, conversionDone }: Pro
         return (
           <details key={vol} style={{ marginTop: '8px' }}>
             <summary style={{ cursor: 'pointer', fontSize: '12px', fontWeight: '500' }}>
-              {vol}（{s.size}/{names.length}）
+              {vol}（已识别 {names.filter(n => imgs[n].ocr).length}/{names.length}，选中 {s.size}）
               <button type="button" onClick={e => { e.preventDefault(); toggleVol(vol, names) }}
                 style={{ marginLeft: '8px', fontSize: '11px', border: '1px solid var(--macos-border)', background: 'none', borderRadius: '4px', cursor: 'pointer' }}>
                 {names.every(n => s.has(n)) ? '清空' : '全选'}
@@ -218,6 +221,11 @@ export function SelectiveOCR({ caseId, onUnocrCountChange, conversionDone }: Pro
                     style={{ position: 'absolute', top: '5px', left: '5px', background: 'rgba(255,255,255,0.9)', borderRadius: '3px', display: 'flex', alignItems: 'center', cursor: 'pointer', padding: '1px 3px', boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }}>
                     <input type="checkbox" checked={s.has(name)} onChange={() => toggle(vol, name)} style={{ cursor: 'pointer' }} />
                   </label>
+                  {/* 已识别标记（右上角绿勾，一眼区分已/未 OCR） */}
+                  {imgs[name].ocr && (
+                    <span title="已识别"
+                      style={{ position: 'absolute', top: '5px', right: '5px', background: 'rgba(52,199,89,0.95)', color: '#fff', fontSize: '10px', borderRadius: '3px', padding: '1px 4px', lineHeight: 1.4, boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }}>✓ 已识别</span>
+                  )}
                 </div>
               ))}
             </div>
