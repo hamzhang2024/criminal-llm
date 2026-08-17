@@ -4,7 +4,8 @@ import React, { useState } from 'react'
 import { MacOSCard, MacOSButton } from '../../../components/MacOSLayout'
 import { showConfirm } from '../../../components/MacOSDialog'
 import DocTypeBadge, { CompletenessDot } from '../../../components/DocTypeBadge'
-import type { EvidenceIndexFile, CompletenessReport } from '../../../api'
+import { getCacheStats } from '../../../api'
+import type { EvidenceIndexFile, CompletenessReport, CacheStats } from '../../../api'
 import type { ExtractProgress } from '../hooks/useEvidenceExtraction'
 import { SelectiveOCR } from './SelectiveOCR'
 
@@ -58,6 +59,17 @@ export function Step1Extract({
   const mdConversionComplete = files.length > 0 && files.every(f => f.status === 'done')
   // 未 OCR 图片数（SelectiveOCR 上报，用于提取前提醒）
   const [unocrCount, setUnocrCount] = useState(0)
+
+  // 提取运行中轮询 LLM 用量统计（每 15s），进度条下方一行小字实时展示
+  const [llmStats, setLlmStats] = useState<CacheStats | null>(null)
+  React.useEffect(() => {
+    if (!processing) return
+    let cancelled = false
+    const load = () => getCacheStats().then(s => { if (!cancelled) setLlmStats(s) }).catch(() => {})
+    load()
+    const timer = setInterval(load, 15000)
+    return () => { cancelled = true; clearInterval(timer) }
+  }, [processing])
 
   // 提取前提醒：还有未 OCR 图片时先让用户选择是否 OCR（转账凭证/流水截图文字对资金流分析重要）
   const handleExtractClick = async () => {
@@ -131,6 +143,12 @@ export function Step1Extract({
               : undefined}
           />
         )
+      )}
+      {/* 提取运行中的实时 LLM 用量（进度条下方一行小字） */}
+      {processing && llmStats && llmStats.calls > 0 && (
+        <div style={{ fontSize: '11px', color: '#86868b', marginTop: '-4px', marginBottom: '8px' }}>
+          LLM 用量：{llmStats.calls} 次调用 · 输入 {llmStats.input_tokens.toLocaleString()} tokens（缓存命中 {Math.round(llmStats.hit_rate * 100)}%）· 输出 {llmStats.output_tokens.toLocaleString()} tokens
+        </div>
       )}
       <SelectiveOCR caseId={caseId} onUnocrCountChange={setUnocrCount} conversionDone={mdConversionComplete} />
       {summaryParts.length > 0 && (

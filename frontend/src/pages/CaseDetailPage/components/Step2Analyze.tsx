@@ -206,7 +206,7 @@ export function Step2Analyze({
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             {/* 分析运行中的实时缓存命中率徽标 */}
             {runningStage !== null && cacheStats && cacheStats.calls > 0 && (
-              <span style={{ fontSize: '11px', color: 'var(--macos-text-tertiary)' }} title={`缓存命中 ${cacheStats.hit_tokens.toLocaleString()} / ${(cacheStats.hit_tokens + cacheStats.miss_tokens).toLocaleString()} tokens`}>
+              <span style={{ fontSize: '11px', color: 'var(--macos-text-tertiary)' }} title={`缓存命中 ${cacheStats.cache_hit_tokens.toLocaleString()} / ${cacheStats.input_tokens.toLocaleString()} 输入 tokens`}>
                 ⚡ 缓存 <span style={{ fontWeight: 600, color: cacheStats.hit_rate >= 0.5 ? '#34c759' : 'var(--macos-accent)' }}>{Math.round(cacheStats.hit_rate * 100)}%</span>
               </span>
             )}

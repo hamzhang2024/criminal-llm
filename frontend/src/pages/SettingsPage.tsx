@@ -1230,17 +1230,17 @@ export function SettingsPage() {
                 <li>摘要层：证据浓缩摘要供分析阶段消费，长卷宗不爆上下文</li>
                 <li>上下文预算：按上方「模型上下文大小」自动缩放分批与截断</li>
               </ul>
-              {/* 本次运行的实时缓存命中率（后端进程级累计） */}
+              {/* 本次运行的实时 LLM 用量统计（后端进程级累计） */}
               {cacheStats && cacheStats.calls > 0 && (
                 <div style={{ marginTop: '8px', fontSize: '11px', color: '#86868b' }}>
-                  本次运行：{cacheStats.calls} 次调用，缓存命中率{' '}
+                  本次运行：{cacheStats.calls} 次调用 · 输入 {cacheStats.input_tokens.toLocaleString()} tokens（缓存命中{' '}
                   <span style={{
                     fontWeight: 600,
                     color: cacheStats.hit_rate >= 0.5 ? '#34c759' : 'var(--macos-accent)',
                   }}>
                     {Math.round(cacheStats.hit_rate * 100)}%
                   </span>
-                  {' '}（{cacheStats.hit_tokens.toLocaleString()} / {(cacheStats.hit_tokens + cacheStats.miss_tokens).toLocaleString()} tokens）
+                  ）· 输出 {cacheStats.output_tokens.toLocaleString()} tokens
                 </div>
               )}
             </div>

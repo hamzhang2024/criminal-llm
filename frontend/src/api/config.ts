@@ -26,12 +26,13 @@ export async function checkUpdate(): Promise<UpdateInfo> {
 
 export { openUrl }
 
-// LLM 前缀缓存命中率统计（后端进程级累计）
+// LLM 用量统计（后端进程级累计：每次调用都统计，与供应商无关）
 export interface CacheStats {
-  hit_tokens: number
-  miss_tokens: number
-  hit_rate: number  // 0~1
   calls: number
+  input_tokens: number
+  output_tokens: number
+  cache_hit_tokens: number
+  hit_rate: number  // 0~1，缓存命中 tokens / 输入 tokens
 }
 
 export async function getCacheStats(): Promise<CacheStats> {
