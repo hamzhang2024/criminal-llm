@@ -88,6 +88,18 @@ export function Step1Extract({
     onExtract()
   }
 
+  // 修复失败证据：明确告知只重提失败份（成功证据按名跳过、摘要只补缺的），语义比"重新提取"直观
+  const handleRepairFailed = async () => {
+    const ok = await showConfirm({
+      title: `修复 ${failedCount} 份提取失败的证据`,
+      message: `将重新提取 ${failedCount} 份失败证据（带 ⚠️ 标记的空壳）。\n\n· 已成功的 ${evidenceList.length - failedCount} 份不会重复提取\n· 摘要层只补失败份，其余不受影响\n· 预计耗时取决于模型速度，失败份会逐轮自动收敛`,
+      confirmText: '开始修复',
+      cancelText: '取消',
+      variant: 'info',
+    })
+    if (ok) onExtract()
+  }
+
   // 文书分类映射：来源文件名 → doc_type
   const docTypeMap: Record<string, string> = {}
   for (const f of evidenceFiles) docTypeMap[f.name] = f.doc_type
@@ -118,6 +130,12 @@ export function Step1Extract({
             <MacOSButton variant="secondary" onClick={onStop} style={{ color: '#ff9500', borderColor: '#ff9500' }}>停止</MacOSButton>
           ) : evidenceExtracted ? (
             <>
+              {failedCount > 0 && (
+                <MacOSButton variant="primary" onClick={handleRepairFailed}
+                  style={{ background: '#b7791f', borderColor: '#b7791f' }}>
+                  修复失败证据（{failedCount}）
+                </MacOSButton>
+              )}
               <MacOSButton variant="secondary" onClick={onExtract}>重新提取</MacOSButton>
               <MacOSButton variant="secondary" onClick={onClear} style={{ color: 'var(--macos-danger)', borderColor: 'var(--macos-danger)' }}>清除</MacOSButton>
             </>
