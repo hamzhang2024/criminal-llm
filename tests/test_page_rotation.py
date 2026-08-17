@@ -158,6 +158,52 @@ def test_detect_skips_unreadable_file(tmp_path):
     assert issues[0]["md_file"] == "good.md"
 
 
+def test_detect_estimates_pdf_page(tmp_path):
+    """提供 pdf_pages 时按行数比例估算乱码块所在 PDF 页码（供前端定位倒置页缩略图）"""
+    md_dir = tmp_path / "md"
+    md_dir.mkdir()
+    # 8 行 md：乱码块起始行为第 7 行（0 基 6，即 3/4 处）
+    lines = [f"第{n}行正常内容。" for n in range(8)]
+    lines[6] = "<table><tr><td>第2页共9页</td></tr><tr><td>问：乱码块</td></tr></table>"
+    (md_dir / "第2卷_去水印.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    from page_rotation import detect_md_issues
+    issues = detect_md_issues(md_dir, pdf_pages={"第2卷_去水印.md": 100})
+    assert len(issues) == 1
+    assert issues[0]["total_pages"] == 100
+    # 估算公式：round(start_line / total_lines * total_pages) = round(6/8*100) = 75
+    assert issues[0]["estimated_page"] == 75
+
+
+def test_detect_estimated_page_clamped_to_first_page(tmp_path):
+    """乱码块在 md 开头时估算页码不低于 1（PDF 页码从 1 开始）"""
+    md_dir = tmp_path / "md"
+    md_dir.mkdir()
+    (md_dir / "a.md").write_text(
+        "<table><tr><td>第1页共3页</td></tr><tr><td>问：开头即乱码</td></tr></table>\n后续内容。\n",
+        encoding="utf-8")
+    from page_rotation import detect_md_issues
+    issues = detect_md_issues(md_dir, pdf_pages={"a.md": 50})
+    assert issues[0]["estimated_page"] == 1
+    assert issues[0]["total_pages"] == 50
+
+
+def test_detect_estimated_page_none_without_pdf_pages(tmp_path):
+    """pdf_pages 缺该文件（PDF 不存在/打不开）→ estimated_page/total_pages 为 None"""
+    md_dir = tmp_path / "md"
+    md_dir.mkdir()
+    (md_dir / "a.md").write_text(
+        "<table><tr><td>第1页共2页</td></tr><tr><td>问：正常检出</td></tr></table>\n", encoding="utf-8")
+    from page_rotation import detect_md_issues
+    # pdf_pages 中无该文件
+    issues = detect_md_issues(md_dir, pdf_pages={})
+    assert issues[0]["estimated_page"] is None
+    assert issues[0]["total_pages"] is None
+    # 不传 pdf_pages（默认 None）同样为 None
+    issues = detect_md_issues(md_dir)
+    assert issues[0]["estimated_page"] is None
+    assert issues[0]["total_pages"] is None
+
+
 def test_extract_single_page(tmp_path):
     """抽取单页为新 PDF（供单页重转提交 MinerU）"""
     from page_rotation import extract_single_page

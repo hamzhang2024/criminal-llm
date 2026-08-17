@@ -91,12 +91,18 @@ _PAGE_LABEL_RE = re.compile(r"第\s*\d+\s*页\s*共\s*\d+\s*页")
 _MAX_TABLE_BLOCK_LINES = 50
 
 
-def detect_md_issues(md_dir: Path) -> list[dict]:
+def detect_md_issues(md_dir: Path, pdf_pages: dict[str, int] | None = None) -> list[dict]:
     """扫描 md/*.md，找出被 MinerU 误判为表格的笔录页（倒置/异常扫描页的特征）
 
     判定：整块 <table>...</table> 内含「第N页共M页」页码标记或 ≥1 个「问：」。
     正常表格（卷内目录等）不含这些特征，不误报。
-    Returns: [{"md_file", "page_label", "start_line", "end_line", "preview"}]
+
+    pdf_pages: md 文件名 → 对应 PDF 总页数（可选，由端点层从 processed/ 组装）。
+    提供时按行数比例估算乱码块所在 PDF 页码（estimated_page），误差通常 ±2 页，
+    足够用户在缩略图中视觉定位倒置页（行号对前端无意义，页码才能跳转）。
+
+    Returns: [{"md_file", "page_label", "start_line", "end_line", "preview",
+               "estimated_page", "total_pages"}]
     （行号为 0 基，end_line 含；供重转拼接定位）
     """
     issues = []
@@ -106,6 +112,9 @@ def detect_md_issues(md_dir: Path) -> list[dict]:
         except (OSError, UnicodeDecodeError) as e:
             logger.warning(f"[乱码检测] 读取 {md.name} 失败，跳过: {e}")
             continue
+        total_lines = len(lines)
+        # 该 md 对应的 PDF 总页数（未知则 None，估算字段返回 null）
+        pages = pdf_pages.get(md.name) if pdf_pages else None
         i = 0
         while i < len(lines):
             if lines[i].strip().startswith("<table>"):
@@ -123,12 +132,17 @@ def detect_md_issues(md_dir: Path) -> list[dict]:
                 text = "\n".join(lines[start:end + 1])
                 if _PAGE_LABEL_RE.search(text) or "问：" in text or "问:" in text:
                     m = _PAGE_LABEL_RE.search(text)
+                    # 按行数比例估算 PDF 页码，钳制在 [1, pages]（行 0 会估出 0，不是合法页码）
+                    estimated = max(1, min(pages, round(start / total_lines * pages))) \
+                        if pages and total_lines else None
                     issues.append({
                         "md_file": md.name,
                         "page_label": m.group(0) if m else "",
                         "start_line": start,
                         "end_line": end,
                         "preview": re.sub(r"<[^>]+>", " ", text)[:120].strip(),
+                        "estimated_page": estimated,
+                        "total_pages": pages,
                     })
                 i = end + 1
             else:

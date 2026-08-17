@@ -3119,6 +3119,7 @@ async def rotate_page(case_id: str, req: RotatePageRequest):
 @router.get("/{case_id}/md-issues")
 async def md_issues(case_id: str):
     """扫描案件 md/ 下的识别异常页（MinerU 把倒置/异常页误判为表格的乱码块）"""
+    import fitz
     from page_rotation import detect_md_issues
     case_path = find_case_path(case_id)
     if not case_path:
@@ -3126,7 +3127,20 @@ async def md_issues(case_id: str):
     md_dir = case_path / "md"
     if not md_dir.exists():
         return {"issues": []}
-    return {"issues": detect_md_issues(md_dir)}
+    # 组装 md 文件名 → processed/ 同名 PDF 总页数（X.md ↔ X.pdf，_去水印后缀两边一致）
+    # 供乱码块按行数比例估算 PDF 页码；PDF 缺失或损坏则跳过（估算字段返回 null）
+    pdf_pages: dict = {}
+    for md in md_dir.glob("*.md"):
+        pdf = case_path / "processed" / (md.stem + ".pdf")
+        if not pdf.exists():
+            continue
+        try:
+            doc = fitz.open(pdf)
+            pdf_pages[md.name] = len(doc)
+            doc.close()
+        except Exception as e:
+            logger.warning(f"[乱码检测] 读取 {pdf.name} 页数失败，跳过页码估算: {e}")
+    return {"issues": detect_md_issues(md_dir, pdf_pages=pdf_pages)}
 
 
 class ReconvertBlockRequest(BaseModel):
