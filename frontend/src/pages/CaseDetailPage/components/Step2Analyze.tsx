@@ -107,6 +107,9 @@ export function Step2Analyze({
                 }}>{ev.id}</div>
                 <div style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {ev.name}
+                  {ev.failed && (
+                    <span title="提取失败，下次提取将自动重试" style={{ color: '#b7791f' }}> ⚠️</span>
+                  )}
                   <DocTypeBadge docType={ev.source ? docTypeMap[ev.source] : undefined} />
                 </div>
                 <div style={{ color: 'var(--macos-text-tertiary)', fontSize: '11px' }}>

@@ -15,6 +15,7 @@ interface EvidenceItem {
   type?: string
   source?: string
   page_range?: string
+  md_file?: string  // 证据全文文件名（预览用）
   failed?: boolean  // 按份提取失败的空壳条目（后端 index.json 标记）
 }
 
@@ -30,6 +31,7 @@ interface Step1ExtractProps {
   onStop: () => void
   onClear: () => void
   onRefreshEvidence: () => void
+  onPreviewEvidence?: (mdFile: string, evId: string | number) => void  // 证据预览（摘要/全文切换，与案卷分析界面一致）
   extractProgress?: ExtractProgress | null  // 提取/摘要实时进度（进度条）
 }
 
@@ -54,7 +56,7 @@ function ProgressBar({ percent, label, subLabel }: { percent: number; label: str
 
 export function Step1Extract({
   caseId, files, evidenceList, evidenceExtracted, evidenceFiles = [], completeness,
-  processing, onExtract, onStop, onClear, extractProgress,
+  processing, onExtract, onStop, onClear, onPreviewEvidence, extractProgress,
 }: Step1ExtractProps) {
   const mdConversionComplete = files.length > 0 && files.every(f => f.status === 'done')
   // 未 OCR 图片数（SelectiveOCR 上报，用于提取前提醒）
@@ -197,6 +199,17 @@ export function Step1Extract({
                   missingCount={entry?.missing?.length || 0}
                   needsReview={entry?.needs_review}
                 />
+                {/* 证据预览（摘要/全文切换，与案卷分析界面一致） */}
+                {ev.md_file && onPreviewEvidence && (
+                  <button
+                    onClick={() => onPreviewEvidence(ev.md_file!, ev.id)}
+                    style={{
+                      padding: '4px 8px', background: 'var(--macos-accent-light)',
+                      border: 'none', borderRadius: '4px', cursor: 'pointer',
+                      fontSize: '11px', color: 'var(--macos-accent)', flexShrink: 0,
+                    }}
+                  >预览</button>
+                )}
               </div>
             )
           })}

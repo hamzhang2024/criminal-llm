@@ -504,6 +504,16 @@ export function CaseDetailPage() {
                 evidenceFiles={evidenceFiles} completeness={completeness}
                 processing={extracting} onExtract={handleExtractEvidence} onStop={handleStopExtract}
                 onClear={handleClearEvidence} onRefreshEvidence={handleRefreshEvidence}
+                onPreviewEvidence={(mdFile, evId) => {
+                  // 证据全文在 evidence/ 目录，直接 setPreviewFile 指向 evidence，
+                  // 不走 handleOpenFile（它会把 .md 强制指到 md/ 原始卷宗目录）
+                  const mdPath = `${API_BASE}/cases/${caseId}/serve-file?file_path=${encodeURIComponent(mdFile)}&dir=evidence`
+                  setPreviewFile({ id: String(evId), name: mdFile, size: 0, status: 'done', path: mdPath, dir: 'evidence' })
+                  // 按 md_file 匹配证据（id 类型不稳定：部分条目无 id 字段），取摘要与保真告警标记
+                  const ev = evidenceList.find((e: any) => e.md_file === mdFile)
+                  setPreviewDigest(ev?.digest || '')
+                  setPreviewDigestWarning(!!ev?.digest_warning)
+                }}
                 extractProgress={extractProgress} />
             )}
 
