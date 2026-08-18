@@ -1929,6 +1929,7 @@ async def _do_extract_evidence(
                         if t:
                             t["current_file_done"] = done
                             t["current_file_total"] = total
+                            t["current_file_stage"] = "按份提取中"  # 目录清点完成，进入按份提取
 
                     # 心跳：LLM 等待期间每 30 秒更新进度，避免卡死检测误杀
                     heartbeat_cancelled = False
@@ -1941,11 +1942,17 @@ async def _do_extract_evidence(
                                 t = EXTRACT_TASKS.get(case_id)
                                 if t:
                                     t["llm_waiting"] = True
+                                    # 实时更新 LLM 等待时长（前端据此判断"在等模型"而非"卡死"）
+                                    t["llm_latency"] = round((time.time() - req_start) * 1000)
                                 # 更新 last_progress_time（外部变量）
                                 nonlocal last_progress_time
                                 last_progress_time = time.time()
 
                     heartbeat_task = asyncio.create_task(heartbeat())
+
+                    # 目录清点在按份提取调用内部首先执行，先标记阶段（0/0 时前端不再误显"0份笔录"）
+                    if task:
+                        task["current_file_stage"] = "目录清点中"
 
                     logger.info(f"[证据提取] 处理: {md_file.name}")
                     source_name, evidence_list = await _extract_single_file_with_tracking(
@@ -2447,6 +2454,7 @@ async def get_extract_status(case_id: str):
             "current_file": task.get("current_file", ""),
             "current_file_done": task.get("current_file_done", 0),
             "current_file_total": task.get("current_file_total", 0),
+            "current_file_stage": task.get("current_file_stage", ""),  # 当前卷阶段：目录清点中/按份提取中
             "summary_done": task.get("summary_done", 0),
             "summary_total": task.get("summary_total", 0),
             "elapsed_seconds": round(elapsed),

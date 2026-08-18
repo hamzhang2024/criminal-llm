@@ -159,7 +159,15 @@ export function Step1Extract({
             percent={extractProgress.totalFiles > 0 ? Math.round(extractProgress.processedFiles / extractProgress.totalFiles * 100) : 0}
             label={`正在提取证据（${extractProgress.processedFiles}/${extractProgress.totalFiles} 卷）`}
             subLabel={extractProgress.currentFile
-              ? `当前：${extractProgress.currentFile}${extractProgress.currentFileTotal > 0 ? ` · ${extractProgress.currentFileDone}/${extractProgress.currentFileTotal} 份笔录` : ''}`
+              ? `当前：${extractProgress.currentFile}${
+                  extractProgress.currentFileTotal > 0
+                    ? ` · ${extractProgress.currentFileDone}/${extractProgress.currentFileTotal} 份笔录`
+                    : ` · ${extractProgress.currentFileStage || '处理中'}`  // 目录清点阶段显示阶段名，不再误显 0/0 份
+                }${
+                  extractProgress.llmLatencyMs > 30000
+                    ? `（等待模型 ${Math.round(extractProgress.llmLatencyMs / 1000)}s）`  // 慢模型下标明"在等模型"而非卡死
+                    : ''
+                }`
               : undefined}
           />
         )

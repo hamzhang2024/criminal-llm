@@ -15,6 +15,8 @@ export interface ExtractProgress {
   currentFile: string
   currentFileDone: number   // 当前卷内已完成笔录份数
   currentFileTotal: number  // 当前卷笔录总份数
+  currentFileStage: string  // 当前卷阶段：目录清点中/按份提取中（total 为 0 时避免误显"0份笔录"）
+  llmLatencyMs: number      // 当前 LLM 调用的等待毫秒数（判断"在等模型"而非"卡死"）
   summaryDone: number
   summaryTotal: number
 }
@@ -118,6 +120,8 @@ export function useEvidenceExtraction(caseId: string | undefined, onExtractCompl
           currentFile: st.current_file || '',
           currentFileDone: st.current_file_done || 0,
           currentFileTotal: st.current_file_total || 0,
+          currentFileStage: st.current_file_stage || '',
+          llmLatencyMs: st.llm_latency_ms || 0,
           summaryDone: st.summary_done || 0,
           summaryTotal: st.summary_total || 0,
         })
