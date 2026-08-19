@@ -19,10 +19,10 @@
     "lucide-react": "^0.344.0",
     "marked": "^18.0.0",
     "mermaid": "^11.14.0",
+    "pdfjs-dist": "^3.11.174",
     "playwright": "^1.60.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "react-pdf": "^7.7.0",
     "react-router-dom": "^6.30.3",
     "tailwind-merge": "^2.2.1"
   },

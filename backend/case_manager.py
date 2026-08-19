@@ -3248,6 +3248,14 @@ async def reconvert_block(case_id: str, req: ReconvertBlockRequest):
         if not new_text:
             raise HTTPException(status_code=502, detail="单页转换结果为空，请稍后重试")
 
+    # 拼接前备份原 md：填错页码时乱码块被替换成错误页文字后将无法再次扫描修复，
+    # 备份供人工回滚（恢复方式：把 .fix-bak 内容改回原名覆盖）
+    backup_path = md_path.with_suffix(md_path.suffix + ".fix-bak")
+    try:
+        shutil.copy2(md_path, backup_path)
+    except Exception as e:
+        logger.warning(f"[单页重转] 备份 {md_path.name} 失败: {e}")
+
     try:
         splice_md_block(md_path, req.start_line, req.end_line, new_text)
     except MdBlockMismatchError as e:
@@ -3609,3 +3617,43 @@ async def get_ocr_status(case_id: str):
         raise HTTPException(status_code=404, detail="案件不存在")
     task = OCR_TASKS.get(case_id, {"status": "idle", "done": 0, "total": 0})
     return {"success": True, "task": task}
+
+
+# ========== PDF 批注持久化 ==========
+# 存储：案件目录下 annotations.json（与 case.json 平级，高频写独立文件避免冲突）
+# 全量替换策略：单案批注量级小（几十 KB），last-write-wins 足够，前端防抖 + 乐观更新
+
+class AnnotationsPayload(BaseModel):
+    version: int = 1
+    annotations: List[Dict] = []
+
+
+def _annotations_file(case_path: Path) -> Path:
+    return case_path / "annotations.json"
+
+
+@router.get("/{case_id}/annotations")
+async def get_annotations(case_id: str):
+    """读取案件批注（不存在返回空结构）"""
+    case_path = find_case_path(case_id)
+    if not case_path:
+        raise HTTPException(status_code=404, detail="案件不存在")
+    f = _annotations_file(case_path)
+    if not f.exists():
+        return {"version": 1, "annotations": []}
+    try:
+        return json.loads(f.read_text(encoding="utf-8"))
+    except Exception as e:
+        logger.warning(f"[批注] 读取 {f.name} 失败: {e}")
+        return {"version": 1, "annotations": []}
+
+
+@router.put("/{case_id}/annotations")
+async def put_annotations(case_id: str, payload: AnnotationsPayload):
+    """全量替换案件批注（原子写）"""
+    case_path = find_case_path(case_id)
+    if not case_path:
+        raise HTTPException(status_code=404, detail="案件不存在")
+    data = {"version": payload.version, "annotations": payload.annotations}
+    _atomic_write_text(_annotations_file(case_path), json.dumps(data, ensure_ascii=False, indent=2))
+    return {"success": True, "count": len(payload.annotations)}

@@ -79,7 +79,7 @@ criminal-llm/
 │   │   ├── components/
 │   │   │   ├── MacOSLayout.tsx   # macOS 风格设计系统
 │   │   │   ├── MacOSDialog.tsx   # 模态对话框（showAlert/showConfirm）
-│   │   │   ├── PdfViewer.tsx     # PDF 查看器（pdf.js CDN + 懒加载 + 批注）
+│   │   │   ├── pdf-viewer/       # PDF 查看器模块（本地 pdfjs-dist + 缩放/页码联动/缩略图/文本层/搜索/批注）
 │   │   │   ├── StickyNoteOverlay.tsx # 区域便签批注
 │   │   │   ├── MermaidRenderer.tsx   # Mermaid 图表渲染
 │   │   │   └── report/           # 报告页专用组件
@@ -176,7 +176,7 @@ criminal-llm/
 | `LoginPage` | 登录页面，邮箱 + 密码，注册链接跳转远程网站 |
 | `MacOSLayout` | macOS 风格设计系统（Titlebar、Sidebar、Toolbar、Button、Card、EmptyState） |
 | `MacOSDialog` | macOS 风格模态对话框（alert/confirm 封装，通过 `showAlert`/`showConfirm` 调用） |
-| `PdfViewer` | 自定义 PDF 渲染组件，使用 pdf.js CDN 动态加载 + canvas 渲染，支持懒加载（IntersectionObserver）和批注覆盖层 |
+| `pdf-viewer/PdfViewer` | PDF 阅读器模块：本地 pdfjs-dist（离线可用）+ canvas 懒加载渲染 + 连续缩放（Ctrl+滚轮/预设/视觉锚点保持）+ 页码联动跳转 + 缩略图侧栏 + 文本层选择复制 + 全文搜索高亮 + 便签/框选批注（后端 annotations.json 持久化，localStorage 旧数据自动迁移） |
 | `StickyNoteOverlay` | 区域便签批注覆盖层，支持点击创建/编辑/删除彩色便签 |
 | `MermaidRenderer` | Mermaid 图表渲染组件 |
 

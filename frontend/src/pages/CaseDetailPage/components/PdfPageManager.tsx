@@ -4,6 +4,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { API_BASE } from '../../../api/client'
 import { getThumbnails, rotatePage, reconvertBlock } from '../../../api/cases'
 import type { MdIssue } from '../../../api/cases'
+import { showConfirm } from '../../../components/MacOSDialog'
 
 interface PdfPageManagerProps {
   caseId: string
@@ -120,6 +121,14 @@ export function PdfPageManager({ caseId, pdfFilename, issues, onFixed }: PdfPage
       setMessage(`页码超出范围（共 ${thumbs.length} 页）`)
       return
     }
+    // 二次确认：填错页码会把错误页文字写进乱码块，且该块不再被扫描识别、无法再次修复
+    const confirmed = await showConfirm({
+      title: '确认修复',
+      message: `将提取 PDF 第 ${page} 页的文字，替换 ${issue.md_file} 中的识别异常块（第 ${issue.start_line + 1}-${issue.end_line + 1} 行）。\n\n原 md 会自动备份为 ${issue.md_file}.fix-bak；替换后该块不再被异常扫描识别，请确认页码无误。`,
+      confirmText: '确认修复',
+      cancelText: '取消',
+    })
+    if (!confirmed) return
     setFixing(true)
     setMessage('')
     try {

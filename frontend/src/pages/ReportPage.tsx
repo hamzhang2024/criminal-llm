@@ -19,7 +19,8 @@ import DOMPurify from 'dompurify'
 // 配置 marked 使用同步解析
 marked.setOptions({ async: false })
 import { MermaidRenderer } from '../components/MermaidRenderer'
-import { PdfViewer } from '../components/PdfViewer'
+import { PdfViewer } from '../components/pdf-viewer'
+import { useAnnotations } from '../components/pdf-viewer/annotationApi'
 import { StickyNoteOverlay } from '../components/StickyNoteOverlay'
 import { ReportRenderer } from '../components/report/ReportRenderer'
 import DocTypeBadge from '../components/DocTypeBadge'
@@ -296,13 +297,12 @@ export function ReportPage() {
     createdAt: string
   }
   const [annotationMode, setAnnotationMode] = useState(false)
-  const [annotations, setAnnotations] = useState<Annotation[]>(() => {
-    if (!caseId) return []
-    try {
-      const saved = localStorage.getItem(`annotations-${caseId}`)
-      return saved ? JSON.parse(saved) : []
-    } catch { return [] }
-  })
+  // 批注持久化：后端 annotations.json 存储 + localStorage 旧数据自动迁移（见 pdf-viewer/annotationApi.ts）
+  const {
+    annotations, saveError: annotationSaveError,
+    addAnnotation: addAnnotationBase,
+    updateAnnotation, deleteAnnotation, updateAnnotationPosition,
+  } = useAnnotations(caseId)
 
   // 编辑模式
   const [editMode, setEditMode] = useState(false)
@@ -765,27 +765,11 @@ export function ReportPage() {
     }
   }, [chatMessages, caseId])
 
-  // Save annotations
-  useEffect(() => {
-    if (caseId) {
-      localStorage.setItem(`annotations-${caseId}`, JSON.stringify(annotations))
-    }
-  }, [annotations, caseId])
-
   // 批注操作
   const addAnnotation = useCallback((annotation: Annotation) => {
-    setAnnotations(prev => [...prev, annotation])
+    addAnnotationBase(annotation)
     setAnnotationMode(false)
-  }, [])
-  const updateAnnotation = useCallback((id: string, text: string) => {
-    setAnnotations(prev => prev.map(a => a.id === id ? { ...a, text } : a))
-  }, [])
-  const deleteAnnotation = useCallback((id: string) => {
-    setAnnotations(prev => prev.filter(a => a.id !== id))
-  }, [])
-  const updateAnnotationPosition = useCallback((id: string, x: number, y: number) => {
-    setAnnotations(prev => prev.map(a => a.id === id ? { ...a, x, y } : a))
-  }, [])
+  }, [addAnnotationBase])
 
   // 编辑模式：进入编辑
   const handleStartEdit = useCallback(() => {
@@ -3190,6 +3174,11 @@ export function ReportPage() {
           }}>
             <StickyNote className="w-3 h-3" />批注
           </button>
+          {annotationSaveError && (
+            <span style={{ fontSize: '11px', color: '#d66' }} title="批注已保存到本地，恢复连接后自动同步">
+              批注未能保存到服务器
+            </span>
+          )}
           <button onClick={handleExportReport} disabled={!stageContent.full && !stageContent.stage_53} style={{
             padding: '5px 12px',
             background: (stageContent.full || stageContent.stage_53) ? colors.accent : colors.surfaceAlt,

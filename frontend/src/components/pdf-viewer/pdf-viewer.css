@@ -1,0 +1,60 @@
+/* PDF 查看器样式 */
+
+.pdf-page-wrapper {
+  position: relative;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.pdf-page-canvas {
+  display: block;
+}
+
+/* 跳转目标页的金色闪烁高亮（复用 PdfPageManager 的视觉模式） */
+@keyframes pdfPageFlash {
+  0%, 100% { box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18); }
+  50% { box-shadow: 0 0 16px 5px rgba(245, 197, 24, 0.85); }
+}
+
+.pdf-page-flash {
+  animation: pdfPageFlash 0.8s ease-in-out 2;
+}
+
+/* ===== 文本层（提取自 pdf.js 官方 pdf_viewer.css，仅保留必需规则） ===== */
+
+.textLayer {
+  position: absolute;
+  text-align: initial;
+  inset: 0;
+  overflow: hidden;
+  opacity: 0.25;
+  line-height: 1;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  z-index: 2;
+}
+
+.textLayer :is(span, br) {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+}
+
+.textLayer ::selection {
+  background: rgba(0, 100, 255, 0.35);
+}
+
+/* 搜索命中高亮 */
+.textLayer span.search-hit {
+  background: rgba(255, 213, 0, 0.45);
+  border-radius: 2px;
+}
+
+.textLayer span.search-hit-current {
+  background: rgba(255, 140, 0, 0.6);
+}
