@@ -87,6 +87,8 @@ def get_config_status() -> Dict[str, Any]:
         "mineru_model_version": config.get("mineru_model_version", "vlm"),
         # 模型上下文大小（tokens）
         "model_context_limit": config.get("model_context_limit", 250000),
+        # LLM 读超时（秒）：本地大模型处理整卷大 prompt 需调大（默认 180）
+        "llm_read_timeout": int(config.get("llm_read_timeout", 180)),
         "model_window_detected": _detect_model_window(config.get("llm_model", "")),
         # 案例检索云端服务
         "case_service_url": config.get("case_service_url", ""),

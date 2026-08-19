@@ -180,6 +180,7 @@ interface ConfigForm {
   pdf_convert_concurrency: number
   mineru_model_version: string
   model_context_limit: number
+  llm_read_timeout: number  // LLM 读超时（秒），本地大模型需调大（默认 180）
 }
 
 // 默认 LLM 配置（阿里云百炼 Token Plan）
@@ -215,6 +216,7 @@ export function SettingsPage() {
     pdf_convert_concurrency: 10,
     mineru_model_version: 'vlm',
     model_context_limit: 250,
+    llm_read_timeout: 180,
   })
   const [status, setStatus] = useState<ConfigStatus | null>(null)
   const [modelWindowDetected, setModelWindowDetected] = useState<number | null>(null)
@@ -267,6 +269,7 @@ export function SettingsPage() {
       config.mineru_model_version !== initialConfig.mineru_model_version ||
       config.evidence_concurrency !== initialConfig.evidence_concurrency ||
       config.model_context_limit !== initialConfig.model_context_limit ||
+      config.llm_read_timeout !== initialConfig.llm_read_timeout ||
       caseApiKey !== initialCaseApiKey ||
       caseServiceUrl !== initialCaseServiceUrl
     )
@@ -312,6 +315,7 @@ export function SettingsPage() {
       if (data.pdf_convert_concurrency) updates.pdf_convert_concurrency = data.pdf_convert_concurrency
       if (data.mineru_model_version) updates.mineru_model_version = data.mineru_model_version
       if (data.model_context_limit) updates.model_context_limit = Math.round(data.model_context_limit / 1000)
+      if (data.llm_read_timeout) updates.llm_read_timeout = data.llm_read_timeout
       setModelWindowDetected(data.model_window_detected ?? null)
       setSavedLlmModel(data.llm_model || '')
       const loaded = { ...config, ...updates }
@@ -362,6 +366,7 @@ export function SettingsPage() {
           llm_model_heavy: config.llm_model_heavy.trim(),
           evidence_concurrency: config.evidence_concurrency,
           model_context_limit: config.model_context_limit * 1000,
+          llm_read_timeout: config.llm_read_timeout,
           case_api_key: caseApiKey.trim(),
           case_service_url: caseServiceUrl.trim(),
         }),
@@ -1212,6 +1217,19 @@ export function SettingsPage() {
               </div>
               <div style={{ marginTop: '6px', fontSize: '11px', color: '#86868b' }}>
                 影响证据提取的分块策略。值越大，单次处理的文本越多，提取越完整。
+              </div>
+              {/* LLM 读超时：本地大模型（27B+）处理整卷大 prompt 单次可达 60-250s，180s 会大面积超时 */}
+              <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '12px', color: '#86868b' }}>LLM 读超时（秒）：</span>
+                <input
+                  type="number"
+                  min={60}
+                  max={3600}
+                  value={config.llm_read_timeout}
+                  onChange={e => setConfig(prev => ({ ...prev, llm_read_timeout: Math.max(60, parseInt(e.target.value) || 180) }))}
+                  style={{ width: '100px', padding: '6px 10px', border: '1px solid var(--macos-border)', borderRadius: '8px', fontSize: '13px' }}
+                />
+                <span style={{ fontSize: '11px', color: '#86868b' }}>本地大模型建议 600 以上；云端模型保持 180</span>
               </div>
             </div>
 

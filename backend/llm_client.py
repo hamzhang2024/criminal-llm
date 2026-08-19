@@ -134,12 +134,16 @@ class LLMClient:
         self.api_key = api_key
         # 规范化模型名称：DeepSeek API 要求全小写
         self.model = default_model.lower() if default_model else ""
-        # 分层超时：connect/write/pool 各 60s，read 180s 防 stream hang
+        # 分层超时：connect/write/pool 各 60s，read 默认 180s 防 stream hang
         # 单一数值 timeout 在 streaming 响应下每次收到 chunk 重置计时器，
-        # read timeout 是单次读取超时，180s 无数据则抛 ReadTimeout → 触发重试
+        # read timeout 是单次读取超时，无数据则抛 ReadTimeout → 触发重试。
+        # 本地大模型（27B+）处理整卷大 prompt（6-7 万 tokens）单次可达 60-250s，
+        # 180s 会大面积超时——可在设置页把 llm_read_timeout 调大（如 600）
+        from config_manager import get_config_value as _gcv
+        read_timeout = float(_gcv("llm_read_timeout", "180") or 180)
         self.timeout = httpx.Timeout(
             connect=30.0,
-            read=180.0,
+            read=read_timeout,
             write=60.0,
             pool=30.0,
         )
@@ -183,6 +187,12 @@ class LLMClient:
         self.api_key = api_key
         # 规范化模型名称：DeepSeek API 要求全小写（deepseek-v4-pro/deepseek-v4-flash）
         self.model = default_model.lower() if default_model else ""
+        # read 超时也随配置刷新（本地大模型需要把 llm_read_timeout 调大时无需重启后端）
+        from config_manager import get_config_value as _gcv
+        read_timeout = float(_gcv("llm_read_timeout", "180") or 180)
+        if read_timeout != self.timeout.read:
+            self.timeout = httpx.Timeout(connect=30.0, read=read_timeout, write=60.0, pool=30.0)
+            self.client = httpx.AsyncClient(timeout=self.timeout, verify=_SSL_VERIFY)
         logger.info("[LLM 客户端] 配置已重载 baseUrl: %s, model: %s", base_url, self.model)
 
     def get_cache_stats(self) -> dict:

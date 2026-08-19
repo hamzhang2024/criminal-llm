@@ -43,14 +43,30 @@ def _unwrap(resp) -> Any:
     raise HTTPException(status_code=resp.status_code, detail=detail)
 
 
+def _conn_error_detail(e: RequestException) -> str:
+    """把底层连接异常翻译成可读原因（DNS/TLS/超时/拒绝），避免 503 只剩一句套话"""
+    msg = str(e)
+    if "Name or service not known" in msg or "nodename nor servname" in msg or "Temporary failure in name resolution" in msg:
+        reason = "DNS 解析失败（检查网络/域名）"
+    elif "certificate" in msg.lower() or "SSL" in msg:
+        reason = "TLS 证书校验失败"
+    elif "timed out" in msg or "timeout" in msg.lower():
+        reason = "连接/读取超时"
+    elif "Connection refused" in msg:
+        reason = "连接被拒绝（服务未监听或防火墙拦截）"
+    else:
+        reason = msg[:80]
+    return f"案例库服务暂不可用：{reason}，请稍后重试"
+
+
 def _get(path: str, params: Optional[dict] = None) -> Any:
     base, key = _service_config()
     if not key:
         raise HTTPException(status_code=400, detail="未配置案例检索 API Key，请前往设置页填写")
     try:
         resp = requests.get(base + path, params=params, headers={"X-API-Key": key}, timeout=TIMEOUT)
-    except RequestException:
-        raise HTTPException(status_code=503, detail="案例库服务暂不可用，请稍后重试")
+    except RequestException as e:
+        raise HTTPException(status_code=503, detail=_conn_error_detail(e))
     return _unwrap(resp)
 
 
@@ -85,8 +101,8 @@ def validate_key(req: ValidateKeyRequest):
     base = (req.service_url or saved_base).rstrip("/")
     try:
         resp = requests.post(f"{base}/api/keys/validate", json={"api_key": req.api_key}, timeout=TIMEOUT)
-    except RequestException:
-        raise HTTPException(status_code=503, detail="案例库服务暂不可用，请稍后重试")
+    except RequestException as e:
+        raise HTTPException(status_code=503, detail=_conn_error_detail(e))
     return _unwrap(resp)
 
 
