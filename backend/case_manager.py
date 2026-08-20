@@ -991,11 +991,14 @@ async def _process_indictment_single(md_file: Path, md_text: str, evidence_dir: 
    - 涉案人员及角色：谁主谋、谁参与
    - 行为方式：具体手段、方法
    - 金额/结果：涉案金额、受害人、造成后果
-   - 简要案情：该笔事实的完整描述，保留原文细节
+   - **完整案情描述**：必须保留原文的完整描述，不得概括、不得简化、不得省略任何细节
 3. **涉案人员**：全部涉案人员姓名、身份证号、住址、角色分工
 4. **关键关联信息**：电话号码、微信号、银行账号、车牌号、地址信息等
 
-不要概括、不要简化、不要对比其他证据，只做真实记录。"""},
+**特别注意**：
+- 起诉意见书/起诉书是公诉机关的正式指控，**每一笔犯罪事实的完整描述必须原文保留**
+- 不要概括为"详见原文"或"同上"，必须逐笔完整输出
+- 金额、时间、人名、地点必须精确，不要用"约""左右"等模糊词"""},
         {"role": "user", "content": f"""## {doc_type}：{md_file.name}
 
 {md_text}
@@ -1309,7 +1312,13 @@ async def _extract_single_file(
     if total_count >= 2:
         try:
             from evidence_perdoc import extract_by_document
-            evidence_blocks = await extract_by_document(client, md_file, md_text, charges_str, temp_dir, progress_cb=progress_cb, skip_names=skip_names)
+            from config_manager import get_config_value as _gcv
+            max_conc = int(_gcv("evidence_concurrency", "3") or 3)
+            evidence_blocks = await extract_by_document(
+                client, md_file, md_text, charges_str, temp_dir,
+                max_concurrent=max_conc, timeout=timeout_seconds,
+                progress_cb=progress_cb, skip_names=skip_names,
+            )
             if evidence_blocks:
                 logger.info(f"[证据提取] {md_file.name}: 按份提取产出 {len(evidence_blocks)} 份证据")
         except Exception as e:
