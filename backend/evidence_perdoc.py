@@ -73,7 +73,10 @@ _BATCH_SYSTEM = """你是刑事案卷证据提取专家。给定一份案卷 MD 
   "summary": "...", "original_quotes": "...", "contradiction_hints": "无",
   "related_entities": "...", "fund_flows": [], "charges": [], "elements": []}, ...]
 
-要求：程序性文书概括核心内容即可；金额、时间、人名必须精确。"""
+要求：
+- 程序性文书（起诉意见书、起诉书等）**必须完整保留每笔犯罪事实的原文描述**，不得概括简化
+- 告知类、手续类文书概括核心内容即可
+- 金额、时间、人名必须精确"""
 
 # 笔录类判定
 _TRANS_RECORD_RE = re.compile(r"笔录|供述|证言|陈述")
@@ -187,6 +190,7 @@ def verify_perdoc_output(doc: dict, output: str) -> list:
 
 async def _extract_one_document(
     client, md_name: str, md_text: str, doc: dict, charges_str: str, timeout: int = 600,
+    is_procedural: bool = False,  # 程序性文书标记
 ) -> Optional[dict]:
     """第二级：提取单份文书，带第三级校验与一次重试。返回 ev_block 或 None"""
     date_hint = f"，讯问/落款日期 {doc['date']}" if doc.get("date") else ""
@@ -196,8 +200,10 @@ async def _extract_one_document(
     issues = ["调用失败"]
     for attempt in (1, 2):
         try:
+            # 程序性文书用精简 prompt（不需要保留问答原文）
+            system_prompt = _BATCH_SYSTEM if is_procedural else _PERDOC_SYSTEM
             result = await asyncio.wait_for(client.chat([
-                {"role": "system", "content": _PERDOC_SYSTEM},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"案卷文件：{md_name}\n\n{md_text}"},
                 {"role": "user", "content": target_msg if attempt == 1 else
                     target_msg + "\n\n⚠️ 上次输出未通过校验，请务必：1) 锁定正确文书（核对日期）2) 完整输出全部问答 3) 只输出 JSON 对象"},
@@ -262,12 +268,14 @@ async def extract_by_document(
     client, md_file: Path, md_text: str, charges_str: str, temp_dir: Path,
     max_concurrent: int = 3, timeout: int = 600, progress_cb=None,
     skip_names: Optional[set] = None,
+    is_procedural: bool = False,  # 程序性文书卷标记
 ) -> Optional[list]:
     """两阶段按份提取主流程
 
     progress_cb(done, total)：每份笔录完成（含缓存命中/失败）后回调，供前端进度条。
     skip_names：卷内已存在于 index.json 的文书名集合（失败重提场景），
         命中的文书直接跳过、不产出证据块，避免整卷重提时重复提取成功文书。
+    is_procedural：程序性文书卷（无笔录，只有起诉意见书等程序性文书），使用精简 prompt。
 
     Returns:
         ev_block 列表（与 _parse_evidence_blocks 输出同构）；失败返回 None（调用方回退整卷路径）
@@ -343,7 +351,10 @@ async def extract_by_document(
             except Exception:
                 pass
         async with sem:
-            block = await _extract_one_document(client, md_name, md_text, doc, charges_str, timeout)
+            block = await _extract_one_document(
+                client, md_name, md_text, doc, charges_str, timeout,
+                is_procedural=is_procedural,
+            )
         if block:
             results[i] = block
             try:

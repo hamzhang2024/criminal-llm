@@ -1306,10 +1306,13 @@ async def _extract_single_file(
             f"**❗ 输出完毕后必须确认：[完成确认] 本文件共提取 N 份证据，全部输出完毕**\n"
         )
 
-    # 多笔录文件走两级按份提取：整卷一次调用时"全部笔录全文保留"物理不可达，
-    # LLM 会保数量砍内容（占位符敷衍）。按份提取 + 目录日期校验可根治
+    # 检测程序性文书卷：无笔录，但有"卷内文书目录"且目录条目 >= 2
+    is_procedural = (total_count == 0 and "卷内文书目录" in md_text and
+                     md_text.count('<tr><td>') >= 4)
+
+    # 多笔录文件 OR 程序性文书卷走两级按份提取
     evidence_blocks = None
-    if total_count >= 2:
+    if total_count >= 2 or is_procedural:
         try:
             from evidence_perdoc import extract_by_document
             from config_manager import get_config_value as _gcv
@@ -1318,6 +1321,7 @@ async def _extract_single_file(
                 client, md_file, md_text, charges_str, temp_dir,
                 max_concurrent=max_conc, timeout=timeout_seconds,
                 progress_cb=progress_cb, skip_names=skip_names,
+                is_procedural=is_procedural,
             )
             if evidence_blocks:
                 logger.info(f"[证据提取] {md_file.name}: 按份提取产出 {len(evidence_blocks)} 份证据")
