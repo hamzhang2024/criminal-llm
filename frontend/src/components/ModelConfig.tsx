@@ -80,6 +80,26 @@ const PROVIDER_PRESETS = [
     keyHint: 'Key 在火山引擎控制台（console.volcengine.com/ark）创建',
   },
   {
+    key: 'ollama',
+    label: 'Ollama（本地）',
+    baseUrl: 'http://localhost:11434/v1',
+    models: [
+      { name: 'qwen3.6-27b-uncensored', context: 250000, label: 'Qwen3.6 27B（证据提取）' },
+      { name: 'qwen3.8-27b', context: 256000, label: 'Qwen3.8 27B（案卷分析）' },
+    ],
+    keyHint: '本地部署，无需 API Key；baseUrl 默认为 http://localhost:11434/v1',
+  },
+  {
+    key: 'kimi',
+    label: 'Kimi（月之暗面）',
+    baseUrl: 'https://api.moonshot.cn/v1',
+    models: [
+      { name: 'kimi-k2.6', context: 256000, label: 'Kimi K2.6（证据提取）' },
+      { name: 'kimi-k3', context: 1000000, label: 'Kimi K3（案卷分析，1M 上下文）' },
+    ],
+    keyHint: 'Key 为 sk- 开头，platform.moonshot.cn 创建；Kimi K3 支持 1M 上下文',
+  },
+  {
     key: 'custom',
     label: '自定义',
     baseUrl: '',
