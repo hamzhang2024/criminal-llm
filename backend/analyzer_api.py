@@ -813,7 +813,7 @@ async def analyze_case(
             analysis_progress[case_id]["stage"] = "analyzing"
             analysis_progress[case_id]["message"] = "正在调用 AI 进行智能分析..."
             
-            client = get_llm_client()
+            client = get_llm_client("analysis")
             report_text = await client.analyze_case(defendant, evidence_texts, crime_type=crime_type)
             
             # 解析报告为结构化数据
@@ -933,7 +933,7 @@ async def chat_report(
     history: list = Body(default=[]),
 ):
     """报告页对话 — 基于案卷分析报告和证据回答"""
-    client = get_llm_client()
+    client = get_llm_client("analysis")
 
     history_messages = []
     for h in history[-10:]:
@@ -974,7 +974,7 @@ async def chat_update(
     context: str = Body(default=''),
 ):
     """修改报告 — LLM 根据意见更新辩护报告内容"""
-    client = get_llm_client()
+    client = get_llm_client("analysis")
 
     system_prompt = """你是刑事辩护律师助手。用户需要对已有的辩护分析报告进行修改。
 请根据用户的修改意见，保留报告的有效内容，融入新的意见，生成更新后的完整报告。
@@ -1064,7 +1064,7 @@ async def chat(
                 report = case_info["report"]
                 report_context = report.get("raw_markdown", json.dumps(report, ensure_ascii=False))
             
-            client = get_llm_client()
+            client = get_llm_client("analysis")
             answer = await client.chat_about_case(message, evidence_context, report_context)
             
             return {
@@ -1173,7 +1173,7 @@ async def update_report(
             original_markdown = report.get("raw_markdown", json.dumps(report, ensure_ascii=False))
             
             # 调用增量更新
-            client = get_llm_client()
+            client = get_llm_client("analysis")
             update_result = await client.update_report_section(
                 instruction, 
                 original_markdown, 

@@ -84,7 +84,7 @@ async def _batch_analyze_evidence(
     enc = _get_enc()
 
     from llm_client import get_llm_client
-    client = get_llm_client()
+    client = get_llm_client("analysis")
 
     # 计算 prompt 固定开销
     header_tokens = len(enc.encode(user_prompt_header))
@@ -639,7 +639,7 @@ class AnalysisEngine:
             progress_cb("正在分析起诉书，提取指控要素...")
 
         from llm_client import get_llm_client
-        client = get_llm_client()
+        client = get_llm_client("analysis")
 
         system_prompt = """你是一位资深刑事辩护律师，正在阅读案卷材料。
 请仔细阅读起诉书/起诉意见书及相关材料，提取指控的核心要素。
@@ -731,7 +731,7 @@ class AnalysisEngine:
             from config_manager import load_config
             conc = int(load_config().get("evidence_concurrency", 3) or 3)
             logger.info(f"[摘要] {len(missing)} 份证据缺 digest，分析前自动补生成")
-            await summarize_evidence(get_llm_client(), self.case_dir, concurrency=conc)
+            await summarize_evidence(get_llm_client("analysis"), self.case_dir, concurrency=conc)
         except Exception as e:
             logger.warning(f"[摘要] 自动补生成失败（分析回退全文）: {e}")
 
@@ -902,7 +902,7 @@ class AnalysisEngine:
             progress_cb("正在分析事件时间线和证据归组...")
 
         from llm_client import get_llm_client
-        client = get_llm_client()
+        client = get_llm_client("analysis")
 
         indictment_catalog, indictment_text, evidence_catalog_text, evidence_only = _split_indictment_and_evidence(texts)
 
@@ -1035,7 +1035,7 @@ class AnalysisEngine:
             progress_cb("正在梳理资金流并验证指控金额...")
 
         from llm_client import get_llm_client
-        client = get_llm_client()
+        client = get_llm_client("analysis")
 
         from fund_flow import (
             collect_fund_paragraphs, build_fund_prompt, FUND_SYSTEM_PROMPT,
@@ -1161,7 +1161,7 @@ class AnalysisEngine:
             progress_cb(f"正在梳理{crime_type or '涉案罪名'}相关法律法规...")
 
         from llm_client import get_llm_client
-        client = get_llm_client()
+        client = get_llm_client("analysis")
 
         system_prompt = """你是一位资深刑事辩护律师，精通中国刑法。
 请根据案件涉及的罪名，梳理相关法律法规、司法解释和类案裁判规则。
@@ -1306,7 +1306,7 @@ class AnalysisEngine:
         indictment_catalog, _, evidence_catalog_text, _ = _split_indictment_and_evidence(texts)
 
         from llm_client import get_llm_client
-        client = get_llm_client()
+        client = get_llm_client("analysis")
         budget = _get_content_budget_chars()
 
         # 第 1 步：口供稳定性（只喂供述类证据摘要，输入精准）
@@ -1460,7 +1460,7 @@ class AnalysisEngine:
         texts = self._load_evidence_texts()
 
         from llm_client import get_llm_client
-        client = get_llm_client()
+        client = get_llm_client("analysis")
 
         # 获取之前阶段的结果
         stage1_md = _read_stage_md(self.analysis_dir, 1)

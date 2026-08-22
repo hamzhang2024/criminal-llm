@@ -47,7 +47,7 @@ async def _run_sub_stage(engine, sub_stage_type: str, defendant: str, crime_type
     texts = engine._load_evidence_texts()
 
     from llm_client import get_llm_client
-    client = get_llm_client()
+    client = get_llm_client("analysis")
 
     if sub_stage_type == "evidence_analysis":
         parts = []

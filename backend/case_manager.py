@@ -973,7 +973,7 @@ async def _process_indictment_single(md_file: Path, md_text: str, evidence_dir: 
     Returns: 生成的证据文件路径
     """
     from llm_client import get_llm_client
-    client = get_llm_client()
+    client = get_llm_client("evidence")
 
     # 确定文书类型
     doc_type = "起诉意见书" if "意见" in md_file.name else "起诉书"
@@ -1254,7 +1254,7 @@ async def _extract_single_file(
     """
     from llm_client import get_llm_client, LLMRetryExhaustedError
     from doc_classifier import classify_evidence_item
-    client = get_llm_client()
+    client = get_llm_client("evidence")
 
     # 不做预过滤，保留完整原始内容（封面、目录等由LLM自行判断）
     # 无重试的直接调用，超时由调用方控制
@@ -2392,6 +2392,7 @@ async def _do_extract_evidence(
             from evidence_summarizer import summarize_evidence
             from llm_client import get_llm_client
             conc = int(cfg.get("evidence_concurrency", 3) or 3)
+            llm_client = get_llm_client("evidence")
 
             def _summary_progress(done: int, total: int, name: str):
                 """摘要阶段进度（前端进度条）"""
@@ -2403,7 +2404,7 @@ async def _do_extract_evidence(
                     t["current_file"] = name
 
             sum_stats = await summarize_evidence(
-                get_llm_client(), case_path, concurrency=conc,
+                llm_client, case_path, concurrency=conc,
                 should_abort=lambda: EXTRACT_TASKS.get(case_id) == "cancelled",
                 progress_cb=_summary_progress)
             logger.info(f"[证据摘要] 完成: {sum_stats}")

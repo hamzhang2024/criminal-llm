@@ -151,6 +151,42 @@ async def update_config(body: Dict[str, Any]):
     return {"success": True, "message": "配置已保存"}
 
 
+# ========== 多模型配置管理（v1.9.20 新增） ==========
+
+@app.get("/api/config/llm-profiles")
+async def get_llm_profiles():
+    """获取所有模型配置列表"""
+    from config_manager import get_llm_profiles
+    return {"profiles": get_llm_profiles()}
+
+
+@app.post("/api/config/llm-profiles")
+async def save_llm_profile(body: Dict[str, Any]):
+    """保存或更新模型配置"""
+    from config_manager import save_llm_profile
+    profile = body.get("profile")
+    if not profile or not profile.get("id"):
+        return {"success": False, "error": "缺少 profile 或 id"}
+    save_llm_profile(profile)
+    return {"success": True}
+
+
+@app.delete("/api/config/llm-profiles/{profile_id}")
+async def delete_llm_profile(profile_id: str):
+    """删除模型配置（不能删除 default）"""
+    from config_manager import delete_llm_profile
+    if delete_llm_profile(profile_id):
+        return {"success": True}
+    return {"success": False, "error": "不能删除默认模型"}
+
+
+@app.get("/api/config/llm-profile/{purpose}")
+async def get_llm_profile(purpose: str):
+    """获取指定用途的模型配置"""
+    from config_manager import get_llm_profile
+    return {"profile": get_llm_profile(purpose)}
+
+
 @app.post("/api/config/test")
 async def test_config(body: Dict[str, Any]):
     """

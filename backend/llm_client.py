@@ -128,8 +128,14 @@ class LLMClient:
     _config_cache_time: float = 0
     _config_cache_ttl: float = 30.0  # 缓存有效期 30 秒
 
-    def __init__(self):
-        base_url, api_key, default_model = self._get_cached_config()
+    def __init__(self, purpose: str = "evidence"):
+        """初始化 LLM 客户端
+
+        Args:
+            purpose: "evidence"（证据提取）或 "analysis"（案卷分析）
+        """
+        self.purpose = purpose
+        base_url, api_key, default_model, timeout_config = self._get_cached_config(purpose)
         self.base_url = base_url
         self.api_key = api_key
         # 规范化模型名称：DeepSeek API 要求全小写
@@ -139,11 +145,9 @@ class LLMClient:
         # read timeout 是单次读取超时，无数据则抛 ReadTimeout → 触发重试。
         # 本地大模型（27B+）处理整卷大 prompt（6-7 万 tokens）单次可达 60-250s，
         # 180s 会大面积超时——可在设置页把 llm_read_timeout 调大（如 600）
-        from config_manager import get_config_value as _gcv
-        read_timeout = float(_gcv("llm_read_timeout", "180") or 180)
         self.timeout = httpx.Timeout(
             connect=30.0,
-            read=read_timeout,
+            read=timeout_config.get("read_timeout", 180),
             write=60.0,
             pool=30.0,
         )
@@ -162,8 +166,15 @@ class LLMClient:
         logger.info("[LLM 客户端] apiKey: %s", '已配置' if api_key else '未配置')
 
     @classmethod
-    def _get_cached_config(cls) -> tuple[str, Optional[str], str]:
-        """获取配置（带缓存，30秒有效期）"""
+    def _get_cached_config(cls, purpose: str = "evidence") -> tuple[str, Optional[str], str, Dict[str, Any]]:
+        """获取配置（带缓存，30秒有效期）
+
+        Args:
+            purpose: "evidence"（证据提取）或 "analysis"（案卷分析）
+
+        Returns:
+            (base_url, api_key, model, timeout_config)
+        """
         now = time.time()
         if cls._config_cache is not None and (now - cls._config_cache_time) < cls._config_cache_ttl:
             config = cls._config_cache
@@ -173,23 +184,38 @@ class LLMClient:
             cls._config_cache = config
             cls._config_cache_time = now
 
+        # 尝试从多模型配置获取
+        profiles = config.get("llm_profiles", [])
+        profile_key = f"llm_profile_{purpose}"
+        profile_id = config.get(profile_key, "default")
+
+        for p in profiles:
+            if p.get("id") == profile_id:
+                return (
+                    p.get("base_url", ""),
+                    p.get("api_key"),
+                    p.get("model", ""),
+                    {"read_timeout": p.get("read_timeout", 180)},
+                )
+
+        # 回退到旧配置（向后兼容）
         api_key = config.get("llm_api_key")
         base_url = config.get("llm_base_url", "")
         default_model = config.get("llm_model", "")
-        return base_url, api_key, default_model
+        read_timeout = float(config.get("llm_read_timeout", 180))
+        return base_url, api_key, default_model, {"read_timeout": read_timeout}
 
     def reload_config(self):
         """重新读取配置（强制刷新缓存）"""
         # 清除缓存
         LLMClient._config_cache = None
-        base_url, api_key, default_model = self._get_cached_config()
+        base_url, api_key, default_model, timeout_config = self._get_cached_config(self.purpose)
         self.base_url = base_url
         self.api_key = api_key
         # 规范化模型名称：DeepSeek API 要求全小写（deepseek-v4-pro/deepseek-v4-flash）
         self.model = default_model.lower() if default_model else ""
         # read 超时也随配置刷新（本地大模型需要把 llm_read_timeout 调大时无需重启后端）
-        from config_manager import get_config_value as _gcv
-        read_timeout = float(_gcv("llm_read_timeout", "180") or 180)
+        read_timeout = timeout_config.get("read_timeout", 180)
         if read_timeout != self.timeout.read:
             self.timeout = httpx.Timeout(connect=30.0, read=read_timeout, write=60.0, pool=30.0)
             self.client = httpx.AsyncClient(timeout=self.timeout, verify=_SSL_VERIFY)
@@ -917,12 +943,24 @@ class LLMClient:
 _client: Optional[LLMClient] = None
 
 
-def get_llm_client() -> LLMClient:
-    """获取全局客户端实例"""
+def get_llm_client(purpose: str = "evidence") -> LLMClient:
+    """获取全局客户端实例
+
+    Args:
+        purpose: "evidence"（证据提取）或 "analysis"（案卷分析）
+    """
     global _client
     if _client is None:
-        _client = LLMClient()
+        _client = LLMClient(purpose=purpose)
     return _client
+
+
+def get_llm_client_for_purpose(purpose: str) -> LLMClient:
+    """获取指定用途的 LLM 客户端（每次创建新实例）
+
+    用于证据提取和案卷分析使用不同模型的场景。
+    """
+    return LLMClient(purpose=purpose)
 
 
 async def close_llm_client():

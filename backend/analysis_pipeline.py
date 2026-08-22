@@ -243,7 +243,7 @@ class AnalysisPipeline:
         self.case_dir = Path(case_dir) if isinstance(case_dir, str) else case_dir
         self.analysis_dir = self.case_dir / "analysis"
         self.analysis_dir.mkdir(exist_ok=True)
-        self.llm = get_llm_client()
+        self.llm = get_llm_client("analysis")
         # 用户手动指定的起诉书文件名（优先级高于自动检测）
         self.selected_indictment_file = indictment_file
 

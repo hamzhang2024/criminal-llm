@@ -14,6 +14,24 @@ CONFIG_PATH = DATA_DIR / "criminal-llm-config.json"
 
 # 默认配置（阿里云百炼，推荐 qwen3.5-plus）
 DEFAULTS = {
+    # 多模型配置（v1.9.20 新增）
+    "llm_profiles": [
+        {
+            "id": "default",
+            "name": "默认模型（云端）",
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "model": "qwen3.5-plus",
+            "api_key": "",
+            "context_limit": 1000000,  # 云端默认 1M
+            "max_concurrent": 3,
+            "read_timeout": 600,
+            "is_local": False,
+        }
+    ],
+    "llm_profile_evidence": "default",    # 证据提取用的模型 ID
+    "llm_profile_analysis": "default",     # 案卷分析用的模型 ID
+
+    # 旧字段（向后兼容，新代码用 llm_profiles）
     "llm_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
     "llm_model": "qwen3.5-plus",
     # 高质量任务模型（分层路由）：空字符串 = 不启用分层，全部走 llm_model
@@ -101,6 +119,76 @@ def get_config_value(key: str, default: str = "") -> str:
     """获取单个配置值（供其他模块调用）"""
     config = load_config()
     return config.get(key, default)
+
+
+def get_llm_profile(purpose: str = "evidence") -> Dict[str, Any]:
+    """获取指定用途的模型配置
+
+    Args:
+        purpose: "evidence"（证据提取）或 "analysis"（案卷分析）
+
+    Returns:
+        模型配置字典 {id, name, base_url, model, api_key, context_limit, max_concurrent, read_timeout, is_local}
+    """
+    config = load_config()
+    profiles = config.get("llm_profiles", [])
+
+    # 获取用途对应的模型 ID
+    profile_key = f"llm_profile_{purpose}"
+    profile_id = config.get(profile_key, "default")
+
+    # 查找模型配置
+    for p in profiles:
+        if p.get("id") == profile_id:
+            return p
+
+    # 找不到则返回第一个，或默认配置
+    if profiles:
+        return profiles[0]
+    return DEFAULTS["llm_profiles"][0]
+
+
+def get_llm_profiles() -> list:
+    """获取所有模型配置列表"""
+    config = load_config()
+    return config.get("llm_profiles", DEFAULTS["llm_profiles"])
+
+
+def save_llm_profile(profile: Dict[str, Any]) -> None:
+    """保存或更新模型配置"""
+    config = load_config()
+    profiles = config.get("llm_profiles", [])
+
+    # 查找是否已存在
+    profile_id = profile.get("id")
+    for i, p in enumerate(profiles):
+        if p.get("id") == profile_id:
+            profiles[i] = profile
+            break
+    else:
+        profiles.append(profile)
+
+    config["llm_profiles"] = profiles
+    save_config(config)
+
+
+def delete_llm_profile(profile_id: str) -> bool:
+    """删除模型配置（不能删除 default）"""
+    if profile_id == "default":
+        return False
+
+    config = load_config()
+    profiles = config.get("llm_profiles", [])
+
+    # 如果删除的是当前使用的模型，重置为 default
+    if config.get("llm_profile_evidence") == profile_id:
+        config["llm_profile_evidence"] = "default"
+    if config.get("llm_profile_analysis") == profile_id:
+        config["llm_profile_analysis"] = "default"
+
+    config["llm_profiles"] = [p for p in profiles if p.get("id") != profile_id]
+    save_config(config)
+    return True
 
 
 def get_heavy_model() -> Optional[str]:

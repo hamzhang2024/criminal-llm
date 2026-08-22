@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, Check, Eye, EyeOff, Settings as SettingsIcon, RotateCw, Download, FolderOpen, FileText } from 'lucide-react'
 import { MacOSTitlebar, MacOSCard, MacOSInput, MacOSButton } from '../components/MacOSLayout'
+import { ModelConfig } from '../components/ModelConfig'
 import { API_BASE, getAuthEmail, clearToken, clearAuthEmail, getAppVersion, checkUpdate, openUrl, getCacheStats } from '../api'
 import type { CacheStats } from '../api'
 import { showAlert, showConfirm } from '../components/MacOSDialog'
@@ -1001,6 +1002,15 @@ export function SettingsPage() {
                 )}
               </div>
             )}
+          </MacOSCard>
+
+          {/* 多模型配置（v1.9.20 新增） */}
+          <MacOSCard style={{ marginTop: '16px' }}>
+            <h2 style={{ fontSize: '15px', fontWeight: '600', color: '#1d1d1f', display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
+              多模型配置
+              <span style={{ fontSize: '11px', color: '#8b6914', fontWeight: 500, background: 'rgba(139,105,20,0.1)', padding: '2px 8px', borderRadius: '4px' }}>证据提取和案卷分析可用不同模型</span>
+            </h2>
+            <ModelConfig />
           </MacOSCard>
 
           <MacOSCard style={{ marginTop: '16px' }}>
