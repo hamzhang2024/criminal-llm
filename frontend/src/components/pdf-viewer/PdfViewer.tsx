@@ -1,6 +1,8 @@
 // PDF 查看器主容器：工具栏 + 缩略图侧栏 + 搜索面板 + 连续滚动页面列表
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { API_BASE } from '../../api'
+import { API_BASE, getMdIssues } from '../../api'
+import type { MdIssue } from '../../api/cases'
+import { PdfPageManager } from '../../pages/CaseDetailPage/components/PdfPageManager'
 import { generateAnnotationId, randomNoteColor, randomRectColor } from './AnnotationLayer'
 import { PdfPage } from './PdfPage'
 import { PdfToolbar } from './PdfToolbar'
@@ -20,6 +22,9 @@ export function PdfViewer({ caseId, pdfFilename, annotations, onAddAnnotation, o
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [searchOpen, setSearchOpen] = useState(false)
   const [annotationTool, setAnnotationTool] = useState<AnnotationTool>('note')
+  // 页面管理模式（集成 PdfPageManager 功能）
+  const [pageManageMode, setPageManageMode] = useState(false)
+  const [mdIssues, setMdIssues] = useState<MdIssue[]>([])
 
   const url = `${API_BASE}/cases/${caseId}/serve-file?file_path=${encodeURIComponent(pdfFilename)}&dir=processed`
   const { pdfDoc, error, firstPageSize } = usePdfDocument(url)
@@ -27,6 +32,14 @@ export function PdfViewer({ caseId, pdfFilename, annotations, onAddAnnotation, o
   useEffect(() => {
     setNumPages(pdfDoc?.numPages ?? 0)
   }, [pdfDoc])
+
+  // 加载乱码页检测（用于页面管理模式的异常标记）
+  useEffect(() => {
+    if (!caseId || !pdfFilename) return
+    getMdIssues(caseId)
+      .then(r => setMdIssues(r.issues || []))
+      .catch(() => setMdIssues([]))
+  }, [caseId, pdfFilename])
 
   const { currentPage, registerPage, getPageEl, scrollToPage } = useCurrentPage({ containerRef, numPages })
   const { scale, fitMode, zoomIn, zoomOut, fitWidth, applyScale, computeFitScale } = useZoom({
@@ -145,8 +158,11 @@ export function PdfViewer({ caseId, pdfFilename, annotations, onAddAnnotation, o
         searchOpen={searchOpen}
         annotationMode={annotationMode}
         annotationTool={annotationTool}
+        pageManageMode={pageManageMode}
+        issueCount={mdIssues.length}
         onToggleSidebar={() => setSidebarOpen(v => !v)}
         onToggleSearch={() => { setSearchOpen(v => !v); if (searchOpen) setHits([]) }}
+        onTogglePageManage={() => setPageManageMode(v => !v)}
         onToolChange={setAnnotationTool}
         onJump={n => scrollToPage(n, true)}
         onZoomIn={zoomIn}
@@ -155,7 +171,7 @@ export function PdfViewer({ caseId, pdfFilename, annotations, onAddAnnotation, o
         onFitWidth={fitWidth}
       />
       <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
-        {sidebarOpen && (
+        {sidebarOpen && !pageManageMode && (
           <ThumbnailSidebar
             caseId={caseId}
             pdfFilename={pdfFilename}
@@ -164,36 +180,53 @@ export function PdfViewer({ caseId, pdfFilename, annotations, onAddAnnotation, o
             onJump={n => scrollToPage(n, true)}
           />
         )}
-        <div
-          ref={containerRef}
-          tabIndex={0}
-          onKeyDown={handleKeyDown}
-          style={{ flex: 1, overflow: 'auto', background: '#e8e6df', outline: 'none' }}
-        >
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', padding: '8px 0' }}>
-            {Array.from({ length: numPages }, (_, i) => i + 1).map(pageNum => (
-              <PdfPage
-                key={pageNum}
-                pdfDoc={pdfDoc}
-                pageNum={pageNum}
-                scale={scale}
-                defaultSize={firstPageSize}
-                annotations={annotations.filter(a => a.pageNum === pageNum)}
-                annotationMode={annotationMode}
-                annotationTool={annotationTool}
-                registerPage={registerPage}
-                scrollContainer={containerRef}
-                onCreateNote={(x, y, text) => handleCreateNote(pageNum, x, y, text)}
-                onCreateRect={rect => handleCreateRect(pageNum, rect)}
-                onUpdateNote={onUpdateAnnotation}
-                onDeleteNote={onDeleteAnnotation}
-                onDragNote={onDragAnnotation}
-                onTextReady={handleTextReady}
-              />
-            ))}
+        {pageManageMode ? (
+          // 页面管理模式：显示缩略图网格 + 旋转 + 修复
+          <div style={{ flex: 1, overflow: 'auto', background: '#1a1a1e', padding: 16 }}>
+            <PdfPageManager
+              caseId={caseId}
+              pdfFilename={pdfFilename}
+              issues={mdIssues}
+              onFixed={() => {
+                // 修复完成后刷新异常检测
+                getMdIssues(caseId)
+                  .then(r => setMdIssues(r.issues || []))
+                  .catch(() => setMdIssues([]))
+              }}
+            />
           </div>
-        </div>
-        {searchOpen && (
+        ) : (
+          <div
+            ref={containerRef}
+            tabIndex={0}
+            onKeyDown={handleKeyDown}
+            style={{ flex: 1, overflow: 'auto', background: '#e8e6df', outline: 'none' }}
+          >
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', padding: '8px 0' }}>
+              {Array.from({ length: numPages }, (_, i) => i + 1).map(pageNum => (
+                <PdfPage
+                  key={pageNum}
+                  pdfDoc={pdfDoc}
+                  pageNum={pageNum}
+                  scale={scale}
+                  defaultSize={firstPageSize}
+                  annotations={annotations.filter(a => a.pageNum === pageNum)}
+                  annotationMode={annotationMode}
+                  annotationTool={annotationTool}
+                  registerPage={registerPage}
+                  scrollContainer={containerRef}
+                  onCreateNote={(x, y, text) => handleCreateNote(pageNum, x, y, text)}
+                  onCreateRect={rect => handleCreateRect(pageNum, rect)}
+                  onUpdateNote={onUpdateAnnotation}
+                  onDeleteNote={onDeleteAnnotation}
+                  onDragNote={onDragAnnotation}
+                  onTextReady={handleTextReady}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+        {searchOpen && !pageManageMode && (
           <SearchPanel
             hits={hits}
             searching={false}

@@ -25,8 +25,11 @@ interface PdfToolbarProps {
   searchOpen: boolean
   annotationMode: boolean
   annotationTool: AnnotationTool
+  pageManageMode?: boolean          // 页面管理模式
+  issueCount?: number                // 异常页数量
   onToggleSidebar: () => void
   onToggleSearch: () => void
+  onTogglePageManage?: () => void    // 切换页面管理模式
   onToolChange: (tool: AnnotationTool) => void
   onJump: (page: number) => void
   onZoomIn: () => void
@@ -35,7 +38,7 @@ interface PdfToolbarProps {
   onFitWidth: () => void
 }
 
-export function PdfToolbar({ numPages, currentPage, scale, fitMode, sidebarOpen, searchOpen, annotationMode, annotationTool, onToggleSidebar, onToggleSearch, onToolChange, onJump, onZoomIn, onZoomOut, onSetScale, onFitWidth }: PdfToolbarProps) {
+export function PdfToolbar({ numPages, currentPage, scale, fitMode, sidebarOpen, searchOpen, annotationMode, annotationTool, pageManageMode, issueCount, onToggleSidebar, onToggleSearch, onTogglePageManage, onToolChange, onJump, onZoomIn, onZoomOut, onSetScale, onFitWidth }: PdfToolbarProps) {
   const [jumpPage, setJumpPage] = useState('')
 
   // 当前页联动到输入框（仅当输入框未聚焦时，避免打扰用户输入）
@@ -80,6 +83,16 @@ export function PdfToolbar({ numPages, currentPage, scale, fitMode, sidebarOpen,
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+        {/* 页面管理模式切换（检测到异常时显示警告标记） */}
+        {onTogglePageManage && (
+          <button
+            onClick={onTogglePageManage}
+            title={issueCount && issueCount > 0 ? `页面管理（${issueCount} 页异常）` : '页面管理'}
+            style={pageManageMode ? activeBtnStyle : btnStyle}
+          >
+            {issueCount && issueCount > 0 ? `⚠️ ${issueCount}` : '📑'}
+          </button>
+        )}
         {annotationMode && (
           <>
             <button
