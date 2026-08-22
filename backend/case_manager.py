@@ -1341,7 +1341,10 @@ async def _extract_single_file(
         evidence_blocks = _parse_evidence_blocks(result, md_file.name)
     elif evidence_blocks is None:
         # 多块并发提取（块级断点续传：已完成块跳过），合并保持块顺序
-        chunk_sem = asyncio.Semaphore(2)
+        # 块级并发数与证据提取并发数一致（本地模型单并发时避免压垮）
+        from config_manager import get_config_value as _gcv
+        chunk_concurrency = int(_gcv("evidence_concurrency", "2") or 2)
+        chunk_sem = asyncio.Semaphore(chunk_concurrency)
 
         async def extract_chunk(ci: int, chunk: dict) -> list:
             chunk_label = chunk["label"]
