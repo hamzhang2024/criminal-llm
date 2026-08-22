@@ -37,6 +37,8 @@ export function PdfPageManager({ caseId, pdfFilename, issues, onFixed }: PdfPage
   const [lastRotatedPage, setLastRotatedPage] = useState<number | null>(null)
   // 缩略图 DOM 引用（页码 → 容器），供「定位」scrollIntoView 用
   const thumbRefs = useRef<Map<number, HTMLDivElement>>(new Map())
+  // 查看原图的页码（null = 关闭）
+  const [viewingPage, setViewingPage] = useState<number | null>(null)
 
   // 高亮闪烁动画结束后自动取消高亮
   useEffect(() => {
@@ -220,8 +222,13 @@ export function PdfPageManager({ caseId, pdfFilename, issues, onFixed }: PdfPage
                 ...(highlighted ? { outline: '2px solid #f5c518', animation: 'pdfPageFlash 0.65s ease-in-out 3' } : {}),
               }}>
               <div style={{ overflow: 'hidden', borderRadius: 4, marginBottom: 6 }}>
-                <img src={`${BACKEND_ORIGIN}${t.url}${cacheBust ? `?t=${cacheBust}` : ''}`} alt={`第${t.page}页`} loading="lazy"
-                  style={{ width: '100%', transform: `rotate(${deg}deg)`, transition: 'transform 0.2s' }} />
+                <img
+                  src={`${BACKEND_ORIGIN}${t.url}${cacheBust ? `?t=${cacheBust}` : ''}`}
+                  alt={`第${t.page}页`}
+                  loading="lazy"
+                  style={{ width: '100%', transform: `rotate(${deg}deg)`, transition: 'transform 0.2s', cursor: 'zoom-in' }}
+                  onClick={() => setViewingPage(t.page)}
+                />
               </div>
               <div style={{ fontSize: 12, color: '#c8c8ce', marginBottom: 6 }}>第 {t.page} 页{deg ? `（待保存 ${deg}°）` : ''}</div>
               <div style={{ display: 'flex', justifyContent: 'center', gap: 8 }}>
@@ -240,6 +247,38 @@ export function PdfPageManager({ caseId, pdfFilename, issues, onFixed }: PdfPage
             style={{ padding: '8px 24px', fontSize: 14, border: 'none', borderRadius: 8, background: 'var(--macos-accent)', color: '#fff', cursor: 'pointer' }}>
             {saving ? '保存中…' : `保存旋转（${rotations.size} 页）`}
           </button>
+        </div>
+      )}
+
+      {/* 原图查看模态框 */}
+      {viewingPage !== null && (
+        <div
+          onClick={() => setViewingPage(null)}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.95)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000,
+          }}
+        >
+          <div style={{ position: 'relative', maxWidth: '90vw', maxHeight: '90vh' }}>
+            <button
+              onClick={() => setViewingPage(null)}
+              style={{
+                position: 'absolute', top: -40, right: 0,
+                padding: '8px 16px', fontSize: 14, border: 'none', borderRadius: 6,
+                background: 'rgba(255,255,255,0.2)', color: '#fff', cursor: 'pointer',
+              }}
+            >
+              ✕ 关闭
+            </button>
+            <iframe
+              src={`${BACKEND_ORIGIN}/cases/${caseId}/serve-file?file_path=${encodeURIComponent(pdfFilename)}&dir=processed#page=${viewingPage}`}
+              title={`第 ${viewingPage} 页`}
+              style={{ width: '90vw', height: '85vh', border: 'none', background: '#fff' }}
+            />
+            <div style={{ textAlign: 'center', marginTop: 12, color: '#fff', fontSize: 14 }}>
+              第 {viewingPage} 页
+            </div>
+          </div>
         </div>
       )}
     </div>
