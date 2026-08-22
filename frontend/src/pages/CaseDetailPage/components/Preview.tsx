@@ -33,6 +33,11 @@ export function Preview({ file, onClose, digest, digestWarning, mdIssues, onIssu
   const [pageManage, setPageManage] = useState(false)
   const isPdf = !file.name.endsWith('.md')
   const canManage = isPdf && !!file.caseId && file.dir === 'processed'
+  // 证据编辑状态（仅 evidence/ 目录可编辑）
+  const [editing, setEditing] = useState(false)
+  const [editContent, setEditContent] = useState('')
+  const [saving, setSaving] = useState(false)
+  const canEdit = file.dir === 'evidence'
   // _去水印 变体匹配：PDF 与 md 后缀可能不一致，单变体推导会让 ⚠️ 静默缺失
   const pdfIssues = (mdIssues || []).filter(i => isMdFileOfPdf(i.md_file, file.name))
 
@@ -92,6 +97,91 @@ export function Preview({ file, onClose, digest, digestWarning, mdIssues, onIssu
             {pageManage ? '文档预览' : `页面管理${pdfIssues.length ? ` ⚠️${pdfIssues.length}` : ''}`}
           </button>
         )}
+        {canEdit && !editing && (
+          <button
+            onClick={() => {
+              // 进入编辑模式：加载完整内容到 textarea
+              fetch(file.path).then(res => res.text()).then(text => {
+                setEditContent(text)
+                setEditing(true)
+              })
+            }}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '6px 14px',
+              background: 'rgba(0, 122, 255, 0.15)',
+              border: 'none',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              fontSize: '13px',
+              color: 'var(--macos-accent)',
+              fontWeight: '500'
+            }}
+          >
+            编辑
+          </button>
+        )}
+        {editing && (
+          <>
+            <button
+              onClick={async () => {
+                setSaving(true)
+                try {
+                  const res = await fetch(`${API_BASE}/cases/${file.caseId}/evidence/${encodeURIComponent(file.name)}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ md_file: file.name, content: editContent }),
+                  })
+                  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+                  // 保存成功，退出编辑模式并刷新
+                  setEditing(false)
+                  window.location.reload()
+                } catch (e) {
+                  alert(`保存失败：${e instanceof Error ? e.message : String(e)}`)
+                } finally {
+                  setSaving(false)
+                }
+              }}
+              disabled={saving}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '6px 14px',
+                background: saving ? 'rgba(0,0,0,0.1)' : 'rgba(52, 199, 89, 0.15)',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: saving ? 'not-allowed' : 'pointer',
+                fontSize: '13px',
+                color: saving ? '#999' : 'var(--macos-success)',
+                fontWeight: '500'
+              }}
+            >
+              {saving ? '保存中…' : '保存'}
+            </button>
+            <button
+              onClick={() => setEditing(false)}
+              disabled={saving}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '6px 14px',
+                background: 'rgba(0, 122, 255, 0.15)',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: saving ? 'not-allowed' : 'pointer',
+                fontSize: '13px',
+                color: 'var(--macos-accent)',
+                fontWeight: '500'
+              }}
+            >
+              取消
+            </button>
+          </>
+        )}
         <span style={{ fontSize: '13px', color: 'var(--macos-text-secondary)', flex: 1 }}>
           {file.name}
         </span>
@@ -99,7 +189,7 @@ export function Preview({ file, onClose, digest, digestWarning, mdIssues, onIssu
 
       {file.name.endsWith('.md') ? (
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#fff' }}>
-          {digest && (
+          {digest && !editing && (
             <div style={{ display: 'flex', gap: '4px', padding: '8px 16px', background: 'var(--macos-bg-secondary)', borderBottom: '1px solid var(--macos-border)' }}>
               {(['digest', 'full'] as const).map(mode => (
                 <button key={mode}
@@ -118,7 +208,25 @@ export function Preview({ file, onClose, digest, digestWarning, mdIssues, onIssu
               )}
             </div>
           )}
-          {viewMode === 'digest' && digest ? (
+          {editing ? (
+            <textarea
+              value={editContent}
+              onChange={e => setEditContent(e.target.value)}
+              style={{
+                flex: 1,
+                padding: '24px',
+                fontSize: '13px',
+                lineHeight: '1.6',
+                fontFamily: 'Monaco, Menlo, monospace',
+                border: 'none',
+                outline: 'none',
+                resize: 'none',
+                background: '#fff',
+                color: '#1d1d1f',
+              }}
+              placeholder="编辑证据内容..."
+            />
+          ) : viewMode === 'digest' && digest ? (
             <div
               className="md-preview"
               style={{ flex: 1, overflow: 'auto', padding: '24px', fontSize: '13px', lineHeight: '1.6', color: '#1d1d1f' }}

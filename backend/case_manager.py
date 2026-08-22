@@ -3711,3 +3711,49 @@ async def put_annotations(case_id: str, payload: AnnotationsPayload):
     data = {"version": payload.version, "annotations": payload.annotations}
     _atomic_write_text(_annotations_file(case_path), json.dumps(data, ensure_ascii=False, indent=2))
     return {"success": True, "count": len(payload.annotations)}
+
+
+# ========== 证据编辑保存 ==========
+# 保存证据 MD 文件内容，同步更新 index.json 的摘要
+
+class EvidenceSaveRequest(BaseModel):
+    md_file: str          # 证据文件名（如 001_张旭第一次讯问笔录.md）
+    content: str          # 完整 Markdown 内容
+    summary: str = ""     # 更新的摘要（可选，为空则自动生成）
+
+
+@router.put("/{case_id}/evidence/{md_file}")
+async def save_evidence(case_id: str, md_file: str, req: EvidenceSaveRequest):
+    """保存证据文件，同步更新 index.json 的摘要"""
+    case_path = find_case_path(case_id)
+    if not case_path:
+        raise HTTPException(status_code=404, detail="案件不存在")
+
+    # 安全：md_file 仅限纯文件名，防目录穿越
+    if Path(md_file).name != md_file:
+        raise HTTPException(status_code=400, detail="文件名不能含路径分隔符")
+
+    evidence_dir = case_path / "evidence"
+    ev_path = evidence_dir / md_file
+
+    # 写回证据文件（原子写）
+    _atomic_write_text(ev_path, req.content)
+
+    # 更新 index.json 的摘要
+    index_file = evidence_dir / "index.json"
+    if index_file.exists():
+        try:
+            index_data = json.loads(index_file.read_text(encoding="utf-8"))
+            for ev in index_data.get("evidence", []):
+                if ev.get("md_file") == md_file:
+                    # 更新摘要（取前 200 字符）
+                    ev["summary_preview"] = req.content[:200]
+                    # 如果提供了新摘要，也更新 digest
+                    if req.summary:
+                        ev["digest"] = req.summary
+                    break
+            _atomic_write_text(index_file, json.dumps(index_data, ensure_ascii=False, indent=2))
+        except Exception as e:
+            logger.warning(f"[证据保存] 更新 index.json 失败：{e}")
+
+    return {"success": True, "message": "证据已保存"}
