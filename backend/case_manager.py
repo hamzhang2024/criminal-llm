@@ -1745,15 +1745,42 @@ async def _do_extract_evidence(
     index_file = evidence_dir / "index.json"
     processed_sources = set()
     existing_evidence = []
+    completed_sources = set()
 
     if index_file.exists():
         try:
             old_index = json.loads(index_file.read_text(encoding="utf-8"))
             existing_evidence = old_index.get("evidence", [])
             processed_sources = {ev["source"] for ev in existing_evidence}
-            logger.info(f"[证据提取] 断点续传：已有 {len(existing_evidence)} 份证据，跳过已处理的 MD 文件")
+            completed_sources = set(old_index.get("completed_sources", []))
+            logger.info(f"[证据提取] 断点续传：已有 {len(existing_evidence)} 份证据，{len(completed_sources)} 个卷已完成")
         except Exception:
             pass
+
+    # 检查未完成的卷：有证据但不在 completed_sources 中 → 删除该卷所有证据 → 重新提取
+    # 解决：用户中断提取后，部分提取的卷被误判为已完成
+    if existing_evidence:
+        incomplete_sources = {ev["source"] for ev in existing_evidence} - completed_sources
+        if incomplete_sources:
+            logger.info(f"[证据提取] 检测到 {len(incomplete_sources)} 个卷未完整提取，将删除其证据并重新提取：{sorted(incomplete_sources)}")
+            # 删除未完成卷的所有证据文件
+            removed_count = 0
+            for ev in list(existing_evidence):
+                if ev.get("source") in incomplete_sources:
+                    md_name = ev.get("md_file", "")
+                    if md_name:
+                        ev_path = evidence_dir / md_name
+                        if ev_path.exists():
+                            ev_path.unlink()
+                            removed_count += 1
+                    # 删除摘要缓存
+                    summary_cache = evidence_dir / "summaries" / f"{Path(md_name).stem}.md"
+                    if summary_cache.exists():
+                        summary_cache.unlink()
+            # 从清单中移除
+            existing_evidence = [ev for ev in existing_evidence if ev.get("source") not in incomplete_sources]
+            processed_sources = completed_sources
+            logger.info(f"[证据提取] 已删除 {removed_count} 个证据文件，{len(incomplete_sources)} 个卷将重新提取")
 
     # 失败条目自动重提：按份提取失败的空壳条目占住 source，导致整卷被断点续传跳过。
     # 清理空壳条目后其所属卷重新进入待提取；卷内已成功文书按名称跳过，不重复提取
@@ -1991,6 +2018,20 @@ async def _do_extract_evidence(
 
                     # 写完成标记（断点续传用）
                     (temp_dir / f"{md_file.stem}.done").write_text("", encoding="utf-8")
+
+                    # 持久化完成标记到 index.json 的 completed_sources
+                    # 断点续传时：不在 completed_sources 中的卷 → 删除其所有证据 → 重新提取
+                    try:
+                        _idx_file = evidence_dir / "index.json"
+                        _idx_data = {}
+                        if _idx_file.exists():
+                            _idx_data = json.loads(_idx_file.read_text(encoding="utf-8"))
+                        _completed = set(_idx_data.get("completed_sources", []))
+                        _completed.add(source_name)
+                        _idx_data["completed_sources"] = sorted(_completed)
+                        _atomic_write_text(_idx_file, json.dumps(_idx_data, ensure_ascii=False, indent=2))
+                    except Exception as _e:
+                        logger.warning(f"[证据提取] {md_file.name}: 写入完成标记失败（不影响提取）: {_e}")
 
                     if task:
                         task["processed_files"] = task.get("processed_files", 0) + 1
