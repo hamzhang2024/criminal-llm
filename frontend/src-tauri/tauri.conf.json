@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Criminal-Case-Analyzer",
-  "version": "1.9.23",
+  "version": "1.9.24",
   "identifier": "com.criminal-pdf.app",
   "build": {
     "frontendDist": "../dist",
