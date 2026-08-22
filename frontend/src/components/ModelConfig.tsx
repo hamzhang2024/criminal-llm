@@ -1,6 +1,6 @@
 // 多模型配置管理组件
 
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { API_BASE } from '../api'
 
 interface LlmProfile {
@@ -365,16 +365,19 @@ export function ModelConfig({ onProfilesChange }: ModelConfigProps) {
   )
 }
 
-// 模型编辑弹窗
+// 模型编辑弹窗（支持同一供应商多模型）
 function ModelEditModal({ profile, onSave, onCancel }: {
   profile: LlmProfile
   onSave: (p: LlmProfile) => void
   onCancel: () => void
 }) {
   const [form, setForm] = useState(profile)
-  const [dragging, setDragging] = useState(false)
-  const [position, setPosition] = useState({ x: 0, y: 0 })
-  const [dragStart, setDragStart] = useState({ x: 0, y: 0 })
+  const [models, setModels] = useState<Array<{ name: string; context: number; verified?: boolean }>>([
+    { name: profile.model, context: profile.context_limit, verified: false }
+  ])
+  const [testingModel, setTestingModel] = useState<string | null>(null)
+  const modalRef = useRef<HTMLDivElement>(null)
+  const dragStateRef = useRef({ dragging: false, startX: 0, startY: 0, currentX: 0, currentY: 0 })
 
   // 本地模型勾选后预填建议值（可修改）
   const handleLocalChange = (isLocal: boolean) => {
@@ -387,29 +390,120 @@ function ModelEditModal({ profile, onSave, onCancel }: {
     }))
   }
 
-  // 拖动功能
-  const handleMouseDown = (e: React.MouseEvent) => {
-    setDragging(true)
-    setDragStart({ x: e.clientX - position.x, y: e.clientY - position.y })
+  // 供应商切换后更新模型列表
+  const handleProviderChange = (providerKey: string) => {
+    const provider = PROVIDER_PRESETS.find(p => p.key === providerKey)
+    if (!provider || provider.key === 'custom') {
+      setForm(prev => ({ ...prev, provider: 'custom' }))
+      return
+    }
+    setForm(prev => ({
+      ...prev,
+      provider: provider.key,
+      base_url: provider.baseUrl,
+    }))
+    // 自动填充供应商的模型列表
+    setModels(provider.models.map(m => ({ name: m.name, context: m.context, verified: false })))
   }
 
-  useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
-      if (dragging) {
-        setPosition({ x: e.clientX - dragStart.x, y: e.clientY - dragStart.y })
-      }
-    }
-    const handleMouseUp = () => setDragging(false)
+  // 添加模型
+  const addModel = () => {
+    setModels(prev => [...prev, { name: '', context: form.context_limit, verified: false }])
+  }
 
-    if (dragging) {
-      document.addEventListener('mousemove', handleMouseMove)
-      document.addEventListener('mouseup', handleMouseUp)
-      return () => {
-        document.removeEventListener('mousemove', handleMouseMove)
-        document.removeEventListener('mouseup', handleMouseUp)
+  // 删除模型
+  const removeModel = (index: number) => {
+    setModels(prev => prev.filter((_, i) => i !== index))
+  }
+
+  // 验证模型
+  const testModel = async (index: number) => {
+    const model = models[index]
+    if (!model.name) {
+      alert('请先填写模型名')
+      return
+    }
+    setTestingModel(model.name)
+    try {
+      const res = await fetch(`${API_BASE}/config/test`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'llm',
+          api_key: form.api_key,
+          base_url: form.base_url,
+          model: model.name,
+        }),
+      })
+      const data = await res.json()
+      if (data.success) {
+        setModels(prev => prev.map((m, i) => i === index ? { ...m, verified: true } : m))
+        alert('验证成功')
+      } else {
+        alert('验证失败：' + (data.error || '未知错误'))
+      }
+    } catch (e) {
+      alert('验证失败：' + e)
+    } finally {
+      setTestingModel(null)
+    }
+  }
+
+  // 拖动功能（用 ref 避免重渲染）
+  const handleMouseDown = (e: React.MouseEvent) => {
+    dragStateRef.current = {
+      dragging: true,
+      startX: e.clientX - dragStateRef.current.currentX,
+      startY: e.clientY - dragStateRef.current.currentY,
+      currentX: dragStateRef.current.currentX,
+      currentY: dragStateRef.current.currentY,
+    }
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (dragStateRef.current.dragging && modalRef.current) {
+        const newX = e.clientX - dragStateRef.current.startX
+        const newY = e.clientY - dragStateRef.current.startY
+        dragStateRef.current.currentX = newX
+        dragStateRef.current.currentY = newY
+        modalRef.current.style.transform = `translate(${newX}px, ${newY}px)`
       }
     }
-  }, [dragging, dragStart])
+
+    const handleMouseUp = () => {
+      dragStateRef.current.dragging = false
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+    }
+
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+  }
+
+  // 保存：生成多个 profile（一个模型一个）
+  const handleSave = async () => {
+    // 过滤掉空模型名
+    const validModels = models.filter(m => m.name.trim())
+    if (validModels.length === 0) {
+      alert('请至少添加一个模型')
+      return
+    }
+
+    // 为每个模型生成一个 profile
+    for (const model of validModels) {
+      const profileId = models.length > 1
+        ? `${form.provider || 'custom'}_${model.name.replace(/[^a-z0-9]/g, '_')}`
+        : form.id
+
+      const profileToSave: LlmProfile = {
+        ...form,
+        id: profileId,
+        name: models.length > 1 ? `${form.name || form.provider} - ${model.name}` : form.name,
+        model: model.name,
+        context_limit: model.context,
+      }
+      await onSave(profileToSave)
+    }
+  }
 
   return (
     <div style={{
@@ -422,16 +516,15 @@ function ModelEditModal({ profile, onSave, onCancel }: {
       zIndex: 10000,
     }}>
       <div
+        ref={modalRef}
         style={{
           background: 'white',
           borderRadius: '12px',
           padding: '24px',
-          width: '480px',
+          width: '560px',
           maxWidth: '90vw',
           maxHeight: '90vh',
           overflow: 'auto',
-          transform: `translate(${position.x}px, ${position.y}px)`,
-          cursor: dragging ? 'grabbing' : 'default',
         }}
       >
         {/* 可拖动的标题栏 */}
@@ -453,22 +546,7 @@ function ModelEditModal({ profile, onSave, onCancel }: {
           <label style={{ display: 'block', fontSize: '13px', fontWeight: '500', marginBottom: '6px' }}>供应商</label>
           <select
             value={form.provider || 'custom'}
-            onChange={e => {
-              const provider = PROVIDER_PRESETS.find(p => p.key === e.target.value)
-              if (!provider || provider.key === 'custom') {
-                setForm(prev => ({ ...prev, provider: 'custom' }))
-                return
-              }
-              // 选择供应商后，自动填充 base_url 和第一个模型
-              const firstModel = provider.models[0]
-              setForm(prev => ({
-                ...prev,
-                provider: provider.key,
-                base_url: provider.baseUrl,
-                model: firstModel?.name || '',
-                context_limit: firstModel?.context || 1000000,
-              }))
-            }}
+            onChange={e => handleProviderChange(e.target.value)}
             style={{ width: '100%', padding: '8px 12px', border: '1px solid var(--macos-border)', borderRadius: '6px', fontSize: '14px', background: 'white', cursor: 'pointer' }}
           >
             {PROVIDER_PRESETS.map(p => (
@@ -483,47 +561,7 @@ function ModelEditModal({ profile, onSave, onCancel }: {
           })()}
         </div>
 
-        {/* 模型选择（同一供应商下可选多个模型） */}
-        {form.provider && form.provider !== 'custom' && (() => {
-          const provider = PROVIDER_PRESETS.find(p => p.key === form.provider)
-          return provider && provider.models.length > 0 ? (
-            <div style={{ marginBottom: '16px' }}>
-              <label style={{ display: 'block', fontSize: '13px', fontWeight: '500', marginBottom: '6px' }}>模型</label>
-              <select
-                value={form.model}
-                onChange={e => {
-                  const model = provider.models.find(m => m.name === e.target.value)
-                  if (model) {
-                    setForm(prev => ({
-                      ...prev,
-                      model: model.name,
-                      context_limit: model.context,
-                    }))
-                  }
-                }}
-                style={{ width: '100%', padding: '8px 12px', border: '1px solid var(--macos-border)', borderRadius: '6px', fontSize: '14px', background: 'white', cursor: 'pointer' }}
-              >
-                {provider.models.map(m => (
-                  <option key={m.name} value={m.name}>{m.label}</option>
-                ))}
-              </select>
-              <div style={{ marginTop: '6px', fontSize: '11px', color: '#86868b' }}>
-                同一供应商可添加多个模型（如：Flash 用于证据提取，Pro 用于案卷分析）
-              </div>
-            </div>
-          ) : null
-        })()}
-
-        <div style={{ marginBottom: '16px' }}>
-          <label style={{ display: 'block', fontSize: '13px', fontWeight: '500', marginBottom: '6px' }}>名称</label>
-          <input
-            value={form.name}
-            onChange={e => setForm(prev => ({ ...prev, name: e.target.value }))}
-            placeholder="如：DeepSeek V4 Flash（证据提取）"
-            style={{ width: '100%', padding: '8px 12px', border: '1px solid var(--macos-border)', borderRadius: '6px', fontSize: '14px' }}
-          />
-        </div>
-
+        {/* API 地址 */}
         <div style={{ marginBottom: '16px' }}>
           <label style={{ display: 'block', fontSize: '13px', fontWeight: '500', marginBottom: '6px' }}>API 地址</label>
           <input
@@ -534,16 +572,7 @@ function ModelEditModal({ profile, onSave, onCancel }: {
           />
         </div>
 
-        <div style={{ marginBottom: '16px' }}>
-          <label style={{ display: 'block', fontSize: '13px', fontWeight: '500', marginBottom: '6px' }}>模型名</label>
-          <input
-            value={form.model}
-            onChange={e => setForm(prev => ({ ...prev, model: e.target.value }))}
-            placeholder="如：qwen3.6-27b-uncensored"
-            style={{ width: '100%', padding: '8px 12px', border: '1px solid var(--macos-border)', borderRadius: '6px', fontSize: '14px' }}
-          />
-        </div>
-
+        {/* API Key */}
         <div style={{ marginBottom: '16px' }}>
           <label style={{ display: 'block', fontSize: '13px', fontWeight: '500', marginBottom: '6px' }}>API Key</label>
           <input
@@ -555,6 +584,90 @@ function ModelEditModal({ profile, onSave, onCancel }: {
           />
         </div>
 
+        {/* 模型列表（同一供应商可添加多个模型） */}
+        <div style={{ marginBottom: '16px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+            <label style={{ fontSize: '13px', fontWeight: '500' }}>模型列表</label>
+            <button
+              onClick={addModel}
+              style={{
+                padding: '4px 10px',
+                fontSize: '11px',
+                borderRadius: '4px',
+                border: '1px solid var(--macos-accent)',
+                background: 'transparent',
+                cursor: 'pointer',
+                color: 'var(--macos-accent)',
+              }}
+            >
+              + 添加模型
+            </button>
+          </div>
+
+          {models.map((model, index) => (
+            <div
+              key={index}
+              style={{
+                display: 'flex',
+                gap: '8px',
+                marginBottom: '8px',
+                padding: '8px 12px',
+                background: '#f8fafc',
+                borderRadius: '6px',
+                border: '1px solid var(--macos-border)',
+                alignItems: 'center',
+              }}
+            >
+              <input
+                value={model.name}
+                onChange={e => setModels(prev => prev.map((m, i) => i === index ? { ...m, name: e.target.value } : m))}
+                placeholder="模型名（如：deepseek-v4-flash）"
+                style={{ flex: 1, padding: '6px 10px', border: '1px solid var(--macos-border)', borderRadius: '4px', fontSize: '13px' }}
+              />
+              <input
+                type="number"
+                value={model.context}
+                onChange={e => setModels(prev => prev.map((m, i) => i === index ? { ...m, context: parseInt(e.target.value) || 0 } : m))}
+                placeholder="上下文"
+                style={{ width: '100px', padding: '6px 10px', border: '1px solid var(--macos-border)', borderRadius: '4px', fontSize: '13px' }}
+              />
+              <button
+                onClick={() => testModel(index)}
+                disabled={testingModel === model.name}
+                style={{
+                  padding: '6px 12px',
+                  fontSize: '11px',
+                  borderRadius: '4px',
+                  border: '1px solid var(--macos-border)',
+                  background: model.verified ? '#d1fae5' : 'transparent',
+                  cursor: testingModel === model.name ? 'not-allowed' : 'pointer',
+                  color: model.verified ? '#065f46' : 'var(--macos-accent)',
+                  opacity: testingModel === model.name ? 0.6 : 1,
+                }}
+              >
+                {testingModel === model.name ? '验证中…' : model.verified ? '✓ 已验证' : '验证'}
+              </button>
+              {models.length > 1 && (
+                <button
+                  onClick={() => removeModel(index)}
+                  style={{
+                    padding: '6px 10px',
+                    fontSize: '11px',
+                    borderRadius: '4px',
+                    border: '1px solid #ef4444',
+                    background: 'transparent',
+                    cursor: 'pointer',
+                    color: '#ef4444',
+                  }}
+                >
+                  删除
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+
+        {/* 本地模型 */}
         <div style={{ marginBottom: '16px' }}>
           <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
             <input
@@ -570,17 +683,8 @@ function ModelEditModal({ profile, onSave, onCancel }: {
           </div>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '20px' }}>
-          <div>
-            <label style={{ display: 'block', fontSize: '12px', fontWeight: '500', marginBottom: '4px' }}>上下文</label>
-            <input
-              type="number"
-              value={form.context_limit}
-              onChange={e => setForm(prev => ({ ...prev, context_limit: parseInt(e.target.value) || 0 }))}
-              style={{ width: '100%', padding: '6px 10px', border: '1px solid var(--macos-border)', borderRadius: '6px', fontSize: '13px' }}
-            />
-            <div style={{ fontSize: '10px', color: '#86868b', marginTop: '2px' }}>tokens</div>
-          </div>
+        {/* 并发数和超时 */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '20px' }}>
           <div>
             <label style={{ display: 'block', fontSize: '12px', fontWeight: '500', marginBottom: '4px' }}>并发数</label>
             <input
@@ -617,7 +721,7 @@ function ModelEditModal({ profile, onSave, onCancel }: {
             取消
           </button>
           <button
-            onClick={() => onSave(form)}
+            onClick={handleSave}
             style={{
               padding: '8px 16px',
               fontSize: '13px',
