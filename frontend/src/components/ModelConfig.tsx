@@ -1,6 +1,6 @@
 // 多模型配置管理组件
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { API_BASE } from '../api'
 
 interface LlmProfile {
@@ -19,6 +19,13 @@ interface ModelConfigProps {
   onProfilesChange?: (profiles: LlmProfile[]) => void
 }
 
+// 格式化上下文大小：1000000 → 1M，250000 → 250K
+function formatContextLimit(limit: number): string {
+  if (limit >= 1000000) return `${(limit / 1000000).toFixed(1)}M`
+  if (limit >= 1000) return `${(limit / 1000).toFixed(0)}K`
+  return String(limit)
+}
+
 export function ModelConfig({ onProfilesChange }: ModelConfigProps) {
   const [profiles, setProfiles] = useState<LlmProfile[]>([])
   const [evidenceProfile, setEvidenceProfile] = useState('default')
@@ -26,13 +33,14 @@ export function ModelConfig({ onProfilesChange }: ModelConfigProps) {
   const [editing, setEditing] = useState<LlmProfile | null>(null)
   const [showModal, setShowModal] = useState(false)
 
-  // 加载模型列表
+  // 加载模型列表（只执行一次，避免闪动）
   useEffect(() => {
     loadProfiles()
     loadAssignments()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const loadProfiles = async () => {
+  const loadProfiles = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE}/config/llm-profiles`)
       const data = await res.json()
@@ -41,9 +49,9 @@ export function ModelConfig({ onProfilesChange }: ModelConfigProps) {
     } catch (e) {
       console.error('加载模型列表失败：', e)
     }
-  }
+  }, [onProfilesChange])
 
-  const loadAssignments = async () => {
+  const loadAssignments = useCallback(async () => {
     try {
       const [evRes, anRes] = await Promise.all([
         fetch(`${API_BASE}/config/llm-profile/evidence`),
@@ -56,7 +64,7 @@ export function ModelConfig({ onProfilesChange }: ModelConfigProps) {
     } catch (e) {
       console.error('加载用途分配失败：', e)
     }
-  }
+  }, [])
 
   const saveProfile = async (profile: LlmProfile) => {
     try {
@@ -166,7 +174,7 @@ export function ModelConfig({ onProfilesChange }: ModelConfigProps) {
                 )}
               </div>
               <div style={{ fontSize: '12px', color: '#86868b' }}>
-                {p.model} · {(p.context_limit / 1000).toFixed(0)}K 上下文 · {p.max_concurrent} 并发
+                {p.model} · {formatContextLimit(p.context_limit)} 上下文 · {p.max_concurrent} 并发
               </div>
             </div>
             <div style={{ display: 'flex', gap: '8px' }}>
@@ -291,6 +299,9 @@ function ModelEditModal({ profile, onSave, onCancel }: {
   onCancel: () => void
 }) {
   const [form, setForm] = useState(profile)
+  const [dragging, setDragging] = useState(false)
+  const [position, setPosition] = useState({ x: 0, y: 0 })
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 })
 
   // 本地模型勾选后预填建议值（可修改）
   const handleLocalChange = (isLocal: boolean) => {
@@ -303,6 +314,30 @@ function ModelEditModal({ profile, onSave, onCancel }: {
     }))
   }
 
+  // 拖动功能
+  const handleMouseDown = (e: React.MouseEvent) => {
+    setDragging(true)
+    setDragStart({ x: e.clientX - position.x, y: e.clientY - position.y })
+  }
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (dragging) {
+        setPosition({ x: e.clientX - dragStart.x, y: e.clientY - dragStart.y })
+      }
+    }
+    const handleMouseUp = () => setDragging(false)
+
+    if (dragging) {
+      document.addEventListener('mousemove', handleMouseMove)
+      document.addEventListener('mouseup', handleMouseUp)
+      return () => {
+        document.removeEventListener('mousemove', handleMouseMove)
+        document.removeEventListener('mouseup', handleMouseUp)
+      }
+    }
+  }, [dragging, dragStart])
+
   return (
     <div style={{
       position: 'fixed',
@@ -313,16 +348,32 @@ function ModelEditModal({ profile, onSave, onCancel }: {
       justifyContent: 'center',
       zIndex: 10000,
     }}>
-      <div style={{
-        background: 'white',
-        borderRadius: '12px',
-        padding: '24px',
-        width: '480px',
-        maxWidth: '90vw',
-        maxHeight: '90vh',
-        overflow: 'auto',
-      }}>
-        <h3 style={{ fontSize: '16px', fontWeight: '600', marginBottom: '20px' }}>编辑模型</h3>
+      <div
+        style={{
+          background: 'white',
+          borderRadius: '12px',
+          padding: '24px',
+          width: '480px',
+          maxWidth: '90vw',
+          maxHeight: '90vh',
+          overflow: 'auto',
+          transform: `translate(${position.x}px, ${position.y}px)`,
+          cursor: dragging ? 'grabbing' : 'default',
+        }}
+      >
+        {/* 可拖动的标题栏 */}
+        <div
+          onMouseDown={handleMouseDown}
+          style={{
+            cursor: 'grab',
+            marginBottom: '20px',
+            paddingBottom: '12px',
+            borderBottom: '1px solid var(--macos-border)',
+            userSelect: 'none',
+          }}
+        >
+          <h3 style={{ fontSize: '16px', fontWeight: '600', margin: 0 }}>编辑模型</h3>
+        </div>
 
         <div style={{ marginBottom: '16px' }}>
           <label style={{ display: 'block', fontSize: '13px', fontWeight: '500', marginBottom: '6px' }}>名称</label>
