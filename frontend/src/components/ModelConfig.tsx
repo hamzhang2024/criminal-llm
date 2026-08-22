@@ -13,6 +13,7 @@ interface LlmProfile {
   max_concurrent: number
   read_timeout: number
   is_local: boolean
+  provider?: string  // 供应商标识（deepseek/qwen/minimax/glm/doubao/custom）
 }
 
 interface ModelConfigProps {
@@ -25,6 +26,67 @@ function formatContextLimit(limit: number): string {
   if (limit >= 1000) return `${(limit / 1000).toFixed(0)}K`
   return String(limit)
 }
+
+// 供应商预设：一个 API Key 可配置多个模型
+const PROVIDER_PRESETS = [
+  {
+    key: 'deepseek',
+    label: 'DeepSeek',
+    baseUrl: 'https://api.deepseek.com/v1',
+    models: [
+      { name: 'deepseek-v4-flash', context: 1000000, label: 'V4 Flash（证据提取）' },
+      { name: 'deepseek-v4-pro', context: 1000000, label: 'V4 Pro（案卷分析）' },
+    ],
+    keyHint: 'Key 为 sk- 开头，platform.deepseek.com 创建',
+  },
+  {
+    key: 'qwen',
+    label: '通义千问（阿里云百炼）',
+    baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    models: [
+      { name: 'qwen3.5-plus', context: 1000000, label: 'Qwen3.5 Plus（证据提取）' },
+      { name: 'qwen3.5-max', context: 1000000, label: 'Qwen3.5 Max（案卷分析）' },
+    ],
+    keyHint: 'Key 为 sk- 开头，bailian.console.aliyun.com 创建',
+  },
+  {
+    key: 'minimax',
+    label: 'MiniMax',
+    baseUrl: 'https://api.minimax.chat/v1',
+    models: [
+      { name: 'abab6.5-chat', context: 245000, label: 'ABAB 6.5（证据提取）' },
+      { name: 'abab6.5s-chat', context: 245000, label: 'ABAB 6.5s（案卷分析）' },
+    ],
+    keyHint: 'Key 为 Bearer 开头，api.minimax.chat 创建',
+  },
+  {
+    key: 'glm',
+    label: '智谱 GLM',
+    baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+    models: [
+      { name: 'glm-4-flash', context: 128000, label: 'GLM-4 Flash（证据提取）' },
+      { name: 'glm-4-plus', context: 128000, label: 'GLM-4 Plus（案卷分析）' },
+    ],
+    keyHint: 'Key 为 . 分隔，open.bigmodel.cn 创建',
+  },
+  {
+    key: 'doubao',
+    label: '豆包（火山引擎）',
+    baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+    models: [
+      { name: 'doubao-seed-1.6-flash', context: 256000, label: 'Seed 1.6 Flash（证据提取）' },
+      { name: 'doubao-seed-1.6', context: 256000, label: 'Seed 1.6（案卷分析）' },
+    ],
+    keyHint: 'Key 在火山引擎控制台（console.volcengine.com/ark）创建',
+  },
+  {
+    key: 'custom',
+    label: '自定义',
+    baseUrl: '',
+    models: [],
+    keyHint: '',
+  },
+]
 
 export function ModelConfig({ onProfilesChange }: ModelConfigProps) {
   const [profiles, setProfiles] = useState<LlmProfile[]>([])
@@ -170,6 +232,17 @@ export function ModelConfig({ onProfilesChange }: ModelConfigProps) {
                     color: '#92400e',
                   }}>
                     本地
+                  </span>
+                )}
+                {p.provider && p.provider !== 'custom' && (
+                  <span style={{
+                    fontSize: '10px',
+                    padding: '2px 6px',
+                    borderRadius: '4px',
+                    background: '#dbeafe',
+                    color: '#1e40af',
+                  }}>
+                    {PROVIDER_PRESETS.find(pr => pr.key === p.provider)?.label || p.provider}
                   </span>
                 )}
               </div>
@@ -375,12 +448,78 @@ function ModelEditModal({ profile, onSave, onCancel }: {
           <h3 style={{ fontSize: '16px', fontWeight: '600', margin: 0 }}>编辑模型</h3>
         </div>
 
+        {/* 供应商预设 */}
+        <div style={{ marginBottom: '16px' }}>
+          <label style={{ display: 'block', fontSize: '13px', fontWeight: '500', marginBottom: '6px' }}>供应商</label>
+          <select
+            value={form.provider || 'custom'}
+            onChange={e => {
+              const provider = PROVIDER_PRESETS.find(p => p.key === e.target.value)
+              if (!provider || provider.key === 'custom') {
+                setForm(prev => ({ ...prev, provider: 'custom' }))
+                return
+              }
+              // 选择供应商后，自动填充 base_url 和第一个模型
+              const firstModel = provider.models[0]
+              setForm(prev => ({
+                ...prev,
+                provider: provider.key,
+                base_url: provider.baseUrl,
+                model: firstModel?.name || '',
+                context_limit: firstModel?.context || 1000000,
+              }))
+            }}
+            style={{ width: '100%', padding: '8px 12px', border: '1px solid var(--macos-border)', borderRadius: '6px', fontSize: '14px', background: 'white', cursor: 'pointer' }}
+          >
+            {PROVIDER_PRESETS.map(p => (
+              <option key={p.key} value={p.key}>{p.label}</option>
+            ))}
+          </select>
+          {(() => {
+            const provider = PROVIDER_PRESETS.find(p => p.key === form.provider)
+            return provider?.keyHint ? (
+              <div style={{ marginTop: '6px', fontSize: '11px', color: '#8b6914' }}>{provider.keyHint}</div>
+            ) : null
+          })()}
+        </div>
+
+        {/* 模型选择（同一供应商下可选多个模型） */}
+        {form.provider && form.provider !== 'custom' && (() => {
+          const provider = PROVIDER_PRESETS.find(p => p.key === form.provider)
+          return provider && provider.models.length > 0 ? (
+            <div style={{ marginBottom: '16px' }}>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: '500', marginBottom: '6px' }}>模型</label>
+              <select
+                value={form.model}
+                onChange={e => {
+                  const model = provider.models.find(m => m.name === e.target.value)
+                  if (model) {
+                    setForm(prev => ({
+                      ...prev,
+                      model: model.name,
+                      context_limit: model.context,
+                    }))
+                  }
+                }}
+                style={{ width: '100%', padding: '8px 12px', border: '1px solid var(--macos-border)', borderRadius: '6px', fontSize: '14px', background: 'white', cursor: 'pointer' }}
+              >
+                {provider.models.map(m => (
+                  <option key={m.name} value={m.name}>{m.label}</option>
+                ))}
+              </select>
+              <div style={{ marginTop: '6px', fontSize: '11px', color: '#86868b' }}>
+                同一供应商可添加多个模型（如：Flash 用于证据提取，Pro 用于案卷分析）
+              </div>
+            </div>
+          ) : null
+        })()}
+
         <div style={{ marginBottom: '16px' }}>
           <label style={{ display: 'block', fontSize: '13px', fontWeight: '500', marginBottom: '6px' }}>名称</label>
           <input
             value={form.name}
             onChange={e => setForm(prev => ({ ...prev, name: e.target.value }))}
-            placeholder="如：本地 27B"
+            placeholder="如：DeepSeek V4 Flash（证据提取）"
             style={{ width: '100%', padding: '8px 12px', border: '1px solid var(--macos-border)', borderRadius: '6px', fontSize: '14px' }}
           />
         </div>
