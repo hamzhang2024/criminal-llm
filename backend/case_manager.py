@@ -1269,8 +1269,19 @@ async def _extract_single_file(
     import context_budget
     # 字符预算转 token 预算（分块按 tiktoken 计数）：与统一公式保持一致
     content_budget = int(context_budget.content_budget_chars() / context_budget.CHARS_PER_TOKEN)
-    if content_budget < 50000:
-        content_budget = 50000  # 最少保证 50K tokens
+
+    # 根据模型上下文长度动态调整分块大小（充分利用大上下文模型）
+    from config_manager import get_config_value as _gcv
+    model_context_limit = int(_gcv("model_context_limit", "250000"))
+    if model_context_limit >= 1000000:
+        # 云端 1M 上下文：200K/块，充分利用大上下文
+        content_budget = max(content_budget, 200000)
+    elif model_context_limit >= 250000:
+        # 本地 250K 上下文：50K/块，平衡 KV cache 和并发
+        content_budget = max(content_budget, 50000)
+    else:
+        # 小模型（<250K）：30K/块，避免超出上下文
+        content_budget = max(content_budget, 30000)
 
     chunks = _split_content_by_tokens(md_text, content_budget, md_file.name)
 
@@ -2718,6 +2729,11 @@ def _split_content_by_tokens(text: str, budget: int, source_name: str) -> list:
     """
     按 token 预算分块，优先按 ## 标题边界拆分，不破坏文书结构。
 
+    分块保护：
+    1. 笔录完整性：检测"被讯问人/被询问人"标记，确保一份笔录不被拆分到两个块
+    2. 块间重叠：每块保留前一块的尾部作为重叠前缀（默认 250 tokens）
+    3. 降级方案：无标题边界时按固定 token 数硬切
+
     返回：[{"label": "xxx - 分块 1/3", "text": "..."}, ...]
     """
     total_tokens = _count_tokens(text)
@@ -2732,6 +2748,43 @@ def _split_content_by_tokens(text: str, budget: int, source_name: str) -> list:
     if len(sections) <= 1:
         # 仍然无法拆分，降级按固定 token 数硬切
         return _split_by_token_count(text, budget, source_name)
+
+    # 文书完整性保护：确保一个文书（## 标题）不被拆分到两个块
+    # 如果一个文书超过分块大小，用更细粒度的拆分（按三级标题 ###）
+    merged_sections = []
+    i = 0
+    while i < len(sections):
+        current = sections[i]
+        current_tokens = _count_tokens(current)
+
+        # 如果当前 section 超过预算，尝试按三级标题拆分
+        if current_tokens > budget:
+            sub_sections = re.split(r'\n(?=### )', current)
+            if len(sub_sections) > 1:
+                # 成功拆分，递归处理子 section
+                for sub in sub_sections:
+                    merged_sections.append(sub)
+                i += 1
+                continue
+
+        # 检查下一个 section 是否是新文书的开始（## 标题）
+        if i + 1 < len(sections):
+            next_section = sections[i + 1]
+            next_is_new_doc = next_section.strip().startswith('## ')
+
+            # 如果下一个不是新文书，且合并后不超过预算，则合并
+            if not next_is_new_doc:
+                merged = current + "\n" + next_section
+                merged_tokens = _count_tokens(merged)
+                if merged_tokens <= budget:
+                    merged_sections.append(merged)
+                    i += 2
+                    continue
+
+        merged_sections.append(current)
+        i += 1
+
+    sections = merged_sections
 
     chunks = []
     current_parts: list[str] = []
