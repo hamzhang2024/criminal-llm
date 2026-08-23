@@ -46,12 +46,63 @@ def compute_max_output_tokens(context_limit: int, model: str) -> int:
     return min(computed, DEFAULT_OUTPUT_CAP)
 
 
-def get_context_limit() -> int:
-    """内容预算的基准：用户配置（model_context_limit）为唯一事实源"""
+# 分块输入预算占窗口比例：对齐已验证档位（1M→200K 封顶、250K→约 62K）
+CHUNK_INPUT_RATIO = 0.25
+MAX_CHUNK_TOKENS = 200000   # 云端大窗口封顶（更长则单块提取质量下降）
+MIN_CHUNK_TOKENS = 4000     # 再小也要保证基本内容量
+
+
+def _effective_reserve(context_limit: int, model: str = "") -> int:
+    """分块时的有效输出预留：极小窗口（≤40K）压缩预留，否则输入侧无空间"""
+    reserve = compute_max_output_tokens(context_limit, model)
+    if context_limit <= 40000:
+        reserve = min(reserve, int(context_limit * 0.4))
+    return reserve
+
+
+def compute_input_chunk_tokens(context_limit: int, model: str = "") -> int:
+    """分块输入预算（tokens）：窗口 × 25%，且满足不变式 块+输出预留+固定开销 ≤ 窗口
+
+    修复 2026-08-23 事故：分块读全局旧字段 model_context_limit=250000，
+    向 64K 窗口的 Ollama 模型发 176K tokens → 全部 400。
+    调用方必须传入当前用途 profile 的 context_limit（唯一事实源）。
+    """
+    reserve = _effective_reserve(context_limit, model)
+    chunk = int(context_limit * CHUNK_INPUT_RATIO)
+    chunk = min(chunk, MAX_CHUNK_TOKENS, context_limit - reserve - PROMPT_OVERHEAD_TOKENS)
+    return max(chunk, MIN_CHUNK_TOKENS)
+
+
+def get_context_limit(purpose: str | None = None) -> int:
+    """内容预算的基准上下文窗口
+
+    purpose 给出时（"evidence"/"analysis"）：解析该用途分配的 profile 的
+    context_limit（唯一事实源）；不给时读全局旧字段 model_context_limit
+    （向后兼容老配置/老调用点）。
+    """
+    profile = _resolve_profile(purpose)
+    if profile and profile.get("context_limit"):
+        return int(profile["context_limit"])
     try:
         return int(get_config_value("model_context_limit", str(DEFAULT_CONTEXT_LIMIT)))
     except Exception:
         return DEFAULT_CONTEXT_LIMIT
+
+
+def _resolve_profile(purpose: str | None) -> dict | None:
+    """按用途解析分配的 profile（无匹配返回 None）"""
+    if not purpose:
+        return None
+    try:
+        from config_manager import load_config
+        config = load_config()
+        profile_id = config.get(f"llm_profile_{purpose}")
+        for p in config.get("llm_profiles", []):
+            if p.get("id") == profile_id:
+                return p
+    except Exception:
+        pass
+    return None
 
 
 def get_model_window(model: str) -> int | None:
@@ -63,29 +114,35 @@ def get_model_window(model: str) -> int | None:
     return None
 
 
-def get_output_reserve_tokens() -> int:
+def get_output_reserve_tokens(purpose: str | None = None) -> int:
     """输出预留 = chat() 实际请求的 max_tokens + system prompt 固定开销
 
     chat() 按 compute_max_output_tokens 设置 max_tokens（deepseek 等可达 65536），
     预算若不把这部分扣除，input 打满后 input+max_tokens 必然超上下文上限，
     被 API 以 400 拒绝（如 162000 分块 + 65536 输出 > 200000 上下文）。
+    purpose 给出时按该用途的 profile 解析窗口与模型（唯一事实源）。
     """
-    limit = get_context_limit()
-    try:
-        model = str(get_config_value("llm_model", ""))
-    except Exception:
-        model = ""
+    limit = get_context_limit(purpose)
+    profile = _resolve_profile(purpose)
+    if profile is not None:
+        model = str(profile.get("model", ""))
+    else:
+        try:
+            model = str(get_config_value("llm_model", ""))
+        except Exception:
+            model = ""
     return compute_max_output_tokens(limit, model) + PROMPT_OVERHEAD_TOKENS
 
 
-def content_budget_chars(reserve_tokens: int | None = None) -> int:
+def content_budget_chars(reserve_tokens: int | None = None, purpose: str | None = None) -> int:
     """内容字符预算 = (context_limit - 预留) × 1.35；小配置时保底 MIN_CONTENT_BUDGET_CHARS，杜绝负值
 
     预留缺省为动态计算：输出 max_tokens（随模型/上下文配置变化）+ prompt 固定开销
+    purpose 给出时按该用途的 profile 计算（"evidence"/"analysis"）。
     """
     if reserve_tokens is None:
-        reserve_tokens = get_output_reserve_tokens()
-    return max(MIN_CONTENT_BUDGET_CHARS, int((get_context_limit() - reserve_tokens) * CHARS_PER_TOKEN))
+        reserve_tokens = get_output_reserve_tokens(purpose)
+    return max(MIN_CONTENT_BUDGET_CHARS, int((get_context_limit(purpose) - reserve_tokens) * CHARS_PER_TOKEN))
 
 
 def truncate_with_marker(text: str, budget: int, label: str = "") -> str:

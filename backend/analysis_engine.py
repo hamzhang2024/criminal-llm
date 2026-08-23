@@ -40,9 +40,9 @@ def _get_enc():
     return _tiktoken_enc
 
 def _get_content_budget_chars() -> int:
-    """获取内容字符预算（委托统一预算模块）"""
+    """获取内容字符预算（委托统一预算模块，按 analysis 用途的 profile 解析）"""
     import context_budget
-    return context_budget.content_budget_chars()
+    return context_budget.content_budget_chars(purpose="analysis")
 
 
 def _get_report_budget_chars() -> int:
@@ -94,8 +94,8 @@ async def _batch_analyze_evidence(
     fixed_overhead = system_tokens + header_tokens + footer_tokens + 5000
 
     try:
-        from config_manager import get_config_value
-        context_limit = int(get_config_value("model_context_limit", "250000"))
+        import context_budget
+        context_limit = context_budget.get_context_limit("analysis")
     except Exception:
         context_limit = 250000
 

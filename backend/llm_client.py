@@ -203,11 +203,13 @@ class LLMClient:
             purpose: "evidence"（证据提取）或 "analysis"（案卷分析）
         """
         self.purpose = purpose
-        base_url, api_key, default_model, timeout_config = self._get_cached_config(purpose)
+        base_url, api_key, default_model, timeout_config, context_limit = self._get_cached_config(purpose)
         self.base_url = base_url
         self.api_key = api_key
         # 规范化模型名称：DeepSeek API 要求全小写
         self.model = default_model.lower() if default_model else ""
+        # 上下文窗口（profile 为唯一事实源）：分块/输出预留都以此为准
+        self.context_limit = context_limit
         # 分层超时：connect/write/pool 各 60s，read 默认 180s 防 stream hang
         # 单一数值 timeout 在 streaming 响应下每次收到 chunk 重置计时器，
         # read timeout 是单次读取超时，无数据则抛 ReadTimeout → 触发重试。
@@ -264,6 +266,9 @@ class LLMClient:
                     p.get("api_key"),
                     p.get("model", ""),
                     {"read_timeout": p.get("read_timeout", 180)},
+                    # profile 的 context_limit 是上下文唯一事实源；
+                    # 缺省时回落全局旧字段（向后兼容）
+                    int(p.get("context_limit") or config.get("model_context_limit") or 250000),
                 )
 
         # 回退到旧配置（向后兼容）
@@ -271,17 +276,19 @@ class LLMClient:
         base_url = config.get("llm_base_url", "")
         default_model = config.get("llm_model", "")
         read_timeout = float(config.get("llm_read_timeout", 180))
-        return base_url, api_key, default_model, {"read_timeout": read_timeout}
+        return base_url, api_key, default_model, {"read_timeout": read_timeout}, \
+            int(config.get("model_context_limit") or 250000)
 
     def reload_config(self):
         """重新读取配置（强制刷新缓存）"""
         # 清除缓存
         LLMClient._config_cache = None
-        base_url, api_key, default_model, timeout_config = self._get_cached_config(self.purpose)
+        base_url, api_key, default_model, timeout_config, context_limit = self._get_cached_config(self.purpose)
         self.base_url = base_url
         self.api_key = api_key
         # 规范化模型名称：DeepSeek API 要求全小写（deepseek-v4-pro/deepseek-v4-flash）
         self.model = default_model.lower() if default_model else ""
+        self.context_limit = context_limit
         # read 超时也随配置刷新（本地大模型需要把 llm_read_timeout 调大时无需重启后端）
         read_timeout = timeout_config.get("read_timeout", 180)
         if read_timeout != self.timeout.read:
@@ -328,11 +335,10 @@ class LLMClient:
         url = f"{self.base_url}/chat/completions"
 
         # 根据模型上下文窗口动态计算最大输出 tokens（防止 API 默认值截断长输出）
-        from config_manager import get_config_value
-        context_limit = int(get_config_value("model_context_limit", "250000"))
+        # 上下文窗口取当前 profile（唯一事实源），不再读全局旧字段
         # 预留 20% 给输入，其余作为输出上限；同时按模型家族上限截断，
         # 防止 context_limit 过大导致 max_tokens 超过模型实际上限而 API 400
-        max_output_tokens = compute_max_output_tokens(context_limit, effective_model)
+        max_output_tokens = compute_max_output_tokens(self.context_limit, effective_model)
 
         payload = {
             "model": effective_model,

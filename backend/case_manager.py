@@ -1267,21 +1267,11 @@ async def _extract_single_file(
 
     # 按 token 预算分块（用 tiktoken 精确计算，按 ## 标题边界拆分）
     import context_budget
-    # 字符预算转 token 预算（分块按 tiktoken 计数）：与统一公式保持一致
-    content_budget = int(context_budget.content_budget_chars() / context_budget.CHARS_PER_TOKEN)
-
-    # 根据模型上下文长度动态调整分块大小（充分利用大上下文模型）
-    from config_manager import get_config_value as _gcv
-    model_context_limit = int(_gcv("model_context_limit", "250000"))
-    if model_context_limit >= 1000000:
-        # 云端 1M 上下文：200K/块，充分利用大上下文
-        content_budget = max(content_budget, 200000)
-    elif model_context_limit >= 250000:
-        # 本地 250K 上下文：50K/块，平衡 KV cache 和并发
-        content_budget = max(content_budget, 50000)
-    else:
-        # 小模型（<250K）：30K/块，避免超出上下文
-        content_budget = max(content_budget, 30000)
+    # 分块预算 = 当前提取 profile 的窗口 × 25%（封顶 200K），
+    # 含不变式：块 + 输出预留 + 固定开销 ≤ 窗口（profile 为唯一事实源）
+    _client_ctx = getattr(client, "context_limit", 0) or context_budget.get_context_limit("evidence")
+    content_budget = context_budget.compute_input_chunk_tokens(
+        _client_ctx, getattr(client, "model", ""))
 
     chunks = _split_content_by_tokens(md_text, content_budget, md_file.name)
 

@@ -136,7 +136,6 @@ async def catalog_documents(client, md_name: str, md_text: str, timeout: int = 6
     except Exception as e:
         logger.warning(f"[按份提取] {md_name}: 目录清点调用失败: {e}")
         return None
-
     m = re.search(r"\[[\s\S]*\]", result)
     if not m:
         logger.warning(f"[按份提取] {md_name}: 目录清点未返回 JSON 数组")
@@ -158,6 +157,76 @@ async def catalog_documents(client, md_name: str, md_text: str, timeout: int = 6
     except Exception as e:
         logger.warning(f"[按份提取] {md_name}: 目录解析失败: {e}")
         return None
+
+
+def _locate_doc_spans(md_text: str, docs: list) -> list:
+    """定位目录中每份文书在正文中的区间：返回 [(start, end) | None]，与 docs 同序
+
+    超大卷窗口守卫用：按文书名定位。目录区的提及不算——判定为目录提及的特征：
+    所在行较短（≤名称+15字符）且带序号前缀（"1. xxx"）或以页码/页码范围结尾
+    （"xxx 12-19"）。找不到的文书为 None（调用方回退整卷发送）。
+    区间 = [本文书起点, 下一份已定位文书的起点或文末)。
+    """
+    n = len(md_text)
+
+    def _is_directory_mention(line: str, name_len: int) -> bool:
+        if len(line) > name_len + 15:
+            return False
+        if re.match(r"^\d+\s*[.、．]", line):
+            return True
+        if re.search(r"[\d\-—~]+\s*$", line) and re.search(r"\d", line[-6:]):
+            return True
+        return False
+
+    positions = []
+    for d in docs:
+        name = re.sub(r"\s+", "", d.get("name", ""))
+        pos = None
+        if name:
+            start = 0
+            while True:
+                idx = md_text.find(name, start)
+                if idx < 0:
+                    break
+                line_start = md_text.rfind("\n", 0, idx) + 1
+                line_end = md_text.find("\n", idx)
+                line = md_text[line_start: line_end if line_end > 0 else n].strip()
+                if not _is_directory_mention(line, len(name)):
+                    pos = line_start
+                    break
+                start = idx + len(name)
+        positions.append(pos)
+    located = sorted((p, i) for i, p in enumerate(positions) if p is not None)
+    spans = [None] * len(docs)
+    for k, (p, i) in enumerate(located):
+        end = located[k + 1][0] if k + 1 < len(located) else n
+        spans[i] = (p, end)
+    return spans
+
+
+async def _catalog_sliced(client, md_name: str, md_text: str, budget_chars: int, timeout: int) -> Optional[list]:
+    """超大卷的分片目录清点：按预算切片（行边界），逐片清点，按 名字+日期 去重合并"""
+    n = len(md_text)
+    slices = []
+    start = 0
+    while start < n:
+        end = min(n, start + budget_chars)
+        if end < n:
+            nl = md_text.rfind("\n", start + int(budget_chars * 0.8), end)
+            if nl > start:
+                end = nl
+        slices.append(md_text[start:end])
+        start = end
+    logger.info(f"[按份提取] {md_name}: 卷超出窗口预算，目录分 {len(slices)} 片清点")
+    merged, seen = [], set()
+    for si, s in enumerate(slices):
+        part = await catalog_documents(client, f"{md_name}（切片{si + 1}/{len(slices)}）", s, timeout)
+        for d in part or []:
+            key = (re.sub(r"\s+", "", d.get("name", "")), d.get("date", ""))
+            if key[0] and key not in seen:
+                seen.add(key)
+                merged.append(d)
+    return merged or None
 
 
 def verify_perdoc_output(doc: dict, output: str) -> list:
@@ -194,10 +263,20 @@ async def _extract_one_document(
     client, md_name: str, md_text: str, doc: dict, charges_str: str, timeout: int = 600,
     is_procedural: bool = False,  # 程序性文书标记
     error_sink: dict | None = None,  # 失败原因出口：doc_name → 人性化原因（随占位块展示到界面）
+    span: tuple | None = None,       # 目标文书在正文中的区间（超大卷窗口守卫）
+    budget_chars: int | None = None,  # 单次调用正文预算（字符）
 ) -> Optional[dict]:
     """第二级：提取单份文书，带第三级校验与一次重试。返回 ev_block 或 None"""
     date_hint = f"，讯问/落款日期 {doc['date']}" if doc.get("date") else ""
     target_msg = f"你负责的目标文书是：《{doc['name']}》{date_hint}。请只提取这一份，其他一律忽略。{charges_str}"
+
+    # 超大卷窗口守卫：卷超出预算且有定位区间时，只发目标文书附近切片（防整卷 400）
+    send_text = md_text
+    slice_note = ""
+    if span and budget_chars and len(md_text) > budget_chars:
+        s, e = span
+        send_text = md_text[max(0, s - 200): min(len(md_text), e + 200)]
+        slice_note = "（切片：目标文书附近内容）"
 
     result = ""
     last_error = ""
@@ -208,7 +287,7 @@ async def _extract_one_document(
             system_prompt = _BATCH_SYSTEM if is_procedural else _PERDOC_SYSTEM
             result = await asyncio.wait_for(client.chat([
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"案卷文件：{md_name}\n\n{md_text}"},
+                {"role": "user", "content": f"案卷文件：{md_name}{slice_note}\n\n{send_text}"},
                 {"role": "user", "content": target_msg if attempt == 1 else
                     target_msg + "\n\n⚠️ 上次输出未通过校验，请务必：1) 锁定正确文书（核对日期）2) 完整输出全部问答 3) 只输出 JSON 对象"},
             ]), timeout=timeout)
@@ -291,6 +370,14 @@ async def extract_by_document(
     """
     md_name = md_file.name
 
+    # 单次调用正文预算（字符）：当前提取 profile 窗口 × 25% × 1.35。
+    # 超大卷（如 20 万 tokens 塞进 64K 窗口必 400）按此预算切片/分片
+    import context_budget
+    _ctx = getattr(client, "context_limit", 0) or context_budget.get_context_limit("evidence")
+    _model = getattr(client, "model", "")
+    budget_chars = int(context_budget.compute_input_chunk_tokens(_ctx, _model) * context_budget.CHARS_PER_TOKEN)
+    oversized = len(md_text) > budget_chars
+
     # 目录缓存（文本变化即失效）
     catalog_cache = temp_dir / "_perdoc_catalog.json"
     docs = None
@@ -302,7 +389,11 @@ async def extract_by_document(
         except Exception:
             pass
     if docs is None:
-        docs = await catalog_documents(client, md_name, md_text, timeout)
+        # 超大卷整卷清点必超窗口：分片清点合并
+        if oversized:
+            docs = await _catalog_sliced(client, md_name, md_text, budget_chars, timeout)
+        else:
+            docs = await catalog_documents(client, md_name, md_text, timeout)
         if docs:
             try:
                 catalog_cache.write_text(json.dumps(
@@ -313,6 +404,9 @@ async def extract_by_document(
     if not docs or len(docs) < 2:
         logger.info(f"[按份提取] {md_name}: 目录文书数 {len(docs) if docs else 0}，回退整卷路径")
         return None
+
+    # 超大卷：定位每份文书的正文区间（按份调用只发切片，不塞整卷）
+    spans = _locate_doc_spans(md_text, docs) if oversized else [None] * len(docs)
 
     transcripts = [d for d in docs if _is_transcript(d)]
     others = [d for d in docs if not _is_transcript(d)]
@@ -366,6 +460,8 @@ async def extract_by_document(
                 client, md_name, md_text, doc, charges_str, timeout,
                 is_procedural=is_procedural,
                 error_sink=fail_reasons,
+                span=spans[i] if i < len(spans) else None,
+                budget_chars=budget_chars,
             )
         if block:
             results[i] = block
@@ -380,49 +476,73 @@ async def extract_by_document(
         progress_done["n"] += 1
         _report_progress()
 
-    # 其他短文书：一次批量调用
+    # 其他短文书：一次批量调用（超大卷按定位切片 + 预算打包成多批）
     async def _batch_others():
-        todo = [d for d in others if not _is_skipped(d)]
+        todo = [(i, d) for i, d in enumerate(docs) if not _is_transcript(d) and not _is_skipped(d)]
         if not todo:
             return
-        names = "、".join(f"《{d['name']}》" for d in todo)
-        try:
-            result = await asyncio.wait_for(client.chat([
-                {"role": "system", "content": _BATCH_SYSTEM},
-                {"role": "user", "content": f"案卷文件：{md_name}\n\n{md_text}"},
-                {"role": "user", "content": f"目标文书清单：{names}。只提取这些，每份一个条目。{charges_str}"},
-            ]), timeout=timeout)
-            m = re.search(r"\[[\s\S]*\]", result)
-            if m:
-                for item in json.loads(m.group(0)):
-                    if isinstance(item, dict) and item.get("name"):
-                        # 按名称找回目录下标
-                        for j, d in enumerate(docs):
-                            if d["name"] == item["name"] or d["name"] in item["name"] or item["name"] in d["name"]:
-                                results[j] = {
-                                    "name": _norm_str(item.get("name")) or d["name"],
-                                    "type": _norm_str(item.get("type")) or d.get("type", "程序性文书"),
-                                    "source": md_name,
-                                    "page_range": _norm_str(item.get("page_range")),
-                                    "persons": _norm_str(item.get("persons")),
-                                    "key_facts": _norm_list(item.get("key_facts")),
-                                    "summary": _norm_str(item.get("summary")),
-                                    "original_quotes": _norm_str(item.get("original_quotes")),
-                                    "contradiction_hints": _norm_str(item.get("contradiction_hints")) or "无",
-                                    "related_entities": _norm_str(item.get("related_entities")),
-                                    "fund_flows": _norm_list(item.get("fund_flows")),
-                                    "charges": _norm_list(item.get("charges")),
-                                    "elements": _norm_list(item.get("elements")),
-                                    "proves_facts": _norm_list(item.get("proves_facts")),
-                                    "proves_details": item.get("proves_details") if isinstance(item.get("proves_details"), dict) else {},
-                                    "raw_text": json.dumps(item, ensure_ascii=False, indent=2),
-                                }
-                                break
-        except Exception as e:
-            logger.warning(f"[按份提取] {md_name}: 短文书批量提取失败: {e}")
-            # 批量调用失败：该批所有文书记同一原因（人性化后供界面展示）
-            for d in todo:
-                fail_reasons[d["name"]] = humanize_llm_error(str(e))
+        if not oversized:
+            batches = [(todo, md_text)]
+        else:
+            # 按文书区间切片，贪心地按预算打包；定位失败的文书标原因跳过（不塞整卷）
+            batches = []
+            cur_docs, cur_texts, cur_size = [], [], 0
+            for i, d in todo:
+                sp = spans[i] if i < len(spans) else None
+                if sp is None:
+                    logger.warning(f"[按份提取] {md_name}《{d['name']}》正文定位失败，跳过切片批量")
+                    fail_reasons[d["name"]] = "正文定位失败（目录名与正文标题不一致），请人工核对"
+                    continue
+                s, e = sp
+                piece = md_text[max(0, s - 100): min(len(md_text), e + 100)]
+                if cur_size + len(piece) > budget_chars and cur_docs:
+                    batches.append((cur_docs, "\n\n".join(cur_texts)))
+                    cur_docs, cur_texts, cur_size = [], [], 0
+                cur_docs.append((i, d))
+                cur_texts.append(piece)
+                cur_size += len(piece)
+            if cur_docs:
+                batches.append((cur_docs, "\n\n".join(cur_texts)))
+
+        for batch_docs, batch_text in batches:
+            names = "、".join(f"《{d['name']}》" for _, d in batch_docs)
+            try:
+                result = await asyncio.wait_for(client.chat([
+                    {"role": "system", "content": _BATCH_SYSTEM},
+                    {"role": "user", "content": f"案卷文件：{md_name}{'（切片）' if oversized else ''}\n\n{batch_text}"},
+                    {"role": "user", "content": f"目标文书清单：{names}。只提取这些，每份一个条目。{charges_str}"},
+                ]), timeout=timeout)
+                m = re.search(r"\[[\s\S]*\]", result)
+                if m:
+                    for item in json.loads(m.group(0)):
+                        if isinstance(item, dict) and item.get("name"):
+                            # 按名称找回目录下标
+                            for j, d in enumerate(docs):
+                                if d["name"] == item["name"] or d["name"] in item["name"] or item["name"] in d["name"]:
+                                    results[j] = {
+                                        "name": _norm_str(item.get("name")) or d["name"],
+                                        "type": _norm_str(item.get("type")) or d.get("type", "程序性文书"),
+                                        "source": md_name,
+                                        "page_range": _norm_str(item.get("page_range")),
+                                        "persons": _norm_str(item.get("persons")),
+                                        "key_facts": _norm_list(item.get("key_facts")),
+                                        "summary": _norm_str(item.get("summary")),
+                                        "original_quotes": _norm_str(item.get("original_quotes")),
+                                        "contradiction_hints": _norm_str(item.get("contradiction_hints")) or "无",
+                                        "related_entities": _norm_str(item.get("related_entities")),
+                                        "fund_flows": _norm_list(item.get("fund_flows")),
+                                        "charges": _norm_list(item.get("charges")),
+                                        "elements": _norm_list(item.get("elements")),
+                                        "proves_facts": _norm_list(item.get("proves_facts")),
+                                        "proves_details": item.get("proves_details") if isinstance(item.get("proves_details"), dict) else {},
+                                        "raw_text": json.dumps(item, ensure_ascii=False, indent=2),
+                                    }
+                                    break
+            except Exception as e:
+                logger.warning(f"[按份提取] {md_name}: 短文书批量提取失败: {e}")
+                # 批量调用失败：该批所有文书记同一原因（人性化后供界面展示）
+                for _, d in batch_docs:
+                    fail_reasons[d["name"]] = humanize_llm_error(str(e))
 
     await asyncio.gather(
         *(_one(i, d) for i, d in enumerate(docs) if _is_transcript(d)),

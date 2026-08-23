@@ -1101,7 +1101,7 @@ async def chat(
 **重要**：分析必须基于原始证据，不能引用分析报告的结论作为既定事实。
 
 案卷证据材料：
-{evidence_context[:context_budget.content_budget_chars()]}
+{evidence_context[:context_budget.content_budget_chars(purpose="analysis")]}
 
 用户问题：{message}
 

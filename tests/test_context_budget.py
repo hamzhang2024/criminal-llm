@@ -23,7 +23,7 @@ def test_model_window_mapping():
 
 
 def test_content_budget_chars(monkeypatch):
-    monkeypatch.setattr(context_budget, "get_context_limit", lambda: 250000)
+    monkeypatch.setattr(context_budget, "get_context_limit", lambda *a, **kw: 250000)
     _mock_model(monkeypatch, "deepseek-v4-flash")
     # 预留 = min(250000×0.8, 65536) + 8000 prompt 开销 = 73536
     assert content_budget_chars() == int((250000 - 73536) * 1.35)
@@ -31,7 +31,7 @@ def test_content_budget_chars(monkeypatch):
 
 def test_content_budget_chars_explicit_reserve(monkeypatch):
     """显式指定预留时保持旧行为"""
-    monkeypatch.setattr(context_budget, "get_context_limit", lambda: 250000)
+    monkeypatch.setattr(context_budget, "get_context_limit", lambda *a, **kw: 250000)
     assert content_budget_chars(38000) == int((250000 - 38000) * 1.35)
 
 
@@ -41,7 +41,7 @@ def test_budget_plus_output_never_exceeds_context(monkeypatch):
     复现 2026-08-06 生产环境提取失败：旧预留 38000 < max_tokens 65536，
     162000 tokens 分块 + 65536 输出 > 200000 上下文被 vLLM 拒绝。
     """
-    monkeypatch.setattr(context_budget, "get_context_limit", lambda: 200000)
+    monkeypatch.setattr(context_budget, "get_context_limit", lambda *a, **kw: 200000)
     _mock_model(monkeypatch, "deepseek-v4-flash-0731")
     budget_tokens = content_budget_chars() / context_budget.CHARS_PER_TOKEN
     max_output = compute_max_output_tokens(200000, "deepseek-v4-flash-0731")
@@ -51,7 +51,7 @@ def test_budget_plus_output_never_exceeds_context(monkeypatch):
 
 def test_content_budget_chars_floor(monkeypatch):
     """小配置时预算不低于 30000 字符，杜绝负值"""
-    monkeypatch.setattr(context_budget, "get_context_limit", lambda: 32000)
+    monkeypatch.setattr(context_budget, "get_context_limit", lambda *a, **kw: 32000)
     assert content_budget_chars() == 30000
 
 

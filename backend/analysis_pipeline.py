@@ -360,7 +360,7 @@ class AnalysisPipeline:
                     doc_type = await _classify_document_type(self.llm, f["text"][:5000])
                     if doc_type in ("起诉书", "起诉意见书"):
                         fulltext = _extract_fulltext_section(f["text"])
-                        return (fulltext or f["text"])[:context_budget.content_budget_chars()], doc_type
+                        return (fulltext or f["text"])[:context_budget.content_budget_chars(purpose="analysis")], doc_type
                     # LLM 无法确认类型时，回退到自动检测
 
         md_files = self._load_md_files()
@@ -383,14 +383,14 @@ class AnalysisPipeline:
             doc_type = await _classify_document_type(self.llm, f["text"][:5000])
             if doc_type == "起诉书":
                 fulltext = _extract_fulltext_section(f["text"])
-                return (fulltext or f["text"])[:context_budget.content_budget_chars()], "起诉书"
+                return (fulltext or f["text"])[:context_budget.content_budget_chars(purpose="analysis")], "起诉书"
 
         # 再确认起诉意见书
         for f in opinion_candidates:
             doc_type = await _classify_document_type(self.llm, f["text"][:5000])
             if doc_type == "起诉意见书":
                 fulltext = _extract_fulltext_section(f["text"])
-                return (fulltext or f["text"])[:context_budget.content_budget_chars()], "起诉意见书"
+                return (fulltext or f["text"])[:context_budget.content_budget_chars(purpose="analysis")], "起诉意见书"
 
         return "", ""
 
@@ -823,7 +823,7 @@ class AnalysisPipeline:
 6. 保持原始陈述的语气和逻辑
 
 笔录内容：
-{session['content'][:context_budget.content_budget_chars()]}"""},
+{session['content'][:context_budget.content_budget_chars(purpose="analysis")]}"""},
                     ])
                     session_summaries.append({"session_number": i, "time_range": session["time_range"], "summary": summary})
                     completed += 1
@@ -896,7 +896,7 @@ class AnalysisPipeline:
                     {"role": "system", "content": f"你是刑事律师，请对比{person}的多份{etype}，找出前后矛盾。"},
                     {"role": "user", "content": f"""{person}共有{session_count}次{etype}，以下是每次笔录的详细总结：
 
-{summary_text[:context_budget.content_budget_chars()]}
+{summary_text[:context_budget.content_budget_chars(purpose="analysis")]}
 
 注意：本步骤仅分析同一人口供/证言的前后矛盾（供述内矛盾），不分析不同证据之间的矛盾（证据间矛盾在步骤 4 处理）。
 
@@ -1276,7 +1276,7 @@ class AnalysisPipeline:
 
             if not summary_text and etype == "其他证据":
                 if other_index_path.exists():
-                    summary_text = other_index_path.read_text(encoding="utf-8")[:context_budget.content_budget_chars()]
+                    summary_text = other_index_path.read_text(encoding="utf-8")[:context_budget.content_budget_chars(purpose="analysis")]
 
             if not summary_text:
                 print(f"[步骤 4b] 跳过 {person}（无总结文件）")
@@ -1312,7 +1312,7 @@ class AnalysisPipeline:
 {legal_framework if legal_framework else '无'}
 
 ## 待分析证据：{person}（{etype}）
-{summary_text[:context_budget.content_budget_chars()]}
+{summary_text[:context_budget.content_budget_chars(purpose="analysis")]}
 
 ## 该人的矛盾分析（如有）
 {contradiction_text if contradiction_text else '无'}
@@ -1328,7 +1328,7 @@ class AnalysisPipeline:
 5. 是否存在需要其他证据验证的点
 
 请输出 Markdown 格式的详细分析。"""
-                print(f"[预算] 步骤4b 单证据 prompt: {len(user_prompt)} 字符 / 预算 {context_budget.content_budget_chars()}")
+                print(f"[预算] 步骤4b 单证据 prompt: {len(user_prompt)} 字符 / 预算 {context_budget.content_budget_chars(purpose="analysis")}")
                 analysis = await self.llm.chat([
                     {"role": "system", "content": "你是刑事律师，正在进行案件证据分析。请基于证据材料，逐项分析该证据的证明力和证明内容。"},
                     {"role": "user", "content": user_prompt},
@@ -1350,7 +1350,7 @@ class AnalysisPipeline:
         if not self._wiki_page_exists("02-事实要素", "资金流梳理.md"):
             print("[步骤 4e] 梳理资金流...")
             fund_evidence = self._collect_fund_evidence(
-                max_chars=int(context_budget.content_budget_chars() * 0.6)
+                max_chars=int(context_budget.content_budget_chars(purpose="analysis") * 0.6)
             )
             if not fund_evidence.strip():
                 self._save_wiki_page("02-事实要素", "资金流梳理.md",
@@ -1362,7 +1362,7 @@ class AnalysisPipeline:
                     # prompt 由共享模块构建（含起诉书有效性判断与四档对照结论）
                     from fund_flow import build_fund_prompt, FUND_SYSTEM_PROMPT
                     fund_prompt = build_fund_prompt(indictment_content, fund_evidence)
-                    print(f"[预算] 步骤4e 资金流 prompt: {len(fund_prompt)} 字符 / 预算 {context_budget.content_budget_chars()}")
+                    print(f"[预算] 步骤4e 资金流 prompt: {len(fund_prompt)} 字符 / 预算 {context_budget.content_budget_chars(purpose="analysis")}")
                     fund_analysis = await self.llm.chat([
                         {"role": "system", "content": FUND_SYSTEM_PROMPT},
                         {"role": "user", "content": fund_prompt},
@@ -1385,14 +1385,14 @@ class AnalysisPipeline:
             print("[步骤 4d] 生成综合结论...")
             # 收集所有证据分析（按页数均摊内容预算）
             evidence_pages = self._list_wiki_pages("03-证据分析")
-            per_page = max(2000, context_budget.content_budget_chars() // max(1, len(evidence_pages)))
+            per_page = max(2000, context_budget.content_budget_chars(purpose="analysis") // max(1, len(evidence_pages)))
             all_evidence_analysis = ""
             for f in evidence_pages:
                 content = self._load_wiki_page("03-证据分析", f)
                 all_evidence_analysis += f"\n### {f}\n{content[:per_page]}\n"
 
             legal_pages = self._list_wiki_pages("04-法律依据")
-            per_legal_page = max(2000, context_budget.content_budget_chars() // max(1, len(legal_pages)))
+            per_legal_page = max(2000, context_budget.content_budget_chars(purpose="analysis") // max(1, len(legal_pages)))
             legal_content = ""
             for f in legal_pages:
                 content = self._load_wiki_page("04-法律依据", f)
@@ -1409,10 +1409,10 @@ class AnalysisPipeline:
 {indictment_content[:3000]}
 
 ## 证据分析汇总
-{all_evidence_analysis[:int(context_budget.content_budget_chars() * 0.7)]}
+{all_evidence_analysis[:int(context_budget.content_budget_chars(purpose="analysis") * 0.7)]}
 
 ## 法律依据
-{legal_content[:int(context_budget.content_budget_chars() * 0.25)]}
+{legal_content[:int(context_budget.content_budget_chars(purpose="analysis") * 0.25)]}
 {fund_flow_section}
 请综合分析：
 1. 指控事实的证据支撑程度
@@ -1424,7 +1424,7 @@ class AnalysisPipeline:
 7. 资金流与指控金额的印证情况（如提供了资金流梳理）
 
 请输出 Markdown 格式的综合结论。"""
-                print(f"[预算] 步骤4d 综合结论 prompt: {len(user_prompt)} 字符 / 预算 {context_budget.content_budget_chars()}")
+                print(f"[预算] 步骤4d 综合结论 prompt: {len(user_prompt)} 字符 / 预算 {context_budget.content_budget_chars(purpose="analysis")}")
                 conclusion = await self.llm.chat([
                     {"role": "system", "content": "你是刑事律师，请基于案件 Wiki 的所有分析结果，生成综合结论。"},
                     {"role": "user", "content": user_prompt},
@@ -1448,7 +1448,7 @@ class AnalysisPipeline:
         # 更新矛盾记录（从 contradiction 目录直接读取所有 MD 文件，按文件数均摊预算）
         contradiction_summary = ""
         contradiction_files = self._list_contradiction_files()
-        per_contra = max(2000, context_budget.content_budget_chars() // max(1, len(contradiction_files)))
+        per_contra = max(2000, context_budget.content_budget_chars(purpose="analysis") // max(1, len(contradiction_files)))
         for cf in contradiction_files:
             ccontent = self._load_contradiction_file(cf["filename"])
             if ccontent:
@@ -1533,7 +1533,7 @@ class AnalysisPipeline:
             f"## 法律依据\n{wiki_legal}" if wiki_legal else None,
             f"## 资金流梳理\n{wiki_fund_flow}" if wiki_fund_flow.strip() else None,
         ] if p]
-        context = "\n\n".join(context_parts)[:context_budget.content_budget_chars()]
+        context = "\n\n".join(context_parts)[:context_budget.content_budget_chars(purpose="analysis")]
 
         step_name_map = {
             "45a": "控方沙箱",
@@ -2180,17 +2180,17 @@ class AnalysisPipeline:
                 wiki_contradictions = stage52_file.read_text(encoding="utf-8")
 
         legal_pages = self._list_wiki_pages("04-法律依据")
-        per_legal_page = max(2000, context_budget.content_budget_chars() // max(1, len(legal_pages)))
+        per_legal_page = max(2000, context_budget.content_budget_chars(purpose="analysis") // max(1, len(legal_pages)))
         wiki_legal = ""
         for f in legal_pages:
             wiki_legal += self._load_wiki_page("04-法律依据", f)[:per_legal_page] + "\n\n"
         if not wiki_legal.strip():
             stage4_file = self.analysis_dir / "stage_4" / "output.md"
             if stage4_file.exists():
-                wiki_legal = stage4_file.read_text(encoding="utf-8")[:context_budget.content_budget_chars()]
+                wiki_legal = stage4_file.read_text(encoding="utf-8")[:context_budget.content_budget_chars(purpose="analysis")]
 
         evidence_pages = self._list_wiki_pages("03-证据分析")
-        per_evidence_page = max(2000, context_budget.content_budget_chars() // max(1, len(evidence_pages)))
+        per_evidence_page = max(2000, context_budget.content_budget_chars(purpose="analysis") // max(1, len(evidence_pages)))
         wiki_evidence_summary = ""
         for f in evidence_pages:
             content = self._load_wiki_page("03-证据分析", f)
@@ -2198,7 +2198,7 @@ class AnalysisPipeline:
         if not wiki_evidence_summary.strip():
             stage51_file = self.analysis_dir / "stage_51" / "output.md"
             if stage51_file.exists():
-                wiki_evidence_summary = stage51_file.read_text(encoding="utf-8")[:context_budget.content_budget_chars()]
+                wiki_evidence_summary = stage51_file.read_text(encoding="utf-8")[:context_budget.content_budget_chars(purpose="analysis")]
 
         # 读取控辩对抗结果（如有）
         debate_file = self.analysis_dir / "04.5-控辩对抗" / "对抗分析.md"
@@ -2212,7 +2212,7 @@ class AnalysisPipeline:
         if strategy_file.exists():
             strategy_prefix = (
                 "辩护思路（律师已确认，必须遵循；律师补充的思路优先级最高，与系统建议冲突时以律师为准）：\n"
-                + strategy_file.read_text(encoding="utf-8")[:context_budget.content_budget_chars()]
+                + strategy_file.read_text(encoding="utf-8")[:context_budget.content_budget_chars(purpose="analysis")]
                 + "\n\n"
             )
 
@@ -2221,8 +2221,8 @@ class AnalysisPipeline:
 
         try:
             from legal_knowledge import THEORY_THREE_TIERS, CONSTITUTIVE_ELEMENT_ANALYSIS
-            theory_text = THEORY_THREE_TIERS[:context_budget.content_budget_chars()]
-            element_text = CONSTITUTIVE_ELEMENT_ANALYSIS[:context_budget.content_budget_chars()]
+            theory_text = THEORY_THREE_TIERS[:context_budget.content_budget_chars(purpose="analysis")]
+            element_text = CONSTITUTIVE_ELEMENT_ANALYSIS[:context_budget.content_budget_chars(purpose="analysis")]
         except ImportError:
             theory_text = "三阶层理论：构成要件符合性 → 违法性 → 有责性"
             element_text = "法条构成要件拆解分析法：提出问题 → 套入法条 → 是否符合 → 本罪/无罪/他罪"
