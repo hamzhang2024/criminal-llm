@@ -89,6 +89,8 @@ def test_empty_stats_default():
         "output_tokens": 0,
         "cache_hit_tokens": 0,
         "hit_rate": 0,
+        # 供应商是否返回缓存字段（Ollama 无 → False，前端显示"不适用"）
+        "cache_supported": False,
     }
 
 

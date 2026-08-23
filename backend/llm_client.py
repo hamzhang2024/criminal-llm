@@ -1007,20 +1007,21 @@ class LLMClient:
         await self.client.aclose()
 
 
-# 全局客户端实例
-_client: Optional[LLMClient] = None
+# 全局客户端实例（按用途分别缓存）
+# 修复 2026-08-23 事故：原单例 _client 的 purpose 由首次调用决定且终身不变，
+# 在设置页验证分析模型后再跑证据提取，提取会错用分析模型（27B 替代 9B，慢数倍）
+_clients: Dict[str, "LLMClient"] = {}
 
 
 def get_llm_client(purpose: str = "evidence") -> LLMClient:
-    """获取全局客户端实例
+    """获取客户端实例（按用途缓存：证据提取与案卷分析各自使用分配的模型）
 
     Args:
         purpose: "evidence"（证据提取）或 "analysis"（案卷分析）
     """
-    global _client
-    if _client is None:
-        _client = LLMClient(purpose=purpose)
-    return _client
+    if purpose not in _clients:
+        _clients[purpose] = LLMClient(purpose=purpose)
+    return _clients[purpose]
 
 
 def get_llm_client_for_purpose(purpose: str) -> LLMClient:
@@ -1032,8 +1033,6 @@ def get_llm_client_for_purpose(purpose: str) -> LLMClient:
 
 
 async def close_llm_client():
-    """关闭全局客户端"""
-    global _client
-    if _client:
-        await _client.close()
-        _client = None
+    """关闭全部缓存的客户端"""
+    for purpose in list(_clients):
+        await _clients.pop(purpose).close()
