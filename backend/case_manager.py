@@ -1257,8 +1257,10 @@ async def _extract_single_file(
     client = get_llm_client("evidence")
 
     # 不做预过滤，保留完整原始内容（封面、目录等由LLM自行判断）
-    # 无重试的直接调用，超时由调用方控制
-    timeout_seconds = 600  # 10 分钟
+    # 单份/单块调用超时：max(600s, 客户端读超时)——本地模型整卷回退调用可达 10 分钟以上
+    # （2026-08-24：9B@128K 整卷调用 5-8 分钟，600s 硬超时造成大量"调用失败"空错误）
+    _client_read = getattr(getattr(client, "timeout", None), "read", 0) or 0
+    timeout_seconds = max(600, int(_client_read))
 
     # 罪名上下文（传给 LLM 做证据-罪名关联）
     charges_str = ""

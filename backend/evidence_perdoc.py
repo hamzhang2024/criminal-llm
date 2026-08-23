@@ -159,12 +159,48 @@ async def catalog_documents(client, md_name: str, md_text: str, timeout: int = 6
         return None
 
 
+_ORDINALS = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10,
+             "十一": 11, "十二": 12, "十三": 13, "十四": 14, "十五": 15, "十六": 16, "十七": 17,
+             "十八": 18, "十九": 19, "二十": 20}
+
+
+def _parse_transcript_name(name: str) -> tuple | None:
+    """从目录名解析 (人名, 第几次)：'黄卫第一次讯问笔录' → ('黄卫', 1)；'张某讯问笔录' → ('张某', 1)"""
+    m = re.match(r"^(.+?)第([一二三四五六七八九十]+|\d+)次(讯问笔录|询问笔录)$", name)
+    if m:
+        ordinal = _ORDINALS.get(m.group(2))
+        if ordinal is None and m.group(2).isdigit():
+            ordinal = int(m.group(2))
+        if ordinal:
+            return (m.group(1), ordinal)
+    m = re.match(r"^(.+?)(讯问笔录|询问笔录)$", name)
+    if m:
+        return (m.group(1), 1)
+    return None
+
+
+def _transcript_start(md_text: str, field_pos: int) -> int:
+    """笔录文书起点：优先 300 字符内的笔录标题行；没有（OCR 丢标题）则回退到
+    600 字符内最近的空行（笔录头块起点：时间/地点/讯问人…被讯问人）；再退字段位置本身。
+    不限窗口的全局回退会把相邻两份笔录锚到同一标题（胡凯 #9/#10 同点事故）。
+    """
+    window_start = max(0, field_pos - 300)
+    heading = None
+    for hm in re.finditer(r"^#.*笔录.*$", md_text[window_start:field_pos], re.MULTILINE):
+        heading = window_start + hm.start()
+    if heading is not None:
+        return heading
+    blank = md_text.rfind("\n\n", max(0, field_pos - 600), field_pos)
+    return (blank + 2) if blank >= 0 else field_pos
+
+
 def _locate_doc_spans(md_text: str, docs: list) -> list:
     """定位目录中每份文书在正文中的区间：返回 [(start, end) | None]，与 docs 同序
 
-    超大卷窗口守卫用：按文书名定位。目录区的提及不算——判定为目录提及的特征：
-    所在行较短（≤名称+15字符）且带序号前缀（"1. xxx"）或以页码/页码范围结尾
-    （"xxx 12-19"）。找不到的文书为 None（调用方回退整卷发送）。
+    超大卷窗口守卫用。定位策略（按优先级）：
+    1. 文书名直搜：跳过目录提及行（短行 + 序号前缀/页码结尾）
+    2. 泛化标题笔录：按「被讯问人/被询问人」字段定位（正文标题常只有 # 讯问笔录 不含人名）
+    同名文书（目录重复条目）按目录顺序依次占用后续候选位置，避免多份映射到同一点。
     区间 = [本文书起点, 下一份已定位文书的起点或文末)。
     """
     n = len(md_text)
@@ -178,29 +214,64 @@ def _locate_doc_spans(md_text: str, docs: list) -> list:
             return True
         return False
 
-    positions = []
+    def _find_name_positions(name: str) -> list:
+        """文书名的所有正文位置（滤掉目录提及行），按出现顺序"""
+        out = []
+        start = 0
+        while True:
+            idx = md_text.find(name, start)
+            if idx < 0:
+                break
+            line_start = md_text.rfind("\n", 0, idx) + 1
+            line_end = md_text.find("\n", idx)
+            line = md_text[line_start: line_end if line_end > 0 else n].strip()
+            if not _is_directory_mention(line, len(name)):
+                out.append(line_start)
+            start = idx + len(name)
+        return out
+
+    # 为每份目录文书确定候选位置列表（名称直搜优先，泛化标题笔录按人名字段）
+    keys = []
+    candidates = {}
     for d in docs:
         name = re.sub(r"\s+", "", d.get("name", ""))
-        pos = None
-        if name:
-            start = 0
-            while True:
-                idx = md_text.find(name, start)
-                if idx < 0:
-                    break
-                line_start = md_text.rfind("\n", 0, idx) + 1
-                line_end = md_text.find("\n", idx)
-                line = md_text[line_start: line_end if line_end > 0 else n].strip()
-                if not _is_directory_mention(line, len(name)):
-                    pos = line_start
-                    break
-                start = idx + len(name)
-        positions.append(pos)
+        name_key = ("name", name)
+        if name and name_key not in candidates:
+            candidates[name_key] = _find_name_positions(name)
+        if candidates.get(name_key):
+            keys.append(name_key)
+            continue
+        parsed = _parse_transcript_name(name) if name else None
+        if parsed:
+            person_key = ("person", parsed[0])
+            if person_key not in candidates:
+                fields = []
+                for m in re.finditer(r"被(?:讯问|询问)人[：:]?\s*([^\s，,。、（(]+?)(?=[\s，,。、]|性别|$)", md_text):
+                    if m.group(1) == parsed[0]:
+                        fields.append(_transcript_start(md_text, m.start()))
+                candidates[person_key] = sorted(fields)
+            keys.append(person_key)
+        else:
+            keys.append(name_key)  # 无候选 → 该文书定位 None
+
+    # 按目录顺序依次占用候选位置（同名文书取后续位置）
+    ptr = {}
+    positions = []
+    for key in keys:
+        lst = candidates.get(key, [])
+        i = ptr.get(key, 0)
+        if i < len(lst):
+            positions.append(lst[i])
+            ptr[key] = i + 1
+        else:
+            positions.append(None)
+
     located = sorted((p, i) for i, p in enumerate(positions) if p is not None)
     spans = [None] * len(docs)
     for k, (p, i) in enumerate(located):
         end = located[k + 1][0] if k + 1 < len(located) else n
-        spans[i] = (p, end)
+        # 区间过小（<50 字符，基本是定位撞点）视为定位失败：回退整卷/批量带上下文
+        spans[i] = (p, end) if end - p >= 50 else None
     return spans
 
 

@@ -140,3 +140,68 @@ def test_catalog_sliced_merge_dedupes():
     assert docs is not None
     names = [d["name"] for d in docs]
     assert names == ["卷内文书目录", "张某第一次讯问笔录", "张某第二次讯问笔录"]
+
+
+# ── 泛化标题笔录的人名字段定位（2026-08-24 冯叶飞案第3卷事故）──
+
+GENERIC_VOLUME = """卷内文书目录
+1、黄卫第一次讯问笔录 12-19
+2、黄卫第二次讯问笔录 20-26
+3、沈嘉豪第一次询问笔录 27-30
+
+# 犯罪嫌疑人诉讼权利义务告知书
+（告知书正文）
+
+# 讯问笔录
+时间：2026年3月12日
+地点：某某市公安局
+被讯问人：黄卫
+问：你认识赵志强吗？答：认识。
+问：你们怎么合作的？答：他介绍客户。
+问：抵押了什么？答：一辆奥迪TT。
+
+# 讯问笔录
+时间：2026年3月20日
+地点：某某市公安局
+被讯问人：黄卫
+问：这次又是什么事？答：还是抵押车。
+问：车哪来的？答：租来的。
+问：谁的主意？答：赵志强。
+
+# 询问笔录
+时间：2026年4月2日
+被询问人：沈嘉豪
+问：你知道套路贷吗？答：不知道。
+问：你签字了吗？答：签了。
+问：自愿的吗？答：不是。
+"""
+
+GENERIC_DOCS = [
+    {"name": "黄卫第一次讯问笔录", "type": "犯罪嫌疑人供述和辩解", "date": "2026-03-12"},
+    {"name": "黄卫第二次讯问笔录", "type": "犯罪嫌疑人供述和辩解", "date": "2026-03-20"},
+    {"name": "沈嘉豪第一次询问笔录", "type": "证人证言", "date": "2026-04-02"},
+]
+
+
+def test_locate_transcripts_by_person_field():
+    """泛化标题（# 讯问笔录 不含人名）：按 被讯问人/被询问人 字段 + 第N次 定位"""
+    spans = _locate_doc_spans(GENERIC_VOLUME, GENERIC_DOCS)
+    s1, s2, s3 = spans
+    assert s1 is not None and s2 is not None and s3 is not None
+    # 两次黄卫笔录定位到不同位置，且第一次在前
+    assert s1[0] < s2[0]
+    # 区间衔接
+    assert s1[1] == s2[0]
+    # 各自区间内确实是目标内容
+    seg1 = GENERIC_VOLUME[s1[0]:s1[1]]
+    assert "奥迪TT" in seg1 and "还是抵押车" not in seg1
+    seg2 = GENERIC_VOLUME[s2[0]:s2[1]]
+    assert "还是抵押车" in seg2
+    seg3 = GENERIC_VOLUME[s3[0]:s3[1]]
+    assert "沈嘉豪" in seg3
+
+
+def test_locate_transcript_person_not_found():
+    """人名不在正文中 → None（回退整卷发送）"""
+    docs = [{"name": "不存在的人第一次讯问笔录", "type": "犯罪嫌疑人供述和辩解", "date": ""}]
+    assert _locate_doc_spans(GENERIC_VOLUME, docs) == [None]
