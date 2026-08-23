@@ -557,7 +557,7 @@ export function CaseDetailPage() {
         </div>
       </div>
 
-      {previewFile && <Preview file={{ ...previewFile, caseId }} onClose={handleClosePreview} digest={previewDigest} digestWarning={previewDigestWarning} mdIssues={mdIssues} onIssuesChanged={refreshMdIssues} />}
+      {previewFile && <Preview file={{ ...previewFile, caseId }} onClose={handleClosePreview} digest={previewDigest} digestWarning={previewDigestWarning} />}
       {viewingStage && caseId && (
         <StageResultModal caseId={caseId} stageNum={viewingStage.num} stageName={viewingStage.name}
           onClose={() => setViewingStage(null)} />

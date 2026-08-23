@@ -1,6 +1,7 @@
 // PDF 页面管理：缩略图网格 + 页面旋转 + 乱码页修复闭环
 
 import React, { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { API_BASE } from '../../../api/client'
 import { getThumbnails, rotatePage, reconvertBlock } from '../../../api/cases'
 import type { MdIssue } from '../../../api/cases'
@@ -39,6 +40,22 @@ export function PdfPageManager({ caseId, pdfFilename, issues, onFixed }: PdfPage
   const thumbRefs = useRef<Map<number, HTMLDivElement>>(new Map())
   // 查看原图的页码（null = 关闭）
   const [viewingPage, setViewingPage] = useState<number | null>(null)
+  // 网格页码跳转输入（几百页的 PDF 滚动定位不现实）
+  const [jumpInput, setJumpInput] = useState('')
+  // 放大查看模态框内的页码跳转输入
+  const [viewJumpInput, setViewJumpInput] = useState('')
+
+  // 放大查看：Esc 关闭 + ←/→ 翻页
+  useEffect(() => {
+    if (viewingPage === null) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setViewingPage(null)
+      else if (e.key === 'ArrowLeft') setViewingPage(p => (p !== null && p > 1 ? p - 1 : p))
+      else if (e.key === 'ArrowRight') setViewingPage(p => (p !== null && p < thumbs.length ? p + 1 : p))
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [viewingPage, thumbs.length])
 
   // 高亮闪烁动画结束后自动取消高亮
   useEffect(() => {
@@ -50,7 +67,8 @@ export function PdfPageManager({ caseId, pdfFilename, issues, onFixed }: PdfPage
   useEffect(() => {
     setLoading(true)
     setLoadError('')
-    getThumbnails(caseId, pdfFilename, 'processed', 200)
+    // 400px：需能辨认文字朝向（200px 看不清），端点上限 800
+    getThumbnails(caseId, pdfFilename, 'processed', 400)
       .then(r => { setThumbs(r.thumbnails || []); setLoading(false) })
       // 失败须明示（文件不存在/生成失败），否则空网格看起来像"PDF 无页面"
       .catch((e) => { setLoadError(e instanceof Error ? e.message : String(e)); setLoading(false) })
@@ -209,7 +227,32 @@ export function PdfPageManager({ caseId, pdfFilename, issues, onFixed }: PdfPage
         </div>
       )}
       {message && <div style={{ color: '#c8c8ce', fontSize: 13, marginBottom: 10 }}>{message}</div>}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12 }}>
+      {/* 页码跳转条：几百页的 PDF 滚动定位不现实 */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+        <span style={{ fontSize: 12, color: '#c8c8ce' }}>共 {thumbs.length} 页，跳到第</span>
+        <input
+          type="number" min={1} max={thumbs.length} value={jumpInput}
+          onChange={e => setJumpInput(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === 'Enter') {
+              const n = parseInt(jumpInput, 10)
+              if (n >= 1 && n <= thumbs.length) locatePage(n)
+            }
+          }}
+          aria-label="跳转到指定页缩略图"
+          style={{ width: 64, padding: '3px 6px', fontSize: 12, borderRadius: 4, border: '1px solid #48484e', background: '#2c2c30', color: '#fff', textAlign: 'center' }}
+        />
+        <button
+          onClick={() => {
+            const n = parseInt(jumpInput, 10)
+            if (n >= 1 && n <= thumbs.length) locatePage(n)
+          }}
+          style={{ padding: '3px 12px', fontSize: 12, border: 'none', borderRadius: 4, background: '#48484e', color: '#fff', cursor: 'pointer' }}>
+          跳转
+        </button>
+        <span style={{ fontSize: 11, color: '#86868b' }}>点击缩略图可放大查看（←→ 翻页）</span>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 12 }}>
         {thumbs.map(t => {
           const deg = rotations.get(t.page) || 0
           const highlighted = highlightPage === t.page
@@ -250,36 +293,75 @@ export function PdfPageManager({ caseId, pdfFilename, issues, onFixed }: PdfPage
         </div>
       )}
 
-      {/* 原图查看模态框 */}
-      {viewingPage !== null && (
+      {/* 原图查看模态框：Portal 到 body（脱离卡片 transform 层叠上下文，防闪烁/跳动）；
+          用后端渲染的高清 PNG 而非 iframe 内嵌 PDF（WKWebView iframe 不支持 PDF，显示乱码） */}
+      {viewingPage !== null && createPortal(
         <div
           onClick={() => setViewingPage(null)}
           style={{
-            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.95)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000,
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.92)',
+            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+            zIndex: 10000,
           }}
         >
-          <div style={{ position: 'relative', maxWidth: '90vw', maxHeight: '90vh' }}>
+          {/* 工具条：翻页 + 页码跳转 + 选为修复页 + 关闭（阻止冒泡，避免点工具条关模态） */}
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}
+          >
+            <button
+              onClick={() => setViewingPage(p => (p !== null && p > 1 ? p - 1 : p))}
+              disabled={viewingPage <= 1}
+              style={{ padding: '6px 14px', fontSize: 16, border: 'none', borderRadius: 6, background: 'rgba(255,255,255,0.2)', color: '#fff', cursor: 'pointer' }}>
+              ‹
+            </button>
+            <span style={{ color: '#fff', fontSize: 14 }}>第 {viewingPage} / {thumbs.length} 页</span>
+            <button
+              onClick={() => setViewingPage(p => (p !== null && p < thumbs.length ? p + 1 : p))}
+              disabled={viewingPage >= thumbs.length}
+              style={{ padding: '6px 14px', fontSize: 16, border: 'none', borderRadius: 6, background: 'rgba(255,255,255,0.2)', color: '#fff', cursor: 'pointer' }}>
+              ›
+            </button>
+            <input
+              type="number" min={1} max={thumbs.length} value={viewJumpInput}
+              onChange={e => setViewJumpInput(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') {
+                  const n = parseInt(viewJumpInput, 10)
+                  if (n >= 1 && n <= thumbs.length) setViewingPage(n)
+                }
+              }}
+              placeholder="页码"
+              aria-label="放大查看跳转到指定页"
+              style={{ width: 60, padding: '5px 6px', fontSize: 13, borderRadius: 4, border: '1px solid rgba(255,255,255,0.3)', background: 'rgba(255,255,255,0.12)', color: '#fff', textAlign: 'center' }}
+            />
+            {fixingIssue !== null && (
+              <button
+                onClick={() => {
+                  setFixPageInput(String(viewingPage))
+                  setViewingPage(null)
+                  setMessage(`已选择第 ${viewingPage} 页，确认无误后点「确认」执行修复`)
+                }}
+                title="把当前查看的页码填入修复输入框"
+                style={{ padding: '6px 14px', fontSize: 13, border: 'none', borderRadius: 6, background: '#0d6efd', color: '#fff', cursor: 'pointer' }}>
+                选为修复页
+              </button>
+            )}
             <button
               onClick={() => setViewingPage(null)}
-              style={{
-                position: 'absolute', top: -40, right: 0,
-                padding: '8px 16px', fontSize: 14, border: 'none', borderRadius: 6,
-                background: 'rgba(255,255,255,0.2)', color: '#fff', cursor: 'pointer',
-              }}
-            >
+              style={{ padding: '6px 16px', fontSize: 14, border: 'none', borderRadius: 6, background: 'rgba(255,255,255,0.2)', color: '#fff', cursor: 'pointer' }}>
               ✕ 关闭
             </button>
-            <iframe
-              src={`${BACKEND_ORIGIN}/cases/${caseId}/serve-file?file_path=${encodeURIComponent(pdfFilename)}&dir=processed#page=${viewingPage}`}
-              title={`第 ${viewingPage} 页`}
-              style={{ width: '90vw', height: '85vh', border: 'none', background: '#fff' }}
-            />
-            <div style={{ textAlign: 'center', marginTop: 12, color: '#fff', fontSize: 14 }}>
-              第 {viewingPage} 页
-            </div>
           </div>
-        </div>
+          <img
+            key={viewingPage}
+            src={`${BACKEND_ORIGIN}/api/cases/${caseId}/pdf-page-image?file_path=${encodeURIComponent(pdfFilename)}&dir=processed&page=${viewingPage}&dpi=150`}
+            alt={`第 ${viewingPage} 页`}
+            onClick={e => e.stopPropagation()}
+            style={{ maxWidth: '92vw', maxHeight: '82vh', objectFit: 'contain', background: '#fff', borderRadius: 4 }}
+          />
+        </div>,
+        document.body
       )}
     </div>
   )

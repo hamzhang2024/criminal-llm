@@ -2,11 +2,9 @@
 
 import React, { useState, useEffect } from 'react'
 import { API_BASE } from '../../../api'
-import type { MdIssue } from '../../../api/cases'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import { PdfPageManager } from './PdfPageManager'
-import { isMdFileOfPdf } from '../utils/mdName'
+import { PdfViewer } from '../../../components/pdf-viewer/PdfViewer'
 
 marked.setOptions({ async: false, gfm: true, breaks: true })
 
@@ -23,23 +21,21 @@ interface PreviewProps {
   onClose: () => void
   digest?: string
   digestWarning?: boolean
-  mdIssues?: MdIssue[]
-  onIssuesChanged?: () => void
 }
 
-export function Preview({ file, onClose, digest, digestWarning, mdIssues, onIssuesChanged }: PreviewProps) {
+export function Preview({ file, onClose, digest, digestWarning }: PreviewProps) {
   const [viewMode, setViewMode] = useState<'digest' | 'full'>(digest ? 'digest' : 'full')
-  // 页面管理模式（仅 processed/ 下的 PDF 可用）
-  const [pageManage, setPageManage] = useState(false)
   const isPdf = !file.name.endsWith('.md')
-  const canManage = isPdf && !!file.caseId && file.dir === 'processed'
+  // 所有 PDF 预览都用 PdfViewer（页码跳转/缩放/缩略图侧栏/页面管理一体），
+  // 原生 iframe 在 WKWebView 中没有页面导航控件。
+  // PdfViewer 固定从 processed/ 加载，serve-file 找不到会全局兜底（原件仅存在于 original/ 时也能看）；
+  // 页面管理的旋转/重转仍是 processed/ 专属（后端保护原件设计）。
+  const usePdfViewer = isPdf && !!file.caseId
   // 证据编辑状态（仅 evidence/ 目录可编辑）
   const [editing, setEditing] = useState(false)
   const [editContent, setEditContent] = useState('')
   const [saving, setSaving] = useState(false)
   const canEdit = file.dir === 'evidence'
-  // _去水印 变体匹配：PDF 与 md 后缀可能不一致，单变体推导会让 ⚠️ 静默缺失
-  const pdfIssues = (mdIssues || []).filter(i => isMdFileOfPdf(i.md_file, file.name))
 
   return (
     <div style={{
@@ -77,26 +73,6 @@ export function Preview({ file, onClose, digest, digestWarning, mdIssues, onIssu
         >
           ← 返回
         </button>
-        {canManage && (
-          <button
-            onClick={() => setPageManage(v => !v)}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              padding: '6px 14px',
-              background: 'rgba(0, 122, 255, 0.15)',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: 'pointer',
-              fontSize: '13px',
-              color: 'var(--macos-accent)',
-              fontWeight: '500'
-            }}
-          >
-            {pageManage ? '文档预览' : `页面管理${pdfIssues.length ? ` ⚠️${pdfIssues.length}` : ''}`}
-          </button>
-        )}
         {canEdit && !editing && (
           <button
             onClick={() => {
@@ -238,9 +214,19 @@ export function Preview({ file, onClose, digest, digestWarning, mdIssues, onIssu
             </div>
           )}
         </div>
-      ) : pageManage && canManage ? (
-        <PdfPageManager caseId={file.caseId!} pdfFilename={file.name} issues={pdfIssues}
-          onFixed={() => onIssuesChanged?.()} />
+      ) : usePdfViewer ? (
+        <div style={{ flex: 1, overflow: 'hidden' }}>
+          <PdfViewer
+            caseId={file.caseId!}
+            pdfFilename={file.name}
+            annotations={[]}
+            onAddAnnotation={() => {}}
+            onUpdateAnnotation={() => {}}
+            onDragAnnotation={() => {}}
+            onDeleteAnnotation={() => {}}
+            annotationMode={false}
+          />
+        </div>
       ) : (
         <div style={{ flex: 1, overflow: 'hidden', background: '#1a1a1e' }}>
           <iframe

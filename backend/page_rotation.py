@@ -56,6 +56,28 @@ def thumb_cache_dir_for(cache_root: Path, case_id: str, pdf_name: str) -> Path:
     return cache_root / "thumb" / case_id / Path(pdf_name).stem
 
 
+def render_pdf_page_png(pdf_path: Path, page_no: int, cache_dir: Path, dpi: int = 150) -> Path:
+    """渲染单页为高清 PNG（页面管理「放大查看」用；已存在则复用缓存）
+
+    WKWebView 的 iframe 不支持内嵌 PDF（显示原始字节乱码），放大查看必须出图。
+    文件名带 dpi 后缀（page_N_dpi150.png），与缩略图 page_N.png 区分；
+    旋转页面后由 rotate_pdf_page 一并清理。
+    """
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    png = cache_dir / f"page_{page_no}_dpi{dpi}.png"
+    if png.exists():
+        return png
+    doc = fitz.open(pdf_path)
+    try:
+        if not 1 <= page_no <= len(doc):
+            raise ValueError(f"页码 {page_no} 超出范围（共 {len(doc)} 页）")
+        pix = doc[page_no - 1].get_pixmap(dpi=dpi)
+        pix.save(png)
+    finally:
+        doc.close()
+    return png
+
+
 def rotate_pdf_page(pdf_path: Path, page_no: int, degrees: int,
                     thumb_cache_dir: Path | None = None) -> int:
     """将 page_no（1 基）顺时针旋转 degrees（90/180/270），增量保存
@@ -74,11 +96,14 @@ def rotate_pdf_page(pdf_path: Path, page_no: int, degrees: int,
         doc.saveIncr()  # 增量保存：只追加 rotation 变更，大文件秒级完成
     finally:
         doc.close()
-    # 旋转后该页缩略图缓存失效
+    # 旋转后该页缩略图与高清渲染缓存都失效
+    # （注意不能用 glob page_{n}*，会把 page_12 误删；缩略图精确名 + 高清图 dpi 后缀分开删）
     if thumb_cache_dir:
         stale = thumb_cache_dir / f"page_{page_no}.png"
         if stale.exists():
             stale.unlink()
+        for hires in thumb_cache_dir.glob(f"page_{page_no}_dpi*.png"):
+            hires.unlink()
     logger.info(f"[页面旋转] {pdf_path.name} 第 {page_no} 页旋转 {degrees}° → {new_rot}°")
     return new_rot
 

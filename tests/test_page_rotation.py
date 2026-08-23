@@ -501,3 +501,55 @@ def test_splice_md_block_leaves_no_tmp(tmp_path):
     splice_md_block(md, 1, 1, "替换后的第二行")
     assert md.read_text(encoding="utf-8") == "第一行\n替换后的第二行\n第三行\n"
     assert list(tmp_path.glob("*.tmp")) == []
+
+
+# ── 单页高清渲染（页面管理放大查看用，WKWebView iframe 不支持内嵌 PDF）──
+
+def test_render_page_png_generated_and_cached(tmp_path):
+    """单页渲染：生成高清 PNG 并缓存（第二次调用复用，不重复渲染）"""
+    from page_rotation import render_pdf_page_png
+    pdf = tmp_path / "test.pdf"
+    _make_pdf(pdf, pages=3)
+    cache = tmp_path / "thumb"
+
+    png = render_pdf_page_png(pdf, 2, cache, dpi=150)
+    assert png.exists()
+    assert png.name == "page_2_dpi150.png"
+    # 150dpi 的 A4 约 1240px 宽，远大于 200px 缩略图（能看清文字朝向）
+    pix = fitz.Pixmap(str(png))
+    assert pix.width > 1000
+
+    # 第二次调用：mtime 不变即复用缓存
+    mtime = png.stat().st_mtime
+    png2 = render_pdf_page_png(pdf, 2, cache, dpi=150)
+    assert png2 == png
+    assert png.stat().st_mtime == mtime
+
+
+def test_render_page_png_invalid_page(tmp_path):
+    """单页渲染：页码越界抛 ValueError"""
+    from page_rotation import render_pdf_page_png
+    pdf = tmp_path / "test.pdf"
+    _make_pdf(pdf, pages=2)
+    with pytest.raises(ValueError):
+        render_pdf_page_png(pdf, 3, tmp_path / "thumb")
+    with pytest.raises(ValueError):
+        render_pdf_page_png(pdf, 0, tmp_path / "thumb")
+
+
+def test_rotate_invalidates_hires_cache(tmp_path):
+    """旋转后：该页缩略图与高清渲染缓存都失效（否则放大查看仍是旧朝向）"""
+    from page_rotation import render_pdf_page_png
+    pdf = tmp_path / "test.pdf"
+    _make_pdf(pdf, pages=2)
+    cache = tmp_path / "thumb"
+    generate_pdf_thumbnails(pdf, cache, width=200)
+    render_pdf_page_png(pdf, 1, cache, dpi=150)
+    assert (cache / "page_1.png").exists()
+    assert (cache / "page_1_dpi150.png").exists()
+
+    rotate_pdf_page(pdf, 1, 90, thumb_cache_dir=cache)
+    assert not (cache / "page_1.png").exists()
+    assert not (cache / "page_1_dpi150.png").exists()
+    # 其他页缓存不受影响
+    assert (cache / "page_2.png").exists()

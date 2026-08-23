@@ -3247,6 +3247,35 @@ async def pdf_thumbnails(case_id: str, file_path: str, dir: str = "processed", w
             "total_pages": len(thumbs)}
 
 
+@router.get("/{case_id}/pdf-page-image")
+async def pdf_page_image(case_id: str, file_path: str, page: int, dir: str = "processed", dpi: int = 150):
+    """渲染单页为高清 PNG（页面管理「放大查看」用）
+
+    WKWebView 的 iframe 不支持内嵌 PDF（serve-file 直接返回 PDF 会显示原始字节乱码），
+    放大查看须由后端出图。渲染结果缓存于 thumb 缓存目录，旋转页面时一并失效。
+    """
+    from config import CACHE_DIR
+    from fastapi.responses import FileResponse
+    from page_rotation import render_pdf_page_png, thumb_cache_dir_for
+    case_path = find_case_path(case_id)
+    if not case_path:
+        raise HTTPException(status_code=404, detail="案件不存在")
+    # 安全：file_path 仅限纯文件名，防目录穿越（与 rotate-page 对齐）
+    if Path(file_path).name != file_path:
+        raise HTTPException(status_code=400, detail="文件名不能含路径分隔符")
+    pdf = (case_path / dir / file_path).resolve()
+    if not pdf.is_relative_to(case_path.resolve()) or not pdf.exists():
+        raise HTTPException(status_code=404, detail="文件不存在")
+    dpi = max(72, min(dpi, 300))
+    cache_dir = thumb_cache_dir_for(CACHE_DIR, case_id, pdf.name)
+    loop = asyncio.get_event_loop()
+    try:
+        png = await loop.run_in_executor(None, render_pdf_page_png, pdf, page, cache_dir, dpi)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return FileResponse(str(png), media_type="image/png")
+
+
 class RotatePageRequest(BaseModel):
     file_path: str
     dir: str = "processed"

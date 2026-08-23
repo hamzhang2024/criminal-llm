@@ -254,7 +254,9 @@ export function useCaseFiles(caseId: string | undefined, currentStep: number) {
 
     let dir = 'original'
     if (currentStep === 1) dir = 'processed'
-    else if (currentStep >= 2) dir = 'md'
+    // PDF 在步骤≥2 仍指向 processed/（_去水印 文件实际所在目录），
+    // 指向 md/ 会让预览靠 serve-file 全局兜底命中，且「页面管理」因 dir 不符被禁用
+    else if (currentStep >= 2) dir = file.name.endsWith('.pdf') ? 'processed' : 'md'
 
     // 步骤 1 列表数据本就来自 processed/（getStepFiles(1) 返回该目录真实文件名），
     // 直接用 file.name；此前猜测补 _去水印 后缀会让未去水印文件的预览/旋转/重转全部 404
