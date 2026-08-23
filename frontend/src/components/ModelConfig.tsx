@@ -1,6 +1,7 @@
 // 多模型配置管理组件
 
 import React, { useState, useEffect, useCallback, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { API_BASE } from '../api'
 
 interface LlmProfile {
@@ -370,8 +371,9 @@ export function ModelConfig({ onProfilesChange }: ModelConfigProps) {
         </div>
       </div>
 
-      {/* 编辑弹窗 */}
-      {showModal && editing && (
+      {/* 编辑弹窗：Portal 到 body（脱离卡片/页面动画的 transform 层叠上下文，
+          否则 fixed 遮罩被收容到卡片区域，导致闪烁/跳动，同 OCR lightbox f79c9c6） */}
+      {showModal && editing && createPortal(
         <ModelEditModal
           profile={editing}
           onSave={saveProfile}
@@ -379,7 +381,8 @@ export function ModelConfig({ onProfilesChange }: ModelConfigProps) {
             setShowModal(false)
             setEditing(null)
           }}
-        />
+        />,
+        document.body
       )}
     </div>
   )
