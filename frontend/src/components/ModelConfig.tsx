@@ -22,10 +22,21 @@ interface ModelConfigProps {
 }
 
 // 格式化上下文大小：1000000 → 1M，250000 → 250K
+// 仅整除时才简写（65536 显示原值而非 66K），保证 format→parse 往返不丢精度
 function formatContextLimit(limit: number): string {
-  if (limit >= 1000000) return `${(limit / 1000000).toFixed(1)}M`
-  if (limit >= 1000) return `${(limit / 1000).toFixed(0)}K`
+  if (limit >= 1000000 && limit % 1000000 === 0) return `${limit / 1000000}M`
+  if (limit >= 1000 && limit % 1000 === 0) return `${limit / 1000}K`
   return String(limit)
+}
+
+// 解析上下文输入：支持 K/M 简写（64K=64000、1M=1000000）或原始数字（65536）
+// 返回 null = 无法解析或小于最小合理值（1000），调用方应回退原值
+function parseContextInput(text: string): number | null {
+  const m = text.trim().toUpperCase().match(/^(\d+(?:\.\d+)?)\s*([KM])?$/)
+  if (!m) return null
+  const base = parseFloat(m[1])
+  const value = Math.round(base * (m[2] === 'M' ? 1000000 : m[2] === 'K' ? 1000 : 1))
+  return value >= 1000 ? value : null
 }
 
 // 供应商预设：一个 API Key 可配置多个模型
@@ -408,8 +419,26 @@ function ModelEditModal({ profile, onSave, onCancel }: {
     { name: profile.model, context: profile.context_limit, verified: false }
   ])
   const [testingModel, setTestingModel] = useState<string | null>(null)
+  // 上下文输入草稿（行号 → 用户正在输入的原文）：失焦/回车时按 K/M 简写解析提交，
+  // 未编辑时显示 formatContextLimit 简写（1M/250K），避免面对 1000000 这类长数字
+  const [contextDrafts, setContextDrafts] = useState<Record<number, string>>({})
   const modalRef = useRef<HTMLDivElement>(null)
   const dragStateRef = useRef({ dragging: false, startX: 0, startY: 0, currentX: 0, currentY: 0 })
+
+  // 提交上下文草稿：解析成功写入 models，失败回退原值
+  const commitContextDraft = (index: number) => {
+    const draft = contextDrafts[index]
+    if (draft === undefined) return
+    const parsed = parseContextInput(draft)
+    if (parsed !== null) {
+      setModels(prev => prev.map((m, i) => (i === index ? { ...m, context: parsed } : m)))
+    }
+    setContextDrafts(prev => {
+      const next = { ...prev }
+      delete next[index]
+      return next
+    })
+  }
 
   // 本地模型勾选后预填建议值（可修改）
   const handleLocalChange = (isLocal: boolean) => {
@@ -657,11 +686,15 @@ function ModelEditModal({ profile, onSave, onCancel }: {
                 style={{ flex: 1, padding: '6px 10px', border: '1px solid var(--macos-border)', borderRadius: '4px', fontSize: '13px' }}
               />
               <input
-                type="number"
-                value={model.context}
-                onChange={e => setModels(prev => prev.map((m, i) => i === index ? { ...m, context: parseInt(e.target.value) || 0 } : m))}
-                placeholder="上下文"
-                style={{ width: '100px', padding: '6px 10px', border: '1px solid var(--macos-border)', borderRadius: '4px', fontSize: '13px' }}
+                type="text"
+                value={contextDrafts[index] ?? formatContextLimit(model.context)}
+                onChange={e => setContextDrafts(prev => ({ ...prev, [index]: e.target.value }))}
+                onBlur={() => commitContextDraft(index)}
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); commitContextDraft(index) } }}
+                placeholder="如 64K / 1M"
+                title="上下文长度，支持 K/M 简写：64K=64000，1M=1000000"
+                aria-label={`第 ${index + 1} 个模型的上下文长度`}
+                style={{ width: '90px', padding: '6px 10px', border: '1px solid var(--macos-border)', borderRadius: '4px', fontSize: '13px' }}
               />
               <button
                 onClick={() => testModel(index)}
