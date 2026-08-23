@@ -194,7 +194,10 @@ export function useEvidenceExtraction(caseId: string | undefined, onExtractCompl
       await api.stopExtractEvidence(caseId)
     }
     setExtracting(false)
-  }, [caseId, stopPolling])
+    // 通知页面级状态复位（顶部「正在提取证据...」横幅由页面的 processing/progress 驱动，
+    // 不调回调横幅会一直卡着）
+    if (onExtractComplete) onExtractComplete('cancelled')
+  }, [caseId, stopPolling, onExtractComplete])
 
   // 清除证据
   const handleClearEvidence = useCallback(async () => {
