@@ -239,9 +239,11 @@ export function ModelConfig({ onProfilesChange }: ModelConfigProps) {
               alignItems: 'center',
             }}
           >
-            <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                <span style={{ fontSize: '13px', fontWeight: '600', color: '#1d1d1f' }}>
+            {/* 左侧：名称 + 徽标 + 摘要。minWidth:0 让长名称在 flex 内可收缩换行，
+                不挤压右侧按钮；徽标 flexShrink:0 禁止被压成竖条 */}
+            <div style={{ flex: 1, minWidth: 0, marginRight: '12px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: '13px', fontWeight: '600', color: '#1d1d1f', wordBreak: 'break-all' }}>
                   {p.name || p.id}
                 </span>
                 {p.is_local && (
@@ -251,6 +253,8 @@ export function ModelConfig({ onProfilesChange }: ModelConfigProps) {
                     borderRadius: '4px',
                     background: '#fef3c7',
                     color: '#92400e',
+                    flexShrink: 0,
+                    whiteSpace: 'nowrap',
                   }}>
                     本地
                   </span>
@@ -262,16 +266,19 @@ export function ModelConfig({ onProfilesChange }: ModelConfigProps) {
                     borderRadius: '4px',
                     background: '#dbeafe',
                     color: '#1e40af',
+                    flexShrink: 0,
+                    whiteSpace: 'nowrap',
                   }}>
-                    {PROVIDER_PRESETS.find(pr => pr.key === p.provider)?.label || p.provider}
+                    {/* 括号注释（如「Ollama（本地）」）在徽标里冗余且占宽，只显示主名 */}
+                    {(PROVIDER_PRESETS.find(pr => pr.key === p.provider)?.label || p.provider).split('（')[0]}
                   </span>
                 )}
               </div>
-              <div style={{ fontSize: '12px', color: '#86868b' }}>
+              <div style={{ fontSize: '12px', color: '#86868b', wordBreak: 'break-all' }}>
                 {p.model} · {formatContextLimit(p.context_limit)} 上下文 · {p.max_concurrent} 并发
               </div>
             </div>
-            <div style={{ display: 'flex', gap: '8px' }}>
+            <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
               <button
                 onClick={() => {
                   setEditing(p)
@@ -285,6 +292,7 @@ export function ModelConfig({ onProfilesChange }: ModelConfigProps) {
                   background: 'transparent',
                   cursor: 'pointer',
                   color: 'var(--macos-accent)',
+                  whiteSpace: 'nowrap',
                 }}
               >
                 编辑
@@ -300,6 +308,7 @@ export function ModelConfig({ onProfilesChange }: ModelConfigProps) {
                     background: 'transparent',
                     cursor: 'pointer',
                     color: '#ef4444',
+                    whiteSpace: 'nowrap',
                   }}
                 >
                   删除
@@ -681,6 +690,7 @@ function ModelEditModal({ profile, onSave, onCancel }: {
                     background: 'transparent',
                     cursor: 'pointer',
                     color: '#ef4444',
+                    whiteSpace: 'nowrap',
                   }}
                 >
                   删除
