@@ -21,11 +21,12 @@ interface ModelConfigProps {
   onProfilesChange?: (profiles: LlmProfile[]) => void
 }
 
-// 格式化上下文大小：1000000 → 1M，250000 → 250K
-// 仅整除时才简写（65536 显示原值而非 66K），保证 format→parse 往返不丢精度
+// 格式化上下文大小：1M=100万（十进制），64K 同时兼容二进制值（65536 也显示 64K）
+// 优先级：整百万 → 整千（十进制 K）→ 1024 倍数（二进制 K，如 65536/32768）→ 原值
 function formatContextLimit(limit: number): string {
   if (limit >= 1000000 && limit % 1000000 === 0) return `${limit / 1000000}M`
   if (limit >= 1000 && limit % 1000 === 0) return `${limit / 1000}K`
+  if (limit >= 1024 && limit % 1024 === 0) return `${limit / 1024}K`
   return String(limit)
 }
 
@@ -425,10 +426,22 @@ function ModelEditModal({ profile, onSave, onCancel }: {
   const modalRef = useRef<HTMLDivElement>(null)
   const dragStateRef = useRef({ dragging: false, startX: 0, startY: 0, currentX: 0, currentY: 0 })
 
-  // 提交上下文草稿：解析成功写入 models，失败回退原值
+  // 提交上下文草稿：解析成功写入 models，失败回退原值。
+  // 文本未改动（与当前显示一致）时不写回——防止二进制值被静默改写
+  // （65536 显示 64K，若按十进制解析写回会变成 64000）
   const commitContextDraft = (index: number) => {
     const draft = contextDrafts[index]
     if (draft === undefined) return
+    const current = models[index]
+    if (current && draft.trim().toUpperCase() === formatContextLimit(current.context).toUpperCase()) {
+      // 未修改，仅清除草稿
+      setContextDrafts(prev => {
+        const next = { ...prev }
+        delete next[index]
+        return next
+      })
+      return
+    }
     const parsed = parseContextInput(draft)
     if (parsed !== null) {
       setModels(prev => prev.map((m, i) => (i === index ? { ...m, context: parsed } : m)))
