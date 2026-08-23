@@ -17,6 +17,7 @@ interface EvidenceItem {
   page_range?: string
   md_file?: string  // 证据全文文件名（预览用）
   failed?: boolean  // 按份提取失败的空壳条目（后端 index.json 标记）
+  summary_preview?: string  // 摘要预览；失败占位块此处携带人性化失败原因
 }
 
 interface Step1ExtractProps {
@@ -118,6 +119,15 @@ export function Step1Extract({
   // 按份提取失败份数（空壳条目，下次提取自动重试）
   const failedCount = evidenceList.filter(ev => ev.failed).length
 
+  // 从失败条目的 summary_preview 提取人性化失败原因
+  // （后端占位块格式：「⚠️ 本文书提取失败：<原因>，请重新提取。…」；旧数据无原因则返回空）
+  const failReasonOf = (ev: any): string => {
+    const m = (ev.summary_preview || '').match(/提取失败：(.+?)(?:，请重新提取|$)/)
+    return m ? m[1] : ''
+  }
+  // 主导失败原因（第一条有原因的失败条目）：完成行下方展示，用户不用再猜
+  const dominantReason = failReasonOf(evidenceList.find(ev => ev.failed) || {})
+
   return (
     <MacOSCard style={{ marginTop: 12 }}>
       <div className="flex-between mb-md">
@@ -212,13 +222,19 @@ export function Step1Extract({
                   <div style={{ fontSize: '13px', fontWeight: '500', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {ev.name}
                     {ev.failed && (
-                      <span title="提取失败，下次提取将自动重试" style={{ color: '#b7791f' }}> ⚠️</span>
+                      <span title={ev.summary_preview || '提取失败，下次提取将自动重试'} style={{ color: '#b7791f' }}> ⚠️</span>
                     )}
                     <DocTypeBadge docType={ev.source ? docTypeMap[ev.source] : undefined} />
                   </div>
                   <div style={{ fontSize: '11px', color: 'var(--macos-text-secondary)' }}>
                     {ev.type} · {ev.source}{ev.page_range ? ' · ' + ev.page_range : ''}
                   </div>
+                  {/* 失败原因直接显示（不用悬停也能看到，如"请求超出模型上下文窗口…"） */}
+                  {ev.failed && failReasonOf(ev) && (
+                    <div style={{ fontSize: '11px', color: '#b7791f', marginTop: '2px', lineHeight: 1.4 }}>
+                      {failReasonOf(ev)}
+                    </div>
+                  )}
                 </div>
                 <CompletenessDot
                   status={entry?.status}
@@ -275,6 +291,12 @@ export function Step1Extract({
       {evidenceExtracted && (
         <div style={{ fontSize: '12px', color: failedCount > 0 ? '#b7791f' : '#3b5998', padding: '12px 0' }}>
           已完成证据提取{failedCount > 0 && `（${failedCount} 份失败待重提，下次提取自动重试）`}
+          {/* 主导失败原因：修复环境问题后再重提，否则只会再次失败 */}
+          {failedCount > 0 && dominantReason && (
+            <div style={{ marginTop: '6px', lineHeight: 1.5 }}>
+              失败原因：{dominantReason}
+            </div>
+          )}
         </div>
       )}
     </MacOSCard>

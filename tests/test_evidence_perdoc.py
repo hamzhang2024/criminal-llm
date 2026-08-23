@@ -239,3 +239,34 @@ def test_extract_by_document_progress_callback(tmp_path):
     assert progress  # 有进度回调
     assert progress[-1] == (2, 3)  # 最后一次：2 份笔录完成（批量短文书不计），total=目录3份
     assert all(t == 3 for _, t in progress)
+
+
+def test_failed_doc_placeholder_carries_humanized_reason(tmp_path):
+    """单份提取失败：占位块 summary 携带人性化失败原因（供界面直接展示）
+
+    背景：2026-08-23 Ollama num_ctx=8192 致 13 份全部 400，界面只显示"提取失败"，
+    用户无法得知上下文超限。修复后占位块必须带具体原因。
+    """
+    md_file = tmp_path / "第2卷.md"
+    md_file.write_text("案卷内容", encoding="utf-8")
+
+    async def context_overflow_chat(messages, **kw):
+        if len(messages) == 3:  # per-doc 调用
+            raise Exception(
+                'API 请求失败：400\n{"error":{"message":"request (12010 tokens) '
+                'exceeds the available context size (8192 tokens)"}}'
+            )
+        if "目标文书清单" in messages[-1]["content"]:
+            return json.dumps([{"name": "卷宗封面", "type": "程序性文书", "summary": "封面"}], ensure_ascii=False)
+        return CATALOG_JSON
+
+    client = type("C", (), {"chat": staticmethod(context_overflow_chat)})()
+    blocks = asyncio.run(extract_by_document(client, md_file, "案卷内容", "", tmp_path))
+
+    assert blocks is not None and len(blocks) == 3
+    # 失败占位块：summary 必须包含人性化原因（上下文超限 + 8192 窗口数字 + num_ctx 解法）
+    failed = [b for b in blocks if "提取失败" in b["summary"]]
+    assert failed, "应有失败占位块"
+    for b in failed:
+        assert "上下文" in b["summary"], f"占位块缺少人性化原因: {b['summary']}"
+        assert "8192" in b["summary"]

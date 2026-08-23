@@ -19,6 +19,8 @@ import re
 from pathlib import Path
 from typing import Optional
 
+from llm_client import humanize_llm_error
+
 logger = logging.getLogger(__name__)
 
 # ═══════════════════════════════════════════════════════════
@@ -191,12 +193,14 @@ def verify_perdoc_output(doc: dict, output: str) -> list:
 async def _extract_one_document(
     client, md_name: str, md_text: str, doc: dict, charges_str: str, timeout: int = 600,
     is_procedural: bool = False,  # 程序性文书标记
+    error_sink: dict | None = None,  # 失败原因出口：doc_name → 人性化原因（随占位块展示到界面）
 ) -> Optional[dict]:
     """第二级：提取单份文书，带第三级校验与一次重试。返回 ev_block 或 None"""
     date_hint = f"，讯问/落款日期 {doc['date']}" if doc.get("date") else ""
     target_msg = f"你负责的目标文书是：《{doc['name']}》{date_hint}。请只提取这一份，其他一律忽略。{charges_str}"
 
     result = ""
+    last_error = ""
     issues = ["调用失败"]
     for attempt in (1, 2):
         try:
@@ -209,6 +213,7 @@ async def _extract_one_document(
                     target_msg + "\n\n⚠️ 上次输出未通过校验，请务必：1) 锁定正确文书（核对日期）2) 完整输出全部问答 3) 只输出 JSON 对象"},
             ]), timeout=timeout)
         except Exception as e:
+            last_error = str(e)
             logger.warning(f"[按份提取] {md_name}《{doc['name']}》第 {attempt} 次调用失败: {e}")
             issues = ["调用失败"]
             continue
@@ -224,10 +229,14 @@ async def _extract_one_document(
     # 解析 JSON 对象
     m = re.search(r"\{[\s\S]*\}", result) if result else None
     if not result or not m:
+        if error_sink is not None:
+            error_sink[doc["name"]] = humanize_llm_error(last_error or "LLM 未按要求输出内容")
         return None
     try:
         item = json.loads(m.group(0))
     except Exception:
+        if error_sink is not None:
+            error_sink[doc["name"]] = "LLM 输出无法解析为 JSON（模型输出格式不规范）"
         return None
 
     block = {
@@ -313,6 +322,8 @@ async def extract_by_document(
         return None  # 无笔录，没必要走按份路径
 
     results = {}  # name -> block
+    # 失败原因记录（doc_name → 人性化原因）：写入占位块 summary，随 index.json 展示到界面
+    fail_reasons = {}
 
     # 卷内跳过名册：失败重提时，卷内已成功文书（已在 index.json 中）按名称跳过
     skip_keys = {_norm_name_key(n) for n in (skip_names or set()) if n}
@@ -354,6 +365,7 @@ async def extract_by_document(
             block = await _extract_one_document(
                 client, md_name, md_text, doc, charges_str, timeout,
                 is_procedural=is_procedural,
+                error_sink=fail_reasons,
             )
         if block:
             results[i] = block
@@ -408,6 +420,9 @@ async def extract_by_document(
                                 break
         except Exception as e:
             logger.warning(f"[按份提取] {md_name}: 短文书批量提取失败: {e}")
+            # 批量调用失败：该批所有文书记同一原因（人性化后供界面展示）
+            for d in todo:
+                fail_reasons[d["name"]] = humanize_llm_error(str(e))
 
     await asyncio.gather(
         *(_one(i, d) for i, d in enumerate(docs) if _is_transcript(d)),
@@ -423,12 +438,15 @@ async def extract_by_document(
             blocks.append(results[i])
         else:
             logger.error(f"[按份提取] {md_name}《{d['name']}》缺失，写入占位块")
+            # 失败原因（人性化）写入占位块 summary：随 index.json 的 summary_preview 展示到界面
+            reason = fail_reasons.get(d["name"], "")
+            fail_text = f"提取失败：{reason}" if reason else "提取失败或校验未通过"
             blocks.append({
                 "name": d["name"],
                 "type": d.get("type", "其他证据"),
                 "source": md_name,
                 "page_range": "", "persons": "", "key_facts": [],
-                "summary": f"⚠️ 本文书提取失败或校验未通过，请重新提取。目录日期：{d.get('date', '未知')}",
+                "summary": f"⚠️ 本文书{fail_text}，请重新提取。目录日期：{d.get('date', '未知')}",
                 "original_quotes": "",
                 "contradiction_hints": "⚠️ 按份提取失败，需重提",
                 "related_entities": "", "fund_flows": [], "charges": [], "elements": [],

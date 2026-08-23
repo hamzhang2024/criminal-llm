@@ -1579,8 +1579,13 @@ async def _run_extract_background(case_id: str, case_path, md_dir, evidence_dir)
         logger.info("[证据提取] 后台任务启动: %s", case_id)
         await _do_extract_evidence(case_id, case_path, md_dir, evidence_dir)
         logger.info("[证据提取] 后台任务完成: %s", case_id)
-        # 成功完成后清除任务状态
-        EXTRACT_TASKS.pop(case_id, None)
+        # 有单卷失败记录时保留任务状态（status=completed），让前端能拿到 error_details；
+        # 无错误才清除。前端轮询对非 running 状态都会停止，行为不变
+        task = EXTRACT_TASKS.get(case_id)
+        if isinstance(task, dict) and task.get("error_details"):
+            task["status"] = "completed"
+        else:
+            EXTRACT_TASKS.pop(case_id, None)
     except Exception as e:
         logger.exception("[证据提取] 后台任务失败: %s", e)
         # 记录结构化错误详情到 EXTRACT_TASKS，让前端轮询能拿到
@@ -2178,6 +2183,15 @@ async def _do_extract_evidence(
                     if isinstance(result, Exception):
                         fail_count += 1
                         logger.info(f"[证据提取] {f.name}: 提取失败 — {result}")
+                        # 整卷失败原因（人性化）记录到任务状态，供前端轮询展示
+                        from llm_client import humanize_llm_error
+                        task = EXTRACT_TASKS.get(case_id)
+                        if isinstance(task, dict):
+                            task.setdefault("error_details", []).append({
+                                "file": f.name,
+                                "reason": "extract_failed",
+                                "message": humanize_llm_error(str(result)),
+                            })
                     elif result is None:
                         fail_count += 1
                         logger.info(f"[证据提取] {f.name}: 提取返回 None")

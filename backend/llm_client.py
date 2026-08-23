@@ -20,6 +20,56 @@ from analysis_engine import (
 
 logger = logging.getLogger(__name__)
 
+
+def humanize_llm_error(raw: str) -> str:
+    """把 LLM 供应商返回的原始错误转成用户可操作的中文提示（供界面展示失败原因）
+
+    背景：2026-08-23 实际事故——Ollama 默认 num_ctx=8192，证据提取长文全部 400，
+    界面只有"提取失败"四个字，真实原因只藏在后端日志里。
+    未识别的错误保留原文（截断 300 字符），不丢信息。
+    """
+    import re as _re
+    text = (raw or "").strip()
+    lower = text.lower()
+
+    # 上下文超限：Ollama exceed_context_size / OpenAI maximum context length 等
+    if any(kw in lower for kw in (
+        "exceed_context_size", "exceeds the available context",
+        "maximum context length", "context window", "context_length_exceeded",
+        "too many tokens", "input is too long",
+    )):
+        # 尽量带出实际窗口数字（如 "8192 tokens"），用户能直接看到差多少
+        m = _re.search(r"context size \((\d+) tokens\)", lower) or \
+            _re.search(r"context length is (\d+)", lower)
+        window = f"（模型实际上下文窗口仅 {m.group(1)} tokens）" if m else ""
+        return (f"请求超出模型上下文窗口{window}。解决办法：本地模型请调大 Ollama 的 num_ctx"
+                f"（如 ollama create 派生模型设 PARAMETER num_ctx），"
+                f"或在「设置 → 多模型配置」中把该模型的上下文限制改小到模型实际窗口以内")
+
+    # Key 无效/未配置
+    if "401" in text or "unauthorized" in lower or "incorrect api key" in lower or "invalid api key" in lower:
+        return "API Key 无效或未配置，请在「设置」中检查 Key 是否正确"
+
+    # 余额不足（DeepSeek 402 Insufficient Balance 等）
+    if "402" in text or "insufficient" in lower or "balance" in lower:
+        return "模型账户余额不足，请充值后重试"
+
+    # 限流/配额
+    if "429" in text or "rate limit" in lower or "too many" in lower or "quota" in lower:
+        return "触发模型限流或配额不足，请稍后重试或降低并发数"
+
+    # 连接失败（服务未启动/地址错误）
+    if "connection refused" in lower or "connect error" in lower or "failed to connect" in lower:
+        return "无法连接模型服务，请检查「设置」中的 Base URL 是否正确、服务是否已启动"
+
+    # 超时
+    if "timeout" in lower or "超时" in text:
+        return "模型响应超时（模型太慢或内容过长），可稍后重试或换更快的模型"
+
+    # 未识别：保留原文截断
+    return text[:300] if text else "未知错误"
+
+
 # 进程级 LLM 用量累计器：跨 LLMClient 实例累计（LLM 调用均在同一事件循环内，简单全局变量即可）
 # 每次成功调用都统计（与供应商无关），修复仅 DeepSeek 缓存字段路径才累计导致统计全 0 的问题
 _PROCESS_LLM_STATS = {"calls": 0, "input_tokens": 0, "output_tokens": 0, "cache_hit_tokens": 0}
