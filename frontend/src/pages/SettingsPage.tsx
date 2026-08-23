@@ -5,8 +5,7 @@ import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, Check, Eye, EyeOff, Settings as SettingsIcon, RotateCw, Download, FolderOpen, FileText } from 'lucide-react'
 import { MacOSTitlebar, MacOSCard, MacOSInput, MacOSButton } from '../components/MacOSLayout'
 import { ModelConfig } from '../components/ModelConfig'
-import { API_BASE, getAuthEmail, clearToken, clearAuthEmail, getAppVersion, checkUpdate, openUrl, getCacheStats } from '../api'
-import type { CacheStats } from '../api'
+import { API_BASE, getAuthEmail, clearToken, clearAuthEmail, getAppVersion, checkUpdate, openUrl } from '../api'
 import { showAlert, showConfirm } from '../components/MacOSDialog'
 
 // ═══════════════════════════════════════════════════════════
@@ -243,17 +242,6 @@ export function SettingsPage() {
   const [showCaseKey, setShowCaseKey] = useState(false)
   const [appVersion, setAppVersion] = useState('')
   const [checkingUpdate, setCheckingUpdate] = useState(false)
-  // LLM 缓存命中率统计（进入页面拉一次 + 每 30s 轮询）
-  const [cacheStats, setCacheStats] = useState<CacheStats | null>(null)
-
-  useEffect(() => {
-    let cancelled = false
-    const load = () => getCacheStats().then(s => { if (!cancelled) setCacheStats(s) }).catch(() => {})
-    load()
-    const timer = setInterval(load, 30000)
-    return () => { cancelled = true; clearInterval(timer) }
-  }, [])
-
   // 检测是否有未保存的变更
   const hasUnsavedChanges = useCallback((): boolean => {
     if (!initialConfig) return false

@@ -182,10 +182,15 @@ export function Step1Extract({
           />
         )
       )}
-      {/* 提取运行中的实时 LLM 用量（进度条下方一行小字） */}
+      {/* 提取运行中的实时 LLM 用量（进度条下方一行小字）；
+          Ollama 等不返回缓存字段的供应商显示"缓存统计不适用"而非误导性的 0% */}
       {processing && llmStats && llmStats.calls > 0 && (
         <div style={{ fontSize: '11px', color: '#86868b', marginTop: '-4px', marginBottom: '8px' }}>
-          LLM 用量：{llmStats.calls} 次调用 · 输入 {llmStats.input_tokens.toLocaleString()} tokens（缓存命中 {Math.round(llmStats.hit_rate * 100)}%）· 输出 {llmStats.output_tokens.toLocaleString()} tokens
+          LLM 用量：{llmStats.calls} 次调用 · 输入 {llmStats.input_tokens.toLocaleString()} tokens
+          {llmStats.cache_supported === false
+            ? '（本地模型无缓存统计）'
+            : `（缓存命中 ${Math.round(llmStats.hit_rate * 100)}%）`}
+          · 输出 {llmStats.output_tokens.toLocaleString()} tokens
         </div>
       )}
       <SelectiveOCR caseId={caseId} onUnocrCountChange={setUnocrCount} conversionDone={mdConversionComplete} />

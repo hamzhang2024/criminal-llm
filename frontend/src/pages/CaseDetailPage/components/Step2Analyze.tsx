@@ -207,8 +207,8 @@ export function Step2Analyze({
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
           <h4 style={{ fontSize: '14px', fontWeight: '600', margin: 0 }}>分析阶段（不建议并行处理）</h4>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            {/* 分析运行中的实时缓存命中率徽标 */}
-            {runningStage !== null && cacheStats && cacheStats.calls > 0 && (
+            {/* 分析运行中的实时缓存命中率徽标（Ollama 等不返回缓存字段时隐藏，避免误导性 0%） */}
+            {runningStage !== null && cacheStats && cacheStats.calls > 0 && cacheStats.cache_supported !== false && (
               <span style={{ fontSize: '11px', color: 'var(--macos-text-tertiary)' }} title={`缓存命中 ${cacheStats.cache_hit_tokens.toLocaleString()} / ${cacheStats.input_tokens.toLocaleString()} 输入 tokens`}>
                 ⚡ 缓存 <span style={{ fontWeight: 600, color: cacheStats.hit_rate >= 0.5 ? '#34c759' : 'var(--macos-accent)' }}>{Math.round(cacheStats.hit_rate * 100)}%</span>
               </span>

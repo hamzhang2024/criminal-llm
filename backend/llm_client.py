@@ -72,7 +72,19 @@ def humanize_llm_error(raw: str) -> str:
 
 # 进程级 LLM 用量累计器：跨 LLMClient 实例累计（LLM 调用均在同一事件循环内，简单全局变量即可）
 # 每次成功调用都统计（与供应商无关），修复仅 DeepSeek 缓存字段路径才累计导致统计全 0 的问题
-_PROCESS_LLM_STATS = {"calls": 0, "input_tokens": 0, "output_tokens": 0, "cache_hit_tokens": 0}
+# cache_fields_seen：是否有任何响应带缓存统计字段（Ollama 不返回 → 界面应显示"不适用"而非 0%）
+_PROCESS_LLM_STATS = {"calls": 0, "input_tokens": 0, "output_tokens": 0, "cache_hit_tokens": 0,
+                      "cache_fields_seen": False}
+
+
+def _usage_reports_cache(usage: Dict[str, Any]) -> bool:
+    """usage 中是否带缓存统计字段（DeepSeek 扁平 / 千问豆包嵌套有，Ollama 无）"""
+    if not usage:
+        return False
+    if any(k in usage for k in ("prompt_cache_hit_tokens", "prompt_cache_miss_tokens", "cached_tokens")):
+        return True
+    details = usage.get("prompt_tokens_details") or usage.get("input_tokens_details") or {}
+    return "cached_tokens" in details
 
 
 def _extract_usage_tokens(usage: Dict[str, Any]) -> tuple[int, int]:
@@ -97,13 +109,16 @@ def _extract_cache_hit_tokens(usage: Dict[str, Any]) -> int:
     return usage.get("cached_tokens") or 0
 
 
-def _record_process_llm_stats(input_tokens: int, output_tokens: int, cache_hit_tokens: int) -> None:
+def _record_process_llm_stats(input_tokens: int, output_tokens: int, cache_hit_tokens: int,
+                              usage: Optional[Dict[str, Any]] = None) -> None:
     """累加进程级 LLM 用量统计（chat/completions 与豆包 Responses 两条路径共用，
     每次成功调用都累计，无论供应商是否返回缓存字段）"""
     _PROCESS_LLM_STATS["calls"] += 1
     _PROCESS_LLM_STATS["input_tokens"] += input_tokens
     _PROCESS_LLM_STATS["output_tokens"] += output_tokens
     _PROCESS_LLM_STATS["cache_hit_tokens"] += cache_hit_tokens
+    if _usage_reports_cache(usage or {}):
+        _PROCESS_LLM_STATS["cache_fields_seen"] = True
 
 
 def get_cache_stats() -> dict:
@@ -116,6 +131,8 @@ def get_cache_stats() -> dict:
         "output_tokens": _PROCESS_LLM_STATS["output_tokens"],
         "cache_hit_tokens": cache_hit,
         "hit_rate": round(cache_hit / input_tokens, 4) if input_tokens > 0 else 0,
+        # Ollama 等不返回缓存字段的供应商为 False，前端据此显示"不适用"而非误导性的 0%
+        "cache_supported": bool(_PROCESS_LLM_STATS["cache_fields_seen"]),
     }
 
 
@@ -125,6 +142,7 @@ def reset_cache_stats() -> None:
     _PROCESS_LLM_STATS["input_tokens"] = 0
     _PROCESS_LLM_STATS["output_tokens"] = 0
     _PROCESS_LLM_STATS["cache_hit_tokens"] = 0
+    _PROCESS_LLM_STATS["cache_fields_seen"] = False
 
 # 各模型家族的最大输出 token 上限与计算函数已移至 context_budget，
 # 供预算公式（输入侧）与 chat()（输出侧）共用同一事实源，防止 input+output 超上下文
@@ -379,7 +397,7 @@ class LLMClient:
                     input_tokens, output_tokens = _extract_usage_tokens(usage)
                     hit = _extract_cache_hit_tokens(usage)
                     miss = usage.get("prompt_cache_miss_tokens", 0) or 0
-                    _record_process_llm_stats(input_tokens, output_tokens, hit)
+                    _record_process_llm_stats(input_tokens, output_tokens, hit, usage)
                     if hit > 0 or miss > 0:
                         self._cache_hit_tokens += hit
                         self._cache_miss_tokens += miss
@@ -514,7 +532,7 @@ class LLMClient:
         input_tokens, output_tokens = _extract_usage_tokens(usage)
         hit = _extract_cache_hit_tokens(usage)
         miss = max(input_tokens - hit, 0) if input_tokens else 0
-        _record_process_llm_stats(input_tokens, output_tokens, hit)
+        _record_process_llm_stats(input_tokens, output_tokens, hit, usage)
 
         if hit > 0 or miss > 0:
             self._cache_hit_tokens += hit

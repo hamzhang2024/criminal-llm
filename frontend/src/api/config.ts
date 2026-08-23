@@ -33,6 +33,7 @@ export interface CacheStats {
   output_tokens: number
   cache_hit_tokens: number
   hit_rate: number  // 0~1，缓存命中 tokens / 输入 tokens
+  cache_supported?: boolean  // false = 供应商不返回缓存字段（如 Ollama），界面应显示"不适用"而非 0%
 }
 
 export async function getCacheStats(): Promise<CacheStats> {
