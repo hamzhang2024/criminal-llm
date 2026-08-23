@@ -245,4 +245,15 @@ def invalidate_evidence_for_source(case_path: Path, md_filename: str) -> list[st
     idx["evidence"] = [e for e in items if e.get("source") != md_filename]
     _atomic_write_text(index_file, json.dumps(idx, ensure_ascii=False, indent=2))
     logger.info(f"[证据失效] {md_filename}: 移除 {len(removed)} 份证据，待重新提取")
+
+    # 清除该卷的断点续传状态（.done + temp 子目录），
+    # 否则下轮提取会跳过该卷并把修复前的旧 temp 产出直接落库
+    temp_root = case_path / "evidence" / "_temp_extract"
+    stem = Path(md_filename).stem
+    (temp_root / f"{stem}.done").unlink(missing_ok=True)
+    sub = temp_root / stem
+    if sub.exists():
+        import shutil as _shutil
+        _shutil.rmtree(sub)
+
     return [e.get("name", "") for e in removed]

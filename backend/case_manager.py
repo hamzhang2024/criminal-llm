@@ -1689,6 +1689,18 @@ def prune_failed_evidence(case_path: Path) -> list:
 
     removed_names = [ev.get("name", "") for ev in failed]
     logger.info(f"[证据提取] 清理 {len(failed)} 份失败空壳证据: {removed_names}")
+
+    # 清除受影响卷的断点续传状态（.done + temp 子目录），
+    # 否则下轮提取会跳过该卷并把旧 temp 产出直接落库（失败空壳复活）
+    temp_root = evidence_dir / "_temp_extract"
+    for src in {ev.get("source", "") for ev in failed if ev.get("source")}:
+        stem = Path(src).stem
+        if Path(src).name != src:
+            continue  # 安全：source 含路径分隔符不删（防目录穿越）
+        (temp_root / f"{stem}.done").unlink(missing_ok=True)
+        sub = temp_root / stem
+        if sub.exists():
+            shutil.rmtree(sub)
     return removed_names
 
 
@@ -1825,11 +1837,10 @@ async def _do_extract_evidence(
 
     evidence_dir.mkdir(parents=True, exist_ok=True)
 
-    # 清理上次中断遗留的临时文件
-    old_temp = evidence_dir / "_temp_extract"
-    if old_temp.exists():
-        shutil.rmtree(old_temp)
-        logger.info(f"[证据提取] 清理上次中断的临时目录")
+    # 断点续传：启动时不再删除 _temp_extract（9dd15fa 起此处无条件 rmtree，
+    # 把上轮已完成卷的 .done 标记和 temp 产出一并销毁，断点续传从未生效——
+    # 2026-08-23 冯叶飞案中途停止丢失 4 卷产出即此因）。
+    # temp 目录在正常合并完成后由结尾处统一清理。
 
     # 使用电源管理器防止休眠
     from power_manager import PowerInhibitor
@@ -1943,10 +1954,27 @@ async def _do_extract_evidence(
             temp_dir = evidence_dir / "_temp_extract"
             temp_dir.mkdir(exist_ok=True)
 
-            # 断点续传：检查已完成的文件（.done 标记），跳过
-            completed_markers = {
-                f.stem for f in temp_dir.glob("*.done")
-            }
+            # 断点续传：校验已完成的文件（.done 标记 + 结构化产出 + 内容指纹），跳过
+            # 三重校验缺一不可：无 _evidence_list.json 的 .done 是旧格式/损坏（重提）；
+            # 指纹是 md 正文字符数，md 重转/修复后内容变化 → 指纹不匹配 → 重提
+            md_by_stem = {f.stem: f for f in pending_files}
+            completed_markers = set()
+            for done_file in temp_dir.glob("*.done"):
+                stem = done_file.stem
+                md = md_by_stem.get(stem)
+                if md is None:
+                    continue
+                if not (temp_dir / stem / "_evidence_list.json").exists():
+                    continue
+                try:
+                    recorded = done_file.read_text(encoding="utf-8").strip()
+                    current_len = str(len(md.read_text(encoding="utf-8")))
+                except Exception:
+                    continue
+                if not recorded or recorded != current_len:
+                    logger.info(f"[证据提取] {md.name}: md 内容已变化，.done 指纹失效，重新提取")
+                    continue
+                completed_markers.add(stem)
             files_to_extract = [
                 f for f in pending_files
                 if f.stem not in completed_markers
@@ -1972,6 +2000,10 @@ async def _do_extract_evidence(
                     # 每个文件用独立子目录，避免文件名冲突
                     file_temp_dir = temp_dir / md_file.stem
                     file_temp_dir.mkdir(exist_ok=True)
+                    # 重提场景：删除旧 evid 产出文件，防止混入本次合并；
+                    # 但保留 _perdoc/块级缓存（卷内续传靠它们跳过已完成的笔录/块）
+                    for stale_evid in file_temp_dir.glob("evid_*.md"):
+                        stale_evid.unlink(missing_ok=True)
 
                     # 更新进度
                     req_start = time.time()
@@ -2035,8 +2067,13 @@ async def _do_extract_evidence(
                         task["llm_waiting"] = False
                         task["llm_latency"] = round((time.time() - req_start) * 1000)
 
-                    # 写完成标记（断点续传用）
-                    (temp_dir / f"{md_file.stem}.done").write_text("", encoding="utf-8")
+                    # 写完成标记（断点续传用）：结构化产出 + 内容指纹（md 正文字符数）
+                    # 0 份证据的卷不写 .done，保持现有"下轮重试"语义
+                    if evidence_list:
+                        (file_temp_dir / "_evidence_list.json").write_text(
+                            json.dumps(evidence_list, ensure_ascii=False), encoding="utf-8")
+                        (temp_dir / f"{md_file.stem}.done").write_text(
+                            str(len(md_text)), encoding="utf-8")
 
                     # 持久化完成标记到 index.json 的 completed_sources
                     # 断点续传时：不在 completed_sources 中的卷 → 删除其所有证据 → 重新提取
@@ -2208,27 +2245,16 @@ async def _do_extract_evidence(
 
             # ── 按原始文件顺序分配编号（保持卷号顺序）──
             for md_file in pending_files:
-                # 已完成的文件：从子目录读取证据
+                # 已完成的文件：直读结构化产出（evid 展示文本不做二次解析——
+                # _parse_evidence_blocks 解析展示模板会产出以卷名命名的大杂烩垃圾块）
                 if md_file.stem in completed_markers:
                     file_temp_dir = temp_dir / md_file.stem
-                    ev_files = sorted(file_temp_dir.glob("evid_*.md"))
-                    ev_list = []
-                    for ef in ev_files:
-                        ev_text = ef.read_text(encoding="utf-8")
-                        blocks = _parse_evidence_blocks(ev_text, md_file.name)
-                        ev_list.extend([{
-                            "name": b["name"],
-                            "type": b["type"],
-                            "source": md_file.name,
-                            "page_range": b.get("page_range", ""),
-                            "persons": b.get("persons", ""),
-                            "related_entities": b.get("related_entities", ""),
-                            **{field: b.get(field, "") for field in EVIDENCE_STRUCTURED_FIELDS},
-                            "summary_preview": b["summary"][:200],
-                            "has_quotes": bool(b.get("original_quotes", "").strip()),
-                            "md_file": ef.name,
-                            "_temp_dir": str(file_temp_dir),
-                        } for b in blocks])
+                    try:
+                        ev_list = json.loads(
+                            (file_temp_dir / "_evidence_list.json").read_text(encoding="utf-8"))
+                    except Exception as e:
+                        logger.warning(f"[证据提取] {md_file.name}: 读取续传产出失败，跳过（下轮重提）: {e}")
+                        continue
                     if not ev_list:
                         continue
                 else:
