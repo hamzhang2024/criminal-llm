@@ -95,6 +95,9 @@ def _make_case(tmp_path: Path, with_new_indictment: bool) -> tuple:
             "md_file": "001_张某某第一次讯问笔录.md",
         }],
         "case_charges": ["盗窃罪"],
+        # 完成标记：93e228f 起「有证据但不在 completed_sources 的卷」会被判为中断卷
+        # 删除重提——本测试场景是已完成续传，必须带标记才不会触发重提
+        "completed_sources": ["第1卷_去水印.md"],
         "generated_at": "2026-08-16T00:00:00",
     }
     (evidence_dir / "index.json").write_text(

@@ -2758,13 +2758,12 @@ def _overlap_tail(text: str) -> str:
 
 
 def _split_content_by_tokens(text: str, budget: int, source_name: str) -> list:
-    """
-    按 token 预算分块，优先按 ## 标题边界拆分，不破坏文书结构。
+    """过冲回扫分块：[0.8×, 1.2×预算] 下刀区间，文书边界处切割，不腰斩
 
-    分块保护：
-    1. 笔录完整性：检测"被讯问人/被询问人"标记，确保一份笔录不被拆分到两个块
-    2. 块间重叠：每块保留前一块的尾部作为重叠前缀（默认 250 tokens）
-    3. 降级方案：无标题边界时按固定 token 数硬切
+    边界优先级：## 标题 > 笔录头（# ...笔录 / 被讯问人·被询问人字段行）> ### 子标题/空行；
+    无强边界文本降级 _split_by_token_count 硬切（保留重叠）；
+    单文书超预算：_split_long_document_at 按问答对边界拆，续块带文头。
+    不腰斩故不需要块间重叠，块块接近满量。
 
     返回：[{"label": "xxx - 分块 1/3", "text": "..."}, ...]
     """
@@ -2772,108 +2771,113 @@ def _split_content_by_tokens(text: str, budget: int, source_name: str) -> list:
     if total_tokens <= budget:
         return [{"label": source_name, "text": text}]
 
-    # 按 \n## 拆分（二级标题 = 文书边界）
-    sections = re.split(r'\n(?=## )', text)
-    if len(sections) <= 1:
-        # 无二级标题，降级按三级标题拆分
-        sections = re.split(r'\n(?=### )', text)
-    if len(sections) <= 1:
-        # 仍然无法拆分，降级按固定 token 数硬切
+    parts = _cut_at_boundaries(text, budget)
+    if parts is None:
         return _split_by_token_count(text, budget, source_name)
 
-    # 文书完整性保护：确保一个文书（## 标题）不被拆分到两个块
-    # 如果一个文书超过分块大小，用更细粒度的拆分（按三级标题 ###）
-    merged_sections = []
-    i = 0
-    while i < len(sections):
-        current = sections[i]
-        current_tokens = _count_tokens(current)
+    total = len(parts)
+    return [
+        {"label": source_name if total == 1 else f"{source_name} - 分块 {i + 1}/{total}", "text": p}
+        for i, p in enumerate(parts)
+    ]
 
-        # 如果当前 section 超过预算，尝试按三级标题拆分
-        if current_tokens > budget:
-            sub_sections = re.split(r'\n(?=### )', current)
-            if len(sub_sections) > 1:
-                # 成功拆分，递归处理子 section
-                for sub in sub_sections:
-                    merged_sections.append(sub)
-                i += 1
-                continue
 
-        # 检查下一个 section 是否是新文书的开始（## 标题）
-        if i + 1 < len(sections):
-            next_section = sections[i + 1]
-            next_is_new_doc = next_section.strip().startswith('## ')
+def _estimate_chars(tokens: int) -> int:
+    """token 数 → 字符数估算（案卷中英文混合约 1.35 字符/token）"""
+    return int(tokens * 1.35)
 
-            # 如果下一个不是新文书，且合并后不超过预算，则合并
-            if not next_is_new_doc:
-                merged = current + "\n" + next_section
-                merged_tokens = _count_tokens(merged)
-                if merged_tokens <= budget:
-                    merged_sections.append(merged)
-                    i += 2
-                    continue
 
-        merged_sections.append(current)
-        i += 1
-
-    sections = merged_sections
-
-    chunks = []
-    current_parts: list[str] = []
-    current_tokens = 0
-    pending_overlap = ""  # 上一个已发出块的尾部，作为下一块的重叠前缀
-
-    def _emit(text: str) -> None:
-        nonlocal pending_overlap
-        chunks.append({"label": source_name, "text": text})
-        pending_overlap = _overlap_tail(text)
-
-    def _start_parts(section: str, sec_tokens: int) -> None:
-        """开始新的 current_parts，带上前一块的重叠前缀（若有）"""
-        nonlocal current_tokens
-        if pending_overlap:
-            current_parts.append(pending_overlap + "\n\n" + section)
-            current_tokens = _count_tokens(pending_overlap) + sec_tokens
+def _advance_to_token_limit(text: str, pos: int, token_limit: int) -> int:
+    """从 pos 前进到恰好 ≤ token_limit 的字符位置（二分，tiktoken 精确）"""
+    if _count_tokens(text[pos:]) <= token_limit:
+        return len(text)
+    lo, hi = pos, min(len(text), pos + _estimate_chars(token_limit) * 4)
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if _count_tokens(text[pos:mid]) <= token_limit:
+            lo = mid
         else:
-            current_parts.append(section)
-            current_tokens = sec_tokens
+            hi = mid - 1
+    return lo
 
-    for section in sections:
-        sec_tokens = _count_tokens(section)
-        if sec_tokens > budget:
-            # 单段超过预算，先把前面积累的发出
-            if current_parts:
-                _emit("\n".join(current_parts))
-                current_parts = []
-                current_tokens = 0
-            # 超长段内部按三级标题再拆
-            sub_chunks = _split_content_by_tokens(section, budget, source_name)
-            chunks.extend(sub_chunks)
-            if sub_chunks:
-                pending_overlap = _overlap_tail(sub_chunks[-1]["text"])
+
+def _find_boundary_positions(text: str) -> list:
+    """扫描全文文书边界：返回 [(pos, strength)]，3=## 标题，2=笔录头/人名字段行，1=### 标题/空行"""
+    out = []
+    for m in re.finditer(r"^## ", text, re.MULTILINE):
+        out.append((m.start(), 3))
+    for m in re.finditer(r"^#.*笔录.*$|^被[讯问询问]人[：:]?", text, re.MULTILINE):
+        out.append((m.start(), 2))
+    for m in re.finditer(r"^### ", text, re.MULTILINE):
+        out.append((m.start(), 1))
+    for m in re.finditer(r"\n\n", text):
+        out.append((m.start() + 2, 1))
+    return out
+
+
+def _cut_at_boundaries(text: str, budget: int) -> list | None:
+    """过冲回扫主循环：每块在 [0.8×, 1.2×预算] 区间内的最强且最靠后边界处下刀。
+    全文无强边界（##/笔录头）时返回 None，由调用方降级硬切。
+    被迫腰斩文书后，下一块带 pending_header（文头 +「续，接上文」）保上下文。"""
+    boundaries = _find_boundary_positions(text)
+    if not any(s >= 2 for _, s in boundaries):
+        return None
+
+    n = len(text)
+    parts = []
+    pos = 0
+    pending_header = ""
+    while pos < n:
+        if _count_tokens(text[pos:]) <= budget:
+            parts.append(pending_header + text[pos:])
+            break
+        hi = _advance_to_token_limit(text, pos, int(budget * 1.2))
+        lo = pos + int((hi - pos) * 0.66)  # ≈ 0.8×预算处
+        cands = [(p, s) for p, s in boundaries if lo < p <= hi]
+        if not cands:
+            # 区间内无边界：单文书超预算 → 文档内按问答对边界拆分
+            part, pos, pending_header = _split_long_document_at(text, pos, budget, hi)
+            parts.append(part)
             continue
-        if current_tokens + sec_tokens > budget:
-            # 加上这段会超预算，先把当前积累发出
-            _emit("\n".join(current_parts))
-            current_parts = []
-            _start_parts(section, sec_tokens)
-        else:
-            if not current_parts:
-                _start_parts(section, sec_tokens)
-            else:
-                current_parts.append(section)
-                current_tokens += sec_tokens
+        cut, _ = max(cands, key=lambda c: (c[1], c[0]))
+        parts.append(pending_header + text[pos:cut])
+        pending_header = ""
+        pos = cut
+    return parts
 
-    if current_parts:
-        chunks.append({"label": source_name, "text": "\n".join(current_parts)})
 
-    # 标注分块序号
-    if len(chunks) > 1:
-        for i, chunk in enumerate(chunks):
-            chunk["label"] = f"{source_name} - 分块 {i+1}/{len(chunks)}"
+def _doc_header_prefix(text: str) -> str:
+    """提取文书头（标题 + 被讯问人/被询问人字段行，截到首个问句前，≤500 字符），
+    供续块携带人物/时间上下文"""
+    q = re.search(r"^问[：:]", text, re.MULTILINE)
+    head = text[: q.start()] if q else text[:500]
+    return head[:500].rstrip()
 
-    logger.info(f"[分块] {source_name}: {total_tokens:,} tokens → {len(chunks)} 块")
-    return chunks
+
+def _split_long_document_at(text: str, pos: int, budget: int, hi: int) -> tuple:
+    """单文书超预算的文档内拆分：问：行首 > 空行 > hi 处硬切（hi 已是 token 精确的 1.2× 点）
+
+    前后双向扫描：切点取 [0.5×, 1.2×预算] 区间最靠近 1.0×预算 的问句边界，
+    没有问句则空行，再没有则 hi 硬切。
+    返回 (part_text, new_pos, continuation_header)：continuation_header 为
+    下一块携带的文头（标题+人名字段+「续，接上文」），由主循环拼入下一块开头。
+    """
+    target = pos + _estimate_chars(budget)
+    zone_lo = pos + int((hi - pos) * 0.5)
+    qa = [m.start() for m in re.finditer(r"^问[：:]", text[zone_lo:hi], re.MULTILINE)]
+    if qa:
+        # 取最靠近预算点的问句边界（前后双向）
+        cut = zone_lo + min(qa, key=lambda p: abs((zone_lo + p) - target))
+    else:
+        blanks = [m.start() + 2 for m in re.finditer(r"\n\n", text[zone_lo:hi])]
+        cut = zone_lo + min(blanks, key=lambda p: abs((zone_lo + p) - target)) if blanks else hi
+    part = text[pos:cut]
+    continuation = ""
+    if cut < len(text):
+        header = _doc_header_prefix(text[pos:])
+        if header:
+            continuation = f"{header}\n（续，接上文）\n\n"
+    return part, cut, continuation
 
 
 def _split_by_token_count(text: str, budget: int, source_name: str) -> list:

@@ -7,16 +7,18 @@ import case_manager
 from case_manager import _split_content_by_tokens
 
 
-def test_chunks_have_overlap():
-    """多块时，后一块开头包含前一块尾部（重叠区）"""
+def test_chunks_no_overlap_on_boundary_cut():
+    """新契约（过冲回扫）：边界下刀的块不带重叠——不腰斩就不丢上下文，
+    每块净内容 +5-10%；重叠只保留在无标题硬切兜底路径（_split_by_token_count）"""
     sec1 = "## 第一份笔录\n\n" + "甲说。" * 300
     sec2 = "## 第二份笔录\n\n" + "乙说。" * 300
     # 注：单个 "甲说。" 占 4 tokens，每段约 1208 tokens；
     # 预算 1300 保证每段独立成块、两段合计超预算拆为 2 块（标题边界拆分路径）
     chunks = _split_content_by_tokens(sec1 + "\n" + sec2, 1300, "测试.md")
     assert len(chunks) == 2
-    # 第二块应包含第一块尾部的重叠内容
-    assert "甲说" in chunks[1]["text"][:600]
+    # 第二块以标题干净开头，不含第一块内容（无重叠）
+    assert chunks[1]["text"].lstrip().startswith("## 第二份笔录")
+    assert "甲说" not in chunks[1]["text"]
 
 
 def test_single_chunk_no_overlap():
@@ -41,7 +43,7 @@ def test_chunk_level_resume(tmp_path, monkeypatch):
             calls.append(label)
             return "[]"
 
-    monkeypatch.setattr("llm_client.get_llm_client", lambda: FakeClient())
+    monkeypatch.setattr("llm_client.get_llm_client", lambda *a, **kw: FakeClient())
 
     # 预置第 1 块已完成
     (file_temp / "_chunk_0_blocks.json").write_text("[]", encoding="utf-8")
@@ -74,7 +76,7 @@ def test_chunk_cache_invalidated_on_budget_change(tmp_path, monkeypatch):
             calls.append(label)
             return "[]"
 
-    monkeypatch.setattr("llm_client.get_llm_client", lambda: FakeClient())
+    monkeypatch.setattr("llm_client.get_llm_client", lambda *a, **kw: FakeClient())
 
     # 预置：旧 meta（budget=1000，与当前预算不一致）+ 第 1 块缓存
     (file_temp / "_chunking_meta.json").write_text(
@@ -111,7 +113,7 @@ def test_chunk_cache_kept_when_meta_matches(tmp_path, monkeypatch):
             calls.append(label)
             return "[]"
 
-    monkeypatch.setattr("llm_client.get_llm_client", lambda: FakeClient())
+    monkeypatch.setattr("llm_client.get_llm_client", lambda *a, **kw: FakeClient())
 
     # 预置第 1 块已完成（无 meta 文件 → 视为未知来源，按旧行为保留缓存）
     (file_temp / "_chunk_0_blocks.json").write_text("[]", encoding="utf-8")
@@ -153,7 +155,10 @@ def test_chunks_run_concurrently(tmp_path, monkeypatch):
             calls.append(label)
             return "[]"
 
-    monkeypatch.setattr("llm_client.get_llm_client", lambda: FakeClient())
+    monkeypatch.setattr("llm_client.get_llm_client", lambda *a, **kw: FakeClient())
+    # 固定并发为 2：不依赖本机 config（该测试机器 evidence_concurrency=1 时串行会超时）
+    import config_manager
+    monkeypatch.setattr(config_manager, "get_config_value", lambda k, d=None: "2" if k == "evidence_concurrency" else d)
     monkeypatch.setattr(case_manager, "_split_content_by_tokens", lambda text, budget, name: [
         {"label": "大文件.md - 分块 1/3", "text": "块1"},
         {"label": "大文件.md - 分块 2/3", "text": "块2"},

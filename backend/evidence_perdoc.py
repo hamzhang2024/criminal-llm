@@ -349,6 +349,12 @@ async def _extract_one_document(
         send_text = md_text[max(0, s - 200): min(len(md_text), e + 200)]
         slice_note = "（切片：目标文书附近内容）"
 
+    # 单份文书（切片后）仍超预算：银行流水/超长笔录类，分块提取后合并（防整份 400）
+    if budget_chars and len(send_text) > budget_chars:
+        return await _extract_long_document(
+            client, md_name, send_text, doc, target_msg, timeout,
+            is_procedural, error_sink, budget_chars)
+
     result = ""
     last_error = ""
     issues = ["调用失败"]
@@ -411,6 +417,116 @@ async def _extract_one_document(
     if issues:
         block["contradiction_hints"] = f"⚠️ 提取校验提示：{'；'.join(issues)}\n\n" + block["contradiction_hints"]
     return block
+
+
+def _item_to_block(item: dict, doc: dict, md_name: str) -> dict:
+    """LLM 输出项 → 标准证据块（与 _extract_one_document 的构造一致）"""
+    return {
+        "name": _norm_str(item.get("name")) or doc["name"],
+        "type": _norm_str(item.get("type")) or doc.get("type") or "其他证据",
+        "source": md_name,
+        "time": _norm_str(item.get("time")),
+        "page_range": _norm_str(item.get("page_range")),
+        "persons": _norm_str(item.get("persons")),
+        "key_facts": _norm_list(item.get("key_facts")),
+        "summary": _norm_str(item.get("summary")),
+        "original_quotes": _norm_str(item.get("original_quotes")),
+        "contradiction_hints": _norm_str(item.get("contradiction_hints")) or "无",
+        "related_entities": _norm_str(item.get("related_entities")),
+        "fund_flows": _norm_list(item.get("fund_flows")),
+        "charges": _norm_list(item.get("charges")),
+        "elements": _norm_list(item.get("elements")),
+        "proves_facts": _norm_list(item.get("proves_facts")),
+        "proves_details": item.get("proves_details") if isinstance(item.get("proves_details"), dict) else {},
+        "raw_text": json.dumps(item, ensure_ascii=False, indent=2),
+    }
+
+
+def _split_long_doc_chars(text: str, budget_chars: int) -> list:
+    """超长文书按字符预算拆分：问：行首 > 空行 > 行首（银行流水的记录行边界）"""
+    if len(text) <= budget_chars:
+        return [text]
+    parts = []
+    pos = 0
+    n = len(text)
+    while pos < n:
+        if n - pos <= budget_chars:
+            parts.append(text[pos:])
+            break
+        hi = min(n, pos + int(budget_chars * 1.2))
+        lo = pos + int(budget_chars * 0.6)
+        cut = None
+        for pat in (r"^问[：:]", r"\n\n", r"\n"):
+            cands = [m.start() for m in re.finditer(pat, text[lo:hi], re.MULTILINE)]
+            if cands:
+                cut = lo + cands[-1]
+                break
+        if cut is None or cut <= pos:
+            cut = hi
+        parts.append(text[pos:cut])
+        pos = cut
+    return parts
+
+
+def _merge_perdoc_blocks(blocks: list) -> dict:
+    """同一文书分块提取结果的合并：列表字段拼接去重，摘要/引文取最丰富者，raw_text 拼接"""
+    base = dict(blocks[0])
+    for b in blocks[1:]:
+        for f in ("key_facts", "fund_flows", "charges", "elements", "proves_facts"):
+            merged = list(base.get(f) or [])
+            for item in (b.get(f) or []):
+                if item not in merged:
+                    merged.append(item)
+            base[f] = merged
+        for f in ("summary", "original_quotes", "related_entities"):
+            if len(str(b.get(f) or "")) > len(str(base.get(f) or "")):
+                base[f] = b.get(f)
+        if not base.get("contradiction_hints") or base["contradiction_hints"] == "无":
+            base["contradiction_hints"] = b.get("contradiction_hints") or "无"
+        base["raw_text"] = str(base.get("raw_text", "")) + "\n" + str(b.get("raw_text", ""))
+    return base
+
+
+async def _extract_long_document(
+    client, md_name: str, send_text: str, doc: dict, target_msg: str, timeout: int,
+    is_procedural: bool, error_sink: dict | None, budget_chars: int,
+) -> Optional[dict]:
+    """单份超长文书（银行流水/超长笔录）：分块提取后合并
+
+    分块带「同一份文书·第 N/M 段」标记，模型知道是续段；
+    fund_flows/key_facts 等列表字段合并去重——资金流后续由 aggregate_fund_flows
+    确定性聚合（按 转出/转入/金额/日期 去重），分块不丢笔数。
+    """
+    parts = _split_long_doc_chars(send_text, budget_chars)
+    logger.info(f"[按份提取] {md_name}《{doc['name']}》单份超预算（{len(send_text)} 字符），拆 {len(parts)} 块提取")
+    blocks = []
+    last_error = ""
+    system_prompt = _BATCH_SYSTEM if is_procedural else _PERDOC_SYSTEM
+    for k, part in enumerate(parts):
+        part_note = f"（同一份《{doc['name']}》·第 {k + 1}/{len(parts)} 段，可能有前后段）"
+        try:
+            result = await asyncio.wait_for(client.chat([
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"案卷文件：{md_name}{part_note}\n\n{part}"},
+                {"role": "user", "content": target_msg},
+            ]), timeout=timeout)
+        except Exception as e:
+            last_error = str(e)
+            logger.warning(f"[按份提取] {md_name}《{doc['name']}》第 {k + 1} 块调用失败: {e}")
+            continue
+        m = re.search(r"\{[\s\S]*\}", result) if result else None
+        if not m:
+            continue
+        try:
+            item = json.loads(m.group(0))
+        except Exception:
+            continue
+        blocks.append(_item_to_block(item, doc, md_name))
+    if not blocks:
+        if error_sink is not None:
+            error_sink[doc["name"]] = humanize_llm_error(last_error or "LLM 未按要求输出内容")
+        return None
+    return _merge_perdoc_blocks(blocks)
 
 
 def _norm_name_key(name: str) -> str:

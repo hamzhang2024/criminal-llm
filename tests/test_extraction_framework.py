@@ -17,7 +17,7 @@ def test_framework_cached(tmp_path, monkeypatch):
             calls.append(messages)
             return "虚构交易\n资金支付结算\n信用卡套现"
 
-    monkeypatch.setattr(extraction_framework, "get_llm_client", lambda: FakeClient())
+    monkeypatch.setattr(extraction_framework, "get_llm_client", lambda *a, **kw: FakeClient())
     monkeypatch.setattr("case_framework.fetch_case_rules",
                         lambda charges, keywords=None, size=2: {"非法经营罪": "# 类案裁判规则\n\n规则内容"})
 
@@ -36,7 +36,7 @@ def test_degrades_without_llm(tmp_path, monkeypatch):
     class BrokenClient:
         chat = AsyncMock(side_effect=RuntimeError("down"))
 
-    monkeypatch.setattr(extraction_framework, "get_llm_client", lambda: BrokenClient())
+    monkeypatch.setattr(extraction_framework, "get_llm_client", lambda *a, **kw: BrokenClient())
     monkeypatch.setattr("case_framework.fetch_case_rules", lambda charges, keywords=None, size=2: {})
 
     evidence_dir = tmp_path / "evidence"
@@ -77,7 +77,7 @@ def test_extract_single_file_injects_framework(tmp_path, monkeypatch):
 [{"name": "测试证据", "type": "书证", "summary": "摘要内容", "elements": ["虚构交易"]}]
 ```"""
 
-    monkeypatch.setattr("llm_client.get_llm_client", lambda: FakeClient())
+    monkeypatch.setattr("llm_client.get_llm_client", lambda *a, **kw: FakeClient())
     md_file = tmp_path / "测试.md"
     md_file.write_text("## 书证\n\n内容", encoding="utf-8")
     temp_dir = tmp_path / "temp"

@@ -6,6 +6,7 @@ Ollama 上全部 400——目录清点和按份调用都把整卷原文塞进请
 """
 import asyncio
 import json
+import re
 import os
 import sys
 
@@ -205,3 +206,44 @@ def test_locate_transcript_person_not_found():
     """人名不在正文中 → None（回退整卷发送）"""
     docs = [{"name": "不存在的人第一次讯问笔录", "type": "犯罪嫌疑人供述和辩解", "date": ""}]
     assert _locate_doc_spans(GENERIC_VOLUME, docs) == [None]
+
+
+# ── 单份超长文书（银行流水）分块提取合并 ──
+
+def test_long_statement_doc_split_and_merge():
+    """银行流水单份超预算：分块提取（带续段标记），fund_flows 合并不丢笔"""
+    from evidence_perdoc import _extract_one_document
+    # 构造一份 ~1.2 万字符的流水文书（预算 6000 → 拆 2+ 块）
+    rows = "".join(f"2026-03-{i + 1:02d} 赵志强 向 冯叶飞 转账 {10000 + i * 100} 元\n" for i in range(300))
+    volume = f"# 银行转账流水\n\n{rows}"
+    doc = {"name": "银行转账流水", "type": "书证", "date": ""}
+
+    sent = []
+
+    async def fake_chat(messages, **kw):
+        sent.append(messages)
+        user = next(m["content"] for m in messages if "案卷文件" in m["content"])
+        # 从内容里提取本块的流水行（模拟 LLM 按块输出 fund_flows）
+        flows = re.findall(r"赵志强 向 冯叶飞 转账 (\d+) 元", user)
+        return json.dumps({
+            "name": "银行转账流水", "type": "书证",
+            "summary": "资金往来记录",
+            "fund_flows": [f"赵志强→冯叶飞 {a}元" for a in flows],
+            "key_facts": ["转账记录"],
+        }, ensure_ascii=False)
+
+    client = type("C", (), {"chat": staticmethod(fake_chat)})()
+    block = asyncio.run(_extract_one_document(
+        client, "第1卷.md", volume, doc, "", 600,
+        span=(0, len(volume)), budget_chars=6000,
+    ))
+
+    assert block is not None
+    # 至少拆了 2 块
+    assert len(sent) >= 2, f"应分块调用，实际 {len(sent)} 次"
+    # 续段标记存在
+    assert any("第 2/" in str(m) or "第2/" in str(m) for call in sent for m in call if isinstance(m.get("content"), str))
+    # fund_flows 合并且覆盖两块的内容（第 1 笔和最后几笔都应在）
+    amounts = {f.split(" ")[-1] for f in block["fund_flows"]}
+    assert any("10000元" in f for f in block["fund_flows"]), "首笔流水丢失"
+    assert len(block["fund_flows"]) > 150, f"流水笔数明显丢失: {len(block['fund_flows'])}"
