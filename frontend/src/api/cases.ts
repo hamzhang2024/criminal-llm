@@ -291,6 +291,20 @@ export async function reconvertBlock(caseId: string, params: {
   return res.json()
 }
 
+// 整卷重转：重建该卷 md + 失效该卷证据（多页倒置/转换质量差时用，不依赖乱码定位）
+export async function reconvertVolume(caseId: string, filePath: string): Promise<any> {
+  const res = await fetch(`${API_BASE}/cases/${caseId}/reconvert-volume`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ file_path: filePath })
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail || err.error || res.statusText)
+  }
+  return res.json()
+}
+
 // ========== 案卷分析（旧 analyze-case API）==========
 
 export async function createAnalysis(caseDir: string): Promise<any> {

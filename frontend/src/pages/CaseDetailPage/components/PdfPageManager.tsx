@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { API_BASE } from '../../../api/client'
-import { getThumbnails, rotatePage, reconvertBlock } from '../../../api/cases'
+import { getThumbnails, rotatePage, reconvertBlock, reconvertVolume } from '../../../api/cases'
 import type { MdIssue } from '../../../api/cases'
 import { showConfirm } from '../../../components/MacOSDialog'
 
@@ -26,6 +26,8 @@ export function PdfPageManager({ caseId, pdfFilename, issues, onFixed }: PdfPage
   const [rotations, setRotations] = useState<Map<number, number>>(new Map())  // page → 累计角度
   const [saving, setSaving] = useState(false)
   const [fixing, setFixing] = useState(false)
+  // 整卷重转中（多页倒置的根治路径：重建 md + 失效该卷证据）
+  const [reconverting, setReconverting] = useState(false)
   const [message, setMessage] = useState('')
   const [cacheBust, setCacheBust] = useState(0)
   // 行内修复输入：当前展开的 issue 下标（null = 未展开）及其页码输入值
@@ -184,7 +186,7 @@ export function PdfPageManager({ caseId, pdfFilename, issues, onFixed }: PdfPage
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {iss.page_label || '未知页'}
-                  {iss.estimated_page != null && `（PDF 约第 ${iss.estimated_page} 页）`}
+                  {iss.estimated_page != null && `（估算约第 ${iss.estimated_page} 页，可能偏差较大）`}
                   ：{iss.preview.slice(0, 50)}…
                 </span>
                 {iss.estimated_page != null && (
@@ -251,6 +253,41 @@ export function PdfPageManager({ caseId, pdfFilename, issues, onFixed }: PdfPage
           跳转
         </button>
         <span style={{ fontSize: 11, color: '#86868b' }}>点击缩略图可放大查看（←→ 翻页）</span>
+        <button
+          onClick={async () => {
+            const confirmed = await showConfirm({
+              title: '整卷重转',
+              message: `将重建「${pdfFilename}」的 md 文件（转换质量差/多页倒置的根治方法）。\n\n· 该卷已提取的证据会失效，需要重新提取\n· 大卷耗时较长（取决于 PDF 引擎配额）\n\n确认继续？`,
+              confirmText: '开始重转',
+              variant: 'warning',
+            })
+            if (!confirmed) return
+            setReconverting(true)
+            setMessage('整卷重转中，请耐心等待（大卷可能需要几十分钟）…')
+            try {
+              const r = await reconvertVolume(caseId, pdfFilename)
+              if (r.success) {
+                setMessage(`整卷重转完成：${r.md_file}（${r.chars} 字符${r.invalidated?.length ? `，已失效 ${r.invalidated.length} 份证据` : ''}）。请回案件页重新「提取证据」`)
+                setCacheBust(b => b + 1)
+                onFixed()
+              } else {
+                setMessage(`整卷重转失败：${r.error || '未知错误'}`)
+              }
+            } catch (e: any) {
+              setMessage(`整卷重转失败：${e.message || e}`)
+            } finally {
+              setReconverting(false)
+            }
+          }}
+          disabled={reconverting}
+          title="重建该卷 md（多页倒置/转换质量差时用）"
+          style={{
+            marginLeft: 'auto', padding: '3px 12px', fontSize: 12, border: '1px solid #c3a955',
+            borderRadius: 4, background: 'transparent', color: '#c3a955', cursor: reconverting ? 'not-allowed' : 'pointer',
+            opacity: reconverting ? 0.6 : 1,
+          }}>
+          {reconverting ? '重转中…' : '整卷重转'}
+        </button>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 12 }}>
         {thumbs.map(t => {
@@ -284,13 +321,20 @@ export function PdfPageManager({ caseId, pdfFilename, issues, onFixed }: PdfPage
           )
         })}
       </div>
-      {rotations.size > 0 && (
-        <div style={{ position: 'sticky', bottom: 0, padding: '12px 0', textAlign: 'center' }}>
+      {rotations.size > 0 && createPortal(
+        // 悬浮保存按钮：sticky 在嵌套滚动容器里会沉到几百张缩略图底部（用户找不到），
+        // 改 fixed 右下角常驻
+        <div style={{ position: 'fixed', bottom: '24px', right: '24px', zIndex: 9999, textAlign: 'center' }}>
           <button onClick={saveRotations} disabled={saving}
-            style={{ padding: '8px 24px', fontSize: 14, border: 'none', borderRadius: 8, background: 'var(--macos-accent)', color: '#fff', cursor: 'pointer' }}>
+            style={{
+              padding: '10px 22px', fontSize: 14, border: 'none', borderRadius: 10,
+              background: 'var(--macos-accent)', color: '#fff', cursor: 'pointer',
+              boxShadow: '0 4px 16px rgba(0,0,0,0.35)',
+            }}>
             {saving ? '保存中…' : `保存旋转（${rotations.size} 页）`}
           </button>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* 原图查看模态框：Portal 到 body（脱离卡片 transform 层叠上下文，防闪烁/跳动）；
@@ -322,6 +366,22 @@ export function PdfPageManager({ caseId, pdfFilename, issues, onFixed }: PdfPage
               style={{ padding: '6px 14px', fontSize: 16, border: 'none', borderRadius: 6, background: 'rgba(255,255,255,0.2)', color: '#fff', cursor: 'pointer' }}>
               ›
             </button>
+            {/* 就地旋转：发现倒置当场改，不用回网格找小按钮 */}
+            <button
+              onClick={() => addRotation(viewingPage, 270)}
+              title="逆时针90°"
+              style={{ padding: '6px 12px', fontSize: 15, border: 'none', borderRadius: 6, background: 'rgba(255,255,255,0.2)', color: '#fff', cursor: 'pointer' }}>
+              ↺
+            </button>
+            <button
+              onClick={() => addRotation(viewingPage, 90)}
+              title="顺时针90°"
+              style={{ padding: '6px 12px', fontSize: 15, border: 'none', borderRadius: 6, background: 'rgba(255,255,255,0.2)', color: '#fff', cursor: 'pointer' }}>
+              ↻
+            </button>
+            {(rotations.get(viewingPage) || 0) !== 0 && (
+              <span style={{ color: '#f5c518', fontSize: 12 }}>待保存 {rotations.get(viewingPage)}°</span>
+            )}
             <input
               type="number" min={1} max={thumbs.length} value={viewJumpInput}
               onChange={e => setViewJumpInput(e.target.value)}
@@ -354,11 +414,14 @@ export function PdfPageManager({ caseId, pdfFilename, issues, onFixed }: PdfPage
             </button>
           </div>
           <img
-            key={viewingPage}
+            key={`${viewingPage}-${rotations.get(viewingPage) || 0}`}
             src={`${BACKEND_ORIGIN}/api/cases/${caseId}/pdf-page-image?file_path=${encodeURIComponent(pdfFilename)}&dir=processed&page=${viewingPage}&dpi=150`}
             alt={`第 ${viewingPage} 页`}
             onClick={e => e.stopPropagation()}
-            style={{ maxWidth: '92vw', maxHeight: '82vh', objectFit: 'contain', background: '#fff', borderRadius: 4 }}
+            style={{
+              maxWidth: '92vw', maxHeight: '82vh', objectFit: 'contain', background: '#fff', borderRadius: 4,
+              transform: `rotate(${rotations.get(viewingPage) || 0}deg)`,
+            }}
           />
         </div>,
         document.body

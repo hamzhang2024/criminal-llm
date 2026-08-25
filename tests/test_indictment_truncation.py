@@ -51,6 +51,9 @@ def _make_client(responses):
 
     client.client = FakeAsyncClient()
     client._calls = calls
+    # chat() 每次调用前 reload_config()，读真实配置且读超时不符会重建真实 httpx client
+    # （测试环境会真发 HTTP → ConnectError），测试桩掉
+    client.reload_config = lambda: None
     return client
 
 
@@ -132,3 +135,58 @@ def test_indictment_still_truncated_marks_warning(tmp_path, monkeypatch):
     path = asyncio.run(case_manager._process_indictment_single(md, md.read_text(encoding="utf-8"), ev_dir, 1))
     content = path.read_text(encoding="utf-8")
     assert "截断" in content, "仍截断时缺少可见警告标记"
+
+
+# ── A：嵌在卷里的起诉书切片走专用逐笔通道 ──
+
+def test_embedded_indictment_routed_to_special_channel(tmp_path, monkeypatch):
+    """程序性卷（含起诉意见书正文段）：起诉书切片走专用 prompt（逐笔），
+    通用提取输入中剔除该段，专用块排在证据最前"""
+    import llm_client as lc
+    import case_manager
+
+    indictment_body = "起诉意见书\n\n" + "被告人王某涉嫌强奸罪的详细指控事实。" * 60
+    notice_body = "\n\n# 犯罪嫌疑人诉讼权利义务告知书\n\n（告知书正文内容）" * 10
+    md_text = "# 卷内文书目录\n\n若干条目\n\n# " + indictment_body + notice_body
+
+    calls = []
+
+    class FakeClient:
+        context_limit = 250000
+        model = "test"
+        last_finish_reason = "stop"
+
+        async def chat(self, messages, **kw):
+            content = messages[-1]["content"] if messages else ""
+            calls.append(content)
+            if "逐笔记录该文书指控的全部犯罪事实" in str(messages[0].get("content", "")):
+                return "### 总体指控\n- **指控罪名**：强奸罪\n\n### 逐笔犯罪事实\n#### 第1笔\n- **时间**：2015年\n- **地点**：江阴市"
+            return json.dumps([{"name": "诉讼权利义务告知书", "type": "程序性文书",
+                                "summary": "告知内容", "original_quotes": ""}], ensure_ascii=False)
+
+    monkeypatch.setattr(lc, "_clients", {"evidence": FakeClient()})
+    md_file = tmp_path / "第1卷_去水印.md"
+    md_file.write_text(md_text, encoding="utf-8")
+
+    (tmp_path / "temp").mkdir()
+    _, blocks = asyncio.run(case_manager._extract_single_file(
+        md_file, md_text, tmp_path / "temp", ["强奸罪"]))
+
+    assert blocks, "应有证据块"
+    # 专用块在最前，且是起诉意见书类型
+    assert blocks[0]["type"] == "起诉意见书"
+    assert "逐笔犯罪事实" in blocks[0]["summary_preview"]
+    # 通用提取的输入里不含起诉书正文段（专用通道的 user 消息用格式模板标记区分）
+    generic_inputs = [c for c in calls if "请按以下格式输出完整分析" not in c]
+    assert all("详细指控事实" not in c for c in generic_inputs), "通用路径仍收到起诉书正文段"
+
+
+def test_slice_indictment_section():
+    """切片定位：起诉意见书标题到下一个同级标题之间"""
+    from case_manager import _slice_indictment_section
+    text = "# 目录\n\n# 起诉意见书\n\n指控正文\n\n# 告知书\n\n告知正文"
+    section = _slice_indictment_section(text)
+    assert section is not None
+    assert "指控正文" in section
+    assert "告知正文" not in section
+    assert _slice_indictment_section("# 讯问笔录\n\n问答") is None

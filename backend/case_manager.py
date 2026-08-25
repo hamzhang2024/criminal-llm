@@ -967,18 +967,9 @@ def _slice_section_by_markers(raw_text: str, first_line: str, last_line: str) ->
     return sliced
 
 
-async def _process_indictment_single(md_file: Path, md_text: str, evidence_dir: Path, next_id: int) -> Path:
-    """将起诉书/起诉意见书作为一份独立证据提取，真实记录指控的全部事实。
-
-    Returns: 生成的证据文件路径
-    """
-    from llm_client import get_llm_client
-    client = get_llm_client("evidence")
-
-    # 确定文书类型
-    doc_type = "起诉意见书" if "意见" in md_file.name else "起诉书"
-
-    result = await client.chat([
+# 起诉书类文书共享 prompt（独立成册的专用通道与嵌在卷里的切片通道共用）
+def _build_indictment_prompt(doc_type: str, doc_name: str, doc_text: str) -> list:
+    return [
         {"role": "system", "content": f"""你是刑事案卷审查专家，正在审查一份{doc_type}。
 
 **核心原则：真实、完整、逐笔记录该文书指控的全部犯罪事实。**
@@ -999,9 +990,9 @@ async def _process_indictment_single(md_file: Path, md_text: str, evidence_dir: 
 - 起诉意见书/起诉书是公诉机关的正式指控，**每一笔犯罪事实的完整描述必须原文保留**
 - 不要概括为"详见原文"或"同上"，必须逐笔完整输出
 - 金额、时间、人名、地点必须精确，不要用"约""左右"等模糊词"""},
-        {"role": "user", "content": f"""## {doc_type}：{md_file.name}
+        {"role": "user", "content": f"""## {doc_type}：{doc_name}
 
-{md_text}
+{doc_text}
 
 ---
 
@@ -1029,7 +1020,59 @@ async def _process_indictment_single(md_file: Path, md_text: str, evidence_dir: 
 
 ### 关键关联信息
 （电话号码、微信号、银行账号、车牌号、地址信息等，每项格式：`[类型] 内容 — 涉及人员/说明`）"""},
+    ]
+
+
+async def _chat_with_truncation_continuation(client, messages: list) -> tuple:
+    """LLM 调用 + 截断自动续写（一次）。返回 (结果文本, 截断警告或空串)
+
+    起诉书类长输出常超 max_tokens（多被告、上百笔事实）：finish_reason=length
+    时自动续写；仍截断则返回可见警告，绝不静默落库半截内容。
+    """
+    result = await client.chat(messages)
+    if getattr(client, "last_finish_reason", "") != "length":
+        return result, ""
+    tail = result[-300:] if len(result) > 300 else result
+    continuation = await client.chat([
+        {"role": "system", "content": "你是刑事案卷审查专家。上次输出因长度限制被截断，请从截断处继续输出剩余内容（不要重复已输出部分，不要加任何解释）。"},
+        {"role": "user", "content": f"上次输出的结尾是：\n...{tail}\n\n请紧接着继续："},
     ])
+    result = result.rstrip() + "\n" + continuation.lstrip()
+    if getattr(client, "last_finish_reason", "") == "length":
+        return result, "⚠️ 输出两次被截断（触及长度上限），内容可能不完整，请人工核对原文"
+    return result, ""
+
+
+def _slice_indictment_section(md_text: str) -> str | None:
+    """从卷宗 md 中切出起诉意见书/起诉书正文段（嵌在卷里的起诉书类文书）
+
+    通用整卷提取对起诉书类只产概括壳（实测王振栋案 127 笔事实只剩 1 行），
+    须切出单独走专用逐笔通道。按标题行定位，切到下一个同级标题或文末。
+    """
+    m = re.search(r"^#{1,4}\s*(起诉意见书|起\s*诉\s*书)\s*$", md_text, re.MULTILINE)
+    if not m:
+        return None
+    start = m.start()
+    nxt = re.search(r"^#{1,4}\s", md_text[m.end():], re.MULTILINE)
+    end = m.end() + nxt.start() if nxt else len(md_text)
+    return md_text[start:end]
+
+
+async def _process_indictment_single(md_file: Path, md_text: str, evidence_dir: Path, next_id: int) -> Path:
+    """将起诉书/起诉意见书作为一份独立证据提取，真实记录指控的全部事实。
+
+    Returns: 生成的证据文件路径
+    """
+    from llm_client import get_llm_client
+    client = get_llm_client("evidence")
+
+    # 确定文书类型
+    doc_type = "起诉意见书" if "意见" in md_file.name else "起诉书"
+
+    result, truncation_warning = await _chat_with_truncation_continuation(
+        client, _build_indictment_prompt(doc_type, md_file.name, md_text))
+    if truncation_warning:
+        logger.warning(f"[起诉文书] {md_file.name}: 续写后仍截断，已标记警告")
 
     # 原文全文切片：LLM 只给首行/末行定位，代码从原文切（不经转述）
     fulltext_section = ""
@@ -1055,6 +1098,9 @@ async def _process_indictment_single(md_file: Path, md_text: str, evidence_dir: 
     # 保存为一份独立证据文件，使用传入的 next_id 编号
     safe_name = _sanitize_filename(f"{doc_type} — {md_file.stem}")
     ev_md_file = evidence_dir / f"{next_id:03d}_{safe_name}.md"
+
+    if truncation_warning:
+        result = f"> {truncation_warning}\n\n" + result
 
     content = f"""# {doc_type} — {md_file.stem}
 
@@ -1332,12 +1378,51 @@ async def _extract_single_file(
             logger.warning(f"[证据提取] {md_file.name}: 按份提取异常，回退整卷路径: {e}")
             evidence_blocks = None
 
+    # 嵌在卷里的起诉意见书/起诉书：切出正文段走专用逐笔通道。
+    # 通用整卷路径对起诉书类只产概括壳（实测王振栋案 127 笔事实只剩 1 行），
+    # 无论按份是否回退，只要卷内有起诉书类正文段就单独提取，并从通用输入中剔除
+    indictment_block = None
+    generic_md_text = md_text
+    if evidence_blocks is None:
+        section = _slice_indictment_section(md_text)
+        if section and len(section) > 500:
+            try:
+                doc_type = "起诉意见书" if "意见" in section[:200] else "起诉书"
+                logger.info(f"[证据提取] {md_file.name}: 检测到{doc_type}正文段（{len(section)} 字符），走专用逐笔通道")
+                result, trunc_warn = await asyncio.wait_for(
+                    _chat_with_truncation_continuation(
+                        client, _build_indictment_prompt(doc_type, md_file.name, section)),
+                    timeout=timeout_seconds * 2,  # 长输出 + 可能续写一次
+                )
+                indictment_block = {
+                    "name": f"{doc_type}（{md_file.stem}）",
+                    "type": doc_type,
+                    "source": md_file.name,
+                    "page_range": "", "persons": "",
+                    "key_facts": ["完整逐笔提取见详细摘要"],
+                    "summary": (f"> {trunc_warn}\n\n" if trunc_warn else "") + result,
+                    "original_quotes": section[:3000],
+                    "contradiction_hints": trunc_warn or "无",
+                    "related_entities": "",
+                    "fund_flows": [], "charges": charges or [],
+                    "elements": [], "proves_facts": [], "proves_details": {},
+                    "raw_text": section,
+                }
+                generic_md_text = md_text.replace(section, "\n（起诉意见书已单独提取，此处略）\n")
+                # 多块路径的分块已按原文切好，剔除起诉书段后需重切
+                if len(chunks) > 1:
+                    chunks = _split_content_by_tokens(generic_md_text, content_budget, md_file.name)
+            except Exception as e:
+                logger.warning(f"[证据提取] {md_file.name}: 起诉书专用通道失败，回退通用路径: {e}")
+                indictment_block = None
+                generic_md_text = md_text
+
     if evidence_blocks is None and len(chunks) == 1:
         # 单块，直接发送
         result = await asyncio.wait_for(
             client.chat([
                 {"role": "system", "content": _EVIDENCE_SYSTEM_PROMPT + "\n\n" + _EVIDENCE_EXTRACTION_RULES + framework_prefix},
-                {"role": "user", "content": f"## 案卷文件：{md_file.name}\n\n{charges_str}{hint}\n\n{md_text}"},
+                {"role": "user", "content": f"## 案卷文件：{md_file.name}\n\n{charges_str}{hint}\n\n{generic_md_text}"},
             ]),
             timeout=timeout_seconds,
         )
@@ -1383,6 +1468,10 @@ async def _extract_single_file(
         all_evidence_blocks = [b for blocks in chunk_results for b in blocks]
         evidence_blocks = _merge_evidence_blocks(all_evidence_blocks)
         logger.info(f"[证据提取] {md_file.name}: {len(chunks)} 块合并后 {len(evidence_blocks)} 份证据")
+
+    # 起诉书专用通道产出并入（如有）：专用块放最前（指控文件优先于普通证据）
+    if indictment_block is not None:
+        evidence_blocks = [indictment_block] + (evidence_blocks or [])
 
     # 调试：将解析结果保存到 debug 文件
     debug_file = temp_dir / f"_debug_{md_file.stem}.txt"
@@ -3368,6 +3457,64 @@ async def md_issues(case_id: str):
         except Exception as e:
             logger.warning(f"[乱码检测] 读取 {pdf.name} 页数失败，跳过页码估算: {e}")
     return {"issues": detect_md_issues(md_dir, pdf_pages=pdf_pages)}
+
+
+class ReconvertVolumeRequest(BaseModel):
+    file_path: str          # processed/ 下 PDF 文件名
+
+
+@router.post("/{case_id}/reconvert-volume")
+async def reconvert_volume(case_id: str, req: ReconvertVolumeRequest):
+    """整卷重转：重建该卷 md 并失效该卷证据供重新提取
+
+    多页倒置/转换质量差的正确解法：不依赖乱码页定位（估算可能偏差很大），
+    整卷 md 从修正后的 PDF 重建。同步执行（与 convert-to-md 同路径），大卷耗时较长。
+    """
+    case_path = find_case_path(case_id)
+    if not case_path:
+        raise HTTPException(status_code=404, detail="案件不存在")
+    # 安全：file_path 仅限纯文件名，防目录穿越（旋转只作用于 processed/）
+    if Path(req.file_path).name != req.file_path:
+        raise HTTPException(status_code=400, detail="文件名不能含路径分隔符")
+    pdf = (case_path / "processed" / req.file_path).resolve()
+    if not pdf.is_relative_to(case_path.resolve()) or not pdf.exists():
+        raise HTTPException(status_code=404, detail="processed/ 下文件不存在")
+
+    md_dir = case_path / "md"
+    md_dir.mkdir(exist_ok=True)
+    try:
+        from pdf_to_md import get_evidence_text
+        text, images_dir = get_evidence_text(str(pdf), prefer_md=True, output_dir=str(md_dir))
+    except Exception as e:
+        return {"success": False, "error": f"转换异常：{e}"}
+    if text is None:
+        return {"success": False, "error": "转换失败，请查看后端日志"}
+
+    md_file = md_dir / f"{pdf.stem}.md"
+    md_file.write_text(text, encoding="utf-8")
+    image_count = 0
+    if images_dir and Path(images_dir).exists():
+        target = md_dir / f"{pdf.stem}_images"
+        if target.exists():
+            shutil.rmtree(target)
+        shutil.copytree(images_dir, target)
+        image_count = len(list(target.iterdir()))
+
+    # 失效该卷证据（条目+摘要缓存+.done/temp 续传状态），并清 completed_sources 标记
+    from page_rotation import invalidate_evidence_for_source
+    invalidated = invalidate_evidence_for_source(case_path, md_file.name)
+    index_file = case_path / "evidence" / "index.json"
+    if index_file.exists():
+        idx = json.loads(index_file.read_text(encoding="utf-8"))
+        completed = set(idx.get("completed_sources", []))
+        if md_file.name in completed:
+            completed.discard(md_file.name)
+            idx["completed_sources"] = sorted(completed)
+            _atomic_write_text(index_file, json.dumps(idx, ensure_ascii=False, indent=2))
+
+    logger.info(f"[整卷重转] {pdf.name}: 重建 {md_file.name}（{len(text)} 字符），失效证据 {len(invalidated)} 份")
+    return {"success": True, "md_file": md_file.name, "chars": len(text),
+            "images": image_count, "invalidated": invalidated}
 
 
 class ReconvertBlockRequest(BaseModel):

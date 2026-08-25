@@ -210,6 +210,8 @@ class LLMClient:
         self.model = default_model.lower() if default_model else ""
         # 上下文窗口（profile 为唯一事实源）：分块/输出预留都以此为准
         self.context_limit = context_limit
+        # 本次请求的 finish_reason（调用方可据此做截断续写；每次成功调用后更新）
+        self.last_finish_reason = ""
         # 分层超时：connect/write/pool 各 60s，read 默认 180s 防 stream hang
         # 单一数值 timeout 在 streaming 响应下每次收到 chunk 重置计时器，
         # read timeout 是单次读取超时，无数据则抛 ReadTimeout → 触发重试。
@@ -414,9 +416,10 @@ class LLMClient:
                         overall_rate = (self._cache_hit_tokens / overall_total * 100) if overall_total > 0 else 0
                         logger.info("[LLM 缓存] 本次命中: %d/%d tokens (%.0f%%), 累计: %d/%d (%.0f%%), 共 %d 次请求", hit, total, hit_rate, self._cache_hit_tokens, overall_total, overall_rate, self._total_requests)
 
-                    # 检测输出是否被截断
+                    # 检测输出是否被截断（同时暴露给调用方：起诉意见书等长输出场景需要据此续写）
                     choice = data["choices"][0]
                     finish_reason = choice.get("finish_reason", "")
+                    self.last_finish_reason = finish_reason
                     if finish_reason == "length":
                         logger.warning("[LLM] 输出被截断！finish_reason=length，建议增大 max_output_tokens 配置（当前 %d）", max_output_tokens)
                     elif finish_reason == "stop":
@@ -491,6 +494,8 @@ class LLMClient:
                 # 缓存命中率统计（前缀缓存命中并入会话级统计）
                 self._record_responses_cache_stats(data)
 
+                # Responses API 的截断形态：status=incomplete（incomplete_details.reason=max_output_tokens）
+                self.last_finish_reason = "length" if data.get("status") == "incomplete" else "stop"
                 return self._parse_responses_text(data)
             except (httpx.ReadTimeout, httpx.ConnectTimeout) as e:
                 last_error = e
