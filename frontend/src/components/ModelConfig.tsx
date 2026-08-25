@@ -125,6 +125,7 @@ export function ModelConfig({ onProfilesChange }: ModelConfigProps) {
   const [profiles, setProfiles] = useState<LlmProfile[]>([])
   const [evidenceProfile, setEvidenceProfile] = useState('default')
   const [analysisProfile, setAnalysisProfile] = useState('default')
+  const [evidenceConcurrency, setEvidenceConcurrency] = useState(3)
   const [editing, setEditing] = useState<LlmProfile | null>(null)
   const [showModal, setShowModal] = useState(false)
 
@@ -148,14 +149,17 @@ export function ModelConfig({ onProfilesChange }: ModelConfigProps) {
 
   const loadAssignments = useCallback(async () => {
     try {
-      const [evRes, anRes] = await Promise.all([
+      const [evRes, anRes, cfgRes] = await Promise.all([
         fetch(`${API_BASE}/config/llm-profile/evidence`),
         fetch(`${API_BASE}/config/llm-profile/analysis`),
+        fetch(`${API_BASE}/config`),
       ])
       const evData = await evRes.json()
       const anData = await anRes.json()
+      const cfgData = await cfgRes.json()
       setEvidenceProfile(evData.profile?.id || 'default')
       setAnalysisProfile(anData.profile?.id || 'default')
+      setEvidenceConcurrency(Number(cfgData.evidence_concurrency) || 3)
     } catch (e) {
       console.error('加载用途分配失败：', e)
     }
@@ -196,6 +200,22 @@ export function ModelConfig({ onProfilesChange }: ModelConfigProps) {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ [`llm_profile_${purpose}`]: profileId }),
+      })
+    } catch (e) {
+      alert('保存失败：' + e)
+    }
+  }
+
+  // 证据提取并发数：真实生效字段（evidence_concurrency，供按份/分块/摘要并发读取）
+  // 注意区别于 profile 里的 max_concurrent（历史遗留死配置，无任何消费点）
+  const saveEvidenceConcurrency = async (value: number) => {
+    const n = Math.max(1, Math.min(50, Math.round(value) || 1))
+    setEvidenceConcurrency(n)
+    try {
+      await fetch(`${API_BASE}/config`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ evidence_concurrency: n }),
       })
     } catch (e) {
       alert('保存失败：' + e)
@@ -287,7 +307,7 @@ export function ModelConfig({ onProfilesChange }: ModelConfigProps) {
                 )}
               </div>
               <div style={{ fontSize: '12px', color: '#86868b', wordBreak: 'break-all' }}>
-                {p.model} · {formatContextLimit(p.context_limit)} 上下文 · {p.max_concurrent} 并发
+                {p.model} · {formatContextLimit(p.context_limit)} 上下文
               </div>
             </div>
             <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
@@ -339,28 +359,49 @@ export function ModelConfig({ onProfilesChange }: ModelConfigProps) {
           <label style={{ display: 'block', fontSize: '13px', fontWeight: '500', marginBottom: '8px' }}>
             证据提取
           </label>
-          <select
-            value={evidenceProfile}
-            onChange={e => {
-              setEvidenceProfile(e.target.value)
-              saveAssignment('evidence', e.target.value)
-            }}
-            style={{
-              width: '100%',
-              padding: '10px 12px',
-              border: '1px solid var(--macos-border)',
-              borderRadius: '8px',
-              fontSize: '14px',
-              background: 'white',
-              cursor: 'pointer',
-            }}
-          >
-            {profiles.map(p => (
-              <option key={p.id} value={p.id}>
-                {p.name || p.id} ({p.model})
-              </option>
-            ))}
-          </select>
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+            <select
+              value={evidenceProfile}
+              onChange={e => {
+                setEvidenceProfile(e.target.value)
+                saveAssignment('evidence', e.target.value)
+              }}
+              style={{
+                flex: 1,
+                padding: '10px 12px',
+                border: '1px solid var(--macos-border)',
+                borderRadius: '8px',
+                fontSize: '14px',
+                background: 'white',
+                cursor: 'pointer',
+              }}
+            >
+              {profiles.map(p => (
+                <option key={p.id} value={p.id}>
+                  {p.name || p.id} ({p.model})
+                </option>
+              ))}
+            </select>
+            {/* 提取并发数：真实生效字段（按份/分块/摘要并发都读它），按用途调整而非按模型 */}
+            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: '#1d1d1f', whiteSpace: 'nowrap' }}>
+              并发
+              <input
+                type="number" min={1} max={50}
+                value={evidenceConcurrency}
+                onChange={e => setEvidenceConcurrency(Number(e.target.value) || 1)}
+                onBlur={e => saveEvidenceConcurrency(Number(e.target.value))}
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); saveEvidenceConcurrency(Number((e.target as HTMLInputElement).value)) } }}
+                aria-label="证据提取并发数"
+                style={{
+                  width: '56px', padding: '8px 8px', textAlign: 'center',
+                  border: '1px solid var(--macos-border)', borderRadius: '8px', fontSize: '14px',
+                }}
+              />
+            </label>
+          </div>
+          <div style={{ fontSize: '11px', color: '#86868b', marginTop: '6px' }}>
+            云端服务建议 3-5；本地 Ollama 多数架构不支持并行（排队执行，设 1-2 即可）；vLLM 等服务端并行建议 2-4
+          </div>
         </div>
 
         <div style={{ marginBottom: '16px' }}>
@@ -571,7 +612,10 @@ function ModelEditModal({ profile, onSave, onCancel }: {
       const profileToSave: LlmProfile = {
         ...form,
         id: profileId,
-        name: models.length > 1 ? `${form.name || form.provider} - ${model.name}` : form.name,
+        // 名称为空时按模型名派生（此前弹窗无名称输入，保存出大量空名配置）
+        name: models.length > 1
+          ? `${form.name || form.provider} - ${model.name}`
+          : (form.name || model.name),
         model: model.name,
         context_limit: model.context,
       }
@@ -762,14 +806,14 @@ function ModelEditModal({ profile, onSave, onCancel }: {
           </div>
         </div>
 
-        {/* 并发数和超时 */}
+        {/* 配置名称和超时 */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '20px' }}>
           <div>
-            <label style={{ display: 'block', fontSize: '12px', fontWeight: '500', marginBottom: '4px' }}>并发数</label>
+            <label style={{ display: 'block', fontSize: '12px', fontWeight: '500', marginBottom: '4px' }}>配置名称</label>
             <input
-              type="number"
-              value={form.max_concurrent}
-              onChange={e => setForm(prev => ({ ...prev, max_concurrent: parseInt(e.target.value) || 1 }))}
+              value={form.name}
+              onChange={e => setForm(prev => ({ ...prev, name: e.target.value }))}
+              placeholder="留空则按供应商+模型自动生成"
               style={{ width: '100%', padding: '6px 10px', border: '1px solid var(--macos-border)', borderRadius: '6px', fontSize: '13px' }}
             />
           </div>
@@ -781,7 +825,7 @@ function ModelEditModal({ profile, onSave, onCancel }: {
               onChange={e => setForm(prev => ({ ...prev, read_timeout: parseInt(e.target.value) || 600 }))}
               style={{ width: '100%', padding: '6px 10px', border: '1px solid var(--macos-border)', borderRadius: '6px', fontSize: '13px' }}
             />
-            <div style={{ fontSize: '10px', color: '#86868b', marginTop: '2px' }}>秒</div>
+            <div style={{ fontSize: '10px', color: '#86868b', marginTop: '2px' }}>秒（本地慢模型建议 1800-3600）</div>
           </div>
         </div>
 
