@@ -210,6 +210,12 @@ export function useEvidenceExtraction(caseId: string | undefined, onExtractCompl
         setEvidenceFiles([])
         setCompleteness(null)
         setEvidenceExtracted(false)
+        // 只提示不删：analysis/ 分析产物按用户决定保留，但须明确告知已过期
+        showAlert({
+          title: '证据已清除',
+          message: '证据目录已清空，可重新提取。\n\n注意：阶段分析结果、辩护报告等分析产物基于旧证据生成，已过期——重新提取证据并重新分析后将自动覆盖更新。',
+          variant: 'info',
+        })
       }
     } catch { /* ignore */ }
   }, [caseId])
