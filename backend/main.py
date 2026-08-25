@@ -76,8 +76,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# 带 no-cache 响应头的静态文件服务：
+# 缩略图旋转后删除重建但 URL 不变，WKWebView 启发式缓存（无 Cache-Control 时
+# 按 RFC 9111 取 10% × 文件年龄）会展示旋转前的旧图；no-cache 禁用启发式缓存，
+# 每次都取最新内容（本地服务，传输成本可忽略）。
+class NoCacheStaticFiles(StaticFiles):
+    async def get_response(self, path: str, scope):
+        resp = await super().get_response(path, scope)
+        resp.headers["Cache-Control"] = "no-cache"
+        return resp
+
+
 # 静态文件服务（缩略图）
-app.mount("/thumbnails", StaticFiles(directory=CACHE_DIR), name="thumbnails")
+app.mount("/thumbnails", NoCacheStaticFiles(directory=CACHE_DIR), name="thumbnails")
 
 # 注册路由
 app.include_router(analyzer_router)

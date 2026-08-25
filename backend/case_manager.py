@@ -3347,7 +3347,13 @@ async def serve_file(case_id: str, file_path: str, dir: Optional[str] = None):
         ".json": "application/json",
     }
     media_type = media_type_map.get(suffix, "application/octet-stream")
-    return FileResponse(str(fp), media_type=media_type, filename=fp.name, headers={"Content-Disposition": "inline"})
+    # Cache-Control: no-cache = 禁用启发式缓存，每次都向服务器取最新内容。
+    # 不能省略：无此头时 WKWebView 按 RFC 9111 启发式缓存（10% × 文件年龄），
+    # 页面旋转 saveIncr 后退出再进，pdfjs 会拿到旋转前的旧 PDF 字节。
+    # （Starlette FileResponse 不处理条件请求，ETag 仅供调试，无 304 短路；
+    #   本地 localhost 全量传输成本可忽略）
+    return FileResponse(str(fp), media_type=media_type, filename=fp.name,
+                        headers={"Content-Disposition": "inline", "Cache-Control": "no-cache"})
 
 
 @router.get("/{case_id}/pdf-thumbnails")
@@ -3398,7 +3404,8 @@ async def pdf_page_image(case_id: str, file_path: str, page: int, dir: str = "pr
         png = await loop.run_in_executor(None, render_pdf_page_png, pdf, page, cache_dir, dpi)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return FileResponse(str(png), media_type="image/png")
+    # no-cache：旋转后旧页图缓存必须重验证（同 serve-file）
+    return FileResponse(str(png), media_type="image/png", headers={"Cache-Control": "no-cache"})
 
 
 class RotatePageRequest(BaseModel):
