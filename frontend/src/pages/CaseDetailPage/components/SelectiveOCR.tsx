@@ -170,7 +170,7 @@ export function SelectiveOCR({ caseId, onUnocrCountChange, conversionDone }: Pro
           }
         } catch { failCount++; if (failCount >= 3) { clearInterval(timerRef.current!); timerRef.current = null } }
       }, 2000)
-    } catch { setError('启动 OCR 失败') }
+    } catch (e) { setError(e instanceof Error ? e.message : '启动 OCR 失败') }
   }
 
   return (
@@ -193,10 +193,15 @@ export function SelectiveOCR({ caseId, onUnocrCountChange, conversionDone }: Pro
         </button>
       </div>
       {ocrStatus && (
-        <div style={{ fontSize: '12px', color: '#86868b', margin: '6px 0' }}>
-          {ocrStatus.status === 'running' ? `识别中 ${ocrStatus.done}/${ocrStatus.total}` : ''}
-          {ocrStatus.status === 'completed' ? '完成' : ''}
-          {ocrStatus.status === 'failed' ? '识别失败，请重试' : ''}
+        <div style={{
+          fontSize: '12px', margin: '6px 0', padding: '5px 10px', borderRadius: '5px',
+          background: ocrStatus.status === 'completed' ? 'rgba(52,199,89,0.1)' : ocrStatus.status === 'failed' ? 'rgba(255,59,48,0.08)' : 'rgba(0,122,255,0.08)',
+          color: ocrStatus.status === 'completed' ? '#248a3d' : ocrStatus.status === 'failed' ? '#c00' : 'var(--macos-accent)',
+          fontWeight: 500,
+        }}>
+          {ocrStatus.status === 'running' ? `⏳ 识别中 ${ocrStatus.done}/${ocrStatus.total}，请稍候…` : ''}
+          {ocrStatus.status === 'completed' ? `✓ 识别完成（${ocrStatus.done}/${ocrStatus.total} 张已识别）` : ''}
+          {ocrStatus.status === 'failed' ? '✗ 识别失败，请重试' : ''}
           {ocrStatus.failed && ocrStatus.failed.length > 0 && <span style={{ color: '#c00' }}>（失败卷：{ocrStatus.failed.join('、')}）</span>}
         </div>
       )}

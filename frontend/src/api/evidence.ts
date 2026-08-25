@@ -134,7 +134,13 @@ export async function startOcrImages(caseId: string, groups: Record<string, stri
     const text = await res.text().catch(() => '')
     throw new Error(`启动 OCR 失败: ${res.status} ${text.slice(0, 100)}`)
   }
-  return res.json()
+  const data = await res.json()
+  // 200 但 success:false（如"OCR 任务进行中"/"未选择任何图片"）必须当错误抛出，
+  // 否则前端会进入永不前进的幻影"识别中 0/N"状态（用户看到的"没有反应"）
+  if (data && data.success === false) {
+    throw new Error(data.error || '启动 OCR 失败')
+  }
+  return data
 }
 
 export async function getOcrStatus(caseId: string): Promise<{ status: string; done: number; total: number; current?: string; failed?: string[] }> {
